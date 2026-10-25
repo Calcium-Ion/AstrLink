@@ -9,7 +9,7 @@ import (
 )
 
 // migrateBeforeFreshInstallDefaults opens a database at the published schema
-// just before fresh_install_defaults and returns it with the full list.
+// just before install_defaults_biometric and returns it with the full list.
 func migrateBeforeFreshInstallDefaults(t *testing.T) (*sql.DB, []Migration) {
 	t.Helper()
 	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "fresh-install-defaults.db"))
@@ -20,12 +20,12 @@ func migrateBeforeFreshInstallDefaults(t *testing.T) (*sql.DB, []Migration) {
 	migrations := DefaultMigrations()
 	index := -1
 	for i, migration := range migrations {
-		if migration.Name == "fresh_install_defaults" {
+		if migration.Name == "install_defaults_biometric" {
 			index = i
 		}
 	}
 	if index < 1 || migrations[index-1].Name != "request_output_activity" {
-		t.Fatal("fresh_install_defaults must follow the published output activity migration")
+		t.Fatal("install_defaults_biometric must follow the published output activity migration")
 	}
 	before, err := New(SQLDatabase{DB: db}, migrations[:index])
 	if err != nil {
@@ -252,5 +252,104 @@ func TestFreshInstallDefaultsLeaveEveryChangedPrivacyPolicyAsItWas(t *testing.T)
 				t.Fatalf("policy =\n%#v\nwant\n%#v", after, want)
 			}
 		})
+	}
+}
+
+func TestRawKeyEnvelopesKeepTheirRowsAndAcceptABiometricOne(t *testing.T) {
+	db, migrations := migrateBeforeFreshInstallDefaults(t)
+	// One connection, so the foreign_keys pragma below holds for the delete.
+	db.SetMaxOpenConns(1)
+	const created = "2026-10-01T08:00:00Z"
+	if _, err := db.Exec(`INSERT INTO raw_sealing_keys (id, public_key, pk_mac, created_at)
+VALUES (7, zeroblob(32), zeroblob(32), ?)`, created); err != nil {
+		t.Fatal(err)
+	}
+	insertEnvelope := func(kind string) error {
+		_, err := db.Exec(`INSERT INTO raw_key_envelopes (key_id, kind, kdf_json, salt, nonce, wrapped, created_at)
+VALUES (7, ?, '{}', zeroblob(16), zeroblob(12), x'01', ?)`, kind, created)
+		return err
+	}
+	if err := insertEnvelope("password"); err != nil {
+		t.Fatal(err)
+	}
+	if err := insertEnvelope("biometric"); err == nil {
+		t.Fatal("the published schema already took a biometric envelope")
+	}
+	migrateFully(t, db, migrations)
+
+	var kind, stamp string
+	if err := db.QueryRow(`SELECT kind, created_at FROM raw_key_envelopes WHERE key_id = 7`).Scan(&kind, &stamp); err != nil {
+		t.Fatal(err)
+	}
+	if kind != "password" || stamp != created {
+		t.Fatalf("kept envelope = %q at %q", kind, stamp)
+	}
+	if err := insertEnvelope("biometric"); err != nil {
+		t.Fatalf("biometric envelope refused: %v", err)
+	}
+	if err := insertEnvelope("passkey"); err == nil {
+		t.Fatal("an unknown envelope kind was accepted")
+	}
+	// Envelopes still go with their key.
+	if _, err := db.Exec(`PRAGMA foreign_keys = ON`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`DELETE FROM raw_sealing_keys WHERE id = 7`); err != nil {
+		t.Fatal(err)
+	}
+	var left int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM raw_key_envelopes`).Scan(&left); err != nil {
+		t.Fatal(err)
+	}
+	if left != 0 {
+		t.Fatalf("%d envelopes outlived their key", left)
+	}
+}
+
+func TestRawKeyEnvelopeRebuildLeavesOutKindsNoBuildReads(t *testing.T) {
+	db, migrations := migrateBeforeFreshInstallDefaults(t)
+	// Test builds before v0.1.0 created the table with a local-key envelope
+	// kind beside the password one.
+	for _, statement := range []string{
+		`DROP TABLE raw_key_envelopes`,
+		`CREATE TABLE raw_key_envelopes (
+    key_id INTEGER NOT NULL REFERENCES raw_sealing_keys(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL CHECK(kind IN ('password', 'local')),
+    kdf_json TEXT,
+    salt BLOB,
+    nonce BLOB NOT NULL CHECK(length(nonce) = 12),
+    wrapped BLOB NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY(key_id, kind)
+)`,
+		`INSERT INTO raw_sealing_keys (id, public_key, pk_mac, created_at)
+VALUES (1, randomblob(32), randomblob(32), '2026-09-20T08:00:00Z')`,
+		`INSERT INTO raw_key_envelopes VALUES
+(1, 'password', '{}', randomblob(16), randomblob(12), randomblob(48), '2026-09-20T08:00:00Z'),
+(1, 'local', '{}', randomblob(16), randomblob(12), randomblob(48), '2026-09-20T08:00:00Z')`,
+	} {
+		if _, err := db.Exec(statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	migrateFully(t, db, migrations)
+	rows, err := db.Query(`SELECT kind FROM raw_key_envelopes ORDER BY kind`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var kinds []string
+	for rows.Next() {
+		var kind string
+		if err := rows.Scan(&kind); err != nil {
+			t.Fatal(err)
+		}
+		kinds = append(kinds, kind)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(kinds, []string{"password"}) {
+		t.Fatalf("envelope kinds = %q, want only the password one", kinds)
 	}
 }

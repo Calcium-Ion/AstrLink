@@ -117,7 +117,7 @@ import { PageHeader } from "./PageHeader";
 import {
   RawSealingDialogs,
   rawPasswordMissing,
-  unlockIdleMinutes,
+  unlockEndText,
   type RawDialog,
 } from "./RawSealingControls";
 import {
@@ -4240,9 +4240,7 @@ function RecordDetail({
                   tone="notice"
                 >
                   <span className="min-w-0">
-                    {t("rawSealing.unlockedHint", {
-                      minutes: unlockIdleMinutes(rawSealing),
-                    })}
+                    {unlockEndText(rawSealing, "unlocked")}
                   </span>
                   <Button
                     onClick={onLockRaw}

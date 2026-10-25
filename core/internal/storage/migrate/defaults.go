@@ -1116,7 +1116,13 @@ END`,
 		// trigger is held off around them and updated_at is left as it was. A
 		// configuration sync then treats the new default like a seeded row, and
 		// an edit made on another device still wins over it.
-		{Version: 56, Name: "fresh_install_defaults", Statements: []string{
+		//
+		// The raw key gains a second envelope kind, opened by a key the desktop
+		// keeps behind Touch ID. SQLite cannot widen a CHECK in place, so the
+		// envelope table is rebuilt; nothing references it. Envelopes of kinds
+		// that test builds before v0.1.0 wrote, which no build reads now, are
+		// left out: the new table rejects them.
+		{Version: 56, Name: "install_defaults_biometric", Statements: []string{
 			`UPDATE local_access_tokens SET source = 'system_default'
 WHERE source = 'user'
   AND created_at = (SELECT completed_at FROM local_access_token_bootstrap_state WHERE singleton = 1)`,
@@ -1203,6 +1209,21 @@ WHERE id = 'policy_privacy_default'
 			`CREATE TRIGGER config_change_policies_update AFTER UPDATE ON policies BEGIN
     INSERT INTO config_change_log (entity_kind, entity_id, changed_at) VALUES ('policy', NEW.id, strftime('%Y-%m-%dT%H:%M:%f000000Z', 'now'));
 END`,
+			`CREATE TABLE raw_key_envelopes_new (
+    key_id INTEGER NOT NULL REFERENCES raw_sealing_keys(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL CHECK(kind IN ('password', 'biometric')),
+    kdf_json TEXT NOT NULL,
+    salt BLOB NOT NULL CHECK(length(salt) = 16),
+    nonce BLOB NOT NULL CHECK(length(nonce) = 12),
+    wrapped BLOB NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY(key_id, kind)
+)`,
+			`INSERT INTO raw_key_envelopes_new (key_id, kind, kdf_json, salt, nonce, wrapped, created_at)
+SELECT key_id, kind, kdf_json, salt, nonce, wrapped, created_at FROM raw_key_envelopes
+WHERE kind IN ('password', 'biometric')`,
+			`DROP TABLE raw_key_envelopes`,
+			`ALTER TABLE raw_key_envelopes_new RENAME TO raw_key_envelopes`,
 		}},
 	}
 }

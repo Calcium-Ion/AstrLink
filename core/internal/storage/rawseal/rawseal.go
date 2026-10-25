@@ -4,6 +4,10 @@
 //
 //	k_blob ─HPKE(pk, info=request‖direction)─▶ wrapped_key (80 B)
 //	password ─Argon2id─▶ K_wrap ─AES-256-GCM─▶ private key ("password")
+//	keychain key ─HKDF─▶ K_wrap ─AES-256-GCM─▶ private key ("biometric")
+//
+// The biometric envelope's key is 32 random bytes the desktop keeps in the
+// keychain and releases only after Touch ID; Core never stores it.
 //
 // Capture needs only the public key, so the request path never runs a KDF.
 // Go cannot zero the copies crypto/ecdh keeps internally; every byte slice
@@ -13,6 +17,7 @@ package rawseal
 import (
 	"bytes"
 	"crypto/ecdh"
+	"crypto/hkdf"
 	"crypto/hmac"
 	"crypto/hpke"
 	"crypto/rand"
@@ -47,13 +52,23 @@ const (
 	RecommendedPasswordRunes = 12
 	MaxPasswordRunes         = 128
 
-	// KindPassword names the private key envelope.
+	// KindPassword names the private key envelope the raw password opens.
 	KindPassword = "password"
+	// KindBiometric names the envelope a key the desktop releases after
+	// Touch ID opens.
+	KindBiometric = "biometric"
+	// BiometricKeyBytes is the size of that key.
+	BiometricKeyBytes = 32
+	// BiometricKDFJSON fills the kdf_json column of a biometric envelope:
+	// its key is random, so HKDF only binds it to the salt.
+	BiometricKDFJSON = `{"alg":"hkdf-sha256"}`
 
-	blobKeyInfoPrefix = "astrlink/raw-key/v1"
-	passwordAADPrefix = "raw-envelope/password"
-	publicKeyMACLabel = "raw-sealing/public-key"
-	argon2idVersion   = argon2.Version
+	blobKeyInfoPrefix  = "astrlink/raw-key/v1"
+	passwordAADPrefix  = "raw-envelope/password"
+	biometricAADPrefix = "raw-envelope/biometric"
+	biometricKeyInfo   = "astrlink/raw-envelope/biometric/v1"
+	publicKeyMACLabel  = "raw-sealing/public-key"
+	argon2idVersion    = argon2.Version
 )
 
 var (
@@ -62,6 +77,9 @@ var (
 	ErrPasswordPolicy = errors.New("raw password does not meet the length policy")
 	// ErrPassword means the password did not open the password envelope.
 	ErrPassword = errors.New("raw password is incorrect")
+	// ErrBiometric means the key offered did not open the biometric
+	// envelope.
+	ErrBiometric = errors.New("biometric key is incorrect")
 	// ErrEnvelope means a private key envelope is malformed or does not
 	// open with the key offered.
 	ErrEnvelope = errors.New("raw key envelope cannot be opened")
@@ -316,4 +334,59 @@ func checkedPrivate(private, public []byte) ([]byte, error) {
 		return nil, err
 	}
 	return private, nil
+}
+
+// BiometricEnvelope is the stored form of the private key wrapped under the
+// key the desktop keeps behind Touch ID.
+type BiometricEnvelope struct {
+	Salt    []byte
+	Nonce   []byte
+	Wrapped []byte
+}
+
+func deriveBiometricWrapKey(key, salt []byte) ([]byte, error) {
+	return hkdf.Key(sha256.New, key, salt, biometricKeyInfo, storage.AuditKeyBytes)
+}
+
+// WrapBiometric wraps the private key under key, which must be
+// BiometricKeyBytes of random data the caller keeps elsewhere.
+func WrapBiometric(private, key []byte, keyID int64, public []byte) (BiometricEnvelope, error) {
+	if len(private) != PrivateKeyBytes || len(public) != PublicKeyBytes || len(key) != BiometricKeyBytes {
+		return BiometricEnvelope{}, fmt.Errorf("%w: biometric envelope fields", storage.ErrInvalidArgument)
+	}
+	salt := make([]byte, SaltBytes)
+	if _, err := io.ReadFull(rand.Reader, salt); err != nil {
+		return BiometricEnvelope{}, fmt.Errorf("generate biometric envelope salt: %w", err)
+	}
+	wrapKey, err := deriveBiometricWrapKey(key, salt)
+	if err != nil {
+		return BiometricEnvelope{}, err
+	}
+	defer clear(wrapKey)
+	nonce, wrapped, err := storage.SealAES256GCM(wrapKey, private, envelopeAAD(biometricAADPrefix, keyID, public))
+	if err != nil {
+		return BiometricEnvelope{}, err
+	}
+	return BiometricEnvelope{Salt: salt, Nonce: nonce, Wrapped: wrapped}, nil
+}
+
+// UnwrapBiometric opens a biometric envelope. A wrong key reports
+// ErrBiometric; the returned key is checked against public.
+func UnwrapBiometric(envelope BiometricEnvelope, key []byte, keyID int64, public []byte) ([]byte, error) {
+	if len(envelope.Salt) != SaltBytes || len(public) != PublicKeyBytes {
+		return nil, fmt.Errorf("%w: biometric envelope fields", ErrEnvelope)
+	}
+	if len(key) != BiometricKeyBytes {
+		return nil, ErrBiometric
+	}
+	wrapKey, err := deriveBiometricWrapKey(key, envelope.Salt)
+	if err != nil {
+		return nil, err
+	}
+	defer clear(wrapKey)
+	private, err := storage.OpenAES256GCM(wrapKey, envelope.Nonce, envelope.Wrapped, envelopeAAD(biometricAADPrefix, keyID, public))
+	if err != nil {
+		return nil, ErrBiometric
+	}
+	return checkedPrivate(private, public)
 }

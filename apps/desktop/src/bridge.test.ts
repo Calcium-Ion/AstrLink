@@ -146,12 +146,10 @@ describe("desktop bridge contract", () => {
     invokeMock.mockResolvedValueOnce({
       items: [grant],
       active: [running],
-      unlocked: true,
     });
     await expect(listRawAccess()).resolves.toEqual({
       pending: [{ ...grant, decision: null, scope: null }],
       active: [running],
-      unlocked: true,
     });
     expect(invokeMock).toHaveBeenLastCalledWith("list_raw_access");
 
@@ -193,7 +191,7 @@ describe("desktop bridge contract", () => {
       retry_after_seconds: 8,
     });
     await expect(
-      decideRawAccess(grant.grant_id, "window_5m", {
+      decideRawAccess(grant.grant_id, "until_lock", {
         kind: "password",
         password: "wrong",
       }),
@@ -222,10 +220,9 @@ describe("desktop bridge contract", () => {
     invokeMock.mockResolvedValueOnce({
       items: [{ ...grant, grant_id: "x" }],
       active: [],
-      unlocked: false,
     });
     await expect(listRawAccess()).rejects.toThrow("$.items[0].grant_id");
-    invokeMock.mockResolvedValueOnce({ items: [], unlocked: false });
+    invokeMock.mockResolvedValueOnce({ items: [] });
     await expect(listRawAccess()).rejects.toThrow("$.active");
     invokeMock.mockResolvedValueOnce({ outcome: "approved" });
     await expect(decideRawAccess(grant.grant_id, "deny")).rejects.toThrow(
@@ -248,6 +245,7 @@ describe("desktop bridge contract", () => {
       password_min_length: 8,
       password_max_length: 128,
       key_replaced: false,
+      biometric_available: false,
     };
     invokeMock.mockResolvedValueOnce(status);
     await expect(getRawSealingStatus()).resolves.toEqual(status);
@@ -290,7 +288,11 @@ describe("desktop bridge contract", () => {
     await expect(getRawSealingStatus()).resolves.toMatchObject({
       key_replaced: false,
     });
-    const { key_replaced: _verdict, ...withoutVerdict } = status;
+    const {
+      key_replaced: _verdict,
+      biometric_available: _touchID,
+      ...withoutVerdict
+    } = status;
     invokeMock.mockResolvedValueOnce(withoutVerdict);
     await expect(lockRaw()).resolves.toEqual(status);
     invokeMock.mockResolvedValueOnce({ ...status, key_replaced: "yes" });

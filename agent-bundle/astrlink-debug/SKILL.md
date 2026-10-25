@@ -151,10 +151,11 @@ has `raw_available: true` and the shareable parts cannot answer the question:
    complete the approval yourself.
 4. Once approved, the command prints the audit with `content_view: "raw"`. A
    one-time approval (`once`) allows one read of that request and prints no
-   token. A timed approval (`window_5m` or `window_1h`) lets you read the raw
-   parts of every request; the output then carries `raw_grant` with its
-   `grant_token`. If the wait ends first, ask the user whether they still want
-   to approve before running it again.
+   token. A lasting approval (`until_lock`, which ends when the user's screen
+   locks or AstrLink locks, or `window_1h`) lets you read the raw parts of every
+   request; the output then carries `raw_grant` with its `grant_token`. If the
+   wait ends first, ask the user whether they still want to approve before
+   running it again.
 
 These rules for a `grant_token` are mandatory:
 

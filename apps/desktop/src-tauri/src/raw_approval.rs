@@ -1,24 +1,17 @@
-//! The raw access approval window (plan §5.11.6) and the auto-lock of Core's
-//! unlock session. Approving an agent's request to read raw content happens
-//! only in this small window: it opens on its own when a request arrives,
-//! without taking focus, so no keystroke meant for another window can approve
-//! anything. It floats above other windows only while a request waits for the
-//! operator. Closing it decides nothing and ends no grant; a pending request
-//! waits until it expires, and the tray opens the window again.
+//! The raw access approval window (plan §5.11.6). Approving an agent's
+//! request to read raw content happens only in this small window: it opens on
+//! its own when a request arrives, without taking focus, so no keystroke
+//! meant for another window can approve anything, and every approval asks
+//! for Touch ID or the raw password. It floats above other windows only while
+//! a request waits for the operator. Closing it decides nothing and ends no
+//! grant; a pending request waits until it expires, and the tray opens the
+//! window again. The session lock ends grants; see `os_lock`.
 
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc,
-};
-use std::time::Duration;
+use std::sync::Arc;
 
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 
-use crate::{
-    i18n,
-    preferences::PreferencesStore,
-    sidecar::{CoreManager, CorePhase},
-};
+use crate::{i18n, preferences::PreferencesStore, sidecar::CoreManager};
 
 /// Must match `RAW_ACCESS_APPROVAL_LABEL` in the frontend.
 pub const LABEL: &str = "raw-access-approval";
@@ -26,10 +19,6 @@ const WIDTH: f64 = 440.0;
 const HEIGHT: f64 = 620.0;
 const MIN_WIDTH: f64 = 380.0;
 const MIN_HEIGHT: f64 = 460.0;
-/// macOS reports a minimize only as lost focus, and the window counts as
-/// minimized once the animation ends; look for that long.
-const MINIMIZE_CHECK_INTERVAL: Duration = Duration::from_millis(250);
-const MINIMIZE_CHECK_ATTEMPTS: u32 = 8;
 
 /// Opens the approval window. A window opened for a new request does not take
 /// focus; the tray asks for focus because the operator clicked it.
@@ -123,73 +112,4 @@ pub fn notify_pending(app: &AppHandle) {
             eprintln!("unable to send the raw access notification: {error}");
         }
     }
-}
-
-/// Set once the main window's minimize has locked, so one minimize locks
-/// once; the window taking focus again clears it.
-static MINIMIZE_LOCKED: AtomicBool = AtomicBool::new(false);
-
-/// Closes Core's unlock session once the main window leaves the screen, so
-/// raw content and one-click approvals need the password again. Agent grants
-/// keep running; only the manual lock revokes them.
-pub fn lock_on_hide(app: &AppHandle) {
-    let Some(manager) = app.try_state::<Arc<CoreManager>>() else {
-        return;
-    };
-    if manager.view().phase != CorePhase::Ready {
-        return;
-    }
-    let manager = Arc::clone(manager.inner());
-    let app = app.clone();
-    tauri::async_runtime::spawn(async move {
-        let result = manager.lock_raw(true).await;
-        if let Err(error) = &result {
-            eprintln!("unable to lock raw content after hiding AstrLink: {error}");
-        }
-        let _ = crate::broadcast_raw_sealing_change(&app, result);
-    });
-}
-
-fn lock_once_minimized(app: &AppHandle) {
-    if !MINIMIZE_LOCKED.swap(true, Ordering::SeqCst) {
-        lock_on_hide(app);
-    }
-}
-
-/// Windows and Linux report a minimize as a resize.
-pub fn on_main_resized(app: &AppHandle) {
-    let minimized = app
-        .get_webview_window("main")
-        .is_some_and(|window| window.is_minimized().unwrap_or(false));
-    if minimized {
-        lock_once_minimized(app);
-    }
-}
-
-pub fn on_main_focus(app: &AppHandle, focused: bool) {
-    if focused {
-        MINIMIZE_LOCKED.store(false, Ordering::SeqCst);
-        return;
-    }
-    // macOS has no minimize event: check for one after the window loses
-    // focus, until it is back or found minimized.
-    if !cfg!(target_os = "macos") {
-        return;
-    }
-    let app = app.clone();
-    std::thread::spawn(move || {
-        for _ in 0..MINIMIZE_CHECK_ATTEMPTS {
-            std::thread::sleep(MINIMIZE_CHECK_INTERVAL);
-            let Some(window) = app.get_webview_window("main") else {
-                return;
-            };
-            if window.is_focused().unwrap_or(false) {
-                return;
-            }
-            if window.is_minimized().unwrap_or(false) {
-                lock_once_minimized(&app);
-                return;
-            }
-        }
-    });
 }

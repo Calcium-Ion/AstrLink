@@ -298,6 +298,11 @@ fn sidecar_args(
             if use_system_proxy { "system" } else { "direct" }
         ),
     ]);
+    // The raw unlock follows the session lock this host reports; see
+    // `os_lock`.
+    if crate::os_lock::FOLLOWS_SESSION {
+        arguments.push("--raw-unlock-until-lock".to_string());
+    }
     Ok(arguments)
 }
 
@@ -1860,13 +1865,36 @@ impl CoreManager {
         serde_json::to_value(outcome).map_err(|error| error.to_string())
     }
 
-    /// Ends the operator's raw unlock session at once. The operator's own
-    /// lock also revokes every agent grant; the automatic lock when the main
-    /// window hides keeps them.
-    pub async fn lock_raw(&self, keep_agent_grants: bool) -> Result<serde_json::Value, String> {
-        let body = keep_agent_grants.then(|| serde_json::json!({"keep_agent_grants": true}));
+    /// Ends the operator's raw unlock session and every agent grant at
+    /// once: on the operator's Lock, the screen locking, or sleep.
+    pub async fn lock_raw(&self) -> Result<serde_json::Value, String> {
         let (_, body) = self
-            .authenticated_control(Method::POST, crate::raw_access::RAW_LOCK_PATH, body, None)
+            .authenticated_control(Method::POST, crate::raw_access::RAW_LOCK_PATH, None, None)
+            .await?;
+        crate::raw_access::parse_sealing_status(&body)
+    }
+
+    /// Lets the Touch ID key open raw content: Core opens the raw key with
+    /// the password and wraps it under `key` as well.
+    pub async fn enroll_raw_biometric(
+        &self,
+        password: &str,
+        key: &[u8],
+    ) -> Result<serde_json::Value, String> {
+        let body = crate::raw_access::biometric_body(password, key)?;
+        self.send_sealing_proof(crate::raw_access::RAW_BIOMETRIC_PATH, &body)
+            .await
+    }
+
+    /// Takes the Touch ID envelope out of Core.
+    pub async fn remove_raw_biometric(&self) -> Result<serde_json::Value, String> {
+        let (_, body) = self
+            .authenticated_control(
+                Method::DELETE,
+                crate::raw_access::RAW_BIOMETRIC_PATH,
+                None,
+                None,
+            )
             .await?;
         crate::raw_access::parse_sealing_status(&body)
     }
@@ -7949,29 +7977,31 @@ mod tests {
             true,
         )
         .expect("test path should be valid UTF-8");
-        assert_eq!(
-            arguments,
-            [
-                "--parent-pid".to_string(),
-                "4242".to_string(),
-                "--data-dir".to_string(),
-                "/tmp/astrlink-data".to_string(),
-                "--inference-listen".to_string(),
-                "127.0.0.1:8317".to_string(),
-                "--inference-port-fallback".to_string(),
-                "--control-listen".to_string(),
-                "127.0.0.1:0".to_string(),
-                "--control-token-stdin".to_string(),
-                "--observer-token-stdin".to_string(),
-                "--max-concurrent-inspections".to_string(),
-                "16".to_string(),
-                "--response-start-timeout-seconds".to_string(),
-                "0".to_string(),
-                "--max-request-body-mib".to_string(),
-                "0".to_string(),
-                "--outbound-proxy=system".to_string(),
-            ]
-        );
+        let mut expected = vec![
+            "--parent-pid".to_string(),
+            "4242".to_string(),
+            "--data-dir".to_string(),
+            "/tmp/astrlink-data".to_string(),
+            "--inference-listen".to_string(),
+            "127.0.0.1:8317".to_string(),
+            "--inference-port-fallback".to_string(),
+            "--control-listen".to_string(),
+            "127.0.0.1:0".to_string(),
+            "--control-token-stdin".to_string(),
+            "--observer-token-stdin".to_string(),
+            "--max-concurrent-inspections".to_string(),
+            "16".to_string(),
+            "--response-start-timeout-seconds".to_string(),
+            "0".to_string(),
+            "--max-request-body-mib".to_string(),
+            "0".to_string(),
+            "--outbound-proxy=system".to_string(),
+        ];
+        // Where the host follows the session lock, Core's unlock does too.
+        if crate::os_lock::FOLLOWS_SESSION {
+            expected.push("--raw-unlock-until-lock".to_string());
+        }
+        assert_eq!(arguments, expected);
         let direct = sidecar_args(
             4242,
             Path::new("/tmp/astrlink-data"),

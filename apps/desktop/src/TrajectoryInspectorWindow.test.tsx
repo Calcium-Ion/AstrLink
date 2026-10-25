@@ -136,6 +136,7 @@ function sealing(
     password_min_length: 8,
     password_max_length: 128,
     key_replaced: false,
+    biometric_available: false,
   };
 }
 

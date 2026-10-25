@@ -2890,6 +2890,10 @@
       "notificationTitle": "Agent が原文の閲覧を申請しています",
       "notificationBody": "AstrLinkの承認ウィンドウで、承認または拒否してください。"
     },
+    "rawBiometric": {
+      "unlockReason": "リクエスト原文のロックを解除",
+      "approveReason": "Agent による原文の閲覧を承認"
+    },
     "privacyWarning": {
       "title": "そのままモデルへ送信：{{kinds}}",
       "body": "プライバシー保護は「警告して続行」に設定されています。「マスキングして続行」は送信前にこの内容を置き換え、「リクエストをブロック」はこのようなリクエストを止めます。",
@@ -3796,16 +3800,12 @@
     "providerWarning": "原文は、この Agent が使うモデルの APIプロバイダーへ送信されます。",
     "queued": "この後、{{count}} 件が待機中",
     "once": "1 回だけ許可",
-    "window5m": "5 分間許可",
     "window1h": "1 時間許可",
     "deny": "拒否",
     "onceHint": "「1 回だけ許可」では、この 1 件のリクエストの原文を 1 回だけ読み取れます。",
-    "timedWarning": "「5 分間許可」と「1 時間許可」では、時間内のすべてのリクエストの原文を、その間に行われたリクエストを含めて、何度でも読み取れます。",
-    "locked": "AstrLink はロックされているため、許可には原文パスワードが必要です。",
-    "lockedMeanwhile": "その間に AstrLink がロックされました。許可するには、原文パスワードを入力してください。",
+    "timedWarning": "「ロックまで許可」と「1 時間許可」では、後から行われたリクエストを含むすべてのリクエストの原文を、何度でも読み取れます。「ロックまで許可」は、画面のロック、スリープ、AstrLink の終了、または「ロック」のクリックで終わります。",
     "closeHint": "このウィンドウを閉じても、何も決まりません。申請は期限まで待機します。トレイからこのウィンドウを開き直せます。",
     "approvedOnce": "「{{client}}」は原文を 1 回読み取れます。",
-    "approved5m": "「{{client}}」は 5 分間、すべてのリクエストの原文を読み取れます。",
     "approved1h": "「{{client}}」は 1 時間、すべてのリクエストの原文を読み取れます。",
     "denied": "原文の読み取り申請を拒否しました。",
     "denyFailed": "原文の読み取り申請を拒否できませんでした: {{message}}",
@@ -3822,19 +3822,28 @@
       "revoke": "取り消し",
       "revoked": "「{{client}}」は原文を読み取れなくなりました。",
       "revokeFailed": "取り消せませんでした: {{message}}",
-      "closeKeeps": "このウィンドウを閉じた後も、これらの Agent は原文を読み取れます。トレイからも取り消せます。"
-    }
+      "closeKeeps": "このウィンドウを閉じた後も、これらの Agent は原文を読み取れます。トレイからも取り消せます。",
+      "untilLock": "画面のロックまで"
+    },
+    "untilLock": "ロックまで許可",
+    "approvedUntilLock": "「{{client}}」は画面がロックされるまで、すべてのリクエストの原文を読み取れます。",
+    "proofPassword": "許可には原文パスワードが必要です。",
+    "proofTouchId": "許可を選んだ後、Touch ID で確認します。",
+    "usePassword": "原文パスワードを使う",
+    "useTouchId": "Touch ID を使う"
   },
   "rawSealing": {
     "title": "原文保護",
     "state": {
       "unset": "未設定",
       "password": "パスワード",
-      "unknown": "不明"
+      "unknown": "不明",
+      "biometric": "パスワードと Touch ID"
     },
     "hint": {
       "unset": "セットアップが終わるまで、新しいリクエストの原文は保存されません。リクエストの転送には影響しません。",
-      "password": "原文の閲覧と、Agent 申請の承認にはパスワードが必要です。パスワードを忘れるとリセットしかできず、保存済みの原文はすべて破棄されます。"
+      "password": "原文の閲覧と、Agent 申請の承認にはパスワードが必要です。パスワードを忘れるとリセットしかできず、保存済みの原文はすべて破棄されます。",
+      "biometric": "原文の閲覧と Agent 申請の承認には、Touch ID かパスワードを使います。パスワードを忘れるとリセットしかできず、保存済みの原文はすべて破棄されます。"
     },
     "loadFailed": "原文保護の状態を読み取れませんでした：{{message}}",
     "set": "設定",
@@ -3908,7 +3917,23 @@
     "unlockedHint": "原文はロック解除されています。{{minutes}} 分間操作がないとロックされます。",
     "lockedNow": "原文をロックしました",
     "lockFailed": "原文をロックできませんでした：{{message}}",
-    "unlockUnavailable": "原文保護が設定されていないため、原文をロック解除できません。"
+    "unlockUnavailable": "原文保護が設定されていないため、原文をロック解除できません。",
+    "unlockDescriptionUntilLock": "ロック解除すると、このデバイスで暗号化済みの原文を表示します。画面のロック、スリープ、AstrLink の終了で再びロックされます。",
+    "unlockedHintUntilLock": "原文はロック解除されています。画面のロック、スリープ、AstrLink の終了でロックされます。",
+    "biometric": {
+      "use": "Touch ID を使う",
+      "enable": "Touch ID をオンにする",
+      "disable": "Touch ID をオフにする",
+      "enableTitle": "Touch ID で原文を表示",
+      "enableDescription": "オンにすると、原文の閲覧と Agent 申請の承認を指紋で行えます。原文パスワードも引き続き使えます。オンにするには原文パスワードを入力してください。",
+      "enabled": "Touch ID をオンにしました",
+      "disabled": "Touch ID をオフにしました",
+      "disableTitle": "Touch ID をオフにしますか？",
+      "disableDescription": "オフにすると、原文の閲覧と Agent 申請の承認に原文パスワードが必要になります。",
+      "cancelled": "Touch ID がキャンセルされました。もう一度試すか、原文パスワードを入力してください。",
+      "unavailable": "Touch ID は現在使えません。原文パスワードを入力してください。",
+      "disableFailed": "Touch ID をオフにできませんでした：{{message}}"
+    }
   },
   "dataErrors": {
     "rawSealing": "無効な原文封印データ（{{path}}）: {{detail}}",

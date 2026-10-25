@@ -2890,6 +2890,10 @@
       "notificationTitle": "An agent asks to read raw content",
       "notificationBody": "Approve or deny it in the AstrLink approval window."
     },
+    "rawBiometric": {
+      "unlockReason": "unlock raw request content",
+      "approveReason": "approve an agent's request to read raw content"
+    },
     "privacyWarning": {
       "title": "Sent to the model as is: {{kinds}}",
       "body": "Privacy protection is set to “Warn and continue”. “Redact and continue” replaces this content before sending, and “Block the request” stops such requests.",
@@ -3796,16 +3800,12 @@
     "providerWarning": "The raw content will be sent to the model provider this agent uses.",
     "queued": "{{count}} more waiting after this one",
     "once": "Approve once",
-    "window5m": "Approve for 5 minutes",
     "window1h": "Approve for 1 hour",
     "deny": "Deny",
     "onceHint": "“Approve once” lets it read this one request's raw content, one time.",
-    "timedWarning": "“Approve for 5 minutes” and “Approve for 1 hour” let it read the raw content of all requests until the time is up, including requests made in that time, as often as it wants.",
-    "locked": "AstrLink is locked, so approving needs the raw password.",
-    "lockedMeanwhile": "AstrLink locked in the meantime. Enter the raw password to approve.",
+    "timedWarning": "“Approve until lock” and “Approve for 1 hour” let it read the raw content of all requests, including requests made later, as often as it wants. “Approve until lock” ends when the screen locks, the computer sleeps, AstrLink quits, or you click “Lock”.",
     "closeHint": "Closing this window decides nothing. The request waits until it expires, and you can reopen this window from the tray.",
     "approvedOnce": "“{{client}}” may read the raw content once",
-    "approved5m": "“{{client}}” may read the raw content of all requests for 5 minutes",
     "approved1h": "“{{client}}” may read the raw content of all requests for 1 hour",
     "denied": "Raw access request denied",
     "denyFailed": "Could not deny the raw access request: {{message}}",
@@ -3822,19 +3822,28 @@
       "revoke": "Revoke",
       "revoked": "“{{client}}” can no longer read raw content",
       "revokeFailed": "Could not revoke: {{message}}",
-      "closeKeeps": "These agents can still read raw content after you close this window. You can also revoke access from the tray."
-    }
+      "closeKeeps": "These agents can still read raw content after you close this window. You can also revoke access from the tray.",
+      "untilLock": "until the screen locks"
+    },
+    "untilLock": "Approve until lock",
+    "approvedUntilLock": "“{{client}}” may read the raw content of all requests until the screen locks",
+    "proofPassword": "Approving needs the raw password.",
+    "proofTouchId": "After you click an approval, confirm it with Touch ID.",
+    "usePassword": "Use the raw password",
+    "useTouchId": "Use Touch ID"
   },
   "rawSealing": {
     "title": "Raw protection",
     "state": {
       "unset": "Not set",
       "password": "Password",
-      "unknown": "Unknown"
+      "unknown": "Unknown",
+      "biometric": "Password and Touch ID"
     },
     "hint": {
       "unset": "Until setup is done, raw content of new requests is not saved. Request forwarding is unaffected.",
-      "password": "Viewing raw content and approving agent requests need the password. A forgotten password can only be reset, which discards all saved raw content."
+      "password": "Viewing raw content and approving agent requests need the password. A forgotten password can only be reset, which discards all saved raw content.",
+      "biometric": "Viewing raw content and approving agent requests take Touch ID or the password. A forgotten password can only be reset, which discards all saved raw content."
     },
     "loadFailed": "Could not read the raw protection state: {{message}}",
     "set": "Set",
@@ -3908,7 +3917,23 @@
     "unlockedHint": "Raw content is unlocked. It locks after {{minutes}} minutes without activity.",
     "lockedNow": "Raw content locked",
     "lockFailed": "Could not lock raw content: {{message}}",
-    "unlockUnavailable": "Raw protection is not set up, so raw content cannot be unlocked."
+    "unlockUnavailable": "Raw protection is not set up, so raw content cannot be unlocked.",
+    "unlockDescriptionUntilLock": "Unlocking shows sealed raw content on this device. It locks again when the screen locks, the computer sleeps, or AstrLink quits.",
+    "unlockedHintUntilLock": "Raw content is unlocked. It locks when the screen locks, the computer sleeps, or AstrLink quits.",
+    "biometric": {
+      "use": "Use Touch ID",
+      "enable": "Turn on Touch ID",
+      "disable": "Turn off Touch ID",
+      "enableTitle": "Use Touch ID for raw content",
+      "enableDescription": "With Touch ID on, viewing raw content and approving agent requests take your fingerprint. The raw password keeps working. Enter it to turn Touch ID on.",
+      "enabled": "Touch ID is on",
+      "disabled": "Touch ID is off",
+      "disableTitle": "Turn off Touch ID?",
+      "disableDescription": "Viewing raw content and approving agent requests will take the raw password again.",
+      "cancelled": "Touch ID was canceled. Try again, or enter the raw password.",
+      "unavailable": "Touch ID is not available right now. Enter the raw password.",
+      "disableFailed": "Could not turn off Touch ID: {{message}}"
+    }
   },
   "dataErrors": {
     "rawSealing": "Invalid raw sealing data ({{path}}): {{detail}}",

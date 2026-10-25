@@ -197,3 +197,44 @@ func TestPairChecksAndPublicKeyMAC(t *testing.T) {
 		t.Fatal("public key MAC does not bind the key and the audit key")
 	}
 }
+
+func TestBiometricEnvelopeOpensOnlyWithItsKeyForItsKeyPair(t *testing.T) {
+	private, public, err := GenerateKeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := bytes.Repeat([]byte{0x5a}, BiometricKeyBytes)
+	const keyID = 41
+	envelope, err := WrapBiometric(private, key, keyID, public)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(envelope.Salt) != SaltBytes || bytes.Contains(envelope.Wrapped, private) {
+		t.Fatalf("envelope=%#v", envelope)
+	}
+	opened, err := UnwrapBiometric(envelope, key, keyID, public)
+	if err != nil || !bytes.Equal(opened, private) {
+		t.Fatalf("unwrap = %x, %v", opened, err)
+	}
+	wrongKey := bytes.Repeat([]byte{0x5b}, BiometricKeyBytes)
+	if _, err := UnwrapBiometric(envelope, wrongKey, keyID, public); !errors.Is(err, ErrBiometric) {
+		t.Fatalf("wrong key: %v", err)
+	}
+	if _, err := UnwrapBiometric(envelope, key[:16], keyID, public); !errors.Is(err, ErrBiometric) {
+		t.Fatalf("short key: %v", err)
+	}
+	// The envelope is bound to its key pair, like the password one.
+	if _, err := UnwrapBiometric(envelope, key, keyID+1, public); !errors.Is(err, ErrBiometric) {
+		t.Fatalf("other key id: %v", err)
+	}
+	_, otherPublic, err := GenerateKeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := UnwrapBiometric(envelope, key, keyID, otherPublic); !errors.Is(err, ErrBiometric) {
+		t.Fatalf("other public key: %v", err)
+	}
+	if _, err := WrapBiometric(private, key[:31], keyID, public); err == nil {
+		t.Fatal("a short wrapping key was accepted")
+	}
+}

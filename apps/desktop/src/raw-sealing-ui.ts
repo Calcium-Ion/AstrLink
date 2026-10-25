@@ -26,12 +26,14 @@ export function rawSealingErrorMessage(error: unknown): string {
 
 /**
  * The proof a dialog input carries to the host; a plain confirmation carries
- * none.
+ * none, and Touch ID only asks the host to prompt.
  */
 export function rawProofOf(input: ProofInput): RawProof | undefined {
   switch (input.kind) {
     case "password":
       return { kind: "password", password: input.password };
+    case "biometric":
+      return { kind: "biometric" };
     case "confirm":
       return undefined;
   }
@@ -49,6 +51,16 @@ export function refusalResult(outcome: RawRefusal): ProofResult {
       return {
         kind: "backoff",
         retryAfterSeconds: outcome.retry_after_seconds,
+      };
+    case "biometric_cancelled":
+      return {
+        kind: "error",
+        message: i18n.t("rawSealing.biometric.cancelled"),
+      };
+    case "biometric_unavailable":
+      return {
+        kind: "error",
+        message: i18n.t("rawSealing.biometric.unavailable"),
       };
   }
 }

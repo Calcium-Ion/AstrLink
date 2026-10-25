@@ -2890,6 +2890,10 @@
       "notificationTitle": "Agent 申请读取原文",
       "notificationBody": "请在 AstrLink 的审批窗口中批准或拒绝。"
     },
+    "rawBiometric": {
+      "unlockReason": "解锁请求原文",
+      "approveReason": "批准 Agent 查看原文"
+    },
     "privacyWarning": {
       "title": "已按原文发给模型：{{kinds}}",
       "body": "隐私保护当前设为「警告并继续」。设为「脱敏后继续」会在发送前替换这些内容，设为「阻止请求」会拦下这类请求。",
@@ -3796,16 +3800,12 @@
     "providerWarning": "原文将发送给该 Agent 使用的模型服务商。",
     "queued": "之后还有 {{count}} 个申请在等待",
     "once": "批准一次",
-    "window5m": "批准 5 分钟",
     "window1h": "批准 1 小时",
     "deny": "拒绝",
     "onceHint": "「批准一次」只允许它读取这一条请求的原文，读一次。",
-    "timedWarning": "「批准 5 分钟」和「批准 1 小时」会允许它在时间到之前读取所有请求的原文，包括这段时间里新产生的请求，次数不限。",
-    "locked": "AstrLink 已锁定，批准需要输入原文口令。",
-    "lockedMeanwhile": "AstrLink 刚刚已锁定，请输入原文口令后再批准。",
+    "timedWarning": "「批准到锁屏」和「批准 1 小时」会允许它读取所有请求的原文，包括之后新产生的请求，次数不限。「批准到锁屏」在锁屏、电脑睡眠、退出 AstrLink 或点击「锁定」时结束。",
     "closeHint": "关闭窗口不会批准或拒绝。申请会一直等到过期，可以从托盘重新打开这个窗口。",
     "approvedOnce": "已允许「{{client}}」读取一次原文",
-    "approved5m": "已允许「{{client}}」在 5 分钟内读取所有请求的原文",
     "approved1h": "已允许「{{client}}」在 1 小时内读取所有请求的原文",
     "denied": "已拒绝原文申请",
     "denyFailed": "拒绝原文申请失败：{{message}}",
@@ -3822,19 +3822,28 @@
       "revoke": "撤销",
       "revoked": "「{{client}}」已不能再读取原文",
       "revokeFailed": "撤销失败：{{message}}",
-      "closeKeeps": "关闭窗口后，这些 Agent 照常可以读取原文。也可以在托盘里撤销。"
-    }
+      "closeKeeps": "关闭窗口后，这些 Agent 照常可以读取原文。也可以在托盘里撤销。",
+      "untilLock": "到锁屏为止"
+    },
+    "untilLock": "批准到锁屏",
+    "approvedUntilLock": "已允许「{{client}}」在锁屏前读取所有请求的原文",
+    "proofPassword": "批准需要输入原文口令。",
+    "proofTouchId": "点击批准后，验证 Touch ID 即可。",
+    "usePassword": "改用原文口令",
+    "useTouchId": "改用 Touch ID"
   },
   "rawSealing": {
     "title": "原文保护",
     "state": {
       "unset": "未设置",
       "password": "口令",
-      "unknown": "未知"
+      "unknown": "未知",
+      "biometric": "口令和 Touch ID"
     },
     "hint": {
       "unset": "设置完成前，新请求的原文不会保存。请求转发不受影响。",
-      "password": "查看原文、批准 Agent 申请时输入口令。忘记后只能重置，已保存的原文会全部丢弃。"
+      "password": "查看原文、批准 Agent 申请时输入口令。忘记后只能重置，已保存的原文会全部丢弃。",
+      "biometric": "查看原文、批准 Agent 申请时验证 Touch ID，也可以输入口令。忘记口令后只能重置，已保存的原文会全部丢弃。"
     },
     "loadFailed": "无法读取原文保护状态：{{message}}",
     "set": "设置",
@@ -3908,7 +3917,23 @@
     "unlockedHint": "原文已解锁，{{minutes}} 分钟无操作后自动锁定。",
     "lockedNow": "原文已锁定",
     "lockFailed": "锁定原文失败：{{message}}",
-    "unlockUnavailable": "还没设置原文保护，无法解锁原文。"
+    "unlockUnavailable": "还没设置原文保护，无法解锁原文。",
+    "unlockDescriptionUntilLock": "解锁后可在本机查看已封存的原文。锁屏、电脑睡眠或退出 AstrLink 时会自动锁定。",
+    "unlockedHintUntilLock": "原文已解锁，锁屏、电脑睡眠或退出 AstrLink 时自动锁定。",
+    "biometric": {
+      "use": "使用 Touch ID",
+      "enable": "启用 Touch ID",
+      "disable": "停用 Touch ID",
+      "enableTitle": "用 Touch ID 查看原文",
+      "enableDescription": "启用后，查看原文和批准 Agent 申请时验证指纹即可，原文口令仍然可用。输入原文口令以启用。",
+      "enabled": "已启用 Touch ID",
+      "disabled": "已停用 Touch ID",
+      "disableTitle": "停用 Touch ID？",
+      "disableDescription": "停用后，查看原文和批准 Agent 申请都要输入原文口令。",
+      "cancelled": "Touch ID 已取消。可以再试一次，或输入原文口令。",
+      "unavailable": "Touch ID 现在不可用，请输入原文口令。",
+      "disableFailed": "停用 Touch ID 失败：{{message}}"
+    }
   },
   "dataErrors": {
     "rawSealing": "原文封存数据无效（{{path}}）：{{detail}}",

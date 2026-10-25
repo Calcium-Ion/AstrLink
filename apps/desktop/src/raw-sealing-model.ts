@@ -1,7 +1,10 @@
 import { invalidData, type DataProblem } from "./ipc-data-error";
 
-/** Which stored envelopes can open the raw key (plan §5.11). */
-export type RawEnvelope = "password";
+/**
+ * Which stored envelopes can open the raw key (plan §5.11): the raw
+ * password, and Touch ID once the desktop set it up beside it.
+ */
+export type RawEnvelope = "password" | "biometric";
 
 /** Core's operator view of raw sealing. It never carries key material. */
 export interface RawSealingStatus {
@@ -17,6 +20,10 @@ export interface RawSealingStatus {
   /** The operator's own unlock session is open. */
   unlocked: boolean;
   unlock_expires_at: string | null;
+  /**
+   * How long an unlock lasts without a raw read; 0 when it lasts until the
+   * screen locks, the computer sleeps, or the operator locks.
+   */
   unlock_idle_seconds: number;
   /** Seconds before Core accepts another password attempt. */
   retry_after_seconds: number;
@@ -28,6 +35,11 @@ export interface RawSealingStatus {
    * desktop, and whoever did it may read raw content captured since.
    */
   key_replaced: boolean;
+  /**
+   * The host's verdict, not Core's: Touch ID can stand in for the raw
+   * password on this Mac and build. Whether it is set up is `envelopes`.
+   */
+  biometric_available: boolean;
 }
 
 /** What `raw_sealing_status` returns: Core's status with the host's verdict. */
@@ -51,10 +63,19 @@ export type RawSealingOutcome =
       reset: RawPasswordReset | null;
     }
   | { outcome: "password_invalid" }
-  | { outcome: "backoff"; retry_after_seconds: number };
+  | { outcome: "backoff"; retry_after_seconds: number }
+  /** The Touch ID prompt was dismissed. */
+  | { outcome: "biometric_cancelled" }
+  /** Touch ID cannot stand in for the raw password right now. */
+  | { outcome: "biometric_unavailable" };
 
-/** The proof a raw action carries to the host: the raw password. */
-export type RawProof = { kind: "password"; password: string };
+/**
+ * The proof a raw action carries to the host: the raw password, or a
+ * request for Touch ID, which the host shows and answers itself.
+ */
+export type RawProof =
+  | { kind: "password"; password: string }
+  | { kind: "biometric" };
 
 export type RawPasswordAction = "set" | "change" | "reset";
 
@@ -63,7 +84,7 @@ export type RawProofMode = "password" | "confirm";
 
 type JsonObject = Record<string, unknown>;
 
-const envelopes = new Set<RawEnvelope>(["password"]);
+const envelopes = new Set<RawEnvelope>(["password", "biometric"]);
 const MAX_PASSWORD_BOUND = 4096;
 
 function invalid(
@@ -167,7 +188,7 @@ function parseStatus(value: unknown, path: string): RawSealingStatus {
     unlock_idle_seconds: integerAt(
       status.unlock_idle_seconds,
       `${path}.unlock_idle_seconds`,
-      1,
+      0,
     ),
     retry_after_seconds: integerAt(
       status.retry_after_seconds,
@@ -177,6 +198,10 @@ function parseStatus(value: unknown, path: string): RawSealingStatus {
     password_min_length: minLength,
     password_max_length: maxLength,
     key_replaced: verdictAt(status.key_replaced, `${path}.key_replaced`),
+    biometric_available: verdictAt(
+      status.biometric_available,
+      `${path}.biometric_available`,
+    ),
   };
 }
 
@@ -219,7 +244,9 @@ export function parseRawSealingOutcome(value: unknown): RawSealingOutcome {
       };
     }
     case "password_invalid":
-      return { outcome: "password_invalid" };
+    case "biometric_cancelled":
+    case "biometric_unavailable":
+      return { outcome: outcome.outcome };
     case "backoff":
       return {
         outcome: "backoff",
@@ -236,6 +263,22 @@ export function parseRawSealingOutcome(value: unknown): RawSealingOutcome {
  */
 export function rawProofMode(state: RawSealingState): RawProofMode {
   return state.password_set ? "password" : "confirm";
+}
+
+/**
+ * Touch ID can stand in for the raw password: this Mac and build offer it,
+ * and it is set up for raw content. The password always works beside it.
+ */
+export function rawBiometricReady(state: RawSealingState): boolean {
+  return state.biometric_available && state.envelopes.includes("biometric");
+}
+
+/**
+ * An unlock lasts until the screen locks, the computer sleeps, or the
+ * operator locks, rather than ending after idle time.
+ */
+export function unlockLastsUntilLock(state: RawSealingState): boolean {
+  return state.unlock_idle_seconds === 0;
 }
 
 /**
@@ -259,10 +302,11 @@ export function unlockCheckDelay(expiresAt: string, now = Date.now()): number {
 }
 
 /** How raw content is protected, for the settings summary. */
-export type RawProtection = "unset" | "password";
+export type RawProtection = "unset" | "password" | "biometric";
 
 export function rawProtection(status: RawSealingStatus): RawProtection {
-  return status.password_set ? "password" : "unset";
+  if (!status.password_set) return "unset";
+  return status.envelopes.includes("biometric") ? "biometric" : "password";
 }
 
 /** Core counts Unicode characters, not UTF-16 code units. */

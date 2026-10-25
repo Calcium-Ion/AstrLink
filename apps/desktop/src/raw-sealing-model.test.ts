@@ -6,9 +6,11 @@ import {
   parseRawSealingStatus,
   passwordIsShort,
   passwordLength,
+  rawBiometricReady,
   rawPasswordUnset,
   rawProofMode,
   rawProtection,
+  unlockLastsUntilLock,
   type RawSealingState,
 } from "./raw-sealing-model";
 
@@ -60,8 +62,13 @@ describe("raw sealing status", () => {
       "原文封存数据无效（$.configured）：应为布尔值",
     );
     expect(() =>
-      parseRawSealingStatus(status({ envelopes: ["password", "password"] })),
+      parseRawSealingStatus(
+        status({ envelopes: ["password", "biometric", "password"] }),
+      ),
     ).toThrow("原文封存数据无效（$.envelopes）：过长");
+    expect(() =>
+      parseRawSealingStatus(status({ envelopes: ["password", "password"] })),
+    ).toThrow("$.envelopes[1]");
     expect(() =>
       parseRawSealingStatus(status({ envelopes: ["cloud"] })),
     ).toThrow("$.envelopes[0]");
@@ -72,8 +79,11 @@ describe("raw sealing status", () => {
       parseRawSealingStatus(status({ unlock_expires_at: "soon" })),
     ).toThrow("$.unlock_expires_at");
     expect(() =>
-      parseRawSealingStatus(status({ unlock_idle_seconds: 0 })),
+      parseRawSealingStatus(status({ unlock_idle_seconds: -1 })),
     ).toThrow("$.unlock_idle_seconds");
+    expect(() =>
+      parseRawSealingStatus(status({ biometric_available: "yes" })),
+    ).toThrow("$.biometric_available");
     expect(() =>
       parseRawSealingStatus(status({ retry_after_seconds: -1 })),
     ).toThrow("$.retry_after_seconds");
@@ -131,6 +141,32 @@ describe("raw sealing outcomes", () => {
     expect(() => parseRawSealingOutcome({ outcome: "decided" })).toThrow(
       "$.outcome",
     );
+  });
+});
+
+describe("Touch ID and the session lock", () => {
+  it("offers Touch ID only where it is set up and the host can prompt", () => {
+    const both: Partial<RawSealingState> = {
+      envelopes: ["password", "biometric"],
+    };
+    expect(
+      rawBiometricReady(state({ ...both, biometric_available: true })),
+    ).toBe(true);
+    expect(rawBiometricReady(state({ ...both }))).toBe(false);
+    expect(rawBiometricReady(state({ biometric_available: true }))).toBe(false);
+    expect(rawProtection(state({ ...both }))).toBe("biometric");
+  });
+
+  it("reads an unlock that lasts until the screen locks", () => {
+    const untilLock = parseRawSealingStatus(status({ unlock_idle_seconds: 0 }));
+    expect(unlockLastsUntilLock(untilLock)).toBe(true);
+    expect(unlockLastsUntilLock(state())).toBe(false);
+  });
+
+  it("reads Touch ID outcomes the dialog recovers from", () => {
+    for (const outcome of ["biometric_cancelled", "biometric_unavailable"]) {
+      expect(parseRawSealingOutcome({ outcome })).toEqual({ outcome });
+    }
   });
 });
 

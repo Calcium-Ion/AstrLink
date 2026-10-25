@@ -17,7 +17,7 @@ import (
 
 const (
 	// rawUnlockIdle ends the operator's unlock session after this long
-	// without a raw read (D13).
+	// without a raw read, unless the unlock lasts until Lock (D13).
 	rawUnlockIdle = 15 * time.Minute
 	// rawBackoffFreeFailures wrong proofs in a row are answered at once;
 	// the next ones wait 2^(n-3) s, at most rawBackoffCap (§5.11.9.6)
@@ -65,7 +65,8 @@ type RawPasswordOutcome struct {
 // RawVaultController is the operator side of the vault. A RawVault that does
 // not implement it cannot be unlocked or given a password.
 type RawVaultController interface {
-	// Unlock proves access and keeps the private key for the idle window.
+	// Unlock proves access and keeps the private key for the unlock
+	// session: until Lock, or for the idle window.
 	Unlock(context.Context, RawProof) (RawVaultStatus, error)
 	// Verify checks a proof like Unlock, under the same backoff, but zeroes
 	// the private key at once and leaves the unlock session as it was.
@@ -73,8 +74,16 @@ type RawVaultController interface {
 	// Lock ends the unlock session at once.
 	Lock()
 	// ChangePassword applies action. password is the new password and
-	// belongs to the caller; proof opens the existing key where needed.
+	// belongs to the caller; proof opens the existing key where needed. Every
+	// action takes the biometric envelope out; the desktop adds a new one with
+	// the new password.
 	ChangePassword(ctx context.Context, action RawPasswordAction, password []byte, proof RawProof) (RawPasswordOutcome, error)
+	// EnrollBiometric wraps the private key, opened with the password in
+	// proof, under key: random bytes the desktop keeps behind Touch ID.
+	EnrollBiometric(ctx context.Context, proof RawProof, key []byte) (RawVaultStatus, error)
+	// RemoveBiometric takes the biometric envelope out. It needs no proof:
+	// it only gives access up.
+	RemoveBiometric(context.Context) (RawVaultStatus, error)
 }
 
 // RawVaultOptions configures NewRawVault.
@@ -93,6 +102,12 @@ type RawVaultOptions struct {
 	// to a console other machines reach, raises it. The backoff is kept in
 	// memory only, so a restart clears it.
 	BackoffCap time.Duration
+	// UnlockUntilLock keeps an unlock open until Lock or Core stops, with
+	// no idle deadline. The desktop sets it and calls Lock when the screen
+	// locks, the computer sleeps, or the operator locks. Without it an
+	// unlock ends after rawUnlockIdle without a raw read, as in the server
+	// edition, which has no lock to follow.
+	UnlockUntilLock bool
 }
 
 // Vault guards the raw sealing private key inside Core (§5.11.9.4). The
@@ -117,8 +132,10 @@ type Vault struct {
 
 	session      []byte
 	sessionKeyID int64
+	// sessionUntil is the idle deadline; it stays zero when untilLock.
 	sessionUntil time.Time
 	sessionTimer *time.Timer
+	untilLock    bool
 
 	failures     int
 	blockedUntil time.Time
@@ -162,6 +179,7 @@ func NewRawVault(store storage.RawSealingStore, options RawVaultOptions) *Vault 
 	if vault.backoffCap <= 0 {
 		vault.backoffCap = rawBackoffCap
 	}
+	vault.untilLock = options.UnlockUntilLock
 	// The first pass picks up parts left under the audit key by an earlier
 	// run that stopped mid-reseal.
 	vault.reseal <- struct{}{}
@@ -260,17 +278,24 @@ func (vault *Vault) Status(ctx context.Context) (RawVaultStatus, error) {
 	}
 	now := vault.now()
 	status := RawVaultStatus{
-		Configured:  vault.configured,
-		PasswordSet: vault.configured && vault.state.Password != nil,
-		KeyVerified: vault.configured && vault.state.MACValid,
+		Configured:   vault.configured,
+		PasswordSet:  vault.configured && vault.state.Password != nil,
+		BiometricSet: vault.configured && vault.state.Password != nil && vault.state.Biometric != nil,
+		KeyVerified:  vault.configured && vault.state.MACValid,
+	}
+	if !vault.untilLock {
+		status.UnlockIdle = rawUnlockIdle
 	}
 	if vault.configured {
 		sum := sha256.Sum256(vault.state.PublicKey)
 		status.KeyFingerprint = hex.EncodeToString(sum[:])
 	}
 	if vault.sessionActiveLocked(now) {
-		until := vault.sessionUntil.UTC()
-		status.Unlocked, status.UnlockExpiresAt = true, &until
+		status.Unlocked = true
+		if !vault.untilLock {
+			until := vault.sessionUntil.UTC()
+			status.UnlockExpiresAt = &until
+		}
 	}
 	if remaining := vault.blockedUntil.Sub(now); remaining > 0 {
 		status.RetryAfter = remaining
@@ -282,7 +307,7 @@ func (vault *Vault) sessionActiveLocked(now time.Time) bool {
 	if vault.session == nil {
 		return false
 	}
-	if now.Before(vault.sessionUntil) {
+	if vault.untilLock || now.Before(vault.sessionUntil) {
 		return true
 	}
 	vault.clearSessionLocked()
@@ -315,7 +340,7 @@ func (vault *Vault) expireSession() {
 }
 
 // UnlockedOpener implements RawVault. Each call is a raw read and restarts
-// the idle window.
+// the idle window, if the unlock has one.
 func (vault *Vault) UnlockedOpener() (RawKeyOpener, bool) {
 	vault.mu.Lock()
 	defer vault.mu.Unlock()
@@ -323,7 +348,9 @@ func (vault *Vault) UnlockedOpener() (RawKeyOpener, bool) {
 	if !vault.sessionActiveLocked(now) {
 		return nil, false
 	}
-	vault.sessionUntil = now.Add(rawUnlockIdle)
+	if !vault.untilLock {
+		vault.sessionUntil = now.Add(rawUnlockIdle)
+	}
 	return sessionOpener{vault: vault}, true
 }
 
@@ -392,20 +419,9 @@ func (vault *Vault) WithProof(ctx context.Context, proof RawProof, use func(RawK
 	return use(opener)
 }
 
-// HoldKey implements RawVault. An empty proof copies the unlock session's
-// key without extending its idle window, so holding a key is not a raw
-// read by the operator.
+// HoldKey implements RawVault. The unlock session is neither used nor
+// extended: an agent's grant always rests on its own proof.
 func (vault *Vault) HoldKey(ctx context.Context, proof RawProof) (RawKeyHolder, error) {
-	if proof.Empty() {
-		vault.mu.Lock()
-		defer vault.mu.Unlock()
-		if !vault.sessionActiveLocked(vault.now()) {
-			return nil, ErrRawProofRequired
-		}
-		return &proofOpener{
-			private: append([]byte(nil), vault.session...), keyID: vault.sessionKeyID, cleared: vault.privateCleared,
-		}, nil
-	}
 	private, keyID, err := vault.openWithProof(ctx, proof)
 	if err != nil {
 		return nil, err
@@ -422,8 +438,10 @@ func (vault *Vault) Unlock(ctx context.Context, proof RawProof) (RawVaultStatus,
 	vault.mu.Lock()
 	vault.clearSessionLocked()
 	vault.session, vault.sessionKeyID = private, keyID
-	vault.sessionUntil = vault.now().Add(rawUnlockIdle)
-	vault.sessionTimer = time.AfterFunc(rawUnlockIdle, vault.expireSession)
+	if !vault.untilLock {
+		vault.sessionUntil = vault.now().Add(rawUnlockIdle)
+		vault.sessionTimer = time.AfterFunc(rawUnlockIdle, vault.expireSession)
+	}
 	vault.mu.Unlock()
 	return vault.Status(ctx)
 }
@@ -455,6 +473,70 @@ func (vault *Vault) Lock() {
 	vault.mu.Lock()
 	defer vault.mu.Unlock()
 	vault.clearSessionLocked()
+}
+
+// EnrollBiometric implements RawVaultController. Only the password enrolls,
+// so a key the desktop once kept cannot add itself back after a change.
+func (vault *Vault) EnrollBiometric(ctx context.Context, proof RawProof, key []byte) (RawVaultStatus, error) {
+	if len(proof.Password) == 0 {
+		return RawVaultStatus{}, ErrRawProofRequired
+	}
+	if len(key) != rawseal.BiometricKeyBytes {
+		return RawVaultStatus{}, fmt.Errorf("%w: the Touch ID key must be %d bytes", storage.ErrInvalidArgument, rawseal.BiometricKeyBytes)
+	}
+	if err := vault.acquire(ctx); err != nil {
+		return RawVaultStatus{}, err
+	}
+	defer vault.release()
+	private, keyID, err := vault.openHeldWithProof(ctx, proof)
+	if err != nil {
+		return RawVaultStatus{}, err
+	}
+	defer clear(private)
+	state, _, err := vault.snapshot(ctx)
+	if err != nil {
+		return RawVaultStatus{}, err
+	}
+	if state.KeyID != keyID {
+		return RawVaultStatus{}, fmt.Errorf("%w: the raw key changed", storage.ErrConflict)
+	}
+	wrapped, err := rawseal.WrapBiometric(private, key, keyID, state.PublicKey)
+	if err != nil {
+		return RawVaultStatus{}, err
+	}
+	if err := vault.store.PutRawKeyEnvelope(ctx, keyID, storage.RawKeyEnvelope{
+		Kind: rawseal.KindBiometric, KDFJSON: rawseal.BiometricKDFJSON,
+		Salt: wrapped.Salt, Nonce: wrapped.Nonce, Wrapped: wrapped.Wrapped,
+	}); err != nil {
+		return RawVaultStatus{}, err
+	}
+	if err := vault.reload(ctx); err != nil {
+		return RawVaultStatus{}, err
+	}
+	vault.logf("raw sealing: Touch ID can now unlock raw content")
+	return vault.Status(ctx)
+}
+
+// RemoveBiometric implements RawVaultController.
+func (vault *Vault) RemoveBiometric(ctx context.Context) (RawVaultStatus, error) {
+	if err := vault.acquire(ctx); err != nil {
+		return RawVaultStatus{}, err
+	}
+	defer vault.release()
+	state, configured, err := vault.snapshot(ctx)
+	if err != nil {
+		return RawVaultStatus{}, err
+	}
+	if configured && state.Biometric != nil {
+		if err := vault.store.DeleteRawKeyEnvelope(ctx, state.KeyID, rawseal.KindBiometric); err != nil {
+			return RawVaultStatus{}, err
+		}
+		if err := vault.reload(ctx); err != nil {
+			return RawVaultStatus{}, err
+		}
+		vault.logf("raw sealing: Touch ID no longer unlocks raw content")
+	}
+	return vault.Status(ctx)
 }
 
 // backoffLocked returns how long proofs are still refused.
@@ -531,14 +613,43 @@ func (vault *Vault) openHeldWithProof(ctx context.Context, proof RawProof) ([]by
 // openStateLocked opens state's private key with proof. The caller holds
 // the slot.
 func (vault *Vault) openStateLocked(ctx context.Context, state storage.RawSealingState, proof RawProof) ([]byte, error) {
-	if len(proof.Password) == 0 {
+	var (
+		private []byte
+		err     error
+	)
+	switch {
+	case len(proof.Password) > 0:
+		private, err = vault.openPassword(state, proof.Password)
+	case len(proof.Biometric) > 0:
+		private, err = vault.openBiometric(state, proof.Biometric)
+	default:
 		return nil, ErrRawProofRequired
 	}
-	private, err := vault.openPassword(state, proof.Password)
 	if err != nil {
 		return nil, err
 	}
 	vault.repairAfterProof(ctx, state)
+	return private, nil
+}
+
+// openBiometric opens the biometric envelope. A wrong key counts toward the
+// same backoff as a wrong password.
+func (vault *Vault) openBiometric(state storage.RawSealingState, key []byte) ([]byte, error) {
+	if state.Biometric == nil {
+		return nil, ErrRawBiometricUnavailable
+	}
+	envelope := rawseal.BiometricEnvelope{
+		Salt: state.Biometric.Salt, Nonce: state.Biometric.Nonce, Wrapped: state.Biometric.Wrapped,
+	}
+	private, err := rawseal.UnwrapBiometric(envelope, key, state.KeyID, state.PublicKey)
+	if errors.Is(err, rawseal.ErrBiometric) {
+		vault.noteWrongProof()
+		return nil, ErrRawBiometricInvalid
+	}
+	if err != nil {
+		return nil, err
+	}
+	vault.noteRightProof()
 	return private, nil
 }
 
@@ -671,7 +782,14 @@ func (vault *Vault) ChangePassword(
 		if err := requireNewPassword(password); err != nil {
 			return RawPasswordOutcome{}, err
 		}
+		if len(proof.Password) == 0 {
+			return RawPasswordOutcome{}, ErrRawProofRequired
+		}
 		err = vault.rewrap(ctx, state, password, proof)
+		if err == nil && state.Biometric != nil {
+			// A Touch ID set up beside the old password goes with it.
+			err = vault.store.DeleteRawKeyEnvelope(ctx, state.KeyID, rawseal.KindBiometric)
+		}
 	case RawPasswordReset:
 		if !configured {
 			return RawPasswordOutcome{}, ErrRawNotConfigured

@@ -1,7 +1,9 @@
 package controlapi
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -370,7 +372,8 @@ func TestRawVaultUnlockSessionIdlesOut(t *testing.T) {
 		t.Fatalf("unlock without proof: %v", err)
 	}
 	status, err := vault.Unlock(ctx, passwordProof(rawTestPassword))
-	if err != nil || !status.Unlocked || status.UnlockExpiresAt == nil || !status.UnlockExpiresAt.Equal(clock.Now().Add(rawUnlockIdle)) {
+	if err != nil || !status.Unlocked || status.UnlockIdle != rawUnlockIdle ||
+		status.UnlockExpiresAt == nil || !status.UnlockExpiresAt.Equal(clock.Now().Add(rawUnlockIdle)) {
 		t.Fatalf("unlock status=%#v err=%v", status, err)
 	}
 	for range 3 {
@@ -413,6 +416,45 @@ func TestRawVaultUnlockSessionIdlesOut(t *testing.T) {
 	vault.mu.Unlock()
 	if session != nil {
 		t.Fatal("the expiry timer left the session key in memory")
+	}
+}
+
+// The desktop's unlock follows the operating system: it lasts through idle
+// time and window changes until the desktop locks it.
+func TestRawVaultUnlockUntilLockIgnoresIdleTime(t *testing.T) {
+	ctx := context.Background()
+	clock := newRawTestClock()
+	store := newRawAccessFixture(t, nil).store
+	vault := NewRawVault(store, RawVaultOptions{KDF: rawVaultTestKDF, UnlockUntilLock: true})
+	vault.now = clock.Now
+	mustSetRawPassword(t, vault, rawTestPassword, RawProof{})
+	captureRawTestParts(t, store)
+	blob := rawPartByDirection(t, store, storage.AuditDirectionResponse)
+
+	if status, err := vault.Status(ctx); err != nil || status.UnlockIdle != 0 {
+		t.Fatalf("status=%#v err=%v, want no idle window", status, err)
+	}
+	status, err := vault.Unlock(ctx, passwordProof(rawTestPassword))
+	if err != nil || !status.Unlocked || status.UnlockExpiresAt != nil {
+		t.Fatalf("unlock status=%#v err=%v", status, err)
+	}
+	vault.mu.Lock()
+	timer := vault.sessionTimer
+	vault.mu.Unlock()
+	if timer != nil {
+		t.Fatal("an unlock until lock armed an idle timer")
+	}
+	clock.Advance(24 * time.Hour)
+	opener, unlocked := vault.UnlockedOpener()
+	if !unlocked || !strings.Contains(openWithOpener(t, opener, blob), rawTestSecret) {
+		t.Fatal("idle time ended an unlock that lasts until lock")
+	}
+	vault.Lock()
+	if _, unlocked := vault.UnlockedOpener(); unlocked {
+		t.Fatal("the session outlived Lock")
+	}
+	if _, err := opener.OpenBlobKey(blob); !errors.Is(err, rawseal.ErrBlobKey) {
+		t.Fatalf("a locked session still opens parts: %v", err)
 	}
 }
 
@@ -742,12 +784,15 @@ func TestRawSealingRoutes(t *testing.T) {
 		t.Fatalf("unlocked read=%#v", content.RequestBody)
 	}
 
-	// While unlocked an approval takes no password. A once approval copies
-	// the session key and zeroes the copy once the part keys are out.
+	// Unlocked or not, an approval brings its own proof. A once approval
+	// zeroes the key it opened once the part keys are out.
 	var cleared []byte
 	fixture.vault.privateCleared = func(private []byte) { cleared = private }
 	grant := requestRawGrant(t, handler, rawTestRequestID)
-	wantRawStatus(t, decideRawGrant(t, handler, grant.GrantID, `{"decision":"once"}`), http.StatusOK, "")
+	wantRawStatus(t, decideRawGrant(t, handler, grant.GrantID, `{"decision":"once"}`),
+		http.StatusUnprocessableEntity, "raw_proof_required")
+	wantRawStatus(t, decideRawGrant(t, handler, grant.GrantID, `{"decision":"once","proof":{"password":`+rawTestPasswordJS+`}}`),
+		http.StatusOK, "")
 	if len(cleared) != rawseal.PrivateKeyBytes || strings.Trim(string(cleared), "\x00") != "" {
 		t.Fatal("the approval left the private key in memory")
 	}
@@ -846,23 +891,24 @@ func TestRawGrantsFollowLocksAndPasswordChanges(t *testing.T) {
 	var cleared []byte
 	fixture.vault.privateCleared = func(private []byte) { cleared = private }
 	grant := requestRawGrant(t, handler, rawTestRequestID)
-	wantRawStatus(t, decideRawGrant(t, handler, grant.GrantID, `{"decision":"window_1h"}`), http.StatusOK, "")
-
-	// Locking as the window hides keeps agent grants, and a timed grant
-	// outlives the unlock session it was approved in.
-	wantRawStatus(t, rawHTTP(t, handler, rawAsOperator, http.MethodPost, RawLockPath, `{"keep_agent_grants":true}`, ""),
+	wantRawStatus(t, decideRawGrant(t, handler, grant.GrantID, `{"decision":"until_lock","proof":{"password":`+rawTestPasswordJS+`}}`),
 		http.StatusOK, "")
-	if status := operatorRawStatus(t, handler); status.Unlocked {
-		t.Fatal("the lock left the session open")
-	}
+
+	// A grant outlives the idle end of the unlock session it was approved
+	// in; only a lock ends it.
 	fixture.clock.Advance(rawUnlockIdle + time.Minute)
-	if !readsRaw(grant.GrantToken) {
-		t.Fatal("a timed grant stopped with the unlock session")
+	if status := operatorRawStatus(t, handler); status.Unlocked {
+		t.Fatal("the idle session stayed open")
 	}
-	wantRawStatus(t, rawHTTP(t, handler, rawAsOperator, http.MethodPost, RawLockPath, `{"keep":true}`, ""),
+	if !readsRaw(grant.GrantToken) {
+		t.Fatal("a grant stopped with the unlock session")
+	}
+	// Nothing keeps grants through a lock any more.
+	wantRawStatus(t, rawHTTP(t, handler, rawAsOperator, http.MethodPost, RawLockPath, `{"keep_agent_grants":true}`, ""),
 		http.StatusBadRequest, "invalid_json")
 
-	// The operator's lock takes every grant back and zeroes the held key.
+	// A lock, whether the screen locked or the operator chose it, takes
+	// every grant back and zeroes the held key.
 	if cleared != nil {
 		t.Fatal("the grant's key was zeroed while it still ran")
 	}
@@ -871,14 +917,14 @@ func TestRawGrantsFollowLocksAndPasswordChanges(t *testing.T) {
 		t.Fatal("the lock left a grant's private key in memory")
 	}
 	if readsRaw(grant.GrantToken) {
-		t.Fatal("a grant outlived the operator's lock")
+		t.Fatal("a grant outlived the lock")
 	}
 
-	// A locked Core needs the password to approve.
+	// A locked Core needs the password to approve, as an unlocked one does.
 	changed := requestRawGrant(t, handler, rawTestRequestID)
-	wantRawStatus(t, decideRawGrant(t, handler, changed.GrantID, `{"decision":"window_5m"}`),
+	wantRawStatus(t, decideRawGrant(t, handler, changed.GrantID, `{"decision":"window_1h"}`),
 		http.StatusUnprocessableEntity, "raw_proof_required")
-	wantRawStatus(t, decideRawGrant(t, handler, changed.GrantID, `{"decision":"window_5m","proof":{"password":`+rawTestPasswordJS+`}}`),
+	wantRawStatus(t, decideRawGrant(t, handler, changed.GrantID, `{"decision":"window_1h","proof":{"password":`+rawTestPasswordJS+`}}`),
 		http.StatusOK, "")
 	if !readsRaw(changed.GrantToken) {
 		t.Fatal("a password approval did not read")
@@ -890,13 +936,106 @@ func TestRawGrantsFollowLocksAndPasswordChanges(t *testing.T) {
 	}
 
 	reset := requestRawGrant(t, handler, rawTestRequestID)
-	wantRawStatus(t, decideRawGrant(t, handler, reset.GrantID, `{"decision":"window_5m","proof":{"password":"another phrase"}}`),
+	wantRawStatus(t, decideRawGrant(t, handler, reset.GrantID, `{"decision":"until_lock","proof":{"password":"another phrase"}}`),
 		http.StatusOK, "")
 	wantRawStatus(t, rawHTTP(t, handler, rawAsOperator, http.MethodPost, RawPasswordPath, passwordBody("reset", `"a third phrase"`, ""), ""),
 		http.StatusOK, "")
 	if readsRaw(reset.GrantToken) {
 		t.Fatal("a grant outlived a key reset")
 	}
+}
+
+func TestRawBiometricEnvelopeUnlocksApprovesAndEndsWithThePassword(t *testing.T) {
+	fixture := newRawVaultFixture(t)
+	handler := fixture.handler
+	mustSetRawPassword(t, fixture.vault, rawTestPassword, RawProof{})
+	captureRawTestParts(t, fixture.store)
+	full := rawAuditPath(rawTestRequestID)
+	key := bytes.Repeat([]byte{0x42}, rawseal.BiometricKeyBytes)
+	keyJS := `"` + base64.StdEncoding.EncodeToString(key) + `"`
+	enroll := func(password string) string {
+		return `{"proof":{"password":` + password + `},"key":` + keyJS + `}`
+	}
+	biometric := func(key string) string { return `{"proof":{"biometric":` + key + `}}` }
+
+	// Agents never touch it, and enrolling takes the password itself.
+	wantRawStatus(t, rawHTTP(t, handler, rawAsAgent, http.MethodPost, RawBiometricPath, enroll(rawTestPasswordJS), ""),
+		http.StatusForbidden, "forbidden")
+	wantRawStatus(t, rawHTTP(t, handler, rawAsAgent, http.MethodDelete, RawBiometricPath, "", ""),
+		http.StatusForbidden, "forbidden")
+	wantRawStatus(t, rawHTTP(t, handler, rawAsOperator, http.MethodPost, RawBiometricPath, `{"key":`+keyJS+`}`, ""),
+		http.StatusBadRequest, "validation_failed")
+	wantRawStatus(t, rawHTTP(t, handler, rawAsOperator, http.MethodPost, RawBiometricPath, enroll(`"wrong passphrase"`), ""),
+		http.StatusForbidden, "raw_password_invalid")
+	wantRawStatus(t, rawHTTP(t, handler, rawAsOperator, http.MethodPost, RawBiometricPath,
+		`{"proof":{"password":`+rawTestPasswordJS+`},"key":"`+base64.StdEncoding.EncodeToString(key[:16])+`"}`, ""),
+		http.StatusBadRequest, "validation_failed")
+	enrolled := rawHTTP(t, handler, rawAsOperator, http.MethodPost, RawBiometricPath, enroll(rawTestPasswordJS), "")
+	wantRawStatus(t, enrolled, http.StatusOK, "")
+	var status RawSealingStatus
+	decode(t, enrolled, &status)
+	if len(status.Envelopes) != 2 || status.Envelopes[1] != "biometric" {
+		t.Fatalf("status after enrolling=%#v", status)
+	}
+	// The database holds the envelope, never the key that opens it.
+	state, err := fixture.store.LoadRawSealing(context.Background())
+	if err != nil || state.Biometric == nil {
+		t.Fatalf("stored state=%#v err=%v", state, err)
+	}
+	if bytes.Contains(state.Biometric.Wrapped, key) || bytes.Contains(state.Biometric.Salt, key) {
+		t.Fatal("the envelope stores its own key")
+	}
+
+	// The key unlocks and approves like the password does.
+	unlocked := rawHTTP(t, handler, rawAsOperator, http.MethodPost, RawUnlockPath, biometric(keyJS), "")
+	wantRawStatus(t, unlocked, http.StatusOK, "")
+	decode(t, unlocked, &status)
+	if !status.Unlocked {
+		t.Fatalf("status=%#v", status)
+	}
+	wantRawStatus(t, rawHTTP(t, handler, rawAsOperator, http.MethodPost, RawLockPath, "", ""), http.StatusOK, "")
+	other := `"` + base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{0x43}, rawseal.BiometricKeyBytes)) + `"`
+	wantRawStatus(t, rawHTTP(t, handler, rawAsOperator, http.MethodPost, RawUnlockPath, biometric(other), ""),
+		http.StatusForbidden, "raw_biometric_invalid")
+	grant := requestRawGrant(t, handler, rawTestRequestID)
+	wantRawStatus(t, decideRawGrant(t, handler, grant.GrantID, `{"decision":"until_lock","proof":{"biometric":`+keyJS+`}}`),
+		http.StatusOK, "")
+	if content := readRawAudit(t, handler, rawAsAgent, full, grant.GrantToken); !strings.Contains(content.RequestBody.Content, rawTestSecret) {
+		t.Fatalf("granted read=%#v", content.RequestBody)
+	}
+	// A key replaced outside the desktop is confirmed by its password only.
+	wantRawStatus(t, rawHTTP(t, handler, rawAsOperator, http.MethodPost, RawVerifyPath, biometric(keyJS), ""),
+		http.StatusUnprocessableEntity, "raw_proof_required")
+	wantRawStatus(t, rawHTTP(t, handler, rawAsOperator, http.MethodPost, RawUnlockPath,
+		`{"proof":{"password":`+rawTestPasswordJS+`,"biometric":`+keyJS+`}}`, ""), http.StatusBadRequest, "validation_failed")
+
+	// A password change takes the envelope out; Touch ID needs the new
+	// password to come back.
+	wantRawStatus(t, rawHTTP(t, handler, rawAsOperator, http.MethodPost, RawPasswordPath,
+		passwordBody("change", `"another phrase"`, `{"biometric":`+keyJS+`}`), ""), http.StatusUnprocessableEntity, "raw_proof_required")
+	wantRawStatus(t, rawHTTP(t, handler, rawAsOperator, http.MethodPost, RawPasswordPath,
+		passwordBody("change", `"another phrase"`, `{"password":`+rawTestPasswordJS+`}`), ""), http.StatusOK, "")
+	if status := operatorRawStatus(t, handler); len(status.Envelopes) != 1 {
+		t.Fatalf("envelopes after the change=%v", status.Envelopes)
+	}
+	wantRawStatus(t, rawHTTP(t, handler, rawAsOperator, http.MethodPost, RawUnlockPath, biometric(keyJS), ""),
+		http.StatusConflict, "raw_biometric_unavailable")
+	wantRawStatus(t, rawHTTP(t, handler, rawAsOperator, http.MethodPost, RawBiometricPath, enroll(`"another phrase"`), ""),
+		http.StatusOK, "")
+	wantRawStatus(t, rawHTTP(t, handler, rawAsOperator, http.MethodDelete, RawBiometricPath, "", ""), http.StatusOK, "")
+	if status := operatorRawStatus(t, handler); len(status.Envelopes) != 1 {
+		t.Fatalf("envelopes after removing Touch ID=%v", status.Envelopes)
+	}
+	// A reset replaces the key, and every envelope goes with the old one.
+	wantRawStatus(t, rawHTTP(t, handler, rawAsOperator, http.MethodPost, RawBiometricPath, enroll(`"another phrase"`), ""),
+		http.StatusOK, "")
+	wantRawStatus(t, rawHTTP(t, handler, rawAsOperator, http.MethodPost, RawPasswordPath, passwordBody("reset", `"a third phrase"`, ""), ""),
+		http.StatusOK, "")
+	if status := operatorRawStatus(t, handler); len(status.Envelopes) != 1 {
+		t.Fatalf("envelopes after the reset=%v", status.Envelopes)
+	}
+	wantRawStatus(t, rawHTTP(t, handler, rawAsOperator, http.MethodPost, RawUnlockPath, biometric(keyJS), ""),
+		http.StatusConflict, "raw_biometric_unavailable")
 }
 
 const (
