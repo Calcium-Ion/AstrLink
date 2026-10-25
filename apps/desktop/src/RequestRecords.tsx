@@ -2421,6 +2421,7 @@ export function RequestRecords({
               setOverlayRecords((current) => ({ ...current, ...records }))
             }
             onSelectTurn={setSelectedTurnId}
+            onSetRawPassword={() => setRawDialog({ kind: "set" })}
             onUnlockRaw={() => void unlockRawContent()}
             rawSealing={rawSealing}
             record={selected}
@@ -3346,6 +3347,7 @@ function RecordDetail({
   onLockRaw,
   onSelectTurn,
   onRegisterRecords,
+  onSetRawPassword,
   onUnlockRaw,
 }: {
   record: RequestRecord;
@@ -3374,6 +3376,8 @@ function RecordDetail({
   onLockRaw: () => void;
   onSelectTurn: (requestId: string) => void;
   onRegisterRecords: (records: Record<string, RequestRecord>) => void;
+  /** Sets up the raw password, for parts kept out while there was none. */
+  onSetRawPassword: () => void;
   onUnlockRaw: () => void;
 }) {
   const t = useT();
@@ -4247,6 +4251,28 @@ function RecordDetail({
                     variant="outline"
                   >
                     {t("rawSealing.lock")}
+                  </Button>
+                </FormMessage>
+              ) : null}
+              {rawPasswordMissing(rawSealing) &&
+              Object.values(auditContent.withheld).some(
+                (part) => part?.reason === "raw_not_kept",
+              ) ? (
+                // Capture is on without a raw password, so raw parts are
+                // still dropped; point at the setup without blocking.
+                <FormMessage
+                  className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5"
+                  data-slot="raw-not-kept"
+                  tone="notice"
+                >
+                  <span className="min-w-0">{t("rawSealing.notKeptHint")}</span>
+                  <Button
+                    onClick={onSetRawPassword}
+                    size="xs"
+                    type="button"
+                    variant="outline"
+                  >
+                    {t("rawSealing.setupAction")}
                   </Button>
                 </FormMessage>
               ) : null}

@@ -1097,5 +1097,16 @@ END`,
 			// so the request list can show what a conversation is doing.
 			`ALTER TABLE request_records ADD COLUMN output_json TEXT`,
 		}},
+		// What a fresh install starts with.
+		//
+		// The bootstrap token was stored as one a user created, so a fresh
+		// install's lone token looked like a configured one. It is the token
+		// issued in the same instant the bootstrap completed. The change is
+		// logged, so a sync carries the corrected source to other devices.
+		{Version: 56, Name: "fresh_install_defaults", Statements: []string{
+			`UPDATE local_access_tokens SET source = 'system_default'
+WHERE source = 'user'
+  AND created_at = (SELECT completed_at FROM local_access_token_bootstrap_state WHERE singleton = 1)`,
+		}},
 	}
 }

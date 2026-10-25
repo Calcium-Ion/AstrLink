@@ -30,7 +30,6 @@ import {
   rawPasswordUnset,
   rawProofMode,
   rawProtection,
-  rawSetupNeeded,
   type RawPasswordAction,
   type RawProtection,
   type RawSealingOutcome,
@@ -45,8 +44,8 @@ import { useRawSealingStatus } from "./use-raw-sealing-status";
 
 /**
  * A raw sealing dialog the page asks for; `capture` also turns capture on,
- * `required` is the one the app keeps up until a raw password is set, and
- * `replaced` the one it keeps up for a key replaced outside the desktop.
+ * and `replaced` is the one the app keeps up for a key replaced outside the
+ * desktop.
  */
 export type RawDialog =
   | { kind: "set" }
@@ -54,7 +53,6 @@ export type RawDialog =
   | { kind: "reset" }
   | { kind: "unlock" }
   | { kind: "capture" }
-  | { kind: "required" }
   | { kind: "replaced" };
 
 /** Minutes before Core locks an idle unlock session, for the copy. */
@@ -65,14 +63,6 @@ export function unlockIdleMinutes(status: RawSealingState): number {
 /** No raw password protects the raw key, so raw parts are not kept. */
 export function rawPasswordMissing(status: RawSealingState | null): boolean {
   return status?.password_required === true;
-}
-
-/**
- * A raw password still needs setting (see `rawSetupNeeded`); unknown while
- * the status is.
- */
-export function useRawSetupNeeded(status: RawSealingState | null): boolean {
-  return status !== null && rawSetupNeeded(status);
 }
 
 /**
@@ -272,30 +262,21 @@ export function RawPasswordEntry({
 }
 
 /**
- * Keeps the raw password setup up until it is done: only setting a raw
- * password closes it, and the gateway keeps serving meanwhile. A key
- * replaced outside the desktop keeps its own warning up the same way, until
- * the operator confirms it with its password or resets it.
- * `suspended` holds it back while the first-run guide asks for the password
- * in its own step, or before it is known whether that guide opens.
+ * Keeps the warning about a raw key replaced outside the desktop up until
+ * the operator confirms it with its password or resets it; the gateway
+ * keeps serving meanwhile. A missing raw password asks for nothing here:
+ * turning on capture sets one up, and so can the Safety page.
  */
-export function RawPasswordGate({
+export function RawKeyReplacedGate({
   onStatus,
   status,
-  suspended,
 }: {
   onStatus: (next: RawSealingState) => void;
   status: RawSealingState | null;
-  suspended: boolean;
 }) {
-  const setupNeeded = useRawSetupNeeded(status);
-  const replaced = !suspended && status?.key_replaced === true;
-  const required = !isWebEdition && !suspended && setupNeeded;
   return (
     <RawSealingDialogs
-      dialog={
-        replaced ? { kind: "replaced" } : required ? { kind: "required" } : null
-      }
+      dialog={status?.key_replaced === true ? { kind: "replaced" } : null}
       onClose={() => {}}
       onStatus={onStatus}
       status={status}
@@ -379,7 +360,7 @@ export function RawSealingDialogs({
       notify.success(i18n.t("rawSealing.changed"));
     } else if (action === "reset") {
       notify.success(resetNotice(outcome));
-    } else if (kind === "set" || kind === "required") {
+    } else if (kind === "set") {
       notify.success(i18n.t("rawSealing.saved"));
     }
     close(true);
@@ -424,7 +405,7 @@ export function RawSealingDialogs({
   const invalidNew =
     status !== null &&
     newPasswordIssue(password, confirmation, status) !== null;
-  const settingUp = kind === "capture" || kind === "set" || kind === "required";
+  const settingUp = kind === "capture" || kind === "set";
   const fields = status ? (
     <RawPasswordFields
       confirmation={confirmation}
@@ -482,7 +463,6 @@ export function RawSealingDialogs({
           ? t("records.confirmEnable")
           : t("rawSealing.setupPasswordAction"),
       description,
-      dismissable: kind !== "required",
       focusNew: true,
       note: passwordWarning,
       proof: "confirm",

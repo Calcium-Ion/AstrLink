@@ -606,8 +606,13 @@ func TestRawSealingRoutes(t *testing.T) {
 		status.PasswordMinRunes != rawseal.MinPasswordRunes || status.PasswordMaxRunes != rawseal.MaxPasswordRunes || status.KeyFingerprint != "" {
 		t.Fatalf("fresh status=%#v", status)
 	}
-	if fresh := observers(); !fresh.RawPasswordRequired || len(fresh.RawAccessEvents) != 0 {
+	// Without capture nothing raw is kept, so a missing password is no news.
+	if fresh := observers(); fresh.RawPasswordRequired || len(fresh.RawAccessEvents) != 0 {
 		t.Fatalf("fresh observers=%#v", fresh)
+	}
+	setBodyCapture(t, fixture.store, true)
+	if capturing := observers(); !capturing.RawPasswordRequired {
+		t.Fatalf("observers while capturing without a password=%#v", capturing)
 	}
 	wantRawStatus(t, rawHTTP(t, handler, rawAsOperator, http.MethodPost, RawUnlockPath,
 		`{"proof":{"password":`+rawTestPasswordJS+`}}`, ""), http.StatusConflict, "raw_access_unavailable")

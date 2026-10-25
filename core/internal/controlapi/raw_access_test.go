@@ -318,6 +318,19 @@ func setAgentRawAccess(t *testing.T, store *sqlite.Store, enabled bool) {
 	}
 }
 
+func setBodyCapture(t *testing.T, store *sqlite.Store, enabled bool) {
+	t.Helper()
+	settings, err := store.GetAuditSettings(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings.RequestBodyEnabled = enabled
+	settings.ResponseContentEnabled = enabled
+	if err := store.UpdateAuditSettings(context.Background(), settings); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func rawAuditPath(id string) string { return RequestsPath + "/" + id + "/audit" }
 
 func requestRawGrant(t *testing.T, handler *Handler, id string) rawAccessCreated {

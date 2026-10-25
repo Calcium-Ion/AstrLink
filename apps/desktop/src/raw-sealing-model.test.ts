@@ -9,7 +9,6 @@ import {
   rawPasswordUnset,
   rawProofMode,
   rawProtection,
-  rawSetupNeeded,
   type RawSealingState,
 } from "./raw-sealing-model";
 
@@ -153,17 +152,6 @@ describe("raw proof mode", () => {
       rawProtection(state({ configured: false, password_set: false })),
     ).toBe("unset");
     expect(rawProtection(state())).toBe("password");
-  });
-
-  it("asks for setup until a password protects raw content", () => {
-    const unset = state({
-      configured: false,
-      password_set: false,
-      password_required: true,
-      envelopes: [],
-    });
-    expect(rawSetupNeeded(unset)).toBe(true);
-    expect(rawSetupNeeded(state())).toBe(false);
   });
 });
 

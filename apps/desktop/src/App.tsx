@@ -62,7 +62,7 @@ import { RouteManager } from "./RouteManager";
 import { SafetyPolicy } from "./SafetyPolicy";
 import { AgentDebugSettings } from "./AgentDebugSettings";
 import type { AgentSkillId } from "./agent-install-model";
-import { RawPasswordGate, useRawSetupNeeded } from "./RawSealingControls";
+import { RawKeyReplacedGate } from "./RawSealingControls";
 import { useRawSealingStatus } from "./use-raw-sealing-status";
 import { LocalDataNotice } from "./LocalDataNotice";
 import { SettingsCenter } from "./SettingsCenter";
@@ -412,14 +412,7 @@ export default function App() {
       ? `${snapshot.pid ?? "none"}|${snapshot.ready.control_url}|${snapshot.ready.inference_url}`
       : null;
   const rawSealing = useRawSealingStatus(coreSessionKey, isReady);
-  const rawSetupNeeded = useRawSetupNeeded(rawSealing.status);
-  const onboarding = useOnboarding({
-    isReady,
-    catalog,
-    tokenCatalog,
-    usage,
-    passwordReady: rawSealing.status !== null && !rawSetupNeeded,
-  });
+  const onboarding = useOnboarding({ isReady, catalog, tokenCatalog, usage });
 
   // Silent refreshes read the rendered state to stay out of a visible load.
   const catalogRef = useRef(catalog);
@@ -831,10 +824,7 @@ export default function App() {
     () => snapshot?.capabilities?.protocols ?? [],
     [snapshot?.capabilities?.protocols],
   );
-  const providerImport = useProviderImport({
-    enabled: isReady && rawSealing.status !== null && !rawSetupNeeded,
-    protocols,
-  });
+  const providerImport = useProviderImport({ enabled: isReady, protocols });
 
   const handleProviderImported = (service: Service) => {
     providerImport.close();
@@ -1051,7 +1041,6 @@ export default function App() {
                   {t("onboarding.inProgress")} ·{" "}
                   {t(
                     [
-                      "onboarding.passwordTitle",
                       "onboarding.serviceTitle",
                       "onboarding.tokenTitle",
                       "onboarding.clientTitle",
@@ -1087,8 +1076,6 @@ export default function App() {
                   void refreshUsage();
                 }}
                 onRestart={() => void handleRestart()}
-                onRawSealingStatus={rawSealing.setStatus}
-                rawSealing={rawSealing}
               />
             ) : page.kind === "overview" ? (
               <Overview
@@ -1228,13 +1215,9 @@ export default function App() {
         open={pendingPage !== null}
         title={t("common.discardUnsaved")}
       />
-      <RawPasswordGate
+      <RawKeyReplacedGate
         onStatus={rawSealing.setStatus}
         status={rawSealing.status}
-        // The guide asks for the password in its own first step.
-        suspended={
-          !onboarding.settled || (onboarding.active && page.kind === "overview")
-        }
       />
       {providerImport.active && (
         <ProviderImportDialog

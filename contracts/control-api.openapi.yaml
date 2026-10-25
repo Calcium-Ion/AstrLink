@@ -4204,7 +4204,7 @@ components:
                 $ref: "#/components/schemas/ServicePerformance"
     AccessToken:
       type: object
-      required: [id, name, hint, created_at]
+      required: [id, name, hint, source, created_at]
       properties:
         id:
           $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
@@ -4217,6 +4217,12 @@ components:
           minLength: 1
           maxLength: 32
           description: Non-secret display hint that cannot be used to authenticate.
+        source:
+          type: string
+          enum: [user, system_default]
+          description: |
+            system_default for the bootstrap token this installation issued on
+            its first start, user for a token someone created.
         created_at:
           type: string
           format: date-time
@@ -7939,8 +7945,9 @@ components:
         raw_password_required:
           type: boolean
           description: |
-            True while no raw password protects the raw key, so the desktop can
-            point at the setup from the tray as well as the main window.
+            True while body capture is on and no raw password protects the raw
+            key, so captured raw parts are dropped. The desktop points at the
+            setup from the tray as well as the main window.
       additionalProperties: false
     PurgeRequest:
       type: object

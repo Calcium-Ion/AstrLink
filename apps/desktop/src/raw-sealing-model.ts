@@ -247,11 +247,6 @@ export function rawPasswordUnset(state: RawSealingState): boolean {
   return !state.password_set;
 }
 
-/** Raw protection still needs a raw password. */
-export function rawSetupNeeded(state: RawSealingState): boolean {
-  return state.password_required;
-}
-
 /**
  * Grace after an unlock's expiry before checking it again, so a check lands
  * after Core's own idle lock rather than just before it.

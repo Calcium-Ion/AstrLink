@@ -836,10 +836,16 @@ func (handler *Handler) rawVaultStatus(ctx context.Context) (RawVaultStatus, err
 	return handler.rawVault.Status(ctx)
 }
 
-// rawPasswordRequired is true while a raw vault exists without a raw
-// password. A status error reads as false; the main window still asks.
+// rawPasswordRequired is true while body capture is on and no raw password
+// protects the raw key, so the raw parts it captures are dropped. Without
+// capture nothing raw is kept, and a missing password costs nothing. A read
+// error reads as false; the capture switch still asks.
 func (handler *Handler) rawPasswordRequired(ctx context.Context) bool {
-	if handler.rawVault == nil {
+	if handler.rawVault == nil || handler.auditSettings == nil {
+		return false
+	}
+	settings, err := handler.auditSettings.GetAuditSettings(ctx)
+	if err != nil || !(settings.RequestBodyEnabled || settings.ResponseContentEnabled) {
 		return false
 	}
 	status, err := handler.rawVault.Status(ctx)

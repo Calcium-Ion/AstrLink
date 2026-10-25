@@ -31,7 +31,7 @@ vi.mock("sonner", () => ({
 }));
 
 import {
-  RawPasswordGate,
+  RawKeyReplacedGate,
   RawPasswordPanel,
   RawSealingDialogs,
   rawPasswordMissing,
@@ -524,76 +524,22 @@ describe("RawSealingDialogs", () => {
   });
 });
 
-describe("RawPasswordGate", () => {
-  function Gate({
-    initialStatus,
-    suspended = false,
-  }: {
-    initialStatus: RawSealingState | null;
-    suspended?: boolean;
-  }) {
+describe("RawKeyReplacedGate", () => {
+  function Gate({ initialStatus }: { initialStatus: RawSealingState | null }) {
     const [status, setStatus] = useState(initialStatus);
-    return (
-      <RawPasswordGate
-        onStatus={setStatus}
-        status={status}
-        suspended={suspended}
-      />
-    );
+    return <RawKeyReplacedGate onStatus={setStatus} status={status} />;
   }
 
-  async function renderGate(
-    initialStatus: RawSealingState | null,
-    suspended = false,
-  ) {
-    await act(async () =>
-      root.render(<Gate initialStatus={initialStatus} suspended={suspended} />),
-    );
+  async function renderGate(initialStatus: RawSealingState | null) {
+    await act(async () => root.render(<Gate initialStatus={initialStatus} />));
     await act(async () => {});
   }
 
-  it("keeps asking for protection until one is set", async () => {
-    mocks.setRawPassword.mockResolvedValue(sealed());
+  it("asks nothing of a device without a raw password", async () => {
+    // Nothing raw is kept without one, so it waits for capture or Settings.
     await renderGate(unconfigured);
-
-    expect(dialog()?.textContent).toContain("保护请求原文");
-    expect(dialog()?.textContent).toContain("新请求的原文不会保存");
-    expect(dialog()?.querySelector('[role="radio"]')).toBeNull();
-    expect(queryButton("取消", dialog()!)).toBeNull();
-    await act(async () => {
-      document.activeElement?.dispatchEvent(
-        new KeyboardEvent("keydown", { bubbles: true, key: "Escape" }),
-      );
-    });
-    await act(async () => {
-      document
-        .querySelector('[data-slot="alert-dialog-overlay"]')
-        ?.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
-    });
-    expect(dialog()).not.toBeNull();
-
-    expect(dialog()?.textContent).toContain("忘记后只能重置");
-    await typeNewPassword("correct horse");
-    await click(button("设置口令并继续", dialog()!));
-
-    expect(mocks.setRawPassword).toHaveBeenCalledExactlyOnceWith(
-      "set",
-      "correct horse",
-      undefined,
-    );
-    expect(mocks.toastSuccess).toHaveBeenCalledWith("已设置口令");
     expect(dialog()).toBeNull();
-  });
-
-  it("stays up after a failed attempt", async () => {
-    mocks.setRawPassword.mockRejectedValue(new Error("Core is offline"));
-    await renderGate(unconfigured);
-
-    await typeNewPassword("correct horse");
-    await click(button("设置口令并继续", dialog()!));
-
-    expect(dialog()?.textContent).toContain("Core is offline");
-    expect(queryButton("取消", dialog()!)).toBeNull();
+    expect(mocks.setRawPassword).not.toHaveBeenCalled();
   });
 
   /** A key an offline `astrlink-core raw-password` reset while the app was closed. */
@@ -670,21 +616,11 @@ describe("RawPasswordGate", () => {
     expect(confirmDialog()).toBeNull();
   });
 
-  it("stays away once a password is set, while suspended, or unknown", async () => {
+  it("stays away once a password is set, or while unknown", async () => {
     await renderGate(sealing());
     expect(dialog()).toBeNull();
 
     await renderGate(null);
-    expect(dialog()).toBeNull();
-
-    await act(async () => root.unmount());
-    root = createRoot(container);
-    await renderGate(unconfigured, true);
-    expect(dialog()).toBeNull();
-
-    await act(async () => root.unmount());
-    root = createRoot(container);
-    await renderGate(replacedKey, true);
     expect(dialog()).toBeNull();
   });
 });

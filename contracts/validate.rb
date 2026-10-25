@@ -386,8 +386,8 @@ end
 end
 
 access_token = openapi.dig("components", "schemas", "AccessToken")
-raise "access-token metadata shape drifted" unless access_token.fetch("required") == %w[id name hint created_at]
-raise "access-token source remains on the public contract" if access_token.fetch("properties").key?("source")
+raise "access-token metadata shape drifted" unless access_token.fetch("required") == %w[id name hint source created_at]
+raise "access-token source must name the bootstrap token" unless access_token.dig("properties", "source", "enum") == %w[user system_default]
 
 access_token_list = openapi.dig("components", "schemas", "AccessTokenList")
 raise "access-token list must reserve a null cursor" unless access_token_list.fetch("required") == %w[items next_cursor] &&

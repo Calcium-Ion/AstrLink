@@ -170,8 +170,9 @@ type ObserversResponse struct {
 	ActiveRawGrants int `json:"active_raw_grants"`
 	// RawAccessEvents is the recent raw access log, oldest first.
 	RawAccessEvents []RawAccessEvent `json:"raw_access_events"`
-	// RawPasswordRequired is true while no raw password is set, so the
-	// desktop can point at the setup from outside the main window.
+	// RawPasswordRequired is true while body capture is on and no raw
+	// password is set, so the desktop can point at the setup from outside the
+	// main window.
 	RawPasswordRequired bool `json:"raw_password_required"`
 }
 
