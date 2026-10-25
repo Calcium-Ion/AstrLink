@@ -6832,6 +6832,10 @@ components:
             - $ref: "#/components/schemas/SessionLink"
             - type: "null"
           description: How this record joined an existing session; null when it started the session.
+        parent_session_id:
+          allOf:
+            - $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+          description: The conversation that started this record's session as a subagent. Absent for a top-level conversation.
         cursors:
           type: [array, "null"]
           maxItems: 48
@@ -7211,6 +7215,10 @@ components:
       properties:
         session_id:
           $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+        parent_session_id:
+          allOf:
+            - $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+          description: Set on a subagent's calls; the conversation that started it.
         client_type:
           $ref: "#/components/schemas/ClientType"
         started_at:
@@ -7305,6 +7313,14 @@ components:
         privacy_warned:
           type: boolean
           description: Present and true when the privacy policy's warn action let at least one call of the session through.
+        parent_session_id:
+          allOf:
+            - $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+          description: The conversation that started this one as a subagent. Absent for a top-level conversation.
+        subagent_count:
+          type: integer
+          minimum: 1
+          description: How many conversations this one started as subagents. Absent when it started none.
       additionalProperties: false
     RequestSessionPage:
       type: object
@@ -7327,6 +7343,11 @@ components:
               type: array
               items:
                 $ref: "#/components/schemas/RequestRecord"
+            subagents:
+              type: array
+              description: The conversations this one started as subagents, oldest first. Absent when it started none.
+              items:
+                $ref: "#/components/schemas/RequestSession"
           additionalProperties: false
     Usage:
       type: object

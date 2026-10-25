@@ -2294,6 +2294,7 @@
     "deleteSessionTitle": "删除这个会话",
     "deleteSessionsTitle": "删除 {{count}} 个会话",
     "deleteSessionsBody": "将永久删除 {{calls}}和加密审计内容。",
+    "deleteSessionsWithSubagentsBody": "将永久删除 {{calls}}、{{subagents}}和加密审计内容。",
     "callCount_one": "{{count}} 次调用",
     "callCount_other": "{{count}} 次调用",
     "cleanUp": "清理",
@@ -2427,7 +2428,13 @@
     "moreFilters": "更多筛选",
     "activeFilters": "已启用筛选",
     "moreActiveFilters": "+{{count}} 项",
-    "filterCount": "{{count}} 项"
+    "filterCount": "{{count}} 项",
+    "subagent": "子代理",
+    "subagentCount_one": "{{count}} 个子代理",
+    "subagentCount_other": "{{count}} 个子代理",
+    "subagentList": "它启动的子代理",
+    "parentConversation": "上级对话",
+    "parentConversationHint": "打开启动它的对话"
   },
   "conversation": {
     "tab": "摘要",

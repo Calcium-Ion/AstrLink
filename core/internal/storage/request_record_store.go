@@ -83,6 +83,16 @@ type SessionCursorScope struct {
 	LocalAccessTokenID *contract.AccessTokenID
 	// NotBefore, when non-zero, excludes roots that started earlier.
 	NotBefore time.Time
+	// Continues, when not empty, admits only roots whose stored turn state
+	// is one of these points (convo.Scope.Continues).
+	Continues []SessionTurnPoint
+}
+
+// SessionTurnPoint is a turn state a root may have stored: its
+// turn_user_messages and turn_user_fingerprint.
+type SessionTurnPoint struct {
+	UserMessages int
+	Fingerprint  string
 }
 
 // SessionLinkMatch is the root record FindSessionLink selected.
@@ -98,6 +108,9 @@ type SessionLinkMatch struct {
 	Status contract.RequestStatus
 	// Value is the queried cursor value that matched.
 	Value string
+	// ParentSessionID is the matched record's link to the conversation that
+	// started its session, nil for a top-level conversation.
+	ParentSessionID *contract.SessionID
 }
 
 type RequestRecordStore interface {

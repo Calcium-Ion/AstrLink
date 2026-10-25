@@ -944,7 +944,12 @@ func (handler *Handler) startRecordSession(request *http.Request, classified Req
 	session.privacyGated = handler.privacyFilter != nil
 	session.bindPersistence(handler.requestRecords, handler.auditBlobs, handler.recordLogger)
 	if handler.requestRecords != nil {
-		session.fingerprinter = handler.sessionFingerprints.get(request.Context(), handler.auditBlobs, handler.recordLogger)
+		session.fingerprinter, session.linkFingerprinter = handler.sessionFingerprints.get(request.Context(), handler.auditBlobs, handler.recordLogger)
+		if session.clientType == contract.ClientDeepSeekHarness && session.linkFingerprinter != nil {
+			// Its subagents carry no thread ids; the prompts this
+			// conversation gives them are how they find it.
+			session.scanner.watchSpawns()
+		}
 	}
 	session.resolveSession(request.Context(), handler.requestRecords, handler.recordLogger)
 	// Snapshot the redacted HTTP envelope before any privacy or routing

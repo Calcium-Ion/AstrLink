@@ -9,7 +9,8 @@ import (
 )
 
 // migrateBeforeFreshInstallDefaults opens a database at the published schema
-// just before install_defaults_biometric and returns it with the full list.
+// just before install_defaults_biometric_subagent_links and returns it with
+// the full list.
 func migrateBeforeFreshInstallDefaults(t *testing.T) (*sql.DB, []Migration) {
 	t.Helper()
 	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "fresh-install-defaults.db"))
@@ -20,12 +21,12 @@ func migrateBeforeFreshInstallDefaults(t *testing.T) (*sql.DB, []Migration) {
 	migrations := DefaultMigrations()
 	index := -1
 	for i, migration := range migrations {
-		if migration.Name == "install_defaults_biometric" {
+		if migration.Name == "install_defaults_biometric_subagent_links" {
 			index = i
 		}
 	}
 	if index < 1 || migrations[index-1].Name != "request_output_activity" {
-		t.Fatal("install_defaults_biometric must follow the published output activity migration")
+		t.Fatal("install_defaults_biometric_subagent_links must follow the published output activity migration")
 	}
 	before, err := New(SQLDatabase{DB: db}, migrations[:index])
 	if err != nil {

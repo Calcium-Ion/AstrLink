@@ -1122,7 +1122,11 @@ END`,
 		// envelope table is rebuilt; nothing references it. Envelopes of kinds
 		// that test builds before v0.1.0 wrote, which no build reads now, are
 		// left out: the new table rejects them.
-		{Version: 56, Name: "install_defaults_biometric", Statements: []string{
+		//
+		// A subagent's conversation records the conversation that started it,
+		// so the request list can show it under its parent. Only subagent calls
+		// carry the link, so the index leaves out every other call.
+		{Version: 56, Name: "install_defaults_biometric_subagent_links", Statements: []string{
 			`UPDATE local_access_tokens SET source = 'system_default'
 WHERE source = 'user'
   AND created_at = (SELECT completed_at FROM local_access_token_bootstrap_state WHERE singleton = 1)`,
@@ -1224,6 +1228,8 @@ SELECT key_id, kind, kdf_json, salt, nonce, wrapped, created_at FROM raw_key_env
 WHERE kind IN ('password', 'biometric')`,
 			`DROP TABLE raw_key_envelopes`,
 			`ALTER TABLE raw_key_envelopes_new RENAME TO raw_key_envelopes`,
+			`ALTER TABLE request_records ADD COLUMN parent_session_id TEXT`,
+			`CREATE INDEX request_records_parent_session_idx ON request_records(parent_session_id) WHERE parent_session_id IS NOT NULL`,
 		}},
 	}
 }

@@ -2294,6 +2294,7 @@
     "deleteSessionTitle": "このセッションを削除",
     "deleteSessionsTitle": "{{count}} 件のセッションを削除",
     "deleteSessionsBody": "{{calls}}と暗号化された監査内容を完全に削除します。",
+    "deleteSessionsWithSubagentsBody": "{{calls}}、{{subagents}}、暗号化された監査内容を完全に削除します。",
     "callCount_one": "{{count}} 件のリクエスト",
     "callCount_other": "{{count}} 件のリクエスト",
     "cleanUp": "整理",
@@ -2427,7 +2428,13 @@
     "moreFilters": "その他のフィルター",
     "activeFilters": "適用中のフィルター",
     "moreActiveFilters": "+{{count}} 件",
-    "filterCount": "{{count}} 件選択"
+    "filterCount": "{{count}} 件選択",
+    "subagent": "サブエージェント",
+    "subagentCount_one": "サブエージェント {{count}} 件",
+    "subagentCount_other": "サブエージェント {{count}} 件",
+    "subagentList": "この会話が起動したサブエージェント",
+    "parentConversation": "親の会話",
+    "parentConversationHint": "これを起動した会話を開く"
   },
   "conversation": {
     "tab": "要約",

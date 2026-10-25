@@ -49,11 +49,11 @@ func (store *Store) FindSessionLink(
 	query, args := sessionLinkQuery(kind, cleaned, scope)
 
 	var (
-		sessionID, turnUserFingerprint, value, status sql.NullString
-		turnIndex, turnUserMessages                   sql.NullInt64
+		sessionID, turnUserFingerprint, value, status, parentSessionID sql.NullString
+		turnIndex, turnUserMessages                                    sql.NullInt64
 	)
 	err := store.db.QueryRowContext(ctx, query, args...).Scan(
-		&sessionID, &turnIndex, &turnUserMessages, &turnUserFingerprint, &value, &status,
+		&sessionID, &turnIndex, &turnUserMessages, &turnUserFingerprint, &value, &status, &parentSessionID,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -69,6 +69,10 @@ func (store *Store) FindSessionLink(
 		return storagecontract.SessionLinkMatch{}, false, fmt.Errorf("%w: session %q", storagecontract.ErrInvalidRecord, sessionID.String)
 	}
 	match := storagecontract.SessionLinkMatch{SessionID: id, Value: value.String, Status: contract.RequestStatus(status.String)}
+	if parentSessionID.Valid && parentSessionID.String != "" && parentSessionID.String != sessionID.String {
+		parent := contract.SessionID(parentSessionID.String)
+		match.ParentSessionID = &parent
+	}
 	if turnIndex.Valid && turnIndex.Int64 >= 1 {
 		turn := int(turnIndex.Int64)
 		match.TurnIndex = &turn
@@ -79,6 +83,49 @@ func (store *Store) FindSessionLink(
 		if turnUserFingerprint.Valid {
 			match.TurnUserFingerprint = turnUserFingerprint.String
 		}
+	}
+	return match, true, nil
+}
+
+// FindSessionTurn returns the newest root of a session: the turn state a
+// helper call of that conversation keeps, its status and its parent link. ok
+// is false for an unknown session.
+func (store *Store) FindSessionTurn(
+	ctx context.Context,
+	sessionID contract.SessionID,
+) (storagecontract.SessionLinkMatch, bool, error) {
+	if err := sessionID.Validate(); err != nil {
+		return storagecontract.SessionLinkMatch{}, false, fmt.Errorf("%w: %v", storagecontract.ErrInvalidArgument, err)
+	}
+	var (
+		turnUserFingerprint, status, parentSessionID sql.NullString
+		turnIndex, turnUserMessages                  sql.NullInt64
+	)
+	err := store.db.QueryRowContext(ctx, `SELECT turn_index, turn_user_messages, turn_user_fingerprint, status, parent_session_id
+FROM request_records INDEXED BY request_records_session_turns_idx
+WHERE parent_request_id IS NULL AND COALESCE(session_id, id) = ?
+ORDER BY started_at DESC, id DESC LIMIT 1`, string(sessionID)).Scan(
+		&turnIndex, &turnUserMessages, &turnUserFingerprint, &status, &parentSessionID,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return storagecontract.SessionLinkMatch{}, false, nil
+	}
+	if err != nil {
+		return storagecontract.SessionLinkMatch{}, false, fmt.Errorf("find session turn: %w", err)
+	}
+	match := storagecontract.SessionLinkMatch{SessionID: sessionID, Status: contract.RequestStatus(status.String)}
+	if turnIndex.Valid && turnIndex.Int64 >= 1 {
+		turn := int(turnIndex.Int64)
+		match.TurnIndex = &turn
+		if turnUserMessages.Valid && turnUserMessages.Int64 >= 0 {
+			users := int(turnUserMessages.Int64)
+			match.TurnUserMessages = &users
+		}
+		match.TurnUserFingerprint = turnUserFingerprint.String
+	}
+	if parentSessionID.Valid && parentSessionID.String != "" && parentSessionID.String != string(sessionID) {
+		parent := contract.SessionID(parentSessionID.String)
+		match.ParentSessionID = &parent
 	}
 	return match, true, nil
 }
@@ -191,7 +238,95 @@ func listRequestSessions(ctx context.Context, reader historyReader, options stor
 	if err := loadSessionRuntimes(ctx, reader, page.Items); err != nil {
 		return storagecontract.RequestSessionPage{}, err
 	}
+	if err := loadSubagentCounts(ctx, reader, page.Items); err != nil {
+		return storagecontract.RequestSessionPage{}, err
+	}
 	return page, nil
+}
+
+// loadSubagentCounts counts the conversations each of sessions started.
+func loadSubagentCounts(ctx context.Context, reader historyReader, sessions []contract.RequestSession) error {
+	if len(sessions) == 0 {
+		return nil
+	}
+	byID := make(map[string]*contract.RequestSession, len(sessions))
+	args := make([]any, len(sessions))
+	for index := range sessions {
+		byID[string(sessions[index].ID)] = &sessions[index]
+		args[index] = string(sessions[index].ID)
+	}
+	rows, err := reader.QueryContext(ctx, `SELECT parent_session_id, COUNT(DISTINCT COALESCE(session_id, id))
+FROM request_records
+WHERE parent_session_id IS NOT NULL AND parent_session_id IN (`+sessionPlaceholders(len(args))+`)
+  AND parent_request_id IS NULL
+GROUP BY parent_session_id`, args...)
+	if err != nil {
+		return fmt.Errorf("count subagent sessions: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var parent string
+		var count int
+		if err := rows.Scan(&parent, &count); err != nil {
+			return fmt.Errorf("scan subagent count: %w", err)
+		}
+		if session := byID[parent]; session != nil {
+			session.SubagentCount = count
+		}
+	}
+	return rows.Err()
+}
+
+// listSubagentSessions summarises the conversations parent started, oldest
+// first.
+func (store *Store) listSubagentSessions(ctx context.Context, parent contract.SessionID) ([]contract.RequestSession, error) {
+	rows, err := store.db.QueryContext(ctx, `SELECT COALESCE(session_id, id), MAX(started_at)
+FROM request_records
+WHERE parent_session_id IS NOT NULL AND parent_session_id = ? AND parent_request_id IS NULL
+GROUP BY COALESCE(session_id, id)`, string(parent))
+	if err != nil {
+		return nil, fmt.Errorf("list subagent sessions: %w", err)
+	}
+	defer rows.Close()
+	var items []sessionAggregate
+	for rows.Next() {
+		var item sessionAggregate
+		if err := rows.Scan(&item.id, &item.lastStartedAt); err != nil {
+			return nil, fmt.Errorf("scan subagent session: %w", err)
+		}
+		if item.id != string(parent) {
+			items = append(items, item)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate subagent sessions: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if len(items) == 0 {
+		return nil, nil
+	}
+	summaries, err := loadSessionSummaries(ctx, store.db, items)
+	if err != nil {
+		return nil, err
+	}
+	subagents := make([]contract.RequestSession, 0, len(items))
+	for _, item := range items {
+		if summary, ok := summaries[item.id]; ok {
+			subagents = append(subagents, summary)
+		}
+	}
+	slices.SortStableFunc(subagents, func(left, right contract.RequestSession) int {
+		if order := left.StartedAt.Compare(right.StartedAt); order != 0 {
+			return order
+		}
+		return strings.Compare(string(left.ID), string(right.ID))
+	})
+	if err := store.loadSessionRuntimes(ctx, subagents); err != nil {
+		return nil, err
+	}
+	return subagents, nil
 }
 
 // requestSessionScan selects the roots the options match, newest first. Its
@@ -273,7 +408,12 @@ func (store *Store) GetRequestSession(
 	if err := store.loadSessionRuntimes(ctx, sessions); err != nil {
 		return contract.RequestSessionDetail{}, err
 	}
-	return contract.RequestSessionDetail{RequestSession: sessions[0], Turns: turns}, nil
+	subagents, err := store.listSubagentSessions(ctx, session.ID)
+	if err != nil {
+		return contract.RequestSessionDetail{}, err
+	}
+	sessions[0].SubagentCount = len(subagents)
+	return contract.RequestSessionDetail{RequestSession: sessions[0], Turns: turns, Subagents: subagents}, nil
 }
 
 // Sum actual call durations, including demoted retry attempts. Root records
@@ -397,7 +537,7 @@ const requestSessionSummaryColumns = `
     http_status, turn_index, input_preview,
     (SELECT COUNT(*) FROM request_records children
      WHERE children.parent_request_id = request_records.id), model_redirect_json, client_type, privacy_decision,
-    output_json`
+    output_json, parent_session_id`
 
 // sessionSummaryQuery reads the root turns of sessions, each session's in
 // time order. Without statistics SQLite takes `parent_request_id IS NULL`,
@@ -442,7 +582,7 @@ func loadSessionSummaries(ctx context.Context, reader historyReader, items []ses
 	}
 	defer rows.Close()
 	var id, sessionID, startedAt, status, protocol string
-	var completedAt, model, reasoning, service, token, preview, redirect, client, decision, output sql.NullString
+	var completedAt, model, reasoning, service, token, preview, redirect, client, decision, output, parent sql.NullString
 	// The latest call's output, decoded once per session rather than per call.
 	var latestOutput string
 	var httpStatus, turn sql.NullInt64
@@ -475,7 +615,7 @@ func loadSessionSummaries(ctx context.Context, reader historyReader, items []ses
 	for rows.Next() {
 		if err := rows.Scan(&id, &sessionID, &startedAt, &completedAt, &status, &protocol,
 			&model, &reasoning, &service, &token, &httpStatus, &turn, &preview,
-			&children, &redirect, &client, &decision, &output); err != nil {
+			&children, &redirect, &client, &decision, &output, &parent); err != nil {
 			return nil, err
 		}
 		if string(current.ID) != sessionID {
@@ -566,6 +706,10 @@ func loadSessionSummaries(ctx context.Context, reader historyReader, items []ses
 		current.ServiceID, current.LocalAccessTokenID = record.ServiceID, record.LocalAccessTokenID
 		current.ModelRedirect = record.ModelRedirect
 		current.PrivacyWarned = current.PrivacyWarned || decision.String == string(contract.PrivacyDecisionWarn)
+		if current.ParentSessionID == nil && parent.Valid && parent.String != "" && parent.String != sessionID {
+			value := contract.SessionID(parent.String)
+			current.ParentSessionID = &value
+		}
 		latestOutput = output.String
 	}
 	if err := rows.Err(); err != nil {
@@ -624,10 +768,15 @@ func sessionFromTurns(turns []contract.RequestRecord) (contract.RequestSession, 
 	}
 	callCount := 0
 	warned := false
+	var parent *contract.SessionID
 	for _, turn := range turns {
 		callCount += 1 + turn.ChildCount
 		if turn.PrivacyDecision != nil && *turn.PrivacyDecision == contract.PrivacyDecisionWarn {
 			warned = true
+		}
+		if parent == nil && turn.ParentSessionID != nil && *turn.ParentSessionID != id {
+			value := *turn.ParentSessionID
+			parent = &value
 		}
 	}
 	session := contract.RequestSession{
@@ -648,6 +797,7 @@ func sessionFromTurns(turns []contract.RequestRecord) (contract.RequestSession, 
 		ServiceID:          latest.ServiceID,
 		LocalAccessTokenID: latest.LocalAccessTokenID,
 		PrivacyWarned:      warned,
+		ParentSessionID:    parent,
 	}
 	if err := session.Validate(); err != nil {
 		return contract.RequestSession{}, fmt.Errorf("%w: session %q: %v", storagecontract.ErrInvalidRecord, id, err)

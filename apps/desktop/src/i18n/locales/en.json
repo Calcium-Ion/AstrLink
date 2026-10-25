@@ -2294,6 +2294,7 @@
     "deleteSessionTitle": "Delete this session",
     "deleteSessionsTitle": "Delete {{count}} sessions",
     "deleteSessionsBody": "This permanently deletes {{calls}} and any encrypted audit content.",
+    "deleteSessionsWithSubagentsBody": "This permanently deletes {{calls}}, {{subagents}} and any encrypted audit content.",
     "callCount_one": "{{count}} call",
     "callCount_other": "{{count}} calls",
     "cleanUp": "Clean up",
@@ -2427,7 +2428,13 @@
     "moreFilters": "More filters",
     "activeFilters": "Active filters",
     "moreActiveFilters": "+{{count}} more",
-    "filterCount": "{{count}} selected"
+    "filterCount": "{{count}} selected",
+    "subagent": "Subagent",
+    "subagentCount_one": "{{count}} subagent",
+    "subagentCount_other": "{{count}} subagents",
+    "subagentList": "Subagents it started",
+    "parentConversation": "Parent conversation",
+    "parentConversationHint": "Open the conversation that started this one"
   },
   "conversation": {
     "tab": "Summary",

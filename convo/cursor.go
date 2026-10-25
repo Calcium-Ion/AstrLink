@@ -85,9 +85,41 @@ func (err errInvalidCursor) Error() string { return "convo: invalid cursor: " + 
 // Scope constrains a Lookup. SamePrincipal requires the host to restrict the
 // query to the principal (API key, user, tenant) of the current request;
 // NotBefore, when non-zero, excludes records started before that instant.
+// Continues, when set, further restricts a KindExplicit lookup to records
+// whose stored turn state the request's history continues.
 type Scope struct {
 	SamePrincipal bool
 	NotBefore     time.Time
+	Continues     *Continuation
+}
+
+// Continuation describes a request's history by its newest user messages.
+// A stored record continues into the request when its TurnState's
+// UserMessages and LastUserFingerprint equal one of Points: the request
+// still holds, at the same position, the user text the record ended on.
+type Continuation struct {
+	Points []TurnPoint
+}
+
+// TurnPoint is one user message of a request's history: how many counted
+// user messages the history holds up to it, and the keyed fingerprint of the
+// newest user text at or before it.
+type TurnPoint struct {
+	UserMessages        int
+	LastUserFingerprint string
+}
+
+// Holds reports whether turn ends at one of the points.
+func (continuation *Continuation) Holds(turn *TurnState) bool {
+	if continuation == nil || turn == nil {
+		return false
+	}
+	for _, point := range continuation.Points {
+		if point.UserMessages == turn.UserMessages && point.LastUserFingerprint == turn.LastUserFingerprint {
+			return true
+		}
+	}
+	return false
 }
 
 // TurnState is what a record remembers about its user turn so the next
@@ -104,6 +136,10 @@ type TurnState struct {
 	// or "" when the host has no Fingerprinter. A changed fingerprint at an
 	// unchanged count (a harness that compacted history, a client that edited
 	// the last message) also starts a new turn.
+	//
+	// A state with no user messages and no fingerprint belongs to a helper
+	// call that opened its session (see Decision.SideCall): it holds the
+	// turn's place but gives the next request nothing to compare against.
 	LastUserFingerprint string
 }
 
@@ -123,6 +159,8 @@ type Match struct {
 // the producer carries the turn a continuation builds on. DirectionIn is
 // searched for KindExplicit only, so client-chosen ids that no response
 // emits (prompt_cache_key, Claude Code session ids) still link siblings.
+// A host that ignores Scope.Continues still works: Resolve checks the
+// returned record against it and treats a mismatch as no match.
 type Lookup func(ctx context.Context, kind Kind, values []string, scope Scope) (Match, bool, error)
 
 // Decision is the outcome of Policy.Resolve.
@@ -134,6 +172,14 @@ type Decision struct {
 	// Turn is the user turn this request belongs to, or nil when the protocol
 	// has no user turns. Hosts store it and hand it back through Match.Turn.
 	Turn *TurnState
+	// SideCall is set when the request is a helper call of its thread rather
+	// than its next step: the host marked it (RequestSummary.SideCall), or,
+	// under Policy.ToolFreeHelpers, it offers no tools and its history
+	// continues no earlier call of the thread, as a title request does. Turn then repeats the
+	// matched record's state, so the call neither opens a turn nor moves the
+	// thread's state; one that opens its session holds turn 1 with nothing
+	// to compare. Hosts should not show its text as the turn's prompt.
+	SideCall bool
 	// Inbound lists every cursor the request carried, in layer order. Hosts
 	// should persist only the first KindExplicit entry (see PersistentInbound)
 	// so lower-priority hints cannot alias separate conversations.

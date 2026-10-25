@@ -2,6 +2,7 @@ import { useWorkspaceSnapshot } from "./workspace-snapshots";
 import { SessionChannelBindings } from "./SessionChannelBindings";
 import { RecoveryChain, RecoveryDetails } from "./components/RecoveryDetails";
 import {
+  Fragment,
   memo,
   useCallback,
   useEffect,
@@ -13,6 +14,8 @@ import {
   type ReactNode,
 } from "react";
 import {
+  ArrowUp,
+  Bot,
   Brain,
   ChevronDown,
   ChevronUp,
@@ -166,6 +169,7 @@ import {
   conversationActivity,
   laneAction,
   laneTrail,
+  nestSubagents,
   splitActiveSessions,
   type LaneAction,
   type LaneStep,
@@ -264,8 +268,14 @@ const DETAIL_TABS: readonly DetailTab[] = [
 type PendingConfirm =
   | { kind: "audit-risk"; patch: AuditSettingsPatch }
   | { kind: "delete"; requestId: string }
-  // Whole sessions, from the list selection or the open detail.
-  | { kind: "delete-sessions"; sessionIds: string[]; calls: number }
+  // Whole sessions, from the list selection or the open detail, with the
+  // subagent conversations they started, which go with them.
+  | {
+      kind: "delete-sessions";
+      sessionIds: string[];
+      calls: number;
+      subagents: number;
+    }
   | { kind: "purge-all" }
   | { kind: "purge-before"; before: string };
 
@@ -1441,6 +1451,10 @@ export function RequestRecords({
       kind: "delete-sessions",
       sessionIds: checkedItems.map((session) => session.id),
       calls: checkedItems.reduce((sum, session) => sum + session.call_count, 0),
+      subagents: checkedItems.reduce(
+        (sum, session) => sum + (session.subagent_count ?? 0),
+        0,
+      ),
     });
   };
 
@@ -2414,12 +2428,17 @@ export function RequestRecords({
                 kind: "delete-sessions",
                 sessionIds: [selectedSession.id],
                 calls: selectedSession.call_count,
+                subagents:
+                  overlaySessions[selectedSession.id]?.subagents?.length ??
+                  selectedSession.subagent_count ??
+                  0,
               })
             }
             onLockRaw={() => void lockRawContent()}
             onRegisterRecords={(records) =>
               setOverlayRecords((current) => ({ ...current, ...records }))
             }
+            onOpenSession={openDetail}
             onSelectTurn={setSelectedTurnId}
             onSetRawPassword={() => setRawDialog({ kind: "set" })}
             onUnlockRaw={() => void unlockRawContent()}
@@ -2431,6 +2450,7 @@ export function RequestRecords({
             )}
             services={servicesById}
             session={selectedSession}
+            subagents={overlaySessions[selectedSession.id]?.subagents}
             turns={selectedTurns}
           />
         ) : null}
@@ -2618,14 +2638,21 @@ function SessionStream({
   const t = i18n.t.bind(i18n);
   // The live board's read of the last few minutes tells each lane its steps.
   const recentCalls = useRequestActivityFeed(coreSessionKey)?.calls ?? NO_CALLS;
+  // A subagent sits under the conversation that started it; one whose parent
+  // is not on this page stands on its own.
+  const { roots, subagentsOf } = useMemo(
+    () => nestSubagents(sessions),
+    [sessions],
+  );
   // Conversations in progress lead the list. One waiting between calls moves
   // down into its day once its wait runs out, so the list re-reads the clock
   // every second while any is in progress, even if no poll brings news.
-  const { active, rest } = splitActiveSessions(sessions, Date.now());
+  const nowMs = Date.now();
+  const { active, rest } = splitActiveSessions(roots, nowMs, subagentsOf);
   useLiveClock(active.length > 0, 1000);
   // Only the date buckets need "now", and those turn over once a day.
   const groups = groupSessionsByDate(rest);
-  let remaining = useProgressiveRowCount(sessions.length) - active.length;
+  let remaining = useProgressiveRowCount(roots.length) - active.length;
   const statusColumn = useStatusColumnWidth();
   return (
     <div
@@ -2667,17 +2694,38 @@ function SessionStream({
               {t("records.countItems", { count: active.length })}
             </Badge>
           </div>
-          {active.map((session) => (
-            <SessionLane
-              checked={checkedIds?.has(session.id)}
-              key={session.id}
-              onOpen={onOpen}
-              recentCalls={recentCalls}
-              selected={session.id === selectedId}
-              services={services}
-              session={session}
-            />
-          ))}
+          {active.map((session) => {
+            // Only subagents still at work get a row; the rest are a
+            // click away in the conversation's details.
+            const working = (subagentsOf.get(session.id) ?? []).filter(
+              (subagent) => conversationActivity(subagent, nowMs) !== null,
+            );
+            return (
+              <Fragment key={session.id}>
+                <SessionLane
+                  checked={checkedIds?.has(session.id)}
+                  onOpen={onOpen}
+                  recentCalls={recentCalls}
+                  selected={session.id === selectedId}
+                  services={services}
+                  session={session}
+                  subagents={subagentCount(session, subagentsOf)}
+                  trunk={working.length > 0}
+                />
+                {working.map((subagent, index) => (
+                  <SubagentLane
+                    checked={checkedIds?.has(subagent.id)}
+                    key={subagent.id}
+                    last={index === working.length - 1}
+                    onOpen={onOpen}
+                    recentCalls={recentCalls}
+                    selected={subagent.id === selectedId}
+                    session={subagent}
+                  />
+                ))}
+              </Fragment>
+            );
+          })}
         </section>
       ) : null}
       {groups.map((group) => {
@@ -2710,6 +2758,7 @@ function SessionStream({
                   selected={session.id === selectedId}
                   services={services}
                   session={session}
+                  subagents={subagentCount(session, subagentsOf)}
                 />
               ),
             )}
@@ -2717,6 +2766,20 @@ function SessionStream({
         );
       })}
     </div>
+  );
+}
+
+/**
+ * How many subagents a conversation started: the gateway's count, or the
+ * ones on this page when it has none.
+ */
+function subagentCount(
+  session: RequestSession,
+  subagentsOf: ReadonlyMap<string, readonly RequestSession[]>,
+): number {
+  return Math.max(
+    session.subagent_count ?? 0,
+    subagentsOf.get(session.id)?.length ?? 0,
   );
 }
 
@@ -2834,6 +2897,7 @@ const SessionRow = memo(function SessionRow({
   selected,
   checked,
   onOpen,
+  subagents = 0,
 }: {
   session: RequestSession;
   services: RequestServiceMap;
@@ -2841,6 +2905,8 @@ const SessionRow = memo(function SessionRow({
   /** Set in selection mode, where the row is a checkbox. */
   checked: boolean | undefined;
   onOpen: (sessionId: string) => void;
+  /** Subagents the conversation started; their rows fold into this one. */
+  subagents?: number;
 }) {
   // Memoized, so it subscribes to the language itself.
   const t = useT();
@@ -2930,6 +2996,9 @@ const SessionRow = memo(function SessionRow({
                 duration: formatDuration(sessionRuntimeMs(session, nowMs)),
               },
             )}
+            {subagents > 0 ? (
+              <span>{` · ${t("records.subagentCount", { count: subagents })}`}</span>
+            ) : null}
             {session.output_tokens_per_second != null ? (
               <span title={t("records.outputSpeed")}>
                 {` · ${session.output_tokens_per_second.toFixed(1)} tok/s`}
@@ -2970,6 +3039,8 @@ const SessionLane = memo(function SessionLane({
   checked,
   onOpen,
   recentCalls,
+  subagents = 0,
+  trunk = false,
 }: {
   session: RequestSession;
   services: RequestServiceMap;
@@ -2979,6 +3050,10 @@ const SessionLane = memo(function SessionLane({
   onOpen: (sessionId: string) => void;
   /** Every conversation's calls of the last few minutes. */
   recentCalls: readonly RequestActivityCall[];
+  /** Subagents the conversation started. */
+  subagents?: number;
+  /** Set when subagent rows follow, which hang off this lane's slot. */
+  trunk?: boolean;
 }) {
   const t = useT();
   const trail = useMemo(
@@ -3004,6 +3079,7 @@ const SessionLane = memo(function SessionLane({
         selecting
           ? "grid-cols-[1.25rem_minmax(0,1fr)] @[560px]/request-list:grid-cols-[1.25rem_minmax(0,11rem)_minmax(0,1fr)]"
           : "grid-cols-1 @[560px]/request-list:grid-cols-[minmax(0,11rem)_minmax(0,1fr)]",
+        trunk && "border-b-0",
       )}
     >
       <Button
@@ -3040,73 +3116,223 @@ const SessionLane = memo(function SessionLane({
             service={service}
           />
         </span>
-        <ActivitySlot
-          className="grid grid-cols-[1.25rem_minmax(0,1fr)_auto] items-center gap-x-2 gap-y-0.5 px-2.5 py-1.5"
-          state={calling ? "running" : "idle"}
-        >
-          <ClientTypeIcon clientType={session.client_type} />
-          <span className="flex min-w-0 items-center gap-2">
-            <strong
-              className="min-w-0 truncate text-sm font-medium"
+        <span className="relative block min-w-0">
+          <ActivitySlot
+            className="grid grid-cols-[1.25rem_minmax(0,1fr)_auto] items-center gap-x-2 gap-y-0.5 px-2.5 py-1.5"
+            state={calling ? "running" : "idle"}
+          >
+            <ClientTypeIcon clientType={session.client_type} />
+            <span className="flex min-w-0 items-center gap-2">
+              <strong
+                className="min-w-0 truncate text-sm font-medium"
+                title={session.title || title}
+              >
+                {title}
+              </strong>
+              {session.privacy_warned ? (
+                <StatusBadge
+                  className="shrink-0"
+                  data-testid="privacy-warned-marker"
+                  title={t("records.privacyWarnedHint")}
+                  tone="pending"
+                >
+                  {t("records.privacyWarned")}
+                </StatusBadge>
+              ) : null}
+            </span>
+            {calling || !outcome ? (
+              <LaneActionLabel
+                action={laneAction(session)}
+                calls={calls}
+                elapsedMs={nowMs - since}
+              />
+            ) : (
+              <span
+                className="inline-flex items-center gap-1.5 justify-self-end text-xs whitespace-nowrap tabular-nums text-muted-foreground"
+                data-testid="lane-state"
+                title={t("records.laneIdleHint")}
+              >
+                <StatusBadge
+                  tone={
+                    outcome === "cancelled" ? "neutral" : statusTone(outcome)
+                  }
+                >
+                  {statusLabel(outcome)}
+                </StatusBadge>
+                {t("records.laneIdle", {
+                  duration: formatWait(nowMs - since),
+                })}
+              </span>
+            )}
+            <span className="col-span-2 col-start-2 flex min-w-0 items-center justify-between gap-3 text-xs leading-5 text-muted-foreground">
+              <LaneTrail firstCall={session.call_count === 1} steps={trail} />
+              <span className="min-w-0 truncate tabular-nums">
+                {t(
+                  session.turn_count === session.call_count
+                    ? "records.sessionMetaTurns"
+                    : "records.sessionMeta",
+                  {
+                    count: session.turn_count,
+                    turns: session.turn_count,
+                    calls: session.call_count,
+                    duration: formatDuration(sessionRuntimeMs(session, nowMs)),
+                  },
+                )}
+                {subagents > 0 ? (
+                  <span>{` · ${t("records.subagentCount", { count: subagents })}`}</span>
+                ) : null}
+                {session.output_tokens_per_second != null ? (
+                  <span title={t("records.outputSpeed")}>
+                    {` · ${session.output_tokens_per_second.toFixed(1)} tok/s`}
+                  </span>
+                ) : null}
+              </span>
+            </span>
+          </ActivitySlot>
+          {trunk ? (
+            // The trunk the subagent rows below branch off.
+            <span
+              aria-hidden="true"
+              className="absolute top-full left-2.5 h-2.5 border-l border-border"
+            />
+          ) : null}
+        </span>
+      </Button>
+    </DataRow>
+  );
+});
+
+/**
+ * A subagent at work for the conversation above, in one compact row under
+ * its lane: what it was asked, its last steps and what it does now. Its
+ * counts are on hover.
+ */
+const SubagentLane = memo(function SubagentLane({
+  session,
+  selected,
+  checked,
+  onOpen,
+  recentCalls,
+  last,
+}: {
+  session: RequestSession;
+  selected: boolean;
+  /** Set in selection mode, where the row is a checkbox. */
+  checked: boolean | undefined;
+  onOpen: (sessionId: string) => void;
+  /** Every conversation's calls of the last few minutes. */
+  recentCalls: readonly RequestActivityCall[];
+  /** The last row under its conversation, where the branch ends. */
+  last: boolean;
+}) {
+  const t = useT();
+  const trail = useMemo(
+    () => laneTrail(recentCalls, session),
+    [recentCalls, session],
+  );
+  const calling = sessionRunning(session);
+  const nowMs = useLiveClock(true, calling ? LIVE_CLOCK_INTERVAL_MS : 1000);
+  const since = conversationActivity(session, nowMs)?.since ?? nowMs;
+  const calls = Math.max(1, session.active_request_starts.length);
+  const behavior = rowBehavior(session, checked, selected, onOpen, t);
+  const title = compactTitle(session.title) || t("records.untitledSession");
+  const selecting = checked !== undefined;
+  const meta = t(
+    session.turn_count === session.call_count
+      ? "records.sessionMetaTurns"
+      : "records.sessionMeta",
+    {
+      count: session.turn_count,
+      turns: session.turn_count,
+      calls: session.call_count,
+      duration: formatDuration(sessionRuntimeMs(session, nowMs)),
+    },
+  );
+  const outcome =
+    !calling && session.status !== "succeeded" ? session.status : null;
+  return (
+    <DataRow
+      asChild
+      className={cn(
+        "grid items-center gap-x-3 px-3 py-1.5",
+        selecting
+          ? "grid-cols-[1.25rem_minmax(0,1fr)] @[560px]/request-list:grid-cols-[1.25rem_minmax(0,11rem)_minmax(0,1fr)]"
+          : "grid-cols-1 @[560px]/request-list:grid-cols-[minmax(0,11rem)_minmax(0,1fr)]",
+        !last && "border-b-0",
+      )}
+    >
+      <Button
+        {...behavior.props}
+        className="h-auto w-full rounded-none bg-transparent text-left font-normal whitespace-normal text-foreground hover:bg-muted/60 focus-visible:bg-accent focus-visible:ring-inset aria-checked:bg-accent aria-[current=true]:bg-accent"
+        data-activity={calling ? "calling" : "idle"}
+        data-session-id={session.id}
+        data-testid="subagent-session-row"
+        type="button"
+        variant="ghost"
+      >
+        {selecting ? (
+          <CheckboxMark
+            checked={checked}
+            className="justify-self-center"
+            disabled={behavior.locked}
+          />
+        ) : null}
+        {/* The model column stays empty: the lane above names the model. */}
+        <span
+          aria-hidden="true"
+          className="hidden @[560px]/request-list:block"
+        />
+        <span className="relative block min-w-0 pl-6">
+          {/* A hairline elbow from the trunk into this row. */}
+          <span
+            aria-hidden="true"
+            className="absolute top-[-0.375rem] left-2.5 h-[calc(50%+0.375rem)] w-3.5 rounded-bl-md border-b border-l border-border"
+          />
+          {last ? null : (
+            <span
+              aria-hidden="true"
+              className="absolute top-1/2 bottom-[-0.375rem] left-2.5 border-l border-border"
+            />
+          )}
+          <ActivitySlot
+            className="grid grid-cols-[1.25rem_minmax(0,1fr)_auto_auto] items-center gap-x-3 px-2.5 py-1"
+            state={calling ? "running" : "idle"}
+            title={meta}
+          >
+            <span
+              className="inline-flex justify-center text-muted-foreground"
+              title={t("records.subagent")}
+            >
+              <Bot
+                animateOnHover={false}
+                aria-hidden="true"
+                className="size-4"
+              />
+            </span>
+            <span
+              className="min-w-0 truncate text-sm"
               title={session.title || title}
             >
               {title}
-            </strong>
-            {session.privacy_warned ? (
-              <StatusBadge
-                className="shrink-0"
-                data-testid="privacy-warned-marker"
-                title={t("records.privacyWarnedHint")}
-                tone="pending"
-              >
-                {t("records.privacyWarned")}
-              </StatusBadge>
-            ) : null}
-          </span>
-          {calling || !outcome ? (
-            <LaneActionLabel
-              action={laneAction(session)}
-              calls={calls}
-              elapsedMs={nowMs - since}
-            />
-          ) : (
-            <span
-              className="inline-flex items-center gap-1.5 justify-self-end text-xs whitespace-nowrap tabular-nums text-muted-foreground"
-              data-testid="lane-state"
-              title={t("records.laneIdleHint")}
-            >
+            </span>
+            <span className="hidden text-xs text-muted-foreground @[720px]/request-list:flex">
+              <LaneTrail firstCall={session.call_count === 1} steps={trail} />
+            </span>
+            {calling || !outcome ? (
+              <LaneActionLabel
+                action={laneAction(session)}
+                calls={calls}
+                elapsedMs={nowMs - since}
+              />
+            ) : (
               <StatusBadge
                 tone={outcome === "cancelled" ? "neutral" : statusTone(outcome)}
               >
                 {statusLabel(outcome)}
               </StatusBadge>
-              {t("records.laneIdle", {
-                duration: formatWait(nowMs - since),
-              })}
-            </span>
-          )}
-          <span className="col-span-2 col-start-2 flex min-w-0 items-center justify-between gap-3 text-xs leading-5 text-muted-foreground">
-            <LaneTrail firstCall={session.call_count === 1} steps={trail} />
-            <span className="min-w-0 truncate tabular-nums">
-              {t(
-                session.turn_count === session.call_count
-                  ? "records.sessionMetaTurns"
-                  : "records.sessionMeta",
-                {
-                  count: session.turn_count,
-                  turns: session.turn_count,
-                  calls: session.call_count,
-                  duration: formatDuration(sessionRuntimeMs(session, nowMs)),
-                },
-              )}
-              {session.output_tokens_per_second != null ? (
-                <span title={t("records.outputSpeed")}>
-                  {` · ${session.output_tokens_per_second.toFixed(1)} tok/s`}
-                </span>
-              ) : null}
-            </span>
-          </span>
-        </ActivitySlot>
+            )}
+          </ActivitySlot>
+        </span>
       </Button>
     </DataRow>
   );
@@ -3349,6 +3575,8 @@ function RecordDetail({
   onRegisterRecords,
   onSetRawPassword,
   onUnlockRaw,
+  onOpenSession,
+  subagents,
 }: {
   record: RequestRecord;
   serviceNames: Record<string, string>;
@@ -3379,6 +3607,10 @@ function RecordDetail({
   /** Sets up the raw password, for parts kept out while there was none. */
   onSetRawPassword: () => void;
   onUnlockRaw: () => void;
+  /** Opens another conversation: a subagent or the one that started this. */
+  onOpenSession: (sessionId: string) => void;
+  /** The conversations this one started as subagents, oldest first. */
+  subagents?: readonly RequestSession[];
 }) {
   const t = useT();
   const copyFeedback = useCopyFeedback();
@@ -3562,18 +3794,83 @@ function RecordDetail({
         titleId="request-detail-heading"
         titlePrefix={<ClientTypeIcon clientType={record.client_type} />}
         overline={
-          <StatusBadge
-            className="shrink-0"
-            data-testid="record-status"
-            tone={statusTone(session.status)}
-          >
-            {statusLabel(session.status)}
-            {session.status === "pending" ? (
-              <span className="ml-1.5 tabular-nums">
-                <SessionDuration session={session} />
-              </span>
+          <span className="flex min-w-0 items-center gap-1.5">
+            <StatusBadge
+              className="shrink-0"
+              data-testid="record-status"
+              tone={statusTone(session.status)}
+            >
+              {statusLabel(session.status)}
+              {session.status === "pending" ? (
+                <span className="ml-1.5 tabular-nums">
+                  <SessionDuration session={session} />
+                </span>
+              ) : null}
+            </StatusBadge>
+            {/* Subagent links sit beside the status, clear of the title row. */}
+            {subagents && subagents.length > 0 ? (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    className="text-muted-foreground"
+                    data-testid="session-subagents"
+                    size="xs"
+                    type="button"
+                    variant="ghost"
+                  >
+                    <Bot animateOnHover={false} aria-hidden="true" />
+                    {t("records.subagentCount", { count: subagents.length })}
+                    <ChevronDown aria-hidden="true" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent
+                  align="start"
+                  aria-label={t("records.subagentList")}
+                  className="max-w-96"
+                >
+                  {subagents.map((subagent) => (
+                    <DropdownMenuItem
+                      data-session-id={subagent.id}
+                      key={subagent.id}
+                      onSelect={() => onOpenSession(subagent.id)}
+                    >
+                      <StatusDot
+                        label={statusLabel(subagent.status)}
+                        tone={statusTone(subagent.status)}
+                      />
+                      <span className="min-w-0 truncate">
+                        {compactTitle(subagent.title) ||
+                          t("records.untitledSession")}
+                      </span>
+                      <span className="ml-auto shrink-0 pl-3 text-micro tabular-nums text-muted-foreground">
+                        {t("records.turnsCount", {
+                          count: subagent.turn_count,
+                        })}
+                      </span>
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
             ) : null}
-          </StatusBadge>
+            {session.parent_session_id ? (
+              <Button
+                className="text-muted-foreground"
+                data-testid="parent-session"
+                onClick={() => {
+                  if (session.parent_session_id) {
+                    onOpenSession(session.parent_session_id);
+                  }
+                }}
+                size="xs"
+                title={t("records.parentConversationHint")}
+                type="button"
+                variant="ghost"
+              >
+                <ArrowUp animateOnHover={false} aria-hidden="true" />
+                {t("records.parentConversation")}
+              </Button>
+            ) : null}
+          </span>
         }
         titleSuffix={
           <>
@@ -4510,9 +4807,15 @@ function confirmMessage(pending: PendingConfirm): string {
     return i18n.t("records.deleteBody");
   }
   if (pending.kind === "delete-sessions") {
-    return i18n.t("records.deleteSessionsBody", {
-      calls: i18n.t("records.callCount", { count: pending.calls }),
-    });
+    const calls = i18n.t("records.callCount", { count: pending.calls });
+    return pending.subagents > 0
+      ? i18n.t("records.deleteSessionsWithSubagentsBody", {
+          calls,
+          subagents: i18n.t("records.subagentCount", {
+            count: pending.subagents,
+          }),
+        })
+      : i18n.t("records.deleteSessionsBody", { calls });
   }
   if (pending.kind === "purge-all") {
     return i18n.t("records.purgeAllBody");

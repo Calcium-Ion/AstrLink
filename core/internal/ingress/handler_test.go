@@ -1174,19 +1174,58 @@ func (store *memoryRequestRecordStore) FindSessionLink(
 			if !scope.NotBefore.IsZero() && record.StartedAt.Before(scope.NotBefore) {
 				continue
 			}
+			if len(scope.Continues) > 0 && !continuesRecord(scope.Continues, record) {
+				continue
+			}
 			value, ok := matches(record, direction)
 			if !ok {
 				continue
 			}
 			match := storage.SessionLinkMatch{
 				SessionID: *record.SessionID, TurnIndex: record.TurnIndex, TurnUserMessages: record.TurnUserMessages,
-				Status: record.Status, Value: value,
+				Status: record.Status, Value: value, ParentSessionID: record.ParentSessionID,
 			}
 			if record.TurnUserFingerprint != nil {
 				match.TurnUserFingerprint = *record.TurnUserFingerprint
 			}
 			return match, true, nil
 		}
+	}
+	return storage.SessionLinkMatch{}, false, nil
+}
+
+// continuesRecord reports whether record's turn state is one of points.
+func continuesRecord(points []storage.SessionTurnPoint, record contract.RequestRecord) bool {
+	if record.TurnUserMessages == nil {
+		return false
+	}
+	fingerprint := ""
+	if record.TurnUserFingerprint != nil {
+		fingerprint = *record.TurnUserFingerprint
+	}
+	for _, point := range points {
+		if point.UserMessages == *record.TurnUserMessages && point.Fingerprint == fingerprint {
+			return true
+		}
+	}
+	return false
+}
+
+// FindSessionTurn returns the newest root of a session.
+func (store *memoryRequestRecordStore) FindSessionTurn(_ context.Context, session contract.SessionID) (storage.SessionLinkMatch, bool, error) {
+	for index := len(store.records) - 1; index >= 0; index-- {
+		record := store.records[index]
+		if record.ParentRequestID != nil || record.SessionID == nil || *record.SessionID != session {
+			continue
+		}
+		match := storage.SessionLinkMatch{
+			SessionID: session, TurnIndex: record.TurnIndex, TurnUserMessages: record.TurnUserMessages,
+			Status: record.Status, ParentSessionID: record.ParentSessionID,
+		}
+		if record.TurnUserFingerprint != nil {
+			match.TurnUserFingerprint = *record.TurnUserFingerprint
+		}
+		return match, true, nil
 	}
 	return storage.SessionLinkMatch{}, false, nil
 }

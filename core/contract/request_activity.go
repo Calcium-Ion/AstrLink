@@ -6,6 +6,9 @@ import "time"
 // their root's span, so the spans of a session tell when it was busy.
 type RequestActivityCall struct {
 	SessionID SessionID `json:"session_id"`
+	// ParentSessionID is set on a subagent's calls: the conversation that
+	// started it.
+	ParentSessionID *SessionID `json:"parent_session_id,omitempty"`
 	// ClientType is the inbound client; absent on historical records.
 	ClientType  ClientType    `json:"client_type,omitempty"`
 	StartedAt   time.Time     `json:"started_at"`

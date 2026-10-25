@@ -51,6 +51,9 @@ type usageScanner struct {
 	// stream moved it on and cleared once it was stored.
 	output        contract.OutputActivity
 	outputChanged bool
+	// spawns, when set, collects the subagent tool calls of an OpenAI Chat
+	// response; see watchSpawns.
+	spawns *spawnCalls
 }
 
 func newUsageScanner(protocol contract.ProtocolID, streaming bool) *usageScanner {
@@ -68,7 +71,28 @@ func (scanner *usageScanner) reset(protocol contract.ProtocolID, streaming bool)
 	if scanner == nil {
 		return
 	}
+	watching := scanner.spawns != nil
 	*scanner = *newUsageScanner(protocol, streaming)
+	if watching {
+		scanner.watchSpawns()
+	}
+}
+
+// watchSpawns makes the scanner collect the subagent tool calls the response
+// makes, for a client whose subagents carry no thread ids.
+func (scanner *usageScanner) watchSpawns() {
+	if scanner != nil && scanner.protocol == contract.ProtocolOpenAIChat {
+		scanner.spawns = &spawnCalls{}
+	}
+}
+
+// spawnPrompts returns the prompts of the subagent tool calls seen so far.
+func (scanner *usageScanner) spawnPrompts() []string {
+	if scanner == nil || scanner.spawns == nil {
+		return nil
+	}
+	scanner.Usage()
+	return scanner.spawns.prompts()
 }
 
 // conversation returns what the response contributed to session identity.
@@ -251,6 +275,7 @@ func (scanner *usageScanner) parseEventJSON(payload []byte) {
 		scanner.observer.ObserveEvent(document)
 		scanner.observerFed = true
 	}
+	scanner.spawns.observe(payload, scanner.streaming)
 	switch scanner.protocol {
 	case contract.ProtocolOpenAIResponses, contract.ProtocolOpenAIResponsesCompact:
 		scanner.parseOpenAIResponses(document)
