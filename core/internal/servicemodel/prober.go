@@ -21,6 +21,7 @@ import (
 	"github.com/QuantumNous/astrlink/core/internal/secretstore"
 	"github.com/QuantumNous/astrlink/core/internal/subscription"
 	"github.com/QuantumNous/astrlink/core/internal/transport"
+	"github.com/QuantumNous/astrlink/core/internal/vertexauth"
 )
 
 const (
@@ -49,6 +50,7 @@ type Prober struct {
 	secrets       secretstore.SecretStore
 	subscriptions *subscription.Manager
 	client        *http.Client
+	vertex        *vertexauth.Manager
 }
 
 func New(secrets secretstore.SecretStore, subscriptions *subscription.Manager, client *http.Client) *Prober {
@@ -62,7 +64,12 @@ func New(secrets secretstore.SecretStore, subscriptions *subscription.Manager, c
 		}
 		client = &http.Client{Transport: transportCopy}
 	}
-	return &Prober{secrets: secrets, subscriptions: subscriptions, client: networkproxy.WrapClient(client)}
+	return &Prober{secrets: secrets, subscriptions: subscriptions, client: networkproxy.WrapClient(client), vertex: vertexauth.New(client)}
+}
+
+func (prober *Prober) WithVertexTokens(tokens *vertexauth.Manager) *Prober {
+	prober.vertex = tokens
+	return prober
 }
 
 func (prober *Prober) ProbeService(
@@ -103,8 +110,11 @@ func (prober *Prober) ProbeHTTP(
 	if err := connection.Validate(serviceID); err != nil {
 		return Discovery{}, fmt.Errorf("%w: invalid HTTP connection", ErrUnsupported)
 	}
+	if (kind == contract.ServiceKindVertex) != (connection.Vertex != nil) {
+		return Discovery{}, ErrUnsupported
+	}
 	secret := append([]byte(nil), credential...)
-	defer clear(secret)
+	defer func() { clear(secret) }()
 	if connection.Auth.Scheme != contract.AuthSchemeNone && len(secret) == 0 {
 		if connection.CredentialRef == "" || prober == nil || prober.secrets == nil {
 			return Discovery{}, ErrCredentialUnavailable
@@ -121,6 +131,13 @@ func (prober *Prober) ProbeHTTP(
 			return Discovery{}, fmt.Errorf("%w: %v", ErrCredentialUnavailable, err)
 		}
 	}
+	if kind == contract.ServiceKindVertex {
+		token, err := prober.vertex.AccessToken(probeContext, serviceID, secret)
+		if err != nil {
+			return Discovery{}, fmt.Errorf("%w: %w", ErrCredentialUnavailable, err)
+		}
+		return prober.probeVertex(probeContext, connection, token)
+	}
 	headers, err := authorizationHeaders(providerapi.Auth(kind, protocol, connection.Auth), secret)
 	if err != nil {
 		return Discovery{}, err
@@ -133,7 +150,7 @@ func (prober *Prober) ProbeHTTP(
 		return Discovery{}, fmt.Errorf("%w: invalid base URL", ErrUnsupported)
 	}
 	baseURL = providerapi.BaseURL(kind, protocol, baseURL)
-	return prober.probeHTTPPages(probeContext, baseURL.String(), headers, protocol, kind == contract.ServiceKindAnthropic, connection.ModelListPath)
+	return prober.probeHTTPPages(probeContext, baseURL.String(), headers, protocol, kind == contract.ServiceKindAnthropic, connection.ModelListPath, false)
 }
 
 func (prober *Prober) probeSubscription(
@@ -170,13 +187,13 @@ func (prober *Prober) probeSubscription(
 	if account.Provider == contract.SubscriptionProviderClaudeCode {
 		headers := make(http.Header)
 		accountauth.ApplyClaudeAPIHeaders(headers, tokens, prober.subscriptions.ClaudeIdentity(probeContext))
-		discovery, err := prober.probeHTTPPages(probeContext, prober.subscriptions.APIBaseURLFor(account.Provider), headers, protocol, true, "")
+		discovery, err := prober.probeHTTPPages(probeContext, prober.subscriptions.APIBaseURLFor(account.Provider), headers, protocol, true, "", false)
 		return discovery.Models, err
 	}
 	if account.Provider == contract.SubscriptionProviderXAIGrok {
 		headers := make(http.Header)
 		accountauth.ApplyGrokAPIHeaders(headers, tokens, prober.subscriptions.GrokClientVersion(probeContext))
-		discovery, err := prober.probeHTTPPages(probeContext, prober.subscriptions.APIBaseURLFor(account.Provider), headers, protocol, false, "")
+		discovery, err := prober.probeHTTPPages(probeContext, prober.subscriptions.APIBaseURLFor(account.Provider), headers, protocol, false, "", false)
 		return discovery.Models, err
 	}
 	if account.Provider == contract.SubscriptionProviderFactoryDroid {
@@ -214,6 +231,7 @@ func (prober *Prober) probeHTTPPages(
 	protocol contract.ProtocolID,
 	anthropic bool,
 	customPath string,
+	vertex bool,
 ) (Discovery, error) {
 	base, err := url.Parse(baseURL)
 	if err != nil {
@@ -234,13 +252,21 @@ func (prober *Prober) probeHTTPPages(
 	for page := 0; page < maxProbePages; page++ {
 		incoming := &url.URL{Path: path}
 		query := incoming.Query()
+		if vertex {
+			query.Set("listAllVersions", "true")
+			query.Set("view", "PUBLISHER_MODEL_VIEW_FULL")
+		}
 		if anthropic {
 			query.Set("limit", fmt.Sprint(providerPageLimit))
 			if nextToken != "" {
 				query.Set("after_id", nextToken)
 			}
 		} else if protocol == contract.ProtocolGoogleModels {
-			query.Set("pageSize", fmt.Sprint(providerPageLimit))
+			pageSize := providerPageLimit
+			if vertex {
+				pageSize = 300 // Publisher Models has a lower limit than Gemini Models.
+			}
+			query.Set("pageSize", fmt.Sprint(pageSize))
 			if nextToken != "" {
 				query.Set("pageToken", nextToken)
 			}
@@ -278,7 +304,15 @@ func (prober *Prober) probeHTTPPages(
 		if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 			return Discovery{}, fmt.Errorf("%w: status %d", ErrUpstream, response.StatusCode)
 		}
-		pageModels, token, more, decodeErr := decodePage(body, protocol, anthropic)
+		var pageModels []listedModel
+		var token string
+		var more bool
+		var decodeErr error
+		if vertex {
+			pageModels, token, more, decodeErr = decodeVertexPage(body)
+		} else {
+			pageModels, token, more, decodeErr = decodePage(body, protocol, anthropic)
+		}
 		if decodeErr != nil {
 			return Discovery{}, decodeErr
 		}
@@ -446,6 +480,8 @@ func serviceSupportsDiscovery(service contract.Service, protocol contract.Protoc
 func kindSupportsDiscovery(kind contract.ServiceKind, protocol contract.ProtocolID) bool {
 	switch kind {
 	case contract.ServiceKindNewAPI, contract.ServiceKindMagpie, contract.ServiceKindCustom:
+		return protocol == contract.ProtocolOpenAIModels || protocol == contract.ProtocolGoogleModels
+	case contract.ServiceKindVertex:
 		return protocol == contract.ProtocolOpenAIModels || protocol == contract.ProtocolGoogleModels
 	case contract.ServiceKindGemini:
 		return protocol == contract.ProtocolGoogleModels

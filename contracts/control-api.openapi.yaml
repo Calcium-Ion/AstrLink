@@ -4848,11 +4848,25 @@ components:
         - openai
         - anthropic
         - gemini
+        - vertex
         - openai_compatible
         - custom
       description: >
         Product-level service type. Codex, Claude and Grok subscriptions use OAuth.
-        Coding plans and other HTTP services use provider-issued API keys.
+        Coding plans and other HTTP services use provider-issued API keys; Vertex uses service account JSON.
+    VertexConnection:
+      type: object
+      required: [project_id, location]
+      properties:
+        project_id:
+          type: string
+          pattern: "^(?:[a-z][a-z0-9-]{4,28}[a-z0-9]|[0-9]{1,20})$"
+        location:
+          type: string
+          maxLength: 64
+          pattern: "^(?:global|us|eu|[a-z]+-[a-z]+[0-9]+)$"
+      additionalProperties: false
+      description: Vertex-only configuration. Requires google_service_account auth and the official base_url for this location. Vertex upstream protocols are Gemini, Messages and Chat; Responses entries must specify convert_to to one of these formats. Credentials stay in the existing secret store.
     HTTPServiceConnection:
       type: object
       required: [base_url, auth]
@@ -4865,6 +4879,8 @@ components:
           not:
             pattern: "^https?://[^/]*@"
           description: HTTP(S) origin or reverse-proxy path prefix without userinfo, query, or fragment.
+        vertex:
+          $ref: "#/components/schemas/VertexConnection"
         auth:
           $ref: ./protocol-capabilities.schema.json#/$defs/ServiceAuth
         credential_ref:
@@ -5012,7 +5028,7 @@ components:
         model_protocols:
           type: array
           maxItems: 2000
-          description: The format this service is called in for each listed model, sorted by model. A request entering on openai.responses, anthropic.messages, openai.chat or google.generate_content for that model is converted to the format, or passes through when it already uses it; the format needs no capability of its own, and capabilities only decide which clients may enter. Other entry protocols keep their capability. A model is looked up after this service's redirects. A model without an entry follows its capability's own pass-through or convert_to, except that opencode_go, opencode_zen, copilot_subscription and droid_subscription give every model a built-in format, which an entry here replaces. Subscriptions accept only their conversion targets. An empty array clears the table.
+          description: The format this service is called in for each listed model, sorted by model. A request entering on openai.responses, anthropic.messages, openai.chat or google.generate_content for that model is converted to the format, or passes through when it already uses it; the format needs no capability of its own, and capabilities only decide which clients may enter. Other entry protocols keep their capability. A model is looked up after this service's redirects. A model without an entry follows its capability's own pass-through or convert_to, except that opencode_go, opencode_zen, copilot_subscription and droid_subscription give every model a built-in format, which an entry here replaces. Subscriptions accept only their conversion targets. Vertex accepts Gemini, Messages and Chat formats; unpinned Vertex models follow the entry configuration. An empty array clears the table.
           items:
             $ref: "#/components/schemas/ModelProtocol"
         failure_policy:
@@ -5079,6 +5095,8 @@ components:
           pattern: "^https?://[^?#]+$"
           not:
             pattern: "^https?://[^/]*@"
+        vertex:
+          $ref: "#/components/schemas/VertexConnection"
         auth:
           $ref: ./protocol-capabilities.schema.json#/$defs/ServiceAuth
         credential:
@@ -5105,7 +5123,7 @@ components:
         model_protocols:
           type: array
           maxItems: 2000
-          description: The format this service is called in for each listed model, sorted by model. A request entering on openai.responses, anthropic.messages, openai.chat or google.generate_content for that model is converted to the format, or passes through when it already uses it; the format needs no capability of its own, and capabilities only decide which clients may enter. Other entry protocols keep their capability. A model is looked up after this service's redirects. A model without an entry follows its capability's own pass-through or convert_to, except that opencode_go, opencode_zen, copilot_subscription and droid_subscription give every model a built-in format, which an entry here replaces. Subscriptions accept only their conversion targets. An empty array clears the table.
+          description: The format this service is called in for each listed model, sorted by model. A request entering on openai.responses, anthropic.messages, openai.chat or google.generate_content for that model is converted to the format, or passes through when it already uses it; the format needs no capability of its own, and capabilities only decide which clients may enter. Other entry protocols keep their capability. A model is looked up after this service's redirects. A model without an entry follows its capability's own pass-through or convert_to, except that opencode_go, opencode_zen, copilot_subscription and droid_subscription give every model a built-in format, which an entry here replaces. Subscriptions accept only their conversion targets. Vertex accepts Gemini, Messages and Chat formats; unpinned Vertex models follow the entry configuration. An empty array clears the table.
           items:
             $ref: "#/components/schemas/ModelProtocol"
         failure_policy:
@@ -5162,6 +5180,8 @@ components:
           pattern: "^https?://[^?#]+$"
           not:
             pattern: "^https?://[^/]*@"
+        vertex:
+          $ref: "#/components/schemas/VertexConnection"
         auth:
           $ref: ./protocol-capabilities.schema.json#/$defs/ServiceAuth
         credential:
@@ -5191,7 +5211,7 @@ components:
         model_protocols:
           type: array
           maxItems: 2000
-          description: The format this service is called in for each listed model, sorted by model. A request entering on openai.responses, anthropic.messages, openai.chat or google.generate_content for that model is converted to the format, or passes through when it already uses it; the format needs no capability of its own, and capabilities only decide which clients may enter. Other entry protocols keep their capability. A model is looked up after this service's redirects. A model without an entry follows its capability's own pass-through or convert_to, except that opencode_go, opencode_zen, copilot_subscription and droid_subscription give every model a built-in format, which an entry here replaces. Subscriptions accept only their conversion targets. An empty array clears the table.
+          description: The format this service is called in for each listed model, sorted by model. A request entering on openai.responses, anthropic.messages, openai.chat or google.generate_content for that model is converted to the format, or passes through when it already uses it; the format needs no capability of its own, and capabilities only decide which clients may enter. Other entry protocols keep their capability. A model is looked up after this service's redirects. A model without an entry follows its capability's own pass-through or convert_to, except that opencode_go, opencode_zen, copilot_subscription and droid_subscription give every model a built-in format, which an entry here replaces. Subscriptions accept only their conversion targets. Vertex accepts Gemini, Messages and Chat formats; unpinned Vertex models follow the entry configuration. An empty array clears the table.
           items:
             $ref: "#/components/schemas/ModelProtocol"
         failure_policy:
@@ -5226,7 +5246,7 @@ components:
           minLength: 1
           maxLength: 16384
           writeOnly: true
-          description: Stored through CredentialStore and never returned or logged.
+          description: Stored through CredentialStore and never returned or logged. For Vertex, supply service_account JSON (multiline accepted); it is validated and compacted before storage. Other providers retain API key validation.
       additionalProperties: false
     ServiceModels:
       type: array
@@ -6196,12 +6216,12 @@ components:
             - type: "null"
         preparation:
           description: |
-            Runtime state, never stored. Core prepares a Core ML installation
-            as soon as the policy selects it, and at startup when the policy
-            already uses it: the worker starts, compiles the model for this
-            device and warms it up. Null for every other installation,
-            including CPU installations, which still start on their first
-            request.
+            Runtime state, never stored. Core prepares a Core ML or DirectML
+            installation as soon as the policy selects it, and at startup when
+            the policy already uses it: the worker starts, loads the model
+            (Core ML compiles it for this device) and warms it up. Null for
+            every other installation, including CPU installations, which still
+            start on their first request.
           oneOf:
             - $ref: "#/components/schemas/PrivacyModelPreparation"
             - type: "null"
@@ -8305,7 +8325,7 @@ components:
         model_protocols:
           type: array
           maxItems: 10000
-          description: Formats the upstream list names for models it serves in exactly one, sorted by model; omitted when there are none. New API lists supported_endpoint_types per model. A model listed as Chat alone gets no entry, since New API takes Responses requests to an OpenAI channel as sent. Clients may store these as the service's model_protocols for newly added models.
+          description: Vertex formats are recommendations only and are not automatically persisted by the desktop. Formats the upstream list names for models it serves in exactly one, sorted by model; omitted when there are none. New API lists supported_endpoint_types per model. A model listed as Chat alone gets no entry, since New API takes Responses requests to an OpenAI channel as sent. Clients may store these as the service's model_protocols for newly added models.
           items:
             $ref: "#/components/schemas/ModelProtocol"
       additionalProperties: false
@@ -8320,6 +8340,7 @@ components:
           google.generate_content,
         ]
     ServiceTestRequest:
+      description: Native connectivity test without entry conversion, routing or failover. Vertex accepts only Gemini, Messages and Chat, independently of enabled entry capabilities.
       type: object
       additionalProperties: false
       required: [protocol, model]

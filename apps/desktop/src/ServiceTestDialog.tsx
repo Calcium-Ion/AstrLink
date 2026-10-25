@@ -13,6 +13,7 @@ import { notify } from "./notify";
 import type { Service } from "./service-model";
 import {
   testableCapabilities,
+  vertexTestProtocol,
   type ServiceTestProtocol,
   type ServiceTestResult,
 } from "./service-test-model";
@@ -75,7 +76,7 @@ function TestSettings({
 }: TestSettingsProps) {
   const t = useT();
   const id = useId();
-  const capabilities = testableCapabilities(service);
+  const capabilities = testableCapabilities(service, model);
   const capability = capabilities.find((item) => item.protocol === protocol);
   return (
     <div className="grid gap-4">
@@ -95,18 +96,27 @@ function TestSettings({
         </Field>
       ) : null}
       <Field label={t("serviceTest.protocol")}>
-        <FilterSelect
-          ariaLabel={t("serviceTest.protocol")}
-          label=""
-          className="w-full"
-          disabled={running || capabilities.length === 0}
-          value={protocol}
-          options={capabilities.map((item) => ({
-            value: item.protocol,
-            label: item.protocol,
-          }))}
-          onChange={onProtocol}
-        />
+        {service.kind === "vertex" ? (
+          <p className="text-xs text-muted-foreground">
+            {showModel
+              ? (vertexTestProtocol(service, model) ??
+                t("serviceTest.vertexUnknownModel"))
+              : t("serviceTest.vertexPerModelProtocol")}
+          </p>
+        ) : (
+          <FilterSelect
+            ariaLabel={t("serviceTest.protocol")}
+            label=""
+            className="w-full"
+            disabled={running || capabilities.length === 0}
+            value={protocol}
+            options={capabilities.map((item) => ({
+              value: item.protocol,
+              label: item.protocol,
+            }))}
+            onChange={onProtocol}
+          />
+        )}
       </Field>
       <div className="flex items-center justify-between gap-2">
         <Label htmlFor={`${id}-stream`} className="text-xs text-text-secondary">
@@ -178,14 +188,22 @@ export function ServiceTestDialog({
   const inFlight = useRef(false);
   const testId = useRef<string | null>(null);
   const testSequence = useRef(0);
-  const capability = capabilities.find((item) => item.protocol === protocol);
+  const effectiveProtocol =
+    service.kind === "vertex" ? vertexTestProtocol(service, model) : protocol;
+  const capability = capabilities.find(
+    (item) => item.protocol === effectiveProtocol,
+  );
   const connected =
     !service.subscription || service.subscription.status === "connected";
   const canTest = connected && capability && model.trim() && !running;
   const blocked = !connected
     ? t("serviceTest.notConnected")
     : !capability
-      ? t("serviceTest.unsupported")
+      ? t(
+          service.kind === "vertex"
+            ? "serviceTest.vertexUnknownModel"
+            : "serviceTest.unsupported",
+        )
       : null;
   const hasOutcome = Boolean(result || error || cancelled);
   const settings: TestSettingsProps = {
@@ -226,7 +244,7 @@ export function ServiceTestDialog({
   };
 
   async function runTest() {
-    if (!canTest || inFlight.current) return;
+    if (!canTest || !effectiveProtocol || inFlight.current) return;
     inFlight.current = true;
     testSequence.current += 1;
     const id = `${service.id}:${testSequence.current}:${Date.now()}`;
@@ -242,7 +260,7 @@ export function ServiceTestDialog({
         await testService(
           service.id,
           {
-            protocol,
+            protocol: effectiveProtocol,
             model: model.trim(),
             stream,
             ...(prompt.trim() ? { prompt: prompt.trim() } : {}),
@@ -345,7 +363,11 @@ export function ServiceTestDialog({
               </span>
               <TestSettings {...settings} />
               <p className="mt-auto pt-4 text-xs leading-relaxed text-muted-foreground">
-                {t("serviceTest.savedConnection")}
+                {t(
+                  service.kind === "vertex"
+                    ? "serviceTest.vertexNativeTest"
+                    : "serviceTest.savedConnection",
+                )}
               </p>
             </aside>
             <section
@@ -359,7 +381,7 @@ export function ServiceTestDialog({
                     {model || t("serviceTest.modelPlaceholder")}
                   </p>
                   <p className="mt-0.5 truncate text-muted-foreground">
-                    {protocol} ·{" "}
+                    {effectiveProtocol ?? t("serviceTest.vertexUnknownModel")} ·{" "}
                     {t(stream ? "serviceTest.stream" : "serviceTest.nonStream")}
                   </p>
                 </div>
@@ -445,7 +467,7 @@ export function ServiceTestDialog({
               stream,
               ...(prompt.trim() ? { prompt: prompt.trim() } : {}),
             }}
-            blocked={blocked}
+            blocked={service.kind === "vertex" ? null : blocked}
             settings={<TestSettings {...settings} showModel={false} />}
             onClose={onClose}
             onBusyChange={(value) => {

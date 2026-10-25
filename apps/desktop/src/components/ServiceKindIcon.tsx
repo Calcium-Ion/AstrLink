@@ -34,6 +34,7 @@ const kindMarks: Record<ServiceKind, Mark> = {
   openai_compatible: "openai",
   anthropic: "anthropic",
   gemini: "gemini",
+  vertex: "vertex",
   deepseek: "deepseek",
   qwen: "qwen",
   doubao: "doubao",

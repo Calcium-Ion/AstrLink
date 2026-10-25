@@ -61,6 +61,9 @@
     }
   },
   "serviceTest": {
+    "vertexPerModelProtocol": "Use each model's native protocol",
+    "vertexUnknownModel": "Cannot identify this model's native protocol. Set its format under Supported models.",
+    "vertexNativeTest": "Test the native model API with saved credentials, without entry protocol conversion.",
     "subtitle": "Privacy filtering and request logging; no retries",
     "settings": "Test settings",
     "results": "Test results",
@@ -1125,7 +1128,7 @@
     "notEnabled": "(not enabled yet)",
     "passthrough": "Pass through",
     "perModelFormat": "Forward in each model's format",
-    "capabilityHintPerModel": "Enabled protocols decide which clients can connect. Requests reach OpenCode in each model's upstream format. Change a model's format under Supported models.",
+    "capabilityHintPerModel": "Enabled protocols determine which clients can connect. Requests use each model’s upstream format. You can change it under Supported models.",
     "authBearer": "API Key (Bearer)",
     "authAnthropic": "Anthropic API Key",
     "authGoogle": "Google API Key",
@@ -1258,7 +1261,18 @@
       "chat": "Used by OpenCode, OpenClaw, and most compatible tools",
       "messages": "Used by Claude Code",
       "gemini": "Used by Gemini CLI"
-    }
+    },
+    "vertexProject": "Google Cloud project ID",
+    "vertexLocation": "Location",
+    "vertexLocationHint": "Use global, us, eu, or a region such as us-central1. The model must be available there; requests never fall back to another location.",
+    "vertexCredential": "Service account JSON",
+    "vertexCredentialHint": "Paste a Google Cloud service account key JSON. Saved credentials are never shown again.",
+    "vertexCredentialKeep": "Service account saved. Leave empty to keep it, or paste new JSON to replace it.",
+    "vertexInvalidConfig": "Enter a valid Google Cloud project ID and location.",
+    "vertexInvalidCredential": "Provide service_account JSON containing project_id, client_email, and private_key.",
+    "vertexRemoveCredential": "Remove the saved service account credentials",
+    "vertexModelsHelp": "Vertex model configuration help",
+    "vertexCatalogHint": "Fetch identifiable chat models from the official catalog. Listing does not confirm project access. Enter official IDs manually for missing models, and test availability in the selected location."
   },
   "models": {
     "deleteNamed": "Delete {{label}}",
@@ -1403,7 +1417,8 @@
     "xai": "xAI (Grok) API",
     "antigravity_subscription": "Antigravity subscription",
     "copilot_subscription": "GitHub Copilot subscription",
-    "droid_subscription": "Droid subscription"
+    "droid_subscription": "Droid subscription",
+    "vertex": "Vertex AI"
   },
   "subscription": {
     "tag": "Sub",
@@ -1460,7 +1475,8 @@
     "glmDescription": "Zhipu platform API key with usage-based billing through /api/paas/v4. Add model IDs enabled for your account.",
     "minimaxDescription": "MiniMax platform API key with usage-based billing. Use your platform API key.",
     "doubaoDescription": "Volcengine Ark API key with usage-based billing. Defaults to Beijing; add an enabled model ID or inference endpoint ID (ep-…).",
-    "xaiDescription": "xAI platform API key with usage-based billing; supports Grok Chat, Responses, and model discovery."
+    "xaiDescription": "xAI platform API key with usage-based billing; supports Grok Chat, Responses, and model discovery.",
+    "vertexDescription": "Use a Google Cloud service account for Gemini, Claude, and OpenAI-compatible chat models."
   },
   "usage": {
     "allLimits": "All quotas",
@@ -1815,9 +1831,12 @@
     "unsupported": " · not supported now",
     "unsupportedRequiresMacOS26": " · requires macOS 26 or later",
     "coreMLVariantGPU": "Core ML FP16 · GPU (recommended)",
+    "coreMLVariantGPUInCatalog": "Core ML FP16 · GPU",
     "coreMLVariantNeuralEngine": "Core ML FP16 · Neural Engine (slower)",
     "coreMLVariantAllUnits": "Core ML FP16 · All units",
     "coreMLCompileOnEnable": "When you start using a Core ML version, AstrLink compiles it for this Mac right away and shows the progress. The first time takes about 15–25 seconds; later starts are fast.",
+    "directMLVariantGPU": "DirectML FP16 · GPU",
+    "directMLLoadOnEnable": "When you start using the DirectML version, AstrLink loads it onto the GPU right away and shows the progress. This usually takes a few seconds.",
     "preparingModel": "Preparing local model…",
     "modelCompiling": "Compiling the model for this Mac. The first time takes about 15–25 seconds…",
     "modelCompilingLocalFallback": "Until it is ready, the previous local model keeps checking requests.",
@@ -1827,6 +1846,11 @@
     "modelPrepareFailedLocalFallback": "This model couldn't be prepared on this Mac. The previous local model keeps checking requests.",
     "modelPrepareFailedRegexFallback": "This model couldn't be prepared on this Mac. The regex rules keep checking requests.",
     "modelPrepareFailedBlocked": "This model couldn't be prepared on this Mac. Requests are blocked until it works or you choose another model.",
+    "modelLoadingOnGPU": "Loading the model onto the GPU…",
+    "modelReadyOnGPU": "Loaded onto the GPU and ready.",
+    "modelLoadFailedOnGPULocalFallback": "This model couldn't be loaded onto the GPU. The previous local model keeps checking requests.",
+    "modelLoadFailedOnGPURegexFallback": "This model couldn't be loaded onto the GPU. The regex rules keep checking requests.",
+    "modelLoadFailedOnGPUBlocked": "This model couldn't be loaded onto the GPU. Requests are blocked until it works or you choose another model.",
     "retryPrepare": "Try again",
     "checkAndInstall": "Check and install",
     "updateAvailableHint": "Version {{version}} available",

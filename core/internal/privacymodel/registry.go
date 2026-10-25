@@ -425,7 +425,8 @@ func (registry *Registry) prepareInstallation(
 	catalogPlan, exists := builtinVariantPlan(
 		request.RepoID, request.Revision, request.VariantID,
 	)
-	if !exists && request.RepoID == astrLinkGuardRepoID {
+	// Guard installs only what this system offers, including from the pin.
+	if request.RepoID == astrLinkGuardRepoID {
 		release, err := registry.astrLinkGuardRelease(ctx, request.Revision)
 		if err != nil {
 			return installationPlan{}, err
@@ -623,6 +624,15 @@ func validateStagedCompatibility(
 	if !validLabels || tagScheme != runtime.tagScheme ||
 		validateLabelCoverage(labels, installation.LabelMapping) != nil {
 		return errModelIncompatible
+	}
+	// Accelerated runs pad every window to the static length and read
+	// float32 logits. A catalog release is only seen after the download, so
+	// its model is held to what a local import is checked for up front.
+	if runtime.execution != nil {
+		static, err := localStaticInputLength(context.Background(), directory, runtime)
+		if err != nil || static != runtime.execution.StaticSequenceLength {
+			return errModelIncompatible
+		}
 	}
 	switch installation.Adapter {
 	case contract.PrivacyModelAdapterPPLXBIOES:
@@ -854,7 +864,9 @@ func manifestMatchesBuiltinPlan(
 	plan variantPlan,
 ) bool {
 	if !manifestMatchesRuntime(manifest, plan) ||
-		len(manifest.Files) != len(plan.assets) {
+		len(manifest.Files) != len(plan.assets) ||
+		(manifest.Execution != nil &&
+			manifest.Execution.PadTokenID != plan.runtime.execution.PadTokenID) {
 		return false
 	}
 	expectedFiles := make(map[string]Asset, len(plan.assets))
@@ -902,7 +914,20 @@ func manifestMatchesRuntime(
 			manifest.InputNames.TokenTypeIDs,
 			plan.runtime.inputNames.TokenTypeIDs,
 		) &&
-		manifest.OutputName == plan.runtime.outputName
+		manifest.OutputName == plan.runtime.outputName &&
+		executionsMatch(manifest.Execution, plan.runtime.execution)
+}
+
+// executionsMatch compares everything but the pad id, which a release reads
+// from its own tokenizer; validateExecution has bounded it.
+func executionsMatch(manifest, plan *normalizedExecution) bool {
+	if manifest == nil || plan == nil {
+		return manifest == nil && plan == nil
+	}
+	return manifest.Provider == plan.Provider &&
+		optionalStringsEqual(manifest.ModelFormat, plan.ModelFormat) &&
+		optionalStringsEqual(manifest.ComputeUnits, plan.ComputeUnits) &&
+		manifest.StaticSequenceLength == plan.StaticSequenceLength
 }
 
 func stringSlicesEqual(left, right []string) bool {

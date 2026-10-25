@@ -11,6 +11,7 @@ import (
 
 	"github.com/QuantumNous/astrlink/core/contract"
 	storagecontract "github.com/QuantumNous/astrlink/core/internal/storage"
+	"github.com/QuantumNous/astrlink/core/internal/vertexauth"
 )
 
 func (store *Store) CreateService(
@@ -26,6 +27,13 @@ func (store *Store) CreateService(
 	service, err = normalizeServiceModels(service)
 	if err != nil {
 		return record, fmt.Errorf("%w: %v", storagecontract.ErrInvalidArgument, err)
+	}
+	if service.Kind == contract.ServiceKindVertex && credential.Present && len(credential.Secret) > 0 {
+		credential.Secret, err = vertexauth.Compact(credential.Secret)
+		if err != nil {
+			return record, fmt.Errorf("%w: %v", storagecontract.ErrInvalidArgument, err)
+		}
+		defer clear(credential.Secret)
 	}
 	service, err = applyServiceCredentialMutation(service, credential)
 	if err != nil {
@@ -168,6 +176,13 @@ func (store *Store) UpdateService(
 	service, err = normalizeServiceModels(service)
 	if err != nil {
 		return record, fmt.Errorf("%w: %v", storagecontract.ErrInvalidArgument, err)
+	}
+	if service.Kind == contract.ServiceKindVertex && credential.Present && len(credential.Secret) > 0 {
+		credential.Secret, err = vertexauth.Compact(credential.Secret)
+		if err != nil {
+			return record, fmt.Errorf("%w: %v", storagecontract.ErrInvalidArgument, err)
+		}
+		defer clear(credential.Secret)
 	}
 	service, err = applyServiceCredentialMutation(service, credential)
 	if err != nil {

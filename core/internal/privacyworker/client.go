@@ -1130,7 +1130,7 @@ type installationManifest struct {
 }
 
 // installationExecution is present only for static-shape installations, such
-// as FP16 exports run through Core ML. CPU installations omit it.
+// as FP16 exports run through Core ML or DirectML. CPU installations omit it.
 type installationExecution struct {
 	Provider             string  `json:"provider"`
 	ModelFormat          *string `json:"model_format"`
@@ -1401,6 +1401,10 @@ func validateInstallationExecution(manifest installationManifest) error {
 	case "cpu":
 		if execution.ModelFormat != nil || execution.ComputeUnits != nil {
 			return errors.New("invalid CPU execution")
+		}
+	case "directml":
+		if execution.ModelFormat != nil || execution.ComputeUnits != nil {
+			return errors.New("invalid DirectML execution")
 		}
 	case "coreml":
 		if execution.ModelFormat == nil || *execution.ModelFormat != "mlprogram" ||

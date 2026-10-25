@@ -15,20 +15,23 @@ import (
 // selection, and decides what inspects requests while that model is not
 // ready yet.
 //
-// A Core ML installation is compiled for this device the first time its
-// worker loads, which takes seconds. Handover starts that worker as soon as
-// the policy selects the installation, instead of on the first request, and
-// lets the detector of the previous policy keep inspecting requests until
-// the worker is ready. Then it switches to the new model at once. When the
-// worker fails, the previous detector stays. Without a previous detector,
-// requests wait for the worker within the usual timeouts and fail closed.
+// An accelerated installation (Core ML on macOS, DirectML on Windows) is
+// slow to start: Core ML compiles the model for this device the first time
+// its worker loads, which takes seconds, and both warm the model up on the
+// GPU before the worker reports ready. Handover starts that worker as soon
+// as the policy selects the installation, instead of on the first request,
+// and lets the detector of the previous policy keep inspecting requests
+// until the worker is ready. Then it switches to the new model at once. When
+// the worker fails, the previous detector stays. Without a previous
+// detector, requests wait for the worker within the usual timeouts and fail
+// closed.
 //
 // CPU installations start on their first request, as they always have, and
 // a selection change stops the previous worker at once.
 type Handover struct {
 	model      ReadyInstallationProvider
 	newClient  func() (*Client, error)
-	usesCoreML func(InstalledModel) bool
+	preparable func(InstalledModel) bool
 
 	mu       sync.Mutex
 	closed   bool
@@ -61,14 +64,14 @@ func NewHandover(config Config) (*Handover, error) {
 	return &Handover{
 		model:      config.Model,
 		newClient:  func() (*Client, error) { return New(config) },
-		usesCoreML: installationRunsCoreML,
+		preparable: installationIsAccelerated,
 	}, nil
 }
 
 // ApplyPolicy synchronously applies the policy's detector selection. Leaving
 // local-model mode stops every worker and cancels in-flight inspections. A
-// new Core ML selection starts preparing at once; so does applying a policy
-// again after its Core ML model failed to prepare.
+// new accelerated selection starts preparing at once; so does applying a
+// policy again after its accelerated model failed to prepare.
 func (handover *Handover) ApplyPolicy(policy contract.Policy) {
 	handover.mu.Lock()
 	if handover.closed {
@@ -102,9 +105,9 @@ func (handover *Handover) ApplyPolicy(policy contract.Policy) {
 	}
 	next.ApplyPolicy(policy)
 	installation, ready := handover.model.ReadyInstallation(modelID)
-	coreML := ready && handover.usesCoreML(installation)
+	accelerated := ready && handover.preparable(installation)
 	var fallback *fallbackDetector
-	if coreML {
+	if accelerated {
 		fallback = handover.servingLocked(previous)
 	}
 	var released []*Client
@@ -120,7 +123,7 @@ func (handover *Handover) ApplyPolicy(policy contract.Policy) {
 	handover.modelID = modelID
 	handover.fallback = fallback
 	handover.prep = nil
-	if coreML {
+	if accelerated {
 		prep := &preparation{
 			state: contract.PrivacyModelPreparationPreparing,
 			done:  make(chan struct{}),
@@ -311,11 +314,12 @@ func regexDetectorOf(policy contract.Policy) privacy.Detector {
 	return detector
 }
 
-// installationRunsCoreML reports whether the installation's bound manifest
-// selects the Core ML execution provider. Anything unreadable counts as a
+// installationIsAccelerated reports whether the installation's bound
+// manifest selects the Core ML or DirectML execution provider, which Core
+// prepares when the policy selects it. Anything unreadable counts as a
 // CPU installation, which keeps the first request responsible for it, and
 // that request then fails validation as before.
-func installationRunsCoreML(installation InstalledModel) bool {
+func installationIsAccelerated(installation InstalledModel) bool {
 	if installation.Directory == "" {
 		return false
 	}
@@ -332,5 +336,10 @@ func installationRunsCoreML(installation InstalledModel) bool {
 	if json.Unmarshal(document, &manifest) != nil || manifest.Execution == nil {
 		return false
 	}
-	return manifest.Execution.Provider == "coreml"
+	switch manifest.Execution.Provider {
+	case "coreml", "directml":
+		return true
+	default:
+		return false
+	}
 }

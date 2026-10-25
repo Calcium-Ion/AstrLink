@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  vertexBaseURL,
+  validVertexConnection,
   activeServiceRisk,
   bestConversionTarget,
   hasPlanUsage,
@@ -26,6 +28,127 @@ import {
 const createdAt = "2026-07-28T12:00:00Z";
 
 describe("service model", () => {
+  it("round trips Vertex configuration and restricts upstream formats", () => {
+    const value = {
+      id: "service_vertex",
+      name: "Vertex",
+      kind: "vertex",
+      enabled: true,
+      models: ["gemini-test", "claude-test@20250101", "meta/llama-test-maas"],
+      capabilities: [
+        { protocol: "openai.chat", mode: "native", streaming: true },
+      ],
+      http: {
+        base_url: vertexBaseURL("eu"),
+        auth: { scheme: "google_service_account" },
+        vertex: { project_id: "vertex-test", location: "eu" },
+        credential_ref: "local://service/service_vertex",
+      },
+      created_at: createdAt,
+      updated_at: createdAt,
+    };
+    expect(parseService(value).http).toEqual(value.http);
+    expect(serviceModelFormats("vertex")).not.toContain("openai.responses");
+    expect(
+      supportsResponsesWebSocket({
+        ...parseService(value),
+        capabilities: [
+          { protocol: "openai.responses", mode: "native", streaming: true },
+        ],
+      }),
+    ).toBe(false);
+    expect(
+      value.models.map((model) => serviceBuiltinModelProtocol("vertex", model)),
+    ).toEqual([undefined, undefined, undefined]);
+    for (const protocol of serviceModelFormats("vertex")) {
+      const capabilities = [
+        {
+          protocol: "openai.responses",
+          mode: "native",
+          streaming: true,
+          convert_to: protocol,
+        },
+      ];
+      const model_protocols = [{ model: value.models[0], protocol }];
+      expect(
+        parseService({ ...value, capabilities, model_protocols }),
+      ).toMatchObject({ capabilities, model_protocols });
+      expect(
+        withDiscoveredModelProtocols(
+          "vertex",
+          [],
+          [],
+          value.models,
+          model_protocols,
+        ),
+      ).toEqual([]);
+      expect(
+        withDiscoveredModelProtocols(
+          "vertex",
+          model_protocols,
+          value.models,
+          value.models,
+          [],
+        ),
+      ).toEqual(model_protocols);
+    }
+    for (const capability of [
+      { protocol: "openai.responses" },
+      { protocol: "openai.chat", convert_to: "openai.responses" },
+      { protocol: "openai.embeddings" },
+    ]) {
+      expect(() =>
+        parseService({
+          ...value,
+          capabilities: [{ mode: "native", streaming: false, ...capability }],
+        }),
+      ).toThrow("unsupported Vertex");
+    }
+    expect(() =>
+      parseService({
+        ...value,
+        model_protocols: [
+          { model: value.models[0], protocol: "openai.responses" },
+        ],
+      }),
+    ).toThrow("unsupported Vertex");
+    expect(() => parseService({ ...value, kind: "custom" })).toThrow();
+    expect(() =>
+      parseService({
+        ...value,
+        http: { ...value.http, base_url: "https://other.example" },
+      }),
+    ).toThrow();
+    expect(() =>
+      parseService({
+        ...value,
+        http: { ...value.http, credential_hint: "…json" },
+      }),
+    ).toThrow();
+    expect(() =>
+      parseService({
+        ...value,
+        http: {
+          ...value.http,
+          vertex: { ...value.http.vertex, unknown: true },
+        },
+      }),
+    ).toThrow();
+    expect(
+      validVertexConnection({
+        project_id: "vertex-test",
+        location: "../global",
+      }),
+    ).toBe(false);
+    expect(vertexBaseURL("global")).toBe("https://aiplatform.googleapis.com");
+    expect(vertexBaseURL("us-central1")).toBe(
+      "https://us-central1-aiplatform.googleapis.com",
+    );
+    expect(vertexBaseURL("us")).toBe(
+      "https://aiplatform.us.rep.googleapis.com",
+    );
+  });
+
   it("parses HTTP and subscription services from one page", () => {
     const page = parseServicePage({
       items: [

@@ -24,6 +24,7 @@ func TestInstallationExecutionMatchesTheWorkerContract(t *testing.T) {
 		nil,
 		coreML("cpu_and_gpu"), coreML("cpu_and_neural_engine"), coreML("all"),
 		{Provider: "cpu", StaticSequenceLength: 512},
+		{Provider: "directml", StaticSequenceLength: 512, PadTokenID: 1},
 	}
 	for _, execution := range valid {
 		if err := validateInstallationExecution(manifest(execution)); err != nil {
@@ -36,6 +37,10 @@ func TestInstallationExecutionMatchesTheWorkerContract(t *testing.T) {
 		{Provider: "coreml", ModelFormat: text("mlprogram"), StaticSequenceLength: 512},
 		{Provider: "coreml", ModelFormat: text("neural_network"), ComputeUnits: text("all"), StaticSequenceLength: 512},
 		{Provider: "cpu", ComputeUnits: text("all"), StaticSequenceLength: 512},
+		{Provider: "directml", ModelFormat: text("mlprogram"), StaticSequenceLength: 512},
+		{Provider: "directml", ComputeUnits: text("cpu_and_gpu"), StaticSequenceLength: 512},
+		{Provider: "directml", StaticSequenceLength: 256},
+		{Provider: "dml", StaticSequenceLength: 512},
 		{Provider: "cuda", StaticSequenceLength: 512},
 		{Provider: "cpu", StaticSequenceLength: 256},
 		{Provider: "cpu", StaticSequenceLength: 512, PadTokenID: -1},

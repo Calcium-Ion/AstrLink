@@ -23,6 +23,9 @@ import (
 // does not take), pads every window to the static length and drops the
 // padded positions from the logits. Everything else (tokenization, windowing,
 // decoding, span contract) is the same as the CPU path.
+//
+// On Windows x64 the same models are offered through DirectML instead; see
+// directml.go. The variant expansion below serves both.
 const (
 	executionProviderCPU    = "cpu"
 	executionProviderCoreML = "coreml"
@@ -156,7 +159,7 @@ func validateExecution(
 		return ErrInvalidConfig
 	}
 	switch execution.Provider {
-	case executionProviderCPU:
+	case executionProviderCPU, executionProviderDirectML:
 		if execution.ModelFormat != nil || execution.ComputeUnits != nil {
 			return ErrInvalidConfig
 		}
@@ -179,12 +182,80 @@ func validateExecution(
 	return nil
 }
 
-// expandLocalCoreMLVariants replaces each FP16 entry that is unsupported only
-// because it is not a CPU model with one variant per compute-unit choice,
-// supported from macOS 26 and listed as requiring it before that. It runs
-// after the local revision is computed, so the revision of a directory stays
-// the same on every platform and version.
-func expandLocalCoreMLVariants(
+// acceleratedChoice is one accelerated way to run an eligible FP16 model.
+type acceleratedChoice struct {
+	id            string
+	name          string
+	ramMultiplier int64
+	// execution is completed with the model's static length and pad id.
+	execution normalizedExecution
+}
+
+// localAcceleratedChoices lists the accelerated variants this build and
+// system offer for an eligible FP16 model: Core ML on Apple silicon and
+// DirectML on Windows x64. unsupported is the reason when the variants are
+// listed but cannot run on this system.
+func localAcceleratedChoices() (choices []acceleratedChoice, unsupported *string) {
+	switch support := localCoreMLSupport(); support {
+	case coreMLSupported, coreMLRequiresMacOS26:
+		if support == coreMLRequiresMacOS26 {
+			reason := unsupportedReasonRequiresMacOS26
+			unsupported = &reason
+		}
+		return coreMLAcceleratedChoices(), unsupported
+	}
+	if localDirectMLSupport() {
+		return directMLAcceleratedChoices(), nil
+	}
+	return nil, nil
+}
+
+// allAcceleratedChoices lists the accelerated choices of every platform.
+// Catalog installations are checked against it, so one that loads on
+// another system keeps its provenance; the worker decides whether it runs.
+func allAcceleratedChoices() []acceleratedChoice {
+	return append(coreMLAcceleratedChoices(), directMLAcceleratedChoices()...)
+}
+
+func coreMLAcceleratedChoices() []acceleratedChoice {
+	choices := make([]acceleratedChoice, 0, len(coreMLVariantChoices))
+	for _, choice := range coreMLVariantChoices {
+		format := coreMLModelFormatMLProgram
+		units := choice.computeUnits
+		choices = append(choices, acceleratedChoice{
+			id:            "coreml_fp16_" + choice.suffix,
+			name:          choice.name,
+			ramMultiplier: choice.ramMultiplier,
+			execution: normalizedExecution{
+				Provider:     executionProviderCoreML,
+				ModelFormat:  &format,
+				ComputeUnits: &units,
+			},
+		})
+	}
+	return choices
+}
+
+func directMLAcceleratedChoices() []acceleratedChoice {
+	choices := make([]acceleratedChoice, 0, len(directMLVariantChoices))
+	for _, choice := range directMLVariantChoices {
+		choices = append(choices, acceleratedChoice{
+			id:            "directml_fp16_" + choice.suffix,
+			name:          choice.name,
+			ramMultiplier: choice.ramMultiplier,
+			execution:     normalizedExecution{Provider: executionProviderDirectML},
+		})
+	}
+	return choices
+}
+
+// expandLocalAcceleratedVariants replaces each FP16 entry that is
+// unsupported only because it is not a CPU model with one variant per
+// accelerated choice of this system. Core ML variants are supported from
+// macOS 26 and listed as requiring it before that. It runs after the local
+// revision is computed, so the revision of a directory stays the same on
+// every platform and version.
+func expandLocalAcceleratedVariants(
 	ctx context.Context,
 	directory string,
 	adapter contract.PrivacyModelAdapter,
@@ -192,18 +263,18 @@ func expandLocalCoreMLVariants(
 	variants []contract.PrivacyModelVariant,
 	plans map[string]customVariantPlan,
 ) ([]contract.PrivacyModelVariant, map[string]customVariantPlan, error) {
-	support := localCoreMLSupport()
-	if support == coreMLUnavailable || adapter != contract.PrivacyModelAdapterHFToken {
+	choices, unsupported := localAcceleratedChoices()
+	if len(choices) == 0 || adapter != contract.PrivacyModelAdapterHFToken {
 		return variants, plans, nil
 	}
 	padTokenID, hasPad := tokenizerPadTokenID(tokenizerDocument)
 	if !hasPad {
 		return variants, plans, nil
 	}
-	expanded := make([]contract.PrivacyModelVariant, 0, len(variants)+2)
+	expanded := make([]contract.PrivacyModelVariant, 0, len(variants)+len(choices))
 	for _, variant := range variants {
 		plan, exists := plans[variant.ID]
-		suffix, eligible := coreMLVariantSuffix(variant, plan)
+		suffix, eligible := acceleratedVariantSuffix(variant, plan)
 		if exists && eligible {
 			static, err := localStaticInputLength(ctx, directory, plan.runtime)
 			if err != nil {
@@ -216,57 +287,48 @@ func expandLocalCoreMLVariants(
 			continue
 		}
 		delete(plans, variant.ID)
-		for _, choice := range coreMLVariantChoices {
-			id := "coreml_fp16_" + choice.suffix + suffix
+		for _, choice := range choices {
+			id := choice.id + suffix
 			if _, taken := plans[id]; taken {
 				return nil, nil, ErrUnsupportedModel
 			}
-			coreML := variant
-			coreML.ID = id
-			coreML.Name = choice.name
+			accelerated := variant
+			accelerated.ID = id
+			accelerated.Name = choice.name
 			if suffix != "" {
-				coreML.Name += " " + strings.TrimPrefix(suffix, "_")
+				accelerated.Name += " " + strings.TrimPrefix(suffix, "_")
 			}
-			coreML.Recommended = false
-			coreML.Supported = support == coreMLSupported
-			coreML.UnsupportedReason = nil
-			if !coreML.Supported {
-				reason := unsupportedReasonRequiresMacOS26
-				coreML.UnsupportedReason = &reason
-			}
-			coreML.EstimatedRAMBytes = coreMLEstimatedRAM(variant.BytesTotal, choice.ramMultiplier)
+			accelerated.Recommended = false
+			accelerated.Supported = unsupported == nil
+			accelerated.UnsupportedReason = cloneString(unsupported)
+			accelerated.EstimatedRAMBytes = acceleratedEstimatedRAM(variant.BytesTotal, choice.ramMultiplier)
 			runtimeSpec := plan.runtime
 			runtimeSpec.externalData = append([]string(nil), plan.runtime.externalData...)
 			runtimeSpec.inputNames.TokenTypeIDs = cloneString(plan.runtime.inputNames.TokenTypeIDs)
-			format := coreMLModelFormatMLProgram
-			units := choice.computeUnits
-			runtimeSpec.execution = &normalizedExecution{
-				Provider:             executionProviderCoreML,
-				ModelFormat:          &format,
-				ComputeUnits:         &units,
-				StaticSequenceLength: plan.runtime.window,
-				PadTokenID:           padTokenID,
-			}
+			execution := choice.execution
+			execution.StaticSequenceLength = plan.runtime.window
+			execution.PadTokenID = padTokenID
+			runtimeSpec.execution = cloneExecution(&execution)
 			plans[id] = customVariantPlan{
-				variant: coreML, assets: copyAssets(plan.assets), runtime: runtimeSpec,
+				variant: accelerated, assets: copyAssets(plan.assets), runtime: runtimeSpec,
 			}
-			expanded = append(expanded, coreML)
+			expanded = append(expanded, accelerated)
 		}
 	}
 	return expanded, plans, nil
 }
 
-func coreMLEstimatedRAM(bytes int64, multiplier int64) int64 {
+func acceleratedEstimatedRAM(bytes int64, multiplier int64) int64 {
 	if bytes > contract.MaxPrivacyModelByteCount/multiplier {
 		return contract.MaxPrivacyModelByteCount
 	}
 	return max(bytes*multiplier, 256<<20)
 }
 
-// coreMLVariantSuffix accepts plain FP16 entries whose only problem is that
-// they are not CPU models. q4f16 and exports named for another accelerator
-// stay unsupported.
-func coreMLVariantSuffix(
+// acceleratedVariantSuffix accepts plain FP16 entries whose only problem is
+// that they are not CPU models. q4f16 and exports named for a specific
+// accelerator stay unsupported.
+func acceleratedVariantSuffix(
 	variant contract.PrivacyModelVariant,
 	plan customVariantPlan,
 ) (string, bool) {

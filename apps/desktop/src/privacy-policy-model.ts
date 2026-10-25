@@ -325,10 +325,11 @@ export type PrivacyModelPreparationState = "preparing" | "ready" | "failed";
 export type PrivacyModelPreparationFallback = "local_model" | "regex";
 
 /**
- * Core prepares the policy's Core ML model as soon as it is selected: the
- * worker starts and compiles the model for this Mac. `fallback` is the
- * previous detector, which inspects requests until the model is ready and
- * after it failed; without one, requests wait, then fail once it failed.
+ * Core prepares the policy's Core ML or DirectML model as soon as it is
+ * selected: the worker starts and compiles the model for this Mac, or loads
+ * it onto the GPU. `fallback` is the previous detector, which inspects
+ * requests until the model is ready and after it failed; without one,
+ * requests wait, then fail once it failed.
  */
 export interface PrivacyModelPreparation {
   state: PrivacyModelPreparationState;
@@ -1809,6 +1810,20 @@ export function validatePrivacyModelInstallationID(
  */
 export function isCoreMLVariantID(variantID: string): boolean {
   return variantID.startsWith("coreml_");
+}
+
+/**
+ * On Windows x64 Core offers a local FP16 model as the DirectML variant
+ * `directml_fp16_gpu`. The worker loads it onto the GPU before it is ready;
+ * there is no compile step.
+ */
+export function isDirectMLVariantID(variantID: string): boolean {
+  return variantID.startsWith("directml_");
+}
+
+/** Core prepares these variants as soon as the policy selects them. */
+export function isAcceleratedVariantID(variantID: string): boolean {
+  return isCoreMLVariantID(variantID) || isDirectMLVariantID(variantID);
 }
 
 export function isResourceHeavyVariant(

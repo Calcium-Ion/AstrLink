@@ -9,6 +9,8 @@ import (
 )
 
 func TestBuiltinCatalogRecommendsGuardAndRetainsLegacyProvenance(t *testing.T) {
+	// The FP16 pin is covered with the FP16 variants in astrlink_guard_fp16_test.go.
+	setAstrLinkGuardPin(t, "")
 	catalog := BuiltinCatalog()
 	if len(catalog.Items) != 1 {
 		t.Fatalf("catalog item count = %d", len(catalog.Items))

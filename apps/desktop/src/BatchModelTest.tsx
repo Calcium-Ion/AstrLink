@@ -4,7 +4,10 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { testService } from "./bridge";
 import { useT } from "./i18n";
 import type { Service } from "./service-model";
-import type { ServiceTestInput } from "./service-test-model";
+import {
+  vertexTestProtocol,
+  type ServiceTestInput,
+} from "./service-test-model";
 import {
   MAX_BATCH_MODELS,
   runModelTestBatch,
@@ -137,7 +140,14 @@ export function BatchModelTest({
           if (mounted.current)
             setRows((previous) => ({ ...previous, [row.model]: row }));
         },
-        test: (payload) => testService(service.id, payload),
+        test: (payload) => {
+          const protocol =
+            service.kind === "vertex"
+              ? vertexTestProtocol(service, payload.model)
+              : payload.protocol;
+          if (!protocol) throw new Error(t("serviceTest.vertexUnknownModel"));
+          return testService(service.id, { ...payload, protocol });
+        },
       });
     } catch (cause) {
       if (mounted.current)

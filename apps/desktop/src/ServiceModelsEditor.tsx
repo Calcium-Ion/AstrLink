@@ -55,6 +55,8 @@ export type UpstreamModelSnapshot = {
 };
 
 export type ServiceModelsEditorProps = {
+  /** Use one toolbar when the surrounding tab already names the editor. */
+  compact?: boolean;
   models: string[];
   modelEditor: string;
   probingModels: boolean;
@@ -483,6 +485,7 @@ function ModelGroupSection({
 }
 
 export function ServiceModelsEditor({
+  compact = false,
   models,
   modelEditor,
   probingModels,
@@ -673,9 +676,18 @@ export function ServiceModelsEditor({
   return (
     <fieldset
       aria-labelledby="service-models-editor-heading"
-      className="min-w-0 border-0 border-t bg-transparent px-0 pt-3 pb-0.5"
+      className={cn(
+        "min-w-0 border-0 bg-transparent px-0 pb-0.5",
+        compact
+          ? "grid grid-cols-[minmax(0,1fr)_auto] items-start gap-2"
+          : "border-t pt-3",
+      )}
     >
-      <div className="flex items-start justify-between gap-3">
+      <div
+        className={
+          compact ? "sr-only" : "flex items-start justify-between gap-3"
+        }
+      >
         <div className="grid min-w-0 gap-0.5">
           <strong
             className="text-sm font-semibold"
@@ -694,7 +706,14 @@ export function ServiceModelsEditor({
         </Badge>
       </div>
 
-      <div className="mt-2.5 flex min-w-0 flex-wrap items-center gap-2">
+      <div
+        className={cn(
+          "flex min-w-0 flex-wrap items-center gap-2",
+          compact ? "col-start-1 row-start-1" : "mt-2.5",
+          compact && (selecting || catalog.length === 0) && "col-span-2",
+          compact && selecting && "invisible",
+        )}
+      >
         <ModelSelect
           options={catalog}
           aria-label={t("models.searchConfigured")}
@@ -737,7 +756,7 @@ export function ServiceModelsEditor({
       </div>
 
       {adding ? (
-        <div className="mt-2 grid gap-2 rounded-md border bg-muted p-2.5">
+        <div className="col-span-full mt-2 grid gap-2 rounded-md border bg-muted p-2.5">
           {bulkPaste ? (
             <Textarea
               aria-label={t("models.pendingIds")}
@@ -781,7 +800,7 @@ export function ServiceModelsEditor({
 
       {catalog.length === 0 ? (
         <p
-          className="mt-2.5 rounded-md border border-dashed bg-muted/70 p-3 text-center text-xs text-muted-foreground"
+          className="col-span-full mt-2.5 rounded-md border border-dashed bg-muted/70 p-3 text-center text-xs text-muted-foreground"
           role="status"
         >
           {t("models.empty")}
@@ -790,7 +809,7 @@ export function ServiceModelsEditor({
         <>
           {missing.length > 0 ? (
             <FormMessage
-              className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1"
+              className="col-span-full mt-2 flex flex-wrap items-center gap-x-3 gap-y-1"
               data-testid="service-models-missing"
               tone="warning"
             >
@@ -815,11 +834,18 @@ export function ServiceModelsEditor({
             </FormMessage>
           ) : null}
           {/* Selection covers this row without changing its size, so the list below stays put. */}
-          <div className="relative my-1.5 mt-2 flex min-h-4 items-center justify-between gap-2.5">
+          <div
+            className={cn(
+              "relative flex items-center justify-between gap-2.5",
+              compact ? "row-start-1 min-h-8" : "my-1.5 mt-2 min-h-4",
+              compact && (selecting ? "col-span-2 col-start-1" : "col-start-2"),
+            )}
+          >
             <span
               className={cn(
                 "text-xs font-semibold text-muted-foreground tabular-nums",
                 selecting && "invisible",
+                compact && "sr-only",
               )}
             >
               {hasQuery
@@ -988,13 +1014,16 @@ export function ServiceModelsEditor({
 
           {filtered.length === 0 ? (
             <p
-              className="mt-1.5 rounded-md border border-dashed p-2.5 text-xs text-muted-foreground"
+              className="col-span-full mt-1.5 rounded-md border border-dashed p-2.5 text-xs text-muted-foreground"
               role="status"
             >
               {t("models.noMatch", { query: query.trim() })}
             </p>
           ) : (
-            <div className="grid gap-2" aria-label={t("models.configured")}>
+            <div
+              className="col-span-full grid gap-2"
+              aria-label={t("models.configured")}
+            >
               {categories.map((category) => {
                 if (category.groups.length === 1) {
                   const group = category.groups[0]!;

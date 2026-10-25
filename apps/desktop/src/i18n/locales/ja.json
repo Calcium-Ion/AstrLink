@@ -61,6 +61,9 @@
     }
   },
   "serviceTest": {
+    "vertexPerModelProtocol": "モデルごとのネイティブプロトコルでテスト",
+    "vertexUnknownModel": "モデルのネイティブプロトコルを判別できません。「対応モデル」で形式を指定してください。",
+    "vertexNativeTest": "保存済みの認証情報でモデルのネイティブ API をテストします。入口プロトコルの変換は行いません。",
     "subtitle": "プライバシーフィルタとリクエスト記録、再試行なし",
     "settings": "テスト設定",
     "results": "テスト結果",
@@ -1125,7 +1128,7 @@
     "notEnabled": "（未有効）",
     "passthrough": "パススルー",
     "perModelFormat": "モデルごとの形式で転送",
-    "capabilityHintPerModel": "有効にしたプロトコルで、接続できるクライアントが決まります。リクエストは各モデルの上流の形式で OpenCode に送られます。形式は「対応モデル」で変更できます。",
+    "capabilityHintPerModel": "有効にしたプロトコルで、接続できるクライアントが決まります。リクエストは各モデルの上流の形式で転送されます。形式は「対応モデル」で変更できます。",
     "authBearer": "APIキー（Bearer）",
     "authAnthropic": "Anthropic APIキー",
     "authGoogle": "Google APIキー",
@@ -1258,7 +1261,18 @@
       "chat": "OpenCode、OpenClaw、ほとんどの互換ツールが使用",
       "messages": "Claude Code が使用",
       "gemini": "Gemini CLI が使用"
-    }
+    },
+    "vertexProject": "Google Cloud プロジェクト ID",
+    "vertexLocation": "ロケーション",
+    "vertexLocationHint": "global、us、eu または us-central1 などのリージョンを指定します。選択した場所で利用可能なモデルが必要です。別の場所には自動切替しません。",
+    "vertexCredential": "サービスアカウント JSON",
+    "vertexCredentialHint": "Google Cloud のサービスアカウントキー JSON を貼り付けてください。保存後は再表示されません。",
+    "vertexCredentialKeep": "サービスアカウントは保存済みです。空欄なら保持、新しい JSON を入力すると置換します。",
+    "vertexInvalidConfig": "有効な Google Cloud プロジェクト ID とロケーションを入力してください。",
+    "vertexInvalidCredential": "project_id、client_email、private_key を含む service_account JSON を入力してください。",
+    "vertexRemoveCredential": "保存済みのサービスアカウント認証情報を削除",
+    "vertexModelsHelp": "Vertex モデル設定の説明",
+    "vertexCatalogHint": "公式カタログから識別可能な対話モデルを取得します。一覧への掲載は利用権限を保証しません。不足するモデルは公式 ID を手動入力し、選択した場所での利用可否をテストしてください。"
   },
   "models": {
     "deleteNamed": "{{label}} を削除",
@@ -1403,7 +1417,8 @@
     "xai": "xAI（Grok）API",
     "antigravity_subscription": "Antigravity サブスクリプション",
     "copilot_subscription": "GitHub Copilot サブスクリプション",
-    "droid_subscription": "Droid サブスクリプション"
+    "droid_subscription": "Droid サブスクリプション",
+    "vertex": "Vertex AI"
   },
   "subscription": {
     "tag": "サブスク",
@@ -1460,7 +1475,8 @@
     "glmDescription": "/api/paas/v4 経由で従量課金する Zhipu プラットフォームの APIキーです。アカウントで有効なモデル ID を追加してください。",
     "minimaxDescription": "従量課金の MiniMax プラットフォーム APIキーです。プラットフォームの APIキーを使ってください。",
     "doubaoDescription": "従量課金の Volcengine Ark APIキーです。既定は北京です。有効なモデル ID または推論エンドポイント ID（ep-…）を追加してください。",
-    "xaiDescription": "従量課金の xAI プラットフォーム APIキーです。Grok Chat、Responses、モデル検出に対応しています。"
+    "xaiDescription": "従量課金の xAI プラットフォーム APIキーです。Grok Chat、Responses、モデル検出に対応しています。",
+    "vertexDescription": "Google Cloud サービスアカウントで Gemini、Claude、OpenAI 互換の対話モデルを使用します。"
   },
   "usage": {
     "allLimits": "すべての利用枠",
@@ -1815,9 +1831,12 @@
     "unsupported": " · 現在は非対応",
     "unsupportedRequiresMacOS26": " · macOS 26 以降が必要",
     "coreMLVariantGPU": "Core ML FP16 · GPU（推奨）",
+    "coreMLVariantGPUInCatalog": "Core ML FP16 · GPU",
     "coreMLVariantNeuralEngine": "Core ML FP16 · Neural Engine（低速）",
     "coreMLVariantAllUnits": "Core ML FP16 · すべての演算ユニット",
     "coreMLCompileOnEnable": "Core ML 版を使い始めると、AstrLink はすぐにこの Mac 向けにモデルをコンパイルし、進行状況を表示します。初回は 15〜25 秒ほどかかり、2 回目以降はすぐに起動します。",
+    "directMLVariantGPU": "DirectML FP16 · GPU",
+    "directMLLoadOnEnable": "DirectML 版を使い始めると、AstrLink はすぐにモデルを GPU に読み込み、進行状況を表示します。通常は数秒で終わります。",
     "preparingModel": "ローカルモデルを準備しています…",
     "modelCompiling": "この Mac 向けにモデルをコンパイルしています。初回は 15〜25 秒ほどかかります…",
     "modelCompilingLocalFallback": "準備ができるまでは、前のローカルモデルがリクエストをチェックします。",
@@ -1827,6 +1846,11 @@
     "modelPrepareFailedLocalFallback": "このモデルをこの Mac で準備できませんでした。前のローカルモデルが引き続きリクエストをチェックします。",
     "modelPrepareFailedRegexFallback": "このモデルをこの Mac で準備できませんでした。正規表現ルールが引き続きリクエストをチェックします。",
     "modelPrepareFailedBlocked": "このモデルをこの Mac で準備できませんでした。モデルが使えるようになるか、別のモデルを選ぶまで、リクエストはブロックされます。",
+    "modelLoadingOnGPU": "GPU にモデルを読み込んでいます…",
+    "modelReadyOnGPU": "GPU への読み込みが終わり、使用できます。",
+    "modelLoadFailedOnGPULocalFallback": "このモデルを GPU に読み込めませんでした。前のローカルモデルが引き続きリクエストをチェックします。",
+    "modelLoadFailedOnGPURegexFallback": "このモデルを GPU に読み込めませんでした。正規表現ルールが引き続きリクエストをチェックします。",
+    "modelLoadFailedOnGPUBlocked": "このモデルを GPU に読み込めませんでした。モデルが使えるようになるか、別のモデルを選ぶまで、リクエストはブロックされます。",
     "retryPrepare": "再試行",
     "checkAndInstall": "確認してインストール",
     "updateAvailableHint": "バージョン {{version}} を利用できます",
