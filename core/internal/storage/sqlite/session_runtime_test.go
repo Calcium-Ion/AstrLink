@@ -144,18 +144,18 @@ func TestSessionRuntimeCountsOverlappingCallsOnce(t *testing.T) {
 		wantSince *time.Time
 	}{
 		{
-			name:   "fully overlapping calls count once",
+			name:   "identical calls count once",
+			calls:  []call{{offset: 0, runtime: 10}, {offset: 0, runtime: 10}},
+			wantMs: 10_000,
+		},
+		{
+			name:   "partial overlap counts the shared time once",
 			calls:  []call{{offset: 0, runtime: 10}, {offset: 2, runtime: 10}},
 			wantMs: 12_000,
 		},
 		{
 			name:   "a call nested in another counts once",
 			calls:  []call{{offset: 0, runtime: 10}, {offset: 2, runtime: 1}},
-			wantMs: 10_000,
-		},
-		{
-			name:   "partial overlap counts the shared time once",
-			calls:  []call{{offset: 0, runtime: 10}, {offset: 5, runtime: 3}},
 			wantMs: 10_000,
 		},
 		{
