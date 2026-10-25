@@ -59,6 +59,7 @@ import {
   probeServiceModels,
   probeServiceProxy,
   testService,
+  cancelServiceTest,
   probePrivacyModel,
   restartCore,
   updateService,
@@ -1677,6 +1678,39 @@ describe("desktop bridge contract", () => {
 });
 
 describe("provider test bridge", () => {
+  it("uses the same cancellation ID for the test and cancel commands", async () => {
+    vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+    const input = {
+      protocol: "openai.chat" as const,
+      model: "test",
+      stream: true,
+    };
+    let reject!: (reason: string) => void;
+    invokeMock.mockImplementationOnce(
+      () =>
+        new Promise((_resolve, rejectTest) => {
+          reject = rejectTest;
+        }),
+    );
+    const pending = testService("service_test", input, "test_active");
+    expect(invokeMock).toHaveBeenLastCalledWith("test_service", {
+      serviceId: "service_test",
+      input,
+      testId: "test_active",
+    });
+    invokeMock.mockResolvedValueOnce(true);
+    await expect(
+      cancelServiceTest("service_test", "test_active"),
+    ).resolves.toBe(true);
+    expect(invokeMock).toHaveBeenLastCalledWith("cancel_service_test", {
+      serviceId: "service_test",
+      testId: "test_active",
+    });
+    reject("service_test_cancelled");
+    await expect(pending).rejects.toThrow("service_test_cancelled");
+    vi.unstubAllGlobals();
+  });
+
   it("passes the selected provider and validates its result", async () => {
     vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
     const input = {

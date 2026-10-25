@@ -15,10 +15,11 @@
     "add": "モデルを追加",
     "progress": "完了 {{done}} / {{total}}",
     "finished": "一括完了 {{done}} / {{total}}",
-    "stopping": "停止しています。送信済みのリクエストの完了を待っています…",
-    "stoppingShort": "停止中…",
+    "stopping": "実行中のリクエストをキャンセルしています…",
+    "stoppingShort": "キャンセル中…",
     "successCount": "成功 {{count}}",
     "failedCount": "失敗 {{count}}",
+    "cancelledCount": "キャンセル済み {{count}}",
     "stoppedCount": "未実行 {{count}}",
     "progressLabel": "一括テストの進捗",
     "status": "状態",
@@ -27,7 +28,7 @@
     "detailsNamed": "{{model}} のテストレスポンスを表示",
     "empty": "設定済みのモデルを検索するか、モデル ID を入力して追加してください。",
     "back": "モデルに戻る",
-    "stop": "キューを停止",
+    "stop": "テストをキャンセル",
     "retry": "失敗を再試行（{{count}}）",
     "start": "{{count}} 件のモデルをテスト",
     "state": {
@@ -36,6 +37,7 @@
       "running": "テスト中",
       "success": "成功",
       "failed": "失敗",
+      "cancelled": "キャンセル済み",
       "stopped": "未実行"
     }
   },

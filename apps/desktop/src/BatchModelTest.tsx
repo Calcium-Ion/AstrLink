@@ -1,7 +1,8 @@
 import { ModelSelect } from "./components/ModelSelect";
 import { ModelLabel } from "./components/ModelLabel";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { testService } from "./bridge";
+import { cancelServiceTest, testService } from "./bridge";
+import { createServiceTestId } from "./service-test-cancellation";
 import { useT } from "./i18n";
 import type { Service } from "./service-model";
 import {
@@ -69,26 +70,36 @@ export function BatchModelTest({
   const [error, setError] = useState<string | null>(null);
   const stopRequested = useRef(false);
   const locked = useRef(false);
+  const activeTests = useRef(new Set<string>());
+  const generation = useRef(0);
+  const cancelInFlight = useRef(false);
   const mounted = useRef(true);
   useEffect(() => {
+    const tests = activeTests.current;
     mounted.current = true;
     return () => {
       mounted.current = false;
       stopRequested.current = true;
+      for (const id of tests)
+        void cancelServiceTest(service.id, id).catch(() => {});
     };
-  }, []);
+  }, [service.id]);
   const models = [...new Set([...service.models, ...customModels])];
   const visible = models.filter((model) =>
     model.toLowerCase().includes(query.toLowerCase().trim()),
   );
   const entries = Object.values(rows);
   const completed = entries.filter(
-    (row) => row.state === "success" || row.state === "failed",
+    (row) =>
+      row.state === "success" ||
+      row.state === "failed" ||
+      row.state === "cancelled",
   );
   const failed = entries
     .filter((row) => row.state === "failed")
     .map((row) => row.model);
   const succeeded = entries.filter((row) => row.state === "success").length;
+  const cancelled = entries.filter((row) => row.state === "cancelled").length;
   const stopped = entries.filter((row) => row.state === "stopped").length;
   const progress = entries.length
     ? (100 * (completed.length + stopped)) / entries.length
@@ -119,6 +130,8 @@ export function BatchModelTest({
   async function start(targets: string[], retry = false) {
     if (locked.current || blocked || targets.length === 0) return;
     locked.current = true;
+    generation.current += 1;
+    cancelInFlight.current = false;
     stopRequested.current = false;
     setStopping(false);
     setError(null);
@@ -140,13 +153,19 @@ export function BatchModelTest({
           if (mounted.current)
             setRows((previous) => ({ ...previous, [row.model]: row }));
         },
-        test: (payload) => {
+        test: async (payload) => {
           const protocol =
             service.kind === "vertex"
               ? vertexTestProtocol(service, payload.model)
               : payload.protocol;
           if (!protocol) throw new Error(t("serviceTest.vertexUnknownModel"));
-          return testService(service.id, { ...payload, protocol });
+          const id = createServiceTestId();
+          activeTests.current.add(id);
+          try {
+            return await testService(service.id, { ...payload, protocol }, id);
+          } finally {
+            activeTests.current.delete(id);
+          }
         },
       });
     } catch (cause) {
@@ -158,6 +177,7 @@ export function BatchModelTest({
         );
     } finally {
       locked.current = false;
+      cancelInFlight.current = false;
       if (mounted.current) {
         setRunning(false);
         setStopping(false);
@@ -166,10 +186,34 @@ export function BatchModelTest({
     }
   }
 
+  async function stop() {
+    if (!locked.current || cancelInFlight.current) return;
+    stopRequested.current = true;
+    cancelInFlight.current = true;
+    setStopping(true);
+    setError(null);
+    const currentGeneration = generation.current;
+    const ids = [...activeTests.current];
+    const outcomes = await Promise.allSettled(
+      ids.map((id) => cancelServiceTest(service.id, id)),
+    );
+    if (currentGeneration !== generation.current) return;
+    cancelInFlight.current = false;
+    const failed = outcomes.some(
+      (outcome, index) =>
+        activeTests.current.has(ids[index]) &&
+        (outcome.status === "rejected" || !outcome.value),
+    );
+    if (mounted.current && failed) {
+      setStopping(false);
+      setError(t("serviceTest.cancelFailed"));
+    }
+  }
+
   return (
     <>
       <div
-        className="@container flex min-h-0 flex-1 flex-col gap-2 p-4 min-[800px]:p-5"
+        className="@container flex min-h-0 flex-1 flex-col gap-2 p-3"
         data-testid="batch-model-tests"
       >
         {detail ? (
@@ -178,6 +222,8 @@ export function BatchModelTest({
               result={current?.result}
               error={current?.error}
               running={current?.state === "running"}
+              cancelling={stopping && current?.state === "running"}
+              cancelled={current?.state === "cancelled"}
               stream={current?.result?.stream ?? input.stream}
               leading={
                 <>
@@ -310,6 +356,11 @@ export function BatchModelTest({
                   <span className="text-danger-foreground">
                     {t("batchTest.failedCount", { count: failed.length })}
                   </span>
+                  {cancelled > 0 ? (
+                    <span className="text-muted-foreground">
+                      {t("batchTest.cancelledCount", { count: cancelled })}
+                    </span>
+                  ) : null}
                   {stopped > 0 ? (
                     <span className="text-muted-foreground">
                       {t("batchTest.stoppedCount", { count: stopped })}
@@ -414,7 +465,11 @@ export function BatchModelTest({
                             <Button
                               size="sm"
                               variant="ghost"
-                              disabled={!row?.result && !row?.error}
+                              disabled={
+                                !row?.result &&
+                                !row?.error &&
+                                row?.state !== "cancelled"
+                              }
                               aria-label={t("batchTest.detailsNamed", {
                                 model,
                               })}
@@ -439,7 +494,7 @@ export function BatchModelTest({
           </>
         )}
       </div>
-      <DialogFooter className="flex-row flex-wrap items-center justify-between border-t bg-muted/30 px-4 py-3 sm:justify-between">
+      <DialogFooter className="flex-row flex-wrap items-center justify-between border-t bg-muted/30 px-4 py-2 sm:justify-between">
         <span className="text-xs text-muted-foreground">
           {t("serviceTest.quotaNote")}
         </span>
@@ -451,10 +506,7 @@ export function BatchModelTest({
             <Button
               variant="outline"
               disabled={stopping}
-              onClick={() => {
-                stopRequested.current = true;
-                setStopping(true);
-              }}
+              onClick={() => void stop()}
             >
               {t(stopping ? "batchTest.stoppingShort" : "batchTest.stop")}
             </Button>

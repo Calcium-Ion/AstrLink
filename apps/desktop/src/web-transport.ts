@@ -1,4 +1,8 @@
 import { i18n } from "./i18n";
+import {
+  SERVICE_TEST_ALREADY_RUNNING_ERROR,
+  SERVICE_TEST_INVALID_ID_ERROR,
+} from "./service-test-cancellation";
 
 export const CONSOLE_SIGNED_OUT = "astrlink:console-signed-out";
 export const RAW_CHANGED = "astrlink:web-raw-changed";
@@ -237,10 +241,10 @@ const commands: Record<string, Command> = {
     const serviceId = id(a, "serviceId");
     const testId = typeof a.testId === "string" ? a.testId : "";
     if (testId && !validServiceTestId(testId))
-      throw new Error("service_test_invalid_id");
+      throw new Error(SERVICE_TEST_INVALID_ID_ERROR);
     const key = testId ? serviceTestKey(serviceId, testId) : "";
     if (key && serviceTestAborts.has(key))
-      throw new Error("service_test_already_running");
+      throw new Error(SERVICE_TEST_ALREADY_RUNNING_ERROR);
     const controller = key ? new AbortController() : null;
     if (controller) serviceTestAborts.set(key, controller);
     try {

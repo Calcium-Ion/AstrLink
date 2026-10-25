@@ -463,11 +463,11 @@ export async function resetServiceUsage(
   );
 }
 
-/** Keep in sync with the Rust constants in sidecar.rs. */
-export const SERVICE_TEST_CANCELLED_ERROR = "service_test_cancelled";
-export const SERVICE_TEST_ALREADY_RUNNING_ERROR =
-  "service_test_already_running";
-export const SERVICE_TEST_INVALID_ID_ERROR = "service_test_invalid_id";
+export {
+  SERVICE_TEST_CANCELLED_ERROR,
+  SERVICE_TEST_ALREADY_RUNNING_ERROR,
+  SERVICE_TEST_INVALID_ID_ERROR,
+} from "./service-test-cancellation";
 
 export async function testService(
   serviceId: string,

@@ -133,3 +133,32 @@ it("rejects invalid queues before making requests", async () => {
   }
   expect(test).not.toHaveBeenCalled();
 });
+
+it.each([
+  "service_test_cancelled",
+  new Error("service_test_cancelled"),
+  new DOMException("Aborted", "AbortError"),
+])("distinguishes cancelled requests from failures (%s)", async (reason) => {
+  let stop = false;
+  let reject!: (reason: unknown) => void;
+  const updates: ModelTestRow[] = [];
+  const run = runModelTestBatch({
+    models: ["a", "b"],
+    input,
+    concurrency: 1,
+    shouldStop: () => stop,
+    onUpdate: (row) => updates.push(row),
+    test: () =>
+      new Promise((_resolve, rejectRequest) => {
+        reject = rejectRequest;
+      }),
+  });
+  stop = true;
+  reject(reason);
+  await run;
+  expect(updates).toEqual([
+    { model: "a", state: "running" },
+    { model: "a", state: "cancelled" },
+    { model: "b", state: "stopped" },
+  ]);
+});

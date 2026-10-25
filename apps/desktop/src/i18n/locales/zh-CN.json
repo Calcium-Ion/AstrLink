@@ -15,10 +15,11 @@
     "add": "添加模型",
     "progress": "已完成 {{done}} / {{total}}",
     "finished": "本批已完成 {{done}} / {{total}}",
-    "stopping": "正在停止，等待已发出的请求完成…",
-    "stoppingShort": "正在停止…",
+    "stopping": "正在取消已发出的请求…",
+    "stoppingShort": "正在取消…",
     "successCount": "成功 {{count}}",
     "failedCount": "失败 {{count}}",
+    "cancelledCount": "已取消 {{count}}",
     "stoppedCount": "未执行 {{count}}",
     "progressLabel": "批量测试进度",
     "status": "状态",
@@ -27,7 +28,7 @@
     "detailsNamed": "查看 {{model}} 的测试响应",
     "empty": "可以搜索现有模型，或输入模型 ID 后添加。",
     "back": "返回模型列表",
-    "stop": "停止后续",
+    "stop": "取消测试",
     "retry": "重试失败 ({{count}})",
     "start": "测试 {{count}} 个模型",
     "state": {
@@ -36,6 +37,7 @@
       "running": "测试中",
       "success": "成功",
       "failed": "失败",
+      "cancelled": "已取消",
       "stopped": "未执行"
     }
   },

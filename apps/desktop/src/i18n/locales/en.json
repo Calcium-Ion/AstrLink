@@ -15,10 +15,11 @@
     "add": "Add model",
     "progress": "Completed {{done}} / {{total}}",
     "finished": "Batch completed {{done}} / {{total}}",
-    "stopping": "Stopping; waiting for requests already sent…",
-    "stoppingShort": "Stopping…",
+    "stopping": "Cancelling active requests…",
+    "stoppingShort": "Cancelling…",
     "successCount": "Passed {{count}}",
     "failedCount": "Failed {{count}}",
+    "cancelledCount": "Cancelled {{count}}",
     "stoppedCount": "Not run {{count}}",
     "progressLabel": "Batch test progress",
     "status": "Status",
@@ -27,7 +28,7 @@
     "detailsNamed": "View test response for {{model}}",
     "empty": "Search configured models, or enter and add a model ID.",
     "back": "Back to models",
-    "stop": "Stop queue",
+    "stop": "Cancel tests",
     "retry": "Retry failed ({{count}})",
     "start": "Test {{count}} models",
     "state": {
@@ -36,6 +37,7 @@
       "running": "Testing",
       "success": "Passed",
       "failed": "Failed",
+      "cancelled": "Cancelled",
       "stopped": "Not run"
     }
   },

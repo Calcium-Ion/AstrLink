@@ -93,6 +93,7 @@ beforeEach(() => {
     globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
   ).IS_REACT_ACT_ENVIRONMENT = true;
   mocks.testService.mockReset();
+  mocks.cancelServiceTest.mockReset().mockResolvedValue(true);
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -176,12 +177,16 @@ it.each([false, true])(
       }),
     );
     await act(async () => button("重试失败 (2)").click());
-    expect(mocks.testService).toHaveBeenLastCalledWith(service.id, {
-      model: "claude-test@20250101",
-      protocol: "anthropic.messages",
-      stream,
-      prompt: "keep my prompt",
-    });
+    expect(mocks.testService).toHaveBeenLastCalledWith(
+      service.id,
+      {
+        model: "claude-test@20250101",
+        protocol: "anthropic.messages",
+        stream,
+        prompt: "keep my prompt",
+      },
+      expect.any(String),
+    );
     expect(mocks.testService).toHaveBeenCalledTimes(4);
   },
 );
@@ -230,29 +235,185 @@ it("runs selected models, shows original failures and retries only failed items"
   expect(modelRow("beta").textContent).toContain("成功");
 });
 
-it("blocks mode switches and close until active tests finish, and stops pending models", async () => {
-  const pending = new Map<string, (value: ServiceTestResult) => void>();
+function pendingTests() {
+  const pending = new Map<
+    string,
+    {
+      id: string;
+      resolve: (value: ServiceTestResult) => void;
+      reject: (error: unknown) => void;
+    }
+  >();
   mocks.testService.mockImplementation(
-    (_id: string, input: ServiceTestInput) =>
-      new Promise<ServiceTestResult>((resolve) =>
-        pending.set(input.model, resolve),
+    (_id: string, input: ServiceTestInput, id: string) =>
+      new Promise<ServiceTestResult>((resolve, reject) =>
+        pending.set(input.model, { id, resolve, reject }),
       ),
   );
+  return pending;
+}
+
+it.each(["native", "web"])(
+  "cancels active %s tests, skips the queue and lets the dialog close",
+  async (transport) => {
+    const pending = pendingTests();
+    await open();
+    await act(async () => button("测试 3 个模型").click());
+    expect(mocks.testService).toHaveBeenCalledTimes(2);
+    expect(button("单模型").disabled).toBe(true);
+    expect(button("关闭").disabled).toBe(true);
+    const ids = [...pending.values()].map((test) => test.id);
+    expect(ids).toEqual([expect.any(String), expect.any(String)]);
+    expect(new Set(ids).size).toBe(2);
+    await act(async () => button("取消测试").click());
+    expect(mocks.cancelServiceTest.mock.calls).toEqual(
+      ids.map((id) => [service.id, id]),
+    );
+    expect(button("正在取消…").disabled).toBe(true);
+    await act(async () => {
+      for (const test of pending.values())
+        test.reject(
+          transport === "native"
+            ? new Error("service_test_cancelled")
+            : new DOMException("Aborted", "AbortError"),
+        );
+    });
+    expect(mocks.testService).toHaveBeenCalledTimes(2);
+    expect(modelRow("alpha").textContent).toContain("已取消");
+    expect(modelRow("beta").textContent).toContain("已取消");
+    expect(modelRow("gamma").textContent).toContain("未执行");
+    expect(batch().textContent).toContain("已取消 2");
+    expect(batch().textContent).toContain("失败 0");
+    expect(button("关闭").disabled).toBe(false);
+    expect(button("单模型").disabled).toBe(false);
+    await act(async () => button("查看 alpha 的测试响应").click());
+    expect(batch().textContent).toContain("测试已取消");
+    await act(async () => button("返回模型列表").click());
+    mocks.testService.mockImplementation(
+      async (_id: string, input: ServiceTestInput) => result(input.model),
+    );
+    await act(async () => button("测试 3 个模型").click());
+    const nextIds = mocks.testService.mock.calls
+      .slice(2)
+      .map((call) => call[2]);
+    expect(new Set([...ids, ...nextIds]).size).toBe(5);
+    expect(batch().textContent).toContain("成功 3");
+  },
+);
+
+it("preserves a result that finishes during cancellation", async () => {
+  const pending = pendingTests();
   await open();
   await act(async () => button("测试 3 个模型").click());
-  expect(mocks.testService).toHaveBeenCalledTimes(2);
-  expect(button("单模型").disabled).toBe(true);
-  expect(button("关闭").disabled).toBe(true);
-  await act(async () => button("停止后续").click());
-  expect(button("正在停止…").disabled).toBe(true);
-  await act(async () => {
-    pending.get("alpha")!(result("alpha"));
-    pending.get("beta")!(result("beta"));
+  mocks.cancelServiceTest.mockImplementation(async (_serviceId, id) => {
+    if (id === pending.get("alpha")!.id) {
+      pending.get("alpha")!.resolve(result("alpha"));
+      return false;
+    }
+    pending.get("beta")!.reject(new Error("service_test_cancelled"));
+    return true;
   });
-  expect(mocks.testService).toHaveBeenCalledTimes(2);
+  await act(async () => button("取消测试").click());
+  expect(modelRow("alpha").textContent).toContain("成功0.23 s1.25 s");
+  expect(modelRow("beta").textContent).toContain("已取消");
   expect(modelRow("gamma").textContent).toContain("未执行");
+  expect(document.body.textContent).not.toContain("无法取消测试");
+  expect(mocks.testService).toHaveBeenCalledTimes(2);
+});
+
+it.each(["rejected", "missing"])(
+  "allows retrying a %s cancellation while keeping the remaining request active",
+  async (failure) => {
+    const pending = pendingTests();
+    await open();
+    await act(async () => button("测试 3 个模型").click());
+    mocks.cancelServiceTest.mockImplementation(async (_serviceId, id) => {
+      if (id === pending.get("alpha")!.id) {
+        if (failure === "rejected") throw new Error("offline");
+        return false;
+      }
+      pending.get("beta")!.reject(new Error("service_test_cancelled"));
+      return true;
+    });
+    await act(async () => button("取消测试").click());
+    expect(document.body.textContent).toContain("无法取消测试。");
+    expect(button("取消测试").disabled).toBe(false);
+    expect(button("关闭").disabled).toBe(true);
+    expect(modelRow("alpha").textContent).toContain("测试中");
+    expect(modelRow("beta").textContent).toContain("已取消");
+    mocks.cancelServiceTest.mockClear().mockImplementation(async () => {
+      pending.get("alpha")!.reject(new Error("service_test_cancelled"));
+      return true;
+    });
+    await act(async () => button("取消测试").click());
+    expect(mocks.cancelServiceTest).toHaveBeenCalledExactlyOnceWith(
+      service.id,
+      pending.get("alpha")!.id,
+    );
+    expect(button("关闭").disabled).toBe(false);
+    expect(document.body.textContent).not.toContain("无法取消测试");
+  },
+);
+
+it("cancels active requests when the dialog unmounts", async () => {
+  const pending = pendingTests();
+  await open();
+  await act(async () => button("测试 3 个模型").click());
+  mocks.cancelServiceTest.mockImplementation(async (_serviceId, id) => {
+    [...pending.values()]
+      .find((test) => test.id === id)!
+      .reject(new Error("service_test_cancelled"));
+    return true;
+  });
+  await act(async () => root.render(null));
+  expect(mocks.cancelServiceTest.mock.calls).toEqual(
+    [...pending.values()].map((test) => [service.id, test.id]),
+  );
+  expect(mocks.testService).toHaveBeenCalledTimes(2);
+});
+
+it("ignores a cancellation response from a completed batch", async () => {
+  const pending = pendingTests();
+  let finishCancellation!: (value: boolean) => void;
+  mocks.cancelServiceTest.mockImplementation(
+    () =>
+      new Promise<boolean>((resolve) => {
+        finishCancellation = resolve;
+      }),
+  );
+  await open(["alpha"]);
+  await act(async () => button("测试 1 个模型").click());
+  await act(async () => button("取消测试").click());
+  await act(async () => pending.get("alpha")!.resolve(result("alpha")));
+  await act(async () => button("测试 1 个模型").click());
+  await act(async () => finishCancellation(false));
+  expect(button("取消测试").disabled).toBe(false);
+  expect(document.body.textContent).not.toContain("无法取消测试");
+  await act(async () => pending.get("alpha")!.resolve(result("alpha")));
+});
+
+it("keeps completed results when cancelling the remaining batch", async () => {
+  const pending = pendingTests();
+  await open(["alpha", "beta", "gamma", "delta"]);
+  await act(async () => button("测试 4 个模型").click());
+  await act(async () => pending.get("alpha")!.resolve(result("alpha")));
+  expect(pending.has("gamma")).toBe(true);
+  mocks.cancelServiceTest.mockImplementation(async (_serviceId, id) => {
+    [...pending.values()]
+      .find((test) => test.id === id)!
+      .reject(new Error("service_test_cancelled"));
+    return true;
+  });
+  await act(async () => button("取消测试").click());
+  expect(mocks.cancelServiceTest.mock.calls.map((call) => call[1])).toEqual([
+    pending.get("beta")!.id,
+    pending.get("gamma")!.id,
+  ]);
+  expect(modelRow("alpha").textContent).toContain("成功");
+  expect(modelRow("beta").textContent).toContain("已取消");
+  expect(modelRow("gamma").textContent).toContain("已取消");
+  expect(modelRow("delta").textContent).toContain("未执行");
   expect(button("关闭").disabled).toBe(false);
-  expect(button("单模型").disabled).toBe(false);
 });
 
 it("selects matching models and adds test-only models without changing the provider", async () => {

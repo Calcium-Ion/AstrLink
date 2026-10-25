@@ -2,13 +2,13 @@ import { BatchModelTest } from "./BatchModelTest";
 import { SegmentedControl } from "./components/SegmentedControl";
 import { ServiceTestResultView } from "./ServiceTestResultView";
 import { useId, useRef, useState } from "react";
+import { cancelServiceTest, testService } from "./bridge";
 import {
-  cancelServiceTest,
+  createServiceTestId,
+  isServiceTestCancelled,
   SERVICE_TEST_ALREADY_RUNNING_ERROR,
-  SERVICE_TEST_CANCELLED_ERROR,
   SERVICE_TEST_INVALID_ID_ERROR,
-  testService,
-} from "./bridge";
+} from "./service-test-cancellation";
 import { notify } from "./notify";
 import type { Service } from "./service-model";
 import {
@@ -187,7 +187,6 @@ export function ServiceTestDialog({
   const [error, setError] = useState<string | null>(null);
   const inFlight = useRef(false);
   const testId = useRef<string | null>(null);
-  const testSequence = useRef(0);
   const effectiveProtocol =
     service.kind === "vertex" ? vertexTestProtocol(service, model) : protocol;
   const capability = capabilities.find(
@@ -246,8 +245,7 @@ export function ServiceTestDialog({
   async function runTest() {
     if (!canTest || !effectiveProtocol || inFlight.current) return;
     inFlight.current = true;
-    testSequence.current += 1;
-    const id = `${service.id}:${testSequence.current}:${Date.now()}`;
+    const id = createServiceTestId();
     testId.current = id;
     setSettingsOpen(false);
     setRunning(true);
@@ -269,17 +267,13 @@ export function ServiceTestDialog({
         ),
       );
     } catch (cause) {
-      const name =
-        cause && typeof cause === "object" && "name" in cause
-          ? String(cause.name)
-          : "";
       const message =
         cause instanceof Error
           ? cause.message
           : typeof cause === "string"
             ? cause
             : "";
-      if (name === "AbortError" || message === SERVICE_TEST_CANCELLED_ERROR) {
+      if (isServiceTestCancelled(cause)) {
         setCancelled(true);
       } else if (message === SERVICE_TEST_ALREADY_RUNNING_ERROR) {
         setError(t("serviceTest.alreadyRunning"));
@@ -323,7 +317,7 @@ export function ServiceTestDialog({
         }}
         onInteractOutside={(event) => event.preventDefault()}
       >
-        <DialogHeader className="flex-row items-center gap-3 border-b px-5 py-4 pr-12 text-left">
+        <DialogHeader className="flex-row items-center gap-3 border-b px-5 py-2 pr-12 text-left">
           <span className="flex size-9 shrink-0 items-center justify-center rounded-md border bg-muted">
             <ServiceKindIcon kind={service.kind} size={24} />
           </span>
