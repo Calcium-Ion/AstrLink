@@ -78,7 +78,9 @@ type Dependencies struct {
 	// MaxConcurrentInspections limits how many requests may parse and
 	// classify at once. Zero selects DefaultMaxConcurrentInspections.
 	MaxConcurrentInspections int
-	// MaxRequestBodyMiB limits incoming request bodies; zero means unlimited.
+	// MaxRequestBodyMiB limits incoming request bodies, a compressed one after
+	// decoding; zero means unlimited, though a compressed body still decodes
+	// to at most maxDecodedRequestBodyBytes.
 	MaxRequestBodyMiB uint32
 	// SubscriptionRisk is optional. It receives classified upstream ban and
 	// quota signals from Claude and Codex subscription accounts.
@@ -341,8 +343,16 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 		handler.writeRecordedInferenceError(writer, request, http.StatusRequestEntityTooLarge, "request_too_large", "request body exceeds the configured size limit", false, nil)
 		return
 	}
+	if errors.Is(err, errDecodedBodyTooLarge) {
+		handler.writeRecordedInferenceError(writer, request, http.StatusRequestEntityTooLarge, "request_too_large", fmt.Sprintf("decompressed request body exceeds %d MiB", maxDecodedRequestBodyBytes>>20), false, nil)
+		return
+	}
+	if errors.Is(err, errInvalidContentEncoding) {
+		handler.writeRecordedInferenceError(writer, request, http.StatusBadRequest, "invalid_content_encoding", "request body could not be decompressed with its Content-Encoding", false, nil)
+		return
+	}
 	if errors.Is(err, errUnsupportedContentEncoding) {
-		handler.writeRecordedInferenceError(writer, request, http.StatusUnsupportedMediaType, "unsupported_content_encoding", "encoded inference request bodies are not supported", false, nil)
+		handler.writeRecordedInferenceError(writer, request, http.StatusUnsupportedMediaType, "unsupported_content_encoding", "request Content-Encoding is not supported; send gzip, deflate, br, zstd or an uncompressed body", false, nil)
 		return
 	}
 	if err != nil {
@@ -1047,6 +1057,12 @@ func (handler *Handler) classify(request *http.Request) (Request, func(), error)
 	if err != nil {
 		return Request{}, func() {}, err
 	}
+	limit, tooLarge := handler.decodedBodyLimit()
+	sentBodyHeaders, err := decodeRequestBody(request, limit, tooLarge)
+	if err != nil {
+		release()
+		return Request{}, func() {}, err
+	}
 	classified, classifyErr := classify(request, handler.maxRequestBodyBytes)
 	if classifyErr != nil {
 		if replay, buffered := request.Body.(*replayReadCloser); buffered {
@@ -1055,6 +1071,7 @@ func (handler *Handler) classify(request *http.Request) (Request, func(), error)
 		release()
 		return Request{}, func() {}, classifyErr
 	}
+	classified.sentBodyHeaders = sentBodyHeaders
 	// Inspection is done. Holding the slot through resolve + upstream
 	// streaming caps the whole gateway at four in-flight AI requests.
 	release()

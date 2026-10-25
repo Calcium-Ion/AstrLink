@@ -513,24 +513,36 @@ func TestProductionInferenceGateDoesNotReauthenticateInFlightRequestAfterDeletio
 	assertInferenceError(t, response, http.StatusUnprocessableEntity, "missing_protocol_capability")
 }
 
-func TestInferencePlaneRejectsEncodedJSONBeforeEndpointResolution(t *testing.T) {
-	called := false
-	handler := NewWithDependencies(Dependencies{
-		Resolver: resolverFunc(func(context.Context, endpoint.ResolveRequest) (endpoint.Resolved, error) {
-			called = true
-			return endpoint.Resolved{}, nil
-		}),
-	})
-	request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader("compressed"))
-	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("Content-Encoding", "gzip")
-	response := httptest.NewRecorder()
+func TestInferencePlaneRejectsUndecodableBodiesBeforeEndpointResolution(t *testing.T) {
+	for _, test := range []struct {
+		name, encoding string
+		status         int
+		code           string
+	}{
+		{"unknown coding", "compress", http.StatusUnsupportedMediaType, "unsupported_content_encoding"},
+		{"corrupt gzip", "gzip", http.StatusBadRequest, "invalid_content_encoding"},
+		{"corrupt zstd", "zstd", http.StatusBadRequest, "invalid_content_encoding"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			called := false
+			handler := NewWithDependencies(Dependencies{
+				Resolver: resolverFunc(func(context.Context, endpoint.ResolveRequest) (endpoint.Resolved, error) {
+					called = true
+					return endpoint.Resolved{}, nil
+				}),
+			})
+			request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader("compressed"))
+			request.Header.Set("Content-Type", "application/json")
+			request.Header.Set("Content-Encoding", test.encoding)
+			response := httptest.NewRecorder()
 
-	handler.ServeHTTP(response, request)
+			handler.ServeHTTP(response, request)
 
-	assertInferenceError(t, response, http.StatusUnsupportedMediaType, "unsupported_content_encoding")
-	if called {
-		t.Fatal("resolver ran for an opaque encoded request")
+			assertInferenceError(t, response, test.status, test.code)
+			if called {
+				t.Fatal("resolver ran for a body it could not read")
+			}
+		})
 	}
 }
 

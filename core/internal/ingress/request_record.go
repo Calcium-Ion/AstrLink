@@ -687,6 +687,18 @@ func (session *recordSession) captureHTTPRequestMeta(request *http.Request) {
 		return
 	}
 	session.httpMeta = RedactRequestMeta(request)
+	// Ingress decoded a compressed body on arrival; record the request as it
+	// came, with the coding the client sent.
+	if sent := session.classified.sentBodyHeaders; len(sent) > 0 {
+		headers := request.Header.Clone()
+		if headers == nil {
+			headers = http.Header{}
+		}
+		for name, values := range sent {
+			headers[name] = values
+		}
+		session.httpMeta.RequestHeaders = redactHeaders(headers)
+	}
 	session.httpMetaCaptured = true
 }
 

@@ -61,6 +61,9 @@ type Request struct {
 	// thread is the agent thread the client says sent the request; it
 	// links a subagent's conversation to the one that started it.
 	thread agentThread
+	// sentBodyHeaders are the Content-Encoding and Content-Length the client
+	// sent with a body ingress decoded on arrival; the record keeps them.
+	sentBodyHeaders http.Header
 }
 
 // routingModel is the model id used to select services and sent upstream.
@@ -268,8 +271,9 @@ type requestMetadata struct {
 
 // inspectConversationBestEffort summarises the replayed history of protocols
 // whose bodies AstrLink otherwise treats as opaque (Gemini: model and
-// streaming come from the path). Encoded or malformed bodies are forwarded
-// untouched and simply do not link; the configured size limit still applies.
+// streaming come from the path). Malformed bodies, and bodies in a coding
+// decodeRequestBody does not know, are forwarded untouched and simply do not
+// link; the configured size limit still applies.
 // The buffered bytes are returned so the auto classifier can reuse them.
 func inspectConversationBestEffort(result *Request, request *http.Request, maxBodyBytes int64) ([]byte, error) {
 	convoProto, ok := convoProtocol(result.Protocol)
@@ -351,8 +355,8 @@ func readAndReplayRequestBody(request *http.Request, maxBodyBytes int64) ([]byte
 
 // inspectJSONMetadata observes routing fields without changing bytes that are
 // forwarded. Malformed JSON is rejected locally because planning cannot safely
-// infer its streaming/model requirements; encoded JSON is likewise rejected
-// unless it explicitly uses the no-op identity encoding.
+// infer its streaming/model requirements; JSON in a coding decodeRequestBody
+// does not know is likewise rejected, and identity is a no-op.
 func inspectJSONMetadata(request *http.Request, protocol contract.ProtocolID, maxBodyBytes int64) (requestMetadata, error) {
 	raw, err := bufferRequestBody(request, maxBodyBytes)
 	if err != nil {
