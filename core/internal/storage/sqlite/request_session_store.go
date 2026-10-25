@@ -276,9 +276,12 @@ func (store *Store) GetRequestSession(
 	return contract.RequestSessionDetail{RequestSession: sessions[0], Turns: turns}, nil
 }
 
-// Sum actual call durations, including demoted retry attempts. Root records
-// contain only the final attempt's latency. Idle gaps between calls never count.
-// Keep open starts separate so clients can tick without changing idle snapshots.
+// Model time is the union of actual call runtimes, including demoted retry
+// attempts. Root records contain only the final attempt's latency. Overlapping
+// calls count once and idle gaps between calls never count. Calls still running
+// end at "now", so they merge with any finished call they overlap into one
+// final block; clients add the elapsed time since its start once, instead of
+// once per running call.
 func (store *Store) loadSessionRuntimes(ctx context.Context, sessions []contract.RequestSession) error {
 	return loadSessionRuntimes(ctx, store.db, sessions)
 }
@@ -289,10 +292,10 @@ func loadSessionRuntimes(ctx context.Context, reader historyReader, sessions []c
 	}
 	byID := make(map[string]*contract.RequestSession, len(sessions))
 	performance := make(map[string]*sessionPerformance, len(sessions))
+	runtimes := make(map[string][]runtimeInterval, len(sessions))
 	args := make([]any, len(sessions))
 	for i := range sessions {
 		session := &sessions[i]
-		session.DurationMs = 0
 		session.ActiveRequestStarts = make([]time.Time, 0)
 		byID[string(session.ID)] = session
 		performance[string(session.ID)] = &sessionPerformance{}
@@ -344,29 +347,91 @@ func loadSessionRuntimes(ctx context.Context, reader historyReader, sessions []c
 			record.CompletedAt = &completed
 		}
 		performance[id].observe(rootID, int(turn.Int64), record)
-		if latency.Valid {
-			session.DurationMs += max(0, latency.Int64)
-		} else if completedAt.Valid {
+		switch {
+		case latency.Valid:
+			runtimes[id] = append(runtimes[id], runtimeInterval{
+				start: started,
+				end:   started.Add(time.Duration(max(0, latency.Int64)) * time.Millisecond),
+			})
+		case completedAt.Valid:
 			// Startup recovery timestamps say when the interruption was discovered,
 			// not when execution stopped. Unknown runtime must not include downtime.
 			if errorCode.String == "core_interrupted" {
 				continue
 			}
-			session.DurationMs += max(0, record.CompletedAt.Sub(started).Milliseconds())
-		} else if status == string(contract.RequestStatusPending) {
+			ended := *record.CompletedAt
+			if ended.Before(started) {
+				ended = started
+			}
+			runtimes[id] = append(runtimes[id], runtimeInterval{start: started, end: ended})
+		case status == string(contract.RequestStatusPending):
 			session.ActiveRequestStarts = append(session.ActiveRequestStarts, started)
+			runtimes[id] = append(runtimes[id], runtimeInterval{start: started, open: true})
 		}
 	}
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("iterate session runtimes: %w", err)
 	}
-	for id, stats := range performance {
-		stats.apply(byID[id])
+	for id, session := range byID {
+		session.DurationMs, session.RunningSince = mergeRuntimeIntervals(runtimes[id])
+		performance[id].apply(session)
 		// Calls arrive in index order; a long session would spill a sort by
 		// start time to disk on every poll, and only these starts need it.
-		slices.SortFunc(byID[id].ActiveRequestStarts, time.Time.Compare)
+		slices.SortFunc(session.ActiveRequestStarts, time.Time.Compare)
 	}
 	return nil
+}
+
+// runtimeInterval is one call's runtime. A call still running has no end: it
+// extends into the future, so every later interval overlaps it.
+type runtimeInterval struct {
+	start time.Time
+	end   time.Time
+	open  bool
+}
+
+// mergeRuntimeIntervals returns the total length of the finished intervals
+// outside the open block, and that block's start. Intervals are sorted by start
+// and merged while they overlap. Every running call reaches into the future, so
+// they form one final block; a finished call that overlaps it extends its start
+// backwards, which also removes the overlap from the total.
+func mergeRuntimeIntervals(intervals []runtimeInterval) (int64, *time.Time) {
+	slices.SortFunc(intervals, func(left, right runtimeInterval) int {
+		return left.start.Compare(right.start)
+	})
+	var (
+		total                int64
+		blockStart, blockEnd time.Time
+		blockOpen, merged    bool
+	)
+	closeBlock := func() {
+		if !blockOpen {
+			total += blockEnd.Sub(blockStart).Milliseconds()
+		}
+	}
+	for _, interval := range intervals {
+		if !merged {
+			blockStart, blockEnd, blockOpen, merged = interval.start, interval.end, interval.open, true
+			continue
+		}
+		if blockOpen || !interval.start.After(blockEnd) {
+			if interval.end.After(blockEnd) {
+				blockEnd = interval.end
+			}
+			blockOpen = blockOpen || interval.open
+			continue
+		}
+		closeBlock()
+		blockStart, blockEnd, blockOpen = interval.start, interval.end, interval.open
+	}
+	if !merged {
+		return 0, nil
+	}
+	if blockOpen {
+		return total, &blockStart
+	}
+	closeBlock()
+	return total, nil
 }
 
 type sessionAggregate struct {

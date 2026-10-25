@@ -7147,6 +7147,7 @@ components:
         - last_started_at
         - completed_at
         - duration_ms
+        - running_since
         - active_request_starts
         - turn_count
         - call_count
@@ -7176,10 +7177,14 @@ components:
         duration_ms:
           type: integer
           minimum: 0
-          description: Cumulative recorded runtime of finished calls, including retry children, in milliseconds. Excludes gaps between calls and unknown runtime of requests recovered after a Core interruption.
+          description: Model time, the total length of the union of finished call intervals, retry children included, in milliseconds. Overlapping calls count once. Gaps between calls and unknown runtime of requests recovered after a Core interruption are excluded. While calls run, add the time since running_since.
+        running_since:
+          type: [string, "null"]
+          format: date-time
+          description: Start of the merged runtime block that contains every call still running, or null when none runs. Add the time since then to duration_ms for a live model time, so any number of parallel calls advances it once per second.
         active_request_starts:
           type: array
-          description: Start timestamps of calls still running without a recorded latency. Add their elapsed times to duration_ms for a live cumulative runtime.
+          description: Start timestamps of calls still running without a recorded latency, used for running-call counts. The live model time comes from running_since, not from each start.
           items:
             type: string
             format: date-time
