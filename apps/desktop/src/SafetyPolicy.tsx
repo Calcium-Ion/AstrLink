@@ -2756,7 +2756,7 @@ export function SafetyPolicy({
     return (
       <div className="gutter-frame flex h-full min-h-0 w-full min-w-0 flex-col">
         <PageHeader
-          description={t("safety.description")}
+          description={t("safety.pageDescription")}
           title={t("safety.title")}
           titleId="safety-policy-heading"
         />
@@ -3007,7 +3007,7 @@ export function SafetyPolicy({
             </Button>
           </>
         }
-        description={t("safety.description")}
+        description={t("safety.pageDescription")}
         title={t("safety.title")}
         titleId="safety-policy-heading"
       />
@@ -5393,8 +5393,8 @@ export function SafetyPolicy({
           pendingReset === "kind_rules" ? (
             <p>
               {t("safety.resetKindRulesHint", {
-                off: defaultPrivacyKindRules()
-                  .filter((rule) => !rule.enabled)
+                on: defaultPrivacyKindRules()
+                  .filter((rule) => rule.enabled)
                   .map((rule) => canonicalKindLabel(rule.kind))
                   .join(t("safety.listJoin")),
               })}

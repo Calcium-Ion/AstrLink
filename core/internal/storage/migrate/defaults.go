@@ -1103,10 +1103,106 @@ END`,
 		// install's lone token looked like a configured one. It is the token
 		// issued in the same instant the bootstrap completed. The change is
 		// logged, so a sync carries the corrected source to other devices.
+		//
+		// Privacy protection is on, with the regex detector replacing
+		// credentials only, and the allowlist gains the domains reserved for
+		// examples and tests. A policy nobody saved moves to that default: it has
+		// no kind_rules, which every save writes, and still holds what the
+		// earlier migrations seeded. Any other policy without kind_rules was
+		// saved by a test build before they existed; it keeps the per-kind rules
+		// it was read with until now, so the new code defaults leave it alone.
+		//
+		// Neither policy rewrite is a change the user made, so the change log
+		// trigger is held off around them and updated_at is left as it was. A
+		// configuration sync then treats the new default like a seeded row, and
+		// an edit made on another device still wins over it.
 		{Version: 56, Name: "fresh_install_defaults", Statements: []string{
 			`UPDATE local_access_tokens SET source = 'system_default'
 WHERE source = 'user'
   AND created_at = (SELECT completed_at FROM local_access_token_bootstrap_state WHERE singleton = 1)`,
+			`DROP TRIGGER config_change_policies_update`,
+			`UPDATE policies
+SET document_json = json_set(
+    document_json,
+    '$.enabled', json('true'),
+    '$.allowlist_rules', json('[
+        {"type":"domain_suffix","value":"localhost"},
+        {"type":"domain_suffix","value":"github.com"},
+        {"type":"domain_suffix","value":"githubusercontent.com"},
+        {"type":"domain_suffix","value":"example.com"},
+        {"type":"domain_suffix","value":"example.net"},
+        {"type":"domain_suffix","value":"example.org"},
+        {"type":"domain_suffix","value":"example"},
+        {"type":"domain_suffix","value":"test"},
+        {"type":"domain_suffix","value":"invalid"},
+        {"type":"cidr","value":"127.0.0.0/8"},
+        {"type":"cidr","value":"::1/128"},
+        {"type":"cidr","value":"10.0.0.0/8"},
+        {"type":"cidr","value":"172.16.0.0/12"},
+        {"type":"cidr","value":"192.168.0.0/16"},
+        {"type":"cidr","value":"169.254.0.0/16"}
+    ]'),
+    '$.kind_rules', json('[
+        {"kind":"common_secret","enabled":true,"style":"token","notify":true},
+        {"kind":"payment_card","enabled":false,"style":"token","notify":true},
+        {"kind":"account","enabled":false,"style":"token","notify":true},
+        {"kind":"email","enabled":false,"style":"natural","notify":true},
+        {"kind":"phone","enabled":false,"style":"token","notify":true},
+        {"kind":"url","enabled":false,"style":"natural","notify":true},
+        {"kind":"ip_address","enabled":false,"style":"natural","notify":true},
+        {"kind":"private_person","enabled":false,"style":"token","notify":true},
+        {"kind":"private_address","enabled":false,"style":"token","notify":true},
+        {"kind":"private_date","enabled":false,"style":"token","notify":true}
+    ]')
+)
+WHERE id = 'policy_privacy_default'
+  AND json_type(document_json, '$.kind_rules') IS NULL
+  AND json_type(document_json, '$.enabled') = 'false'
+  AND json_extract(document_json, '$.detector') = 'regex'
+  AND json_type(document_json, '$.local_model_id') = 'null'
+  AND json_extract(document_json, '$.min_confidence') = 0.8
+  AND json_extract(document_json, '$.regex_source') = 'builtin'
+  AND json_extract(document_json, '$.custom_regex_rules') = '[]'
+  AND json_extract(document_json, '$.allowlist_rules') = json('[
+        {"type":"domain_suffix","value":"localhost"},
+        {"type":"domain_suffix","value":"github.com"},
+        {"type":"domain_suffix","value":"githubusercontent.com"},
+        {"type":"cidr","value":"127.0.0.0/8"},
+        {"type":"cidr","value":"::1/128"},
+        {"type":"cidr","value":"10.0.0.0/8"},
+        {"type":"cidr","value":"172.16.0.0/12"},
+        {"type":"cidr","value":"192.168.0.0/16"},
+        {"type":"cidr","value":"169.254.0.0/16"}
+    ]')
+  AND json_extract(document_json, '$.match') = '{}'
+  AND json_extract(document_json, '$.request_action') = 'redact'
+  AND json_extract(document_json, '$.response_action') = 'allow'
+  AND json_type(document_json, '$.response_restore') = 'true'
+  AND json_type(document_json, '$.restore_tool_arguments') = 'true'
+  AND json_type(document_json, '$.placeholder_notice') = 'true'
+  AND json_type(document_json, '$.skip_tool_declarations') = 'false'
+  AND json_type(document_json, '$.inspect_additional_tools') = 'false'`,
+			`UPDATE policies
+SET document_json = json_set(
+    document_json,
+    '$.kind_rules', json('[
+        {"kind":"common_secret","enabled":true,"style":"token","notify":true},
+        {"kind":"payment_card","enabled":true,"style":"token","notify":true},
+        {"kind":"account","enabled":true,"style":"token","notify":true},
+        {"kind":"email","enabled":true,"style":"natural","notify":true},
+        {"kind":"phone","enabled":true,"style":"token","notify":true},
+        {"kind":"url","enabled":false,"style":"natural","notify":true},
+        {"kind":"ip_address","enabled":false,"style":"natural","notify":true},
+        {"kind":"private_person","enabled":true,"style":"token","notify":true},
+        {"kind":"private_address","enabled":true,"style":"token","notify":true},
+        {"kind":"private_date","enabled":false,"style":"token","notify":true}
+    ]')
+)
+WHERE id = 'policy_privacy_default'
+  AND json_type(document_json, '$.kind_rules') IS NULL`,
+			`CREATE TRIGGER config_change_policies_update AFTER UPDATE ON policies BEGIN
+    INSERT INTO config_change_log (entity_kind, entity_id, changed_at) VALUES ('policy', NEW.id, strftime('%Y-%m-%dT%H:%M:%f000000Z', 'now'));
+END`,
 		}},
 	}
 }

@@ -407,12 +407,15 @@ const (
 	// itself, such as a local access token id or a request id. It names a
 	// record without granting access to anything.
 	PrivacyIgnoreAstrLinkIdentifier PrivacyIgnoreReason = "astrlink_identifier"
+	// PrivacyIgnoreExampleValue is a value only documentation and tests use:
+	// a card number payment providers publish for test payments.
+	PrivacyIgnoreExampleValue PrivacyIgnoreReason = "example_value"
 )
 
 func (reason PrivacyIgnoreReason) Valid() bool {
 	switch reason {
 	case PrivacyIgnoreKindDisabled, PrivacyIgnoreLowConfidence, PrivacyIgnoreAllowlisted,
-		PrivacyIgnoreAstrLinkIdentifier:
+		PrivacyIgnoreAstrLinkIdentifier, PrivacyIgnoreExampleValue:
 		return true
 	default:
 		return false

@@ -55,6 +55,11 @@ WHERE id = 'policy_privacy_default'`, fields); err != nil {
 					want[field] = json.RawMessage(`false`)
 				}
 			}
+			// A changed policy without kind_rules keeps the per-kind rules it
+			// was read with before credentials became the only default kind.
+			if _, exists := want["kind_rules"]; !exists {
+				want["kind_rules"] = previousDefaultKindRulesJSON(t)
+			}
 			if err := database.Close(); err != nil {
 				t.Fatal(err)
 			}
@@ -203,4 +208,24 @@ WHERE id = 'policy_privacy_default'`,
 	if _, err := store.ListPolicies(ctx); !errors.Is(err, storagecontract.ErrInvalidRecord) {
 		t.Fatalf("missing singleton list error = %v", err)
 	}
+}
+
+// previousDefaultKindRulesJSON is the per-kind default before only
+// credentials were on: every kind except url, ip_address, and private_date.
+func previousDefaultKindRulesJSON(t *testing.T) json.RawMessage {
+	t.Helper()
+	rules := contract.DefaultPrivacyKindRules()
+	for index := range rules {
+		switch rules[index].Kind {
+		case "url", "ip_address", "private_date":
+			rules[index].Enabled = false
+		default:
+			rules[index].Enabled = true
+		}
+	}
+	encoded, err := json.Marshal(rules)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return encoded
 }

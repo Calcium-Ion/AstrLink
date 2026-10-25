@@ -4042,7 +4042,8 @@ fn validate_privacy_suppression_reason(value: &serde_json::Value) -> Result<(), 
             | "allowlisted"
             | "placeholder"
             | "unrepresentable"
-            | "astrlink_identifier",
+            | "astrlink_identifier"
+            | "example_value",
         ) => Ok(()),
         _ => Err("privacy policy dry-run finding reason is unknown".to_string()),
     }
@@ -7343,6 +7344,10 @@ mod tests {
         assert!(
             parse_privacy_dry_run_result(&serde_json::to_vec(&own_identifier).unwrap()).is_ok()
         );
+
+        let mut example = result.clone();
+        example["suppressed_findings"][0]["reason"] = serde_json::json!("example_value");
+        assert!(parse_privacy_dry_run_result(&serde_json::to_vec(&example).unwrap()).is_ok());
 
         let mut unknown_reason = result.clone();
         unknown_reason["suppressed_findings"][0]["reason"] = serde_json::json!("vibes");

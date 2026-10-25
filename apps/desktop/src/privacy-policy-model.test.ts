@@ -426,6 +426,29 @@ describe("privacy-policy IPC contract", () => {
     ).toBe(false);
   });
 
+  it("mirrors Core's defaults: credentials only, example domains allowed", () => {
+    expect(
+      defaultPrivacyKindRules()
+        .filter((rule) => rule.enabled)
+        .map((rule) => rule.kind),
+    ).toEqual(["common_secret"]);
+    expect(
+      defaultPrivacyAllowlistRules()
+        .filter((rule) => rule.type === "domain_suffix")
+        .map((rule) => rule.value),
+    ).toEqual([
+      "localhost",
+      "github.com",
+      "githubusercontent.com",
+      "example.com",
+      "example.net",
+      "example.org",
+      "example",
+      "test",
+      "invalid",
+    ]);
+  });
+
   it("lists the default allowlist entries a policy no longer has", () => {
     const defaults = defaultPrivacyAllowlistRules();
     expect(missingDefaultPrivacyAllowlistRules([])).toEqual(defaults);

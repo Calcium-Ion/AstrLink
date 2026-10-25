@@ -1641,7 +1641,8 @@
       "allowlisted": "匹配免脱敏名单，因此忽略。",
       "placeholder": "识别为已有占位符，无需重复替换。",
       "unrepresentable": "此内容无法生成可用的替换值，因此忽略。",
-      "astrlink_identifier": "这是 AstrLink 自己生成的 ID（如访问令牌 ID），不能用来访问任何内容，因此忽略。"
+      "astrlink_identifier": "这是 AstrLink 自己生成的 ID（如访问令牌 ID），不能用来访问任何内容，因此忽略。",
+      "example_value": "这是支付平台公开的测试卡号，只用于测试付款，不属于任何人，因此忽略。"
     },
     "testAction": {
       "allow": "当前策略允许请求，保留原文。",
@@ -1683,6 +1684,7 @@
     "redactTypesHint": "选择需要脱敏的信息类型，以及发送给上游的替换形态。",
     "title": "隐私保护",
     "description": "在请求发送到上游前使用规则或所选本地模型检测敏感内容。",
+    "pageDescription": "请求发往上游前，先在本机检测并替换敏感内容。默认只替换常见密钥，其他类型可以按需开启。",
     "readyHint": "策略和模型均在本机保存与执行。",
     "waiting": "网关就绪后可管理安全策略",
     "enable": "启用隐私保护",
@@ -1967,7 +1969,7 @@
     "resetConfirm": "恢复默认",
     "resetKindRulesTitle": "将逐类型脱敏恢复默认？",
     "resetKindRulesWarnTitle": "将逐类型检测与通知恢复默认？",
-    "resetKindRulesHint": "每种信息类型的开关、占位符形态和通知方式都会恢复默认：{{off}}关闭，其他类型开启，所有类型都发送系统通知。新请求立即生效。",
+    "resetKindRulesHint": "每种类型的开关、占位符形态和通知方式会恢复默认。默认只开启{{on}}，其他类型关闭，所有类型都发送系统通知。新请求立即生效。",
     "resetRestoreTitle": "将请求与响应恢复默认？",
     "resetRestoreHint": "以下开关恢复为默认状态，新请求立即生效。",
     "defaultOn": "开启",
@@ -2693,7 +2695,8 @@
       "low_confidence": "低于门槛",
       "allowlisted": "免脱敏名单",
       "kind_disabled": "类型已关闭",
-      "astrlink_identifier": "AstrLink 自有 ID"
+      "astrlink_identifier": "AstrLink 自有 ID",
+      "example_value": "测试卡号"
     },
     "policyAllowHint": "策略没有改动请求内容，请求体见「客户端」。",
     "policyTrustedHint": "此提供商已被信任，策略没有检查这次请求，按原文发往上游。请求体见「客户端」。",

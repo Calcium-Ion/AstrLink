@@ -1641,7 +1641,8 @@
       "allowlisted": "Matches the allowlist, so the match is ignored.",
       "placeholder": "Already a placeholder; no further replacement is needed.",
       "unrepresentable": "No usable replacement can be generated, so the match is ignored.",
-      "astrlink_identifier": "An ID AstrLink generated itself, such as an access token ID. It grants no access, so the match is ignored."
+      "astrlink_identifier": "An ID AstrLink generated itself, such as an access token ID. It grants no access, so the match is ignored.",
+      "example_value": "A card number payment providers publish for test payments. It belongs to no one, so the match is ignored."
     },
     "testAction": {
       "allow": "The current policy allows the request and keeps the original.",
@@ -1683,6 +1684,7 @@
     "redactTypesHint": "Choose which sensitive values to replace and how they appear upstream.",
     "title": "Privacy protection",
     "description": "Detect sensitive content with rules or a local model before the request goes upstream.",
+    "pageDescription": "Finds and replaces sensitive content on this device before a request goes upstream. By default only common secrets are replaced. Turn on other kinds as needed.",
     "readyHint": "Policies and models stay on this machine.",
     "waiting": "You can manage the safety policy after the gateway is ready",
     "enable": "Enable privacy protection",
@@ -1967,7 +1969,7 @@
     "resetConfirm": "Restore defaults",
     "resetKindRulesTitle": "Restore per-kind redaction defaults?",
     "resetKindRulesWarnTitle": "Restore per-kind detection and notification defaults?",
-    "resetKindRulesHint": "Every kind's switch, placeholder style, and notification return to their defaults: {{off}} off, every other kind on, and every kind notifies. New requests use it immediately.",
+    "resetKindRulesHint": "Every kind's switch, placeholder style, and notification return to their defaults. Only {{on}} stays on, every other kind turns off, and every kind notifies. New requests use it immediately.",
     "resetRestoreTitle": "Restore request & response defaults?",
     "resetRestoreHint": "These switches return to their defaults. New requests use them immediately.",
     "defaultOn": "On",
@@ -2693,7 +2695,8 @@
       "low_confidence": "Below threshold",
       "allowlisted": "Allowlisted",
       "kind_disabled": "Type off",
-      "astrlink_identifier": "AstrLink ID"
+      "astrlink_identifier": "AstrLink ID",
+      "example_value": "Test card"
     },
     "policyAllowHint": "The policy left the request unchanged; the body is under Client.",
     "policyTrustedHint": "This provider is trusted, so the policy did not check the request and it went upstream as written. The body is under Client.",

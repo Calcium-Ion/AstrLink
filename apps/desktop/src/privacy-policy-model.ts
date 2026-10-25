@@ -203,7 +203,8 @@ export type PrivacySuppressionReason =
   | "allowlisted"
   | "placeholder"
   | "unrepresentable"
-  | "astrlink_identifier";
+  | "astrlink_identifier"
+  | "example_value";
 
 export interface PrivacyDryRunFinding {
   kind: CanonicalPrivacyKind;
@@ -367,6 +368,7 @@ const suppressionReasons = new Set<PrivacySuppressionReason>([
   "placeholder",
   "unrepresentable",
   "astrlink_identifier",
+  "example_value",
 ]);
 const actions = new Set<PrivacyAction>(["allow", "warn", "block", "redact"]);
 const adapters = new Set<PrivacyModelAdapter>([
@@ -856,13 +858,13 @@ export function parsePrivacyPolicy(value: unknown, path = "$"): PrivacyPolicy {
 
 /**
  * Mirrors core/contract.DefaultPrivacyKindRules for responses that predate the
- * field. url, ip_address, and private_date are off because they were the
- * dominant false-positive sources for coding agents.
+ * field. Only credentials are on: the other kinds fill a coding agent's
+ * prompts as test data, docs, and logs, so each is one switch away.
  */
 export function defaultPrivacyKindRules(): PrivacyKindRule[] {
   return PRIVACY_KINDS.map((kind) => ({
     kind,
-    enabled: kind !== "url" && kind !== "ip_address" && kind !== "private_date",
+    enabled: kind === "common_secret",
     style: PLACEHOLDER_STYLE_LOCKED_KINDS.has(kind) ? "token" : "natural",
     notify: true,
   }));
@@ -905,6 +907,13 @@ export function defaultPrivacyAllowlistRules(): PrivacyAllowlistRule[] {
     { type: "domain_suffix", value: "localhost" },
     { type: "domain_suffix", value: "github.com" },
     { type: "domain_suffix", value: "githubusercontent.com" },
+    // Reserved for examples and tests (RFC 2606, RFC 6761).
+    { type: "domain_suffix", value: "example.com" },
+    { type: "domain_suffix", value: "example.net" },
+    { type: "domain_suffix", value: "example.org" },
+    { type: "domain_suffix", value: "example" },
+    { type: "domain_suffix", value: "test" },
+    { type: "domain_suffix", value: "invalid" },
     { type: "cidr", value: "127.0.0.0/8" },
     { type: "cidr", value: "::1/128" },
     { type: "cidr", value: "10.0.0.0/8" },

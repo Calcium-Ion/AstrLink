@@ -282,7 +282,7 @@ func TestTokenStyleReproducesPreRedesignShapes(t *testing.T) {
 	engine := mustTestEngine(t)
 	body := []byte(`{"messages":[{"role":"system","content":"api_key=abcdefghijklmnop123456"},` +
 		`{"role":"user","content":"mail alice@example.com call +1-415-987-6543 ` +
-		`card 4242 4242 4242 4242 host 10.4.7.9 link https://internal.corp/x"}]}`)
+		`card 4539 1488 0343 6467 host 10.4.7.9 link https://internal.corp/x"}]}`)
 	policy := tokenPolicy()
 	result, err := engine.Inspect(t.Context(), policy, contract.ProtocolOpenAIChat, body)
 	if err != nil || result.Decision != DecisionRedact {

@@ -2597,18 +2597,22 @@ describe("SafetyPolicy", () => {
   });
 
   it("chooses per kind which warnings notify under warn and continue", async () => {
+    // Emails are off by default; this user turned them on.
+    const withEmail = defaultPrivacyKindRules().map((rule) =>
+      rule.kind === "email" ? { ...rule, enabled: true } : rule,
+    );
     bridgeMocks.getPrivacyPolicy.mockResolvedValueOnce(
-      policyRecord({ request_action: "warn" }),
+      policyRecord({ request_action: "warn", kind_rules: withEmail }),
     );
     bridgeMocks.updatePrivacyPolicy.mockResolvedValueOnce(
-      policyRecord({ request_action: "warn" }),
+      policyRecord({ request_action: "warn", kind_rules: withEmail }),
     );
     await renderPolicy();
     expect(container.textContent).toContain("把不需要通知的类型设为「仅记录」");
     await openPolicySection("脱敏规则");
 
     expect(sectionButton("逐类型检测与通知", "重置此组设置").disabled).toBe(
-      true,
+      false,
     );
     expect(
       container.querySelector('[aria-label="邮箱 占位符形态"]'),
@@ -2630,7 +2634,7 @@ describe("SafetyPolicy", () => {
     await settleClosedLayer();
 
     expect(bridgeMocks.updatePrivacyPolicy).toHaveBeenCalledWith(etag, {
-      kind_rules: defaultPrivacyKindRules().map((rule) =>
+      kind_rules: withEmail.map((rule) =>
         rule.kind === "email" ? { ...rule, notify: false } : rule,
       ),
     });
@@ -2664,7 +2668,7 @@ describe("SafetyPolicy", () => {
     await act(async () => sectionButton("逐类型脱敏", "重置此组设置").click());
     const dialog = document.querySelector('[role="alertdialog"]');
     expect(dialog?.textContent).toContain("将逐类型脱敏恢复默认？");
-    expect(dialog?.textContent).toContain("URL、IP 地址、私人日期关闭");
+    expect(dialog?.textContent).toContain("默认只开启常见密钥，其他类型关闭");
     expect(bridgeMocks.updatePrivacyPolicy).not.toHaveBeenCalled();
 
     await act(async () => button("恢复默认").click());
@@ -2737,10 +2741,19 @@ describe("SafetyPolicy", () => {
 
     await act(async () => sectionButton("免脱敏名单", "补回默认条目").click());
     const dialog = document.querySelector('[role="alertdialog"]');
-    expect(dialog?.textContent).toContain("将补回以下 7 条默认条目");
-    const added = [
+    expect(dialog?.textContent).toContain("将补回以下 13 条默认条目");
+    const domains = [
       "localhost",
       "githubusercontent.com",
+      // Reserved for examples and tests.
+      "example.com",
+      "example.net",
+      "example.org",
+      "example",
+      "test",
+      "invalid",
+    ];
+    const ranges = [
       "127.0.0.0/8",
       "::1/128",
       "172.16.0.0/12",
@@ -2749,7 +2762,7 @@ describe("SafetyPolicy", () => {
     ];
     expect(
       [...(dialog?.querySelectorAll("li") ?? [])].map((row) => row.textContent),
-    ).toEqual(added);
+    ).toEqual([...domains, ...ranges]);
 
     await act(async () => button("补回").click());
     await flush();
@@ -2760,13 +2773,12 @@ describe("SafetyPolicy", () => {
         { type: "literal", value: "build-01" },
         { type: "domain_suffix", value: "GitHub.com" },
         { type: "cidr", value: "10.0.0.0/8" },
-        { type: "domain_suffix", value: "localhost" },
-        { type: "domain_suffix", value: "githubusercontent.com" },
-        ...added.slice(2).map((value) => ({ type: "cidr", value })),
+        ...domains.map((value) => ({ type: "domain_suffix", value })),
+        ...ranges.map((value) => ({ type: "cidr", value })),
       ],
     });
     expect(notifyMocks.success).toHaveBeenLastCalledWith(
-      "已补回 7 条默认条目，新请求立即生效。",
+      "已补回 13 条默认条目，新请求立即生效。",
     );
     expect(
       container.querySelector<HTMLInputElement>('input[type="search"]')?.value,
@@ -2775,7 +2787,13 @@ describe("SafetyPolicy", () => {
   });
 
   it("locks the placeholder style of kinds where the shape is a safety property", async () => {
-    bridgeMocks.getPrivacyPolicy.mockResolvedValueOnce(policyRecord());
+    bridgeMocks.getPrivacyPolicy.mockResolvedValueOnce(
+      policyRecord({
+        kind_rules: defaultPrivacyKindRules().map((rule) =>
+          rule.kind === "email" ? { ...rule, enabled: true } : rule,
+        ),
+      }),
+    );
     await renderPolicy();
     await openPolicySection("脱敏规则");
 

@@ -68,6 +68,79 @@ func TestDisabledPrivacyPolicyDoesNotReadOrReplaceOriginalGeminiBody(t *testing.
 	}
 }
 
+// A fresh install's policy is on and replaces credentials only. Everything
+// else a coding agent sends, including the contact details and numbers the
+// default leaves off, must reach the provider byte for byte: no rewrite, no
+// placeholder notice.
+func TestDefaultPrivacyPolicyForwardsRequestsWithoutSecretsUntouched(t *testing.T) {
+	policy, err := privacy.FromContractPolicy(contract.DefaultPrivacyPolicy())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !policy.Enabled {
+		t.Fatal("the shipped policy must be on")
+	}
+	const secret = "k8Jd2nQ7xR4mT9pL3vZ6"
+	for _, test := range []struct {
+		name   string
+		body   string
+		redact bool
+	}{
+		{
+			name: "no secret",
+			body: " {\n \"model\":\"gpt-5\",  \"input\":\"mail alice@acme.io, call +1-415-987-6543, " +
+				"card 4539 1488 0343 6467, see https://docs.acme.io and 10.4.7.9. " +
+				"api_key = process.env.OPENAI_API_KEY\"\n} ",
+		},
+		{
+			name:   "secret",
+			body:   `{"model":"gpt-5","input":"api_key=` + secret + `"}`,
+			redact: true,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var forwarded []byte
+			upstream := validEndpoint(contract.ProtocolOpenAIResponses, false)
+			handler := NewWithDependencies(Dependencies{
+				Resolver: resolverFunc(func(context.Context, endpoint.ResolveRequest) (endpoint.Resolved, error) {
+					return endpoint.Resolved{Endpoint: upstream}, nil
+				}),
+				PrivacyFilter: testPrivacyEngine(t, policy, nil),
+				Forwarder: transport.New(roundTripFunc(func(request *http.Request) (*http.Response, error) {
+					body, err := io.ReadAll(request.Body)
+					if err != nil {
+						t.Fatal(err)
+					}
+					forwarded = body
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Header:     http.Header{"Content-Type": {"application/json"}},
+						Body:       io.NopCloser(strings.NewReader(`{"ok":true}`)),
+					}, nil
+				})),
+			})
+			request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(test.body))
+			request.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+
+			handler.ServeHTTP(response, request)
+
+			if response.Code != http.StatusOK {
+				t.Fatalf("response=%d %s", response.Code, response.Body.String())
+			}
+			if !test.redact {
+				if string(forwarded) != test.body {
+					t.Fatalf("forwarded body = %q, want the original bytes", forwarded)
+				}
+				return
+			}
+			if strings.Contains(string(forwarded), secret) || !strings.Contains(string(forwarded), "api_key=<SECRET_") {
+				t.Fatalf("forwarded body = %s, want the credential replaced", forwarded)
+			}
+		})
+	}
+}
+
 func TestPrivacyNoMatchAndWarnPreserveExactBytesAndWarningStaysLocal(t *testing.T) {
 	tests := []struct {
 		name       string

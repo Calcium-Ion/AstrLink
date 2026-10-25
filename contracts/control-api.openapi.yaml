@@ -5743,6 +5743,7 @@ components:
             - placeholder
             - unrepresentable
             - astrlink_identifier
+            - example_value
           description: >
             Why the span was left in the request. Absent on accepted findings.
             placeholder means the value already belonged to a placeholder
@@ -5751,6 +5752,8 @@ components:
             stand-ins and fell back to a token placeholder. astrlink_identifier
             means the value is an identifier AstrLink generated itself, such as
             a local access token id or a request id, which grants no access.
+            example_value means only documentation and tests use the value: a
+            card number payment providers publish for test payments.
       additionalProperties: false
     PolicyDryRunRedaction:
       type: object
@@ -6870,14 +6873,21 @@ components:
         Matches of one kind the policy left in the request for one reason. A
         match that was already a placeholder is not counted. astrlink_identifier
         counts identifiers AstrLink generated itself, such as local access token
-        ids, which grant no access. Never carries the matched value.
+        ids, which grant no access. example_value counts card numbers payment
+        providers publish for test payments. Never carries the matched value.
       properties:
         kind:
           $ref: "#/components/schemas/PrivacyCanonicalKind"
         reason:
           type: string
           enum:
-            [kind_disabled, low_confidence, allowlisted, astrlink_identifier]
+            [
+              kind_disabled,
+              low_confidence,
+              allowlisted,
+              astrlink_identifier,
+              example_value,
+            ]
         count:
           type: integer
           minimum: 1
