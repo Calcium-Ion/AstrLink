@@ -1732,9 +1732,9 @@
       "policy": "Couldn't read the current privacy settings. Click Refresh at the top right and try again.",
       "sample": "This text can't be checked in the selected request format. Edit the text or choose another format, then try again."
     },
-    "importStarted": "Local model import started. Watch progress under Installed.",
-    "installStarted": "Model install started. Watch progress under Installed.",
-    "updateStarted": "The new version is downloading. When it is ready, switch to it under Installed.",
+    "importStarted": "Local model import started. Progress is shown on the model card.",
+    "installStarted": "Model download started. Progress is shown on the model card.",
+    "updateStarted": "The new version is downloading. Switch to it from the model card when it is ready.",
     "installFailed": "Unable to start installing the local model.",
     "probeMismatch": "The checked model does not match the selected version. Refresh the model catalog and try again.",
     "variantIncompatible": "This model version does not support the current device. Choose another version and try again.",
