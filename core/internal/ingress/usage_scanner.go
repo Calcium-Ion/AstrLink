@@ -355,6 +355,7 @@ func decodeOpenAIResponsesUsage(raw json.RawMessage) *contract.Usage {
 		*payload.TotalTokens,
 		cacheRead,
 	)
+	usage.CacheWriteTokens, usage.CacheWrite12hTokens = cacheWritesFromDetails(payload.InputTokensDetails)
 	usage.InputAudioTokens = audioTokensFromDetails(payload.InputTokensDetails)
 	usage.OutputAudioTokens = audioTokensFromDetails(payload.OutputTokensDetails)
 	return usage
@@ -385,6 +386,7 @@ func (scanner *usageScanner) parseOpenAIChat(document map[string]json.RawMessage
 		*payload.TotalTokens,
 		cachedTokensFromDetails(payload.PromptTokensDetails),
 	)
+	scanner.usage.CacheWriteTokens, scanner.usage.CacheWrite12hTokens = cacheWritesFromDetails(payload.PromptTokensDetails)
 	scanner.usage.InputAudioTokens = audioTokensFromDetails(payload.PromptTokensDetails)
 	scanner.usage.OutputAudioTokens = audioTokensFromDetails(payload.CompletionTokensDetails)
 	scanner.complete = true
@@ -652,6 +654,24 @@ func (writer *usageScanningWriter) FlushError() error {
 
 func (writer *usageScanningWriter) Unwrap() http.ResponseWriter {
 	return writer.ResponseWriter
+}
+
+// cacheWritesFromDetails reads OpenAI's cache_write_tokens and the 12-hour
+// share of them; both are subsets of the reported input.
+func cacheWritesFromDetails(raw json.RawMessage) (write, twelveHour *int) {
+	var details struct {
+		Write *int `json:"cache_write_tokens"`
+		ByTTL *struct {
+			TwelveHour *int `json:"ttl_12h_tokens"`
+		} `json:"cache_write_tokens_details"`
+	}
+	if json.Unmarshal(raw, &details) != nil {
+		return nil, nil
+	}
+	if details.ByTTL != nil {
+		twelveHour = details.ByTTL.TwelveHour
+	}
+	return details.Write, twelveHour
 }
 
 func audioTokensFromDetails(raw json.RawMessage) *int {

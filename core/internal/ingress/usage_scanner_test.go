@@ -120,6 +120,40 @@ func TestUsageScannerProtocols(t *testing.T) {
 			},
 		},
 		{
+			name:      "openai responses sse cache writes by ttl",
+			protocol:  contract.ProtocolOpenAIResponses,
+			streaming: true,
+			chunks: []string{
+				"data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":100,\"output_tokens\":5,\"total_tokens\":105,\"input_tokens_details\":{\"cached_tokens\":40,\"cache_write_tokens\":30,\"cache_write_tokens_details\":{\"ttl_30m_tokens\":20,\"ttl_12h_tokens\":10}}}}}\n",
+			},
+			want: &contract.Usage{
+				InputTokens: 100, OutputTokens: 5, TotalTokens: 105,
+				CacheReadTokens: intPtr(40), CacheWriteTokens: intPtr(30), CacheWrite12hTokens: intPtr(10),
+			},
+		},
+		{
+			name:     "chat prompt_tokens_details cache writes by ttl",
+			protocol: contract.ProtocolOpenAIChat,
+			chunks: []string{
+				`{"id":"c","usage":{"prompt_tokens":20,"completion_tokens":5,"total_tokens":25,"prompt_tokens_details":{"cached_tokens":8,"cache_write_tokens":6,"cache_write_tokens_details":{"ttl_30m_tokens":2,"ttl_12h_tokens":4}}}}`,
+			},
+			want: &contract.Usage{
+				InputTokens: 20, OutputTokens: 5, TotalTokens: 25,
+				CacheReadTokens: intPtr(8), CacheWriteTokens: intPtr(6), CacheWrite12hTokens: intPtr(4),
+			},
+		},
+		{
+			name:     "openai responses cache writes without ttl split",
+			protocol: contract.ProtocolOpenAIResponses,
+			chunks: []string{
+				`{"id":"r","usage":{"input_tokens":10,"output_tokens":2,"total_tokens":12,"input_tokens_details":{"cached_tokens":0,"cache_write_tokens":7}}}`,
+			},
+			want: &contract.Usage{
+				InputTokens: 10, OutputTokens: 2, TotalTokens: 12,
+				CacheReadTokens: intPtr(0), CacheWriteTokens: intPtr(7),
+			},
+		},
+		{
 			name:      "anthropic output usage is cumulative",
 			protocol:  contract.ProtocolAnthropicMessages,
 			streaming: true,
