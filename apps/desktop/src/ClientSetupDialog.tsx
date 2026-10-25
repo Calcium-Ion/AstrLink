@@ -40,14 +40,13 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
+import { cn } from "@/lib/utils";
 import type { AccessTokenSummary } from "./access-token-model";
 import {
   applyClientConfig,
   checkClientProxy,
   getClientConfigStatus,
   getRoutingSettings,
-  getService,
-  updateService,
   isCCSwitchInstalled,
   listServices,
   openCCSwitchImport,
@@ -71,7 +70,18 @@ import {
   astrlinkAutoModelId,
   type ModelRedirect,
 } from "./failure-policy-model";
-import { bestConversionTarget, type Service } from "./service-model";
+import type { Service } from "./service-model";
+import {
+  enableServiceEntry,
+  serviceEntryTarget,
+  serviceHasEntry,
+  serviceSupportsEntry,
+} from "./service-entry-model";
+import { routingMemberEntry, usedMembers } from "./model-routing-format-model";
+import {
+  modelRoutingPublicModelID,
+  type ModelRoutingGroup,
+} from "./model-routing-group-model";
 import type { ConversionEngineCapability } from "./core-model";
 import { protocolLabel } from "./service-presets";
 import { i18n } from "./i18n";
@@ -325,7 +335,8 @@ function DesktopClientSetupDialog({
   const [catalog, setCatalog] = useState<{
     services: Service[];
     redirects: ModelRedirect[];
-  }>({ services: [], redirects: [] });
+    groups: ModelRoutingGroup[];
+  }>({ services: [], redirects: [], groups: [] });
   const [catalogStatus, setCatalogStatus] = useState<
     "loading" | "ready" | "error"
   >("loading");
@@ -386,6 +397,12 @@ function DesktopClientSetupDialog({
         redirects:
           routing.status === "fulfilled"
             ? (routing.value.model_redirects ?? [])
+            : [],
+        groups:
+          routing.status === "fulfilled"
+            ? (routing.value.model_routing_groups ?? []).filter(
+                (group) => group.enabled,
+              )
             : [],
       });
       setCatalogStatus(services.status === "fulfilled" ? "ready" : "error");
@@ -554,19 +571,11 @@ function DesktopClientSetupDialog({
       ? tokens.find((item) => item.id === status?.token_id)
       : undefined;
 
-  const hasEntry = (service: Service, protocol: string) =>
-    service.capabilities.some((row) => row.protocol === protocol);
+  const hasEntry = serviceHasEntry;
   const entryTarget = (service: Service, protocol: string) =>
-    bestConversionTarget(
-      protocol,
-      service.capabilities
-        .filter((row) => !row.convert_to)
-        .map((row) => row.protocol),
-      conversionEngine,
-    );
+    serviceEntryTarget(service, protocol, conversionEngine);
   const supportsEntry = (service: Service, protocol: string) =>
-    service.enabled &&
-    (hasEntry(service, protocol) || Boolean(entryTarget(service, protocol)));
+    serviceSupportsEntry(service, protocol, conversionEngine);
 
   // Preserve the existing route when any provider already accepts this entry.
   const modelService = (modelID: string, protocol: string) => {
@@ -589,43 +598,155 @@ function DesktopClientSetupDialog({
     const target = entryTarget(service, protocol);
     return target ? { service, target } : undefined;
   };
+  // A routing group names its models' providers outright, so each member is
+  // checked against its own provider: an entry to open, or no way to accept
+  // this client's format at all.
+  const groupOf = (modelID: string) =>
+    catalog.groups.find(
+      (group) => modelRoutingPublicModelID(group.id) === modelID.trim(),
+    );
+  const groupEntries = (modelID: string, protocol: string) => {
+    const group = groupOf(modelID);
+    if (!group) return null;
+    const entries = new Map<string, { service: Service; target: string }>();
+    const incompatible: { model: string; service: string }[] = [];
+    // The editor's format check, so the two never disagree about a group.
+    for (const member of usedMembers(group)) {
+      const entry = routingMemberEntry(
+        member,
+        catalog.services,
+        protocol,
+        conversionEngine,
+      );
+      if (entry.kind === "accepts") continue;
+      if (entry.kind === "convertible")
+        entries.set(entry.service.id, {
+          service: entry.service as Service,
+          target: entry.target,
+        });
+      else
+        incompatible.push({
+          model: member.model,
+          service: entry.service?.name ?? t("binding.removedService"),
+        });
+    }
+    return { entries: [...entries.values()], incompatible };
+  };
+  const requiredEntries = (modelID: string, protocol: string) => {
+    const group = groupEntries(modelID, protocol);
+    if (group) return group.entries;
+    const entry = requiredEntry(modelID, protocol);
+    return entry ? [entry] : [];
+  };
+  // Gemini's native path cannot carry the "/" a routing group's name has.
+  const groupOptions =
+    client && client !== "gemini"
+      ? catalog.groups.map((group) => modelRoutingPublicModelID(group.id))
+      : [];
   const modelOptions = client
     ? [
-        ...catalog.services
-          .filter((service) => supportsEntry(service, protocols[client]))
-          .flatMap((service) => service.models),
-        ...catalog.redirects
-          .filter(
-            (redirect) =>
-              redirect.enabled &&
-              redirect.from !== astrlinkAutoModelId &&
-              // Gemini paths cannot carry "/" in the model segment.
-              !(client === "gemini" && redirect.from.includes("/")) &&
-              catalog.services.some(
-                (service) =>
-                  service.models.includes(redirect.to) &&
-                  supportsEntry(service, protocols[client]),
-              ),
-          )
-          .map((redirect) => redirect.from),
-      ].sort()
+        ...groupOptions,
+        ...[
+          ...catalog.services
+            .filter((service) => supportsEntry(service, protocols[client]))
+            .flatMap((service) => service.models),
+          ...catalog.redirects
+            .filter(
+              (redirect) =>
+                redirect.enabled &&
+                redirect.from !== astrlinkAutoModelId &&
+                // Gemini paths cannot carry "/" in the model segment.
+                !(client === "gemini" && redirect.from.includes("/")) &&
+                catalog.services.some(
+                  (service) =>
+                    service.models.includes(redirect.to) &&
+                    supportsEntry(service, protocols[client]),
+                ),
+            )
+            .map((redirect) => redirect.from),
+        ]
+          .filter((option) => !groupOptions.includes(option))
+          .sort(),
+      ]
     : [];
-  const optionAdornment = (modelID: string) =>
-    client && requiredEntry(modelID, protocols[client]) ? (
+  const optionGroup = (modelID: string) =>
+    groupOptions.length === 0
+      ? undefined
+      : t(
+          groupOptions.includes(modelID)
+            ? "clientSetup.groupsHeading"
+            : "clientSetup.modelsHeading",
+        );
+  const optionAdornment = (modelID: string) => {
+    if (!client) return null;
+    const protocol = protocols[client];
+    const group = groupEntries(modelID, protocol);
+    if (group)
+      return (
+        <>
+          {group.entries.length > 0 ? (
+            <Badge
+              variant="secondary"
+              className="ml-auto shrink-0 text-micro"
+              title={group.entries
+                .map(({ service, target }) =>
+                  t("clientSetup.entryWillEnable", {
+                    service: service.name,
+                    protocol: protocolLabel(protocol),
+                    target: protocolLabel(target),
+                  }),
+                )
+                .join("\n")}
+              data-client-setup-entries={group.entries.length}
+            >
+              {t("clientSetup.groupEntries", { count: group.entries.length })}
+            </Badge>
+          ) : null}
+          {group.incompatible.length > 0 ? (
+            <Badge
+              variant="outline"
+              className={cn(
+                "shrink-0 text-micro text-warning-foreground",
+                group.entries.length === 0 && "ml-auto",
+              )}
+              title={group.incompatible
+                .map((item) =>
+                  t("clientSetup.groupIncompatibleItem", {
+                    model: item.model,
+                    service: item.service,
+                    protocol: protocolLabel(protocol),
+                  }),
+                )
+                .join("\n")}
+              data-client-setup-incompatible={group.incompatible.length}
+            >
+              {t("clientSetup.groupIncompatible", {
+                count: group.incompatible.length,
+              })}
+            </Badge>
+          ) : null}
+        </>
+      );
+    return requiredEntry(modelID, protocol) ? (
       <Badge variant="secondary" className="ml-auto shrink-0 text-micro">
         {t("clientSetup.entryRequired")}
       </Badge>
     ) : null;
+  };
   const entryNote = (modelID: string) => {
     if (!client) return null;
-    const entry = requiredEntry(modelID, protocols[client]);
-    return entry ? (
+    const entries = requiredEntries(modelID, protocols[client]);
+    return entries.length > 0 ? (
       <FormMessage tone="notice">
-        {t("clientSetup.entryWillEnable", {
-          service: entry.service.name,
-          protocol: protocolLabel(protocols[client]),
-          target: protocolLabel(entry.target),
-        })}
+        {entries
+          .map(({ service, target }) =>
+            t("clientSetup.entryWillEnable", {
+              service: service.name,
+              protocol: protocolLabel(protocols[client]),
+              target: protocolLabel(target),
+            }),
+          )
+          .join(t("clientSetup.noteSeparator"))}
       </FormMessage>
     ) : null;
   };
@@ -669,36 +790,23 @@ function DesktopClientSetupDialog({
     const entries = new Map(
       Object.values(target.models).flatMap((modelID) => {
         if (typeof modelID !== "string") return [];
-        const entry = requiredEntry(modelID, protocol);
-        return entry ? [[entry.service.id, entry.service] as const] : [];
+        return requiredEntries(modelID, protocol).map(
+          (entry) => [entry.service.id, entry.service] as const,
+        );
       }),
     );
     for (const service of entries.values()) {
       try {
-        const record = await getService(service.id);
-        if (!record.service.enabled)
-          throw new Error(t("clientSetup.entryRequired"));
-        if (!hasEntry(record.service, protocol)) {
-          const convertTo = entryTarget(record.service, protocol);
-          if (!convertTo) throw new Error(t("clientSetup.entryRequired"));
-          const updated = await updateService(service.id, record.etag, {
-            capabilities: [
-              ...record.service.capabilities,
-              {
-                protocol,
-                mode: "native",
-                streaming: true,
-                convert_to: convertTo,
-              },
-            ],
-          });
-          record.service = updated.service;
-        }
+        const updated = await enableServiceEntry(
+          service.id,
+          protocol,
+          conversionEngine,
+        );
         if (active.current)
           setCatalog((current) => ({
             ...current,
             services: current.services.map((item) =>
-              item.id === service.id ? record.service : item,
+              item.id === service.id ? updated : item,
             ),
           }));
       } catch (cause) {
@@ -1050,6 +1158,7 @@ function DesktopClientSetupDialog({
                   )}
                   options={modelOptions}
                   optionAdornment={optionAdornment}
+                  optionGroup={optionGroup}
                   value={modelFields.model}
                   placeholder={t("clientSetup.modelPlaceholder")}
                   onValueChange={(value) => editModel("model", value)}
@@ -1114,6 +1223,7 @@ function DesktopClientSetupDialog({
                         aria-label={t(`clientSetup.${key}`)}
                         options={modelOptions}
                         optionAdornment={optionAdornment}
+                        optionGroup={optionGroup}
                         value={modelFields[key]}
                         onValueChange={(value) => editModel(key, value)}
                         placeholder={t("clientSetup.modelPlaceholder")}

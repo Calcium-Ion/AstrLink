@@ -467,6 +467,72 @@ func TestClientIdentityLearningSettingsPatchAndApplyImmediately(t *testing.T) {
 	}
 }
 
+func TestRoutingSettingsPatchAcceptsDesktopModelRoutingGroupShape(t *testing.T) {
+	store, handler := newRouteHandler(t)
+	service := contract.Service{
+		ID:      "service_01",
+		Name:    "Model routing test service",
+		Kind:    contract.ServiceKindOpenAI,
+		Enabled: true,
+		Models:  []string{"claude-haiku", "claude-sonnet"},
+		HTTP: &contract.HTTPConnection{
+			BaseURL: "https://example.test",
+			Auth:    contract.ServiceAuth{Scheme: contract.AuthSchemeNone},
+		},
+		Capabilities: []contract.Capability{{
+			Protocol:  contract.ProtocolOpenAIChat,
+			Mode:      contract.CapabilityModeNative,
+			Streaming: true,
+		}},
+	}
+	if _, err := store.CreateService(context.Background(), service, storage.CredentialMutation{}); err != nil {
+		t.Fatal(err)
+	}
+	body := `{"model_routing_groups":[{"id":"superclaude","enabled":true,"members":[{"id":"fast","service_id":"service_01","model":"claude-haiku"},{"id":"strong","service_id":"service_01","model":"claude-sonnet"}],"default_member_id":"fast","rules":[{"id":"coding-streaming","priority":100,"when":{"all":[{"field":"task_type","in":["coding"]},{"field":"streaming","equals_bool":true}]},"target_member_id":"strong"}]}]}`
+	response := controlRequest(t, handler, http.MethodPatch, RoutingSettingsPath, "application/merge-patch+json", body, "")
+	if response.Code != http.StatusOK {
+		t.Fatalf("PATCH model_routing_groups: %d %s", response.Code, response.Body.String())
+	}
+	var settings contract.RoutingSettings
+	decode(t, response, &settings)
+	if err := settings.Validate(); err != nil {
+		t.Fatalf("PATCH response failed RoutingSettings.Validate: %v", err)
+	}
+	if len(settings.ModelRoutingGroups) != 1 || settings.ModelRoutingGroups[0].Rules[0].When.All == nil || len(settings.ModelRoutingGroups[0].Rules[0].When.All) != 2 {
+		t.Fatalf("saved model_routing_groups = %+v", settings.ModelRoutingGroups)
+	}
+
+	getResponse := controlRequest(t, handler, http.MethodGet, RoutingSettingsPath, "", "", "")
+	if getResponse.Code != http.StatusOK {
+		t.Fatalf("GET after model_routing_groups PATCH: %d %s", getResponse.Code, getResponse.Body.String())
+	}
+	var persisted contract.RoutingSettings
+	decode(t, getResponse, &persisted)
+	if got := persisted.ModelRoutingGroups[0].DefaultMemberID; got != "fast" {
+		t.Fatalf("persisted default_member_id = %q", got)
+	}
+
+	customBody := `{"model_routing_groups":[{"id":"superclaude","enabled":true,"task_type_labels":["general","custom-review"],"members":[{"id":"fast","service_id":"service_01","model":"claude-haiku"},{"id":"strong","service_id":"service_01","model":"claude-sonnet"}],"default_member_id":"fast","rules":[{"id":"custom-review","priority":100,"when":{"field":"task_type","in":["custom-review"]},"target_member_id":"strong"}]}]}`
+	customResponse := controlRequest(t, handler, http.MethodPatch, RoutingSettingsPath, "application/merge-patch+json", customBody, "")
+	if customResponse.Code != http.StatusOK {
+		t.Fatalf("PATCH custom task_type_labels: %d %s", customResponse.Code, customResponse.Body.String())
+	}
+	getResponse = controlRequest(t, handler, http.MethodGet, RoutingSettingsPath, "", "", "")
+	if getResponse.Code != http.StatusOK {
+		t.Fatalf("GET after custom task_type_labels PATCH: %d %s", getResponse.Code, getResponse.Body.String())
+	}
+	decode(t, getResponse, &persisted)
+	if got := persisted.ModelRoutingGroups[0].TaskTypeLabels; !reflect.DeepEqual(got, []string{"general", "custom-review"}) {
+		t.Fatalf("persisted task_type_labels = %v", got)
+	}
+
+	invalidBody := strings.Replace(customBody, `"task_type_labels":["general","custom-review"]`, `"task_type_labels":["general"]`, 1)
+	invalidResponse := controlRequest(t, handler, http.MethodPatch, RoutingSettingsPath, "application/merge-patch+json", invalidBody, "")
+	if invalidResponse.Code != http.StatusUnprocessableEntity || !strings.Contains(invalidResponse.Body.String(), "allowed labels") {
+		t.Fatalf("invalid custom task_type label response: %d %s", invalidResponse.Code, invalidResponse.Body.String())
+	}
+}
+
 func TestRoutingSettingsThinkingAndPromptRoundTrip(t *testing.T) {
 	store, handler := newRouteHandler(t)
 	response := controlRequest(t, handler, http.MethodGet, RoutingSettingsPath, "", "", "")

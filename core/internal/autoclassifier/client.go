@@ -47,6 +47,7 @@ const (
 	FallbackUnavailable = "classifier_unavailable"
 	FallbackTimeout     = "timeout"
 	FallbackInvalidText = "invalid_text"
+	FallbackBusy        = "classifier_busy"
 )
 
 type ReadyInstallationProvider interface {
@@ -80,6 +81,40 @@ type Outcome struct {
 	Category       string
 	Logits         []float32
 	FallbackReason string
+	// Confidence is the upstream-reported score for Category, passed through
+	// verbatim. The bundled worker leaves it at zero; cloud providers fill it
+	// so callers can apply a low-confidence threshold.
+	Confidence float64
+	// ClassifierID identifies the ready installation used for this attempt.
+	// It is kept separate from the worker response so routing records can
+	// retain a stable local classifier identity without exposing raw output.
+	ClassifierID contract.AutoClassifierID
+	// Candidates is the classifier's ranked label sequence, already sorted,
+	// deduplicated, and catalog-checked by the producing source. Sources that
+	// only answer a single label leave it empty; the caller's conversion fills
+	// the single-value form. Scores here are diagnostics for the observation
+	// side only — the evaluator receives just the ordered labels.
+	Candidates []Candidate
+	// Dimensions carries the custom dimensions' answers, keyed by dimension
+	// name. It never contains task_type, whose answer stays in Category and
+	// Candidates. Sources that answer only task_type leave it nil, which is the
+	// single-dimension shape every existing caller already handles.
+	Dimensions map[string]DimensionAnswer
+}
+
+// DimensionAnswer is one custom dimension's answer from a classifier source:
+// the chosen option and the score reported for it. The score is passed through
+// verbatim; the low-confidence threshold is applied once, downstream, so every
+// dimension is measured against the same configured value.
+type DimensionAnswer struct {
+	Label string
+	Score float64
+}
+
+// Candidate is one ranked label from a classifier's output.
+type Candidate struct {
+	Label string
+	Score float64
 }
 
 func (outcome Outcome) OK() bool {
@@ -145,6 +180,16 @@ func (client *Client) EligibleForRouting() bool {
 }
 
 func (client *Client) Classify(ctx context.Context, text string) Outcome {
+	return client.classify(ctx, text, false)
+}
+
+// TryClassify never waits for the single classifier slot. Routing uses this
+// form so a busy classifier remains fail-open and deterministic.
+func (client *Client) TryClassify(ctx context.Context, text string) Outcome {
+	return client.classify(ctx, text, true)
+}
+
+func (client *Client) classify(ctx context.Context, text string, trySlot bool) Outcome {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -154,16 +199,29 @@ func (client *Client) Classify(ctx context.Context, text string) Outcome {
 	ctx, cancel := context.WithTimeout(ctx, client.timeout)
 	defer cancel()
 
-	select {
-	case client.slot <- struct{}{}:
-		defer func() { <-client.slot }()
-	case <-ctx.Done():
-		return fallbackFromContext(ctx)
+	if trySlot {
+		select {
+		case client.slot <- struct{}{}:
+			defer func() { <-client.slot }()
+		default:
+			return Outcome{FallbackReason: FallbackBusy}
+		}
+	} else {
+		select {
+		case client.slot <- struct{}{}:
+			defer func() { <-client.slot }()
+		case <-ctx.Done():
+			return fallbackFromContext(ctx)
+		}
 	}
 
 	installation, ok := client.model.FirstReady()
 	if !ok {
 		return Outcome{FallbackReason: FallbackUnavailable}
+	}
+	withClassifierID := func(outcome Outcome) Outcome {
+		outcome.ClassifierID = installation.ID
+		return outcome
 	}
 
 	request := classifyRequest{
@@ -173,25 +231,25 @@ func (client *Client) Classify(ctx context.Context, text string) Outcome {
 	}
 	payload, err := json.Marshal(request)
 	if err != nil || len(payload) == 0 || len(payload) > maxFrameBytes {
-		return Outcome{FallbackReason: FallbackUnavailable}
+		return withClassifierID(Outcome{FallbackReason: FallbackUnavailable})
 	}
 
 	for attempt := 0; attempt <= maxStartupRetries; attempt++ {
 		process, err := client.ensureProcess(ctx, installation)
 		if err != nil {
-			return fallbackFromError(err)
+			return withClassifierID(fallbackFromError(err))
 		}
 		response, err := client.exchange(ctx, process, payload)
 		if err == nil {
-			return outcomeFromResponse(request.ID, response)
+			return withClassifierID(outcomeFromResponse(request.ID, response))
 		}
 		client.stopProcess(process)
 		if attempt == maxStartupRetries {
 			client.latch(installation)
-			return fallbackFromError(err)
+			return withClassifierID(fallbackFromError(err))
 		}
 	}
-	return Outcome{FallbackReason: FallbackUnavailable}
+	return withClassifierID(Outcome{FallbackReason: FallbackUnavailable})
 }
 
 func (client *Client) Close() {

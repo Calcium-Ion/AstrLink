@@ -233,6 +233,10 @@ func (handler *Handler) writeStoreError(writer http.ResponseWriter, err error) {
 			"precondition_failed",
 			"If-Match does not match the current resource",
 		)
+	case errors.Is(err, storage.ErrModelRoutingReference):
+		// The message names the group, member and model that depend on the
+		// service, so the operator knows what to change first.
+		writeError(writer, http.StatusConflict, "model_routing_reference", err.Error())
 	case errors.Is(err, storage.ErrInvalidCursor):
 		writeError(writer, http.StatusBadRequest, "invalid_cursor", "cursor is invalid")
 	case errors.Is(err, storage.ErrInvalidArgument):

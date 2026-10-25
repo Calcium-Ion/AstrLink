@@ -154,3 +154,65 @@ func TestNamedServiceServesTheRequestAlone(t *testing.T) {
 		t.Fatalf("pinned discovery listed %s", ids)
 	}
 }
+
+// A routing group still answers to X-AstrLink-Service: a member on the named
+// provider serves the request, and a member on another provider fails it
+// without reaching any provider, since the client excluded every other one.
+func TestNamedServiceBoundsModelRoutingGroups(t *testing.T) {
+	ctx := context.Background()
+	store, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "service-pin-routing.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	for _, id := range []string{"service_alpha", "service_beta"} {
+		ep := validEndpoint(contract.ProtocolOpenAIChat, false)
+		ep.ID, ep.Name, ep.Enabled, ep.Models = contract.ServiceID(id), "Name of "+id, true, []string{"shared-model"}
+		ep.BaseURL = "https://" + strings.TrimPrefix(id, "service_") + ".example"
+		if _, err := store.CreateEndpoint(ctx, ep, storage.CredentialMutation{Present: true, Secret: []byte("test-secret")}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	settings := contract.DefaultRoutingSettings()
+	settings.ModelRoutingGroups = []contract.ModelRoutingGroup{{
+		ID: "pinned", Enabled: true,
+		Members:         []contract.ModelRoutingMember{{ID: "alpha", ServiceID: "service_alpha", Model: "shared-model"}},
+		DefaultMemberID: "alpha",
+		Rules:           []contract.ModelRoutingRule{},
+	}}
+	if err := store.UpdateRoutingSettings(ctx, settings); err != nil {
+		t.Fatal(err)
+	}
+	resolver, err := endpoint.NewStoreResolver(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var hosts []string
+	handler := NewWithDependencies(Dependencies{Resolver: resolver, Authorizer: endpoint.NewSecretAuthorizer(store), RequestRecords: store, AuditBlobs: store, Forwarder: transport.New(roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		hosts = append(hosts, r.URL.Host)
+		return jsonResponse(200, `{"choices":[{"message":{"role":"assistant","content":"routed"}}]}`), nil
+	}))})
+	serve := func(pin string) *httptest.ResponseRecorder {
+		t.Helper()
+		hosts = nil
+		request := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{"model":"astrlink/pinned","messages":[{"role":"user","content":"hello"}]}`))
+		request.Header.Set(ServiceHeader, pin)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		return response
+	}
+
+	if response := serve("service_alpha"); response.Code != 200 || strings.Join(hosts, ",") != "alpha.example" {
+		t.Fatalf("member on the named provider: status %d hosts %v body %s", response.Code, hosts, response.Body)
+	}
+	response := serve("service_beta")
+	if response.Code != http.StatusUnprocessableEntity || len(hosts) != 0 {
+		t.Fatalf("member on another provider: status %d hosts %v body %s", response.Code, hosts, response.Body)
+	}
+	if code := gjson.Get(response.Body.String(), "error.code").String(); code != "model_routing_member_unavailable" {
+		t.Fatalf("error code %q body %s", code, response.Body)
+	}
+	if message := gjson.Get(response.Body.String(), "error.message").String(); !strings.Contains(message, ServiceHeader) {
+		t.Fatalf("error message %q does not name %s", message, ServiceHeader)
+	}
+}

@@ -212,3 +212,31 @@ func BenchmarkSecretGet(b *testing.B) {
 		clear(secret)
 	}
 }
+
+// classifier_credentials keeps its one row at id 1 but seals it under the
+// name of its ref, "default". The local-data check and the plaintext sealing
+// must open and seal it under that key, or a working key reads as unreadable.
+func TestClassifierCredentialIsReadableToTheLocalDataCheck(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t, filepath.Join(t.TempDir(), "astrlink.db"))
+	defer store.Close()
+	ref := secretstore.Ref("local://classifier/default")
+	if err := store.Put(ctx, ref, []byte("sk-classifier")); err != nil {
+		t.Fatal(err)
+	}
+	if status, err := store.LocalDataStatus(ctx); err != nil || status.UnreadableCredentials != 0 {
+		t.Fatalf("LocalDataStatus after storing the classifier key = %+v, %v", status, err)
+	}
+	// A row left in plaintext is sealed under the same key the reads use.
+	mustExec(t, store, `UPDATE classifier_credentials SET credential_value = ?, sealed = 0 WHERE id = 1`, []byte("sk-plain"))
+	if sealed, err := store.SealPlaintextSecrets(ctx); err != nil || sealed != 1 {
+		t.Fatalf("SealPlaintextSecrets = %d, %v", sealed, err)
+	}
+	value, err := store.Get(ctx, ref)
+	if err != nil || string(value) != "sk-plain" {
+		t.Fatalf("classifier key after sealing = %q, %v", value, err)
+	}
+	if status, err := store.LocalDataStatus(ctx); err != nil || status.UnreadableCredentials != 0 {
+		t.Fatalf("LocalDataStatus after sealing = %+v, %v", status, err)
+	}
+}

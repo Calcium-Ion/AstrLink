@@ -1,6 +1,7 @@
 import { RecoveryDetails } from "./components/RecoveryDetails";
 import { ConversionDiagnosticsDetails } from "./components/ConversionDiagnosticsDetails";
 import { RoutingSteps } from "./components/RoutingSteps";
+import { RequestRoutingProcess } from "./components/RequestRoutingProcess";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { ChevronRight, LockKeyhole } from "@/components/icons";
@@ -22,7 +23,10 @@ import {
   type RequestRecord,
   type RequestStatus,
 } from "./request-record-model";
-import { routingSteps } from "./request-routing-model";
+import {
+  routingSteps,
+  withoutModelRoutingEvent,
+} from "./request-routing-model";
 import {
   requestServiceIdentity,
   type RequestServiceIdentity,
@@ -411,12 +415,22 @@ function RouteInspector({
   const names: RequestServiceMap = service.id
     ? { [service.id]: { id: service.id, name: service.name }, ...services }
     : services;
-  const stepped = routingSteps(routes, record.routing_decision).length > 0;
+  // The group's choice of model is its own section; as a route event it would
+  // read like one more API provider.
+  const providerRoutes = withoutModelRoutingEvent(routes, record.model_routing);
+  const stepped =
+    routingSteps(providerRoutes, record.routing_decision).length > 0;
   return (
     <>
+      {record.model_routing ? (
+        <RequestRoutingProcess
+          record={record}
+          services={Object.values(names)}
+        />
+      ) : null}
       <RoutingSteps
         decision={record.routing_decision}
-        routes={routes}
+        routes={providerRoutes}
         selectedServiceId={record.service_id}
         serviceNames={Object.fromEntries(
           Object.entries(names).map(([id, item]) => [id, item.name]),

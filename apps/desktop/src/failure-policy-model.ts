@@ -1,4 +1,9 @@
 import { parseBuiltinTools, type BuiltinTools } from "./builtin-tools-model";
+import {
+  parseModelRoutingGroups,
+  type ModelRoutingGroup,
+} from "./model-routing-group-model";
+import type { ClassifierDimension } from "./classifier-settings-model";
 export type FailureAction =
   | "stop"
   | "retry"
@@ -290,6 +295,11 @@ export interface RoutingSettings {
   adaptive_max?: ReasoningLevel;
   image_compression?: ImageCompression;
   model_redirects?: ModelRedirect[];
+  /**
+   * Model routing groups, replaced wholesale by one PATCH. Absent means none;
+   * a present `null` is rejected, mirroring the control API.
+   */
+  model_routing_groups?: ModelRoutingGroup[];
   channel_stickiness?: ChannelStickiness;
   default_recovery_paths?: Record<string, string>;
   default_failure_policy: FailurePolicy;
@@ -562,7 +572,15 @@ function parseImageCompression(value: unknown): ImageCompression {
   };
 }
 
-export function parseRoutingSettings(value: unknown): RoutingSettings {
+/**
+ * `dimensions` are the custom dimensions the classifier settings declare, which
+ * rules may name; `null` when they could not be read, which leaves every name
+ * that is not a built-in field to Core rather than refusing the document.
+ */
+export function parseRoutingSettings(
+  value: unknown,
+  dimensions?: ClassifierDimension[] | null,
+): RoutingSettings {
   const settings = object(value, "routing_settings");
   keys(
     settings,
@@ -576,6 +594,7 @@ export function parseRoutingSettings(value: unknown): RoutingSettings {
       "default_recovery_paths",
       "channel_stickiness",
       "model_redirects",
+      "model_routing_groups",
       "builtin_tools",
       "image_compression",
       ...forwardingSwitchKeys,
@@ -586,6 +605,12 @@ export function parseRoutingSettings(value: unknown): RoutingSettings {
   );
   const imageCompression = parseImageCompression(settings.image_compression);
   const redirects = parseModelRedirects(settings.model_redirects);
+  const modelRoutingGroups = parseModelRoutingGroups(
+    settings.model_routing_groups,
+    dimensions === null
+      ? null
+      : (dimensions ?? []).map((dimension) => dimension.name),
+  );
   const parsed = parseFailoverPolicy({
     enabled: settings.allow_unmatched_failover,
     strategy: settings.strategy,
@@ -697,6 +722,7 @@ export function parseRoutingSettings(value: unknown): RoutingSettings {
     adaptive_max: adaptiveMax,
     image_compression: imageCompression,
     model_redirects: redirects,
+    model_routing_groups: modelRoutingGroups,
     ...(settings.builtin_tools !== undefined
       ? { builtin_tools: parseBuiltinTools(settings.builtin_tools) }
       : {}),

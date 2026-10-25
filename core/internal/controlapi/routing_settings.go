@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/storage"
@@ -99,6 +100,8 @@ func (handler *Handler) routingSettingsResource(writer http.ResponseWriter, requ
 				destination = &settings.BuiltinTools
 			case "model_redirects":
 				destination = &settings.ModelRedirects
+			case "model_routing_groups":
+				destination = &settings.ModelRoutingGroups
 			case "channel_stickiness":
 				destination = &settings.ChannelStickiness
 			case "default_failure_policy":
@@ -119,15 +122,38 @@ func (handler *Handler) routingSettingsResource(writer http.ResponseWriter, requ
 			}
 		}
 		settings = normalizeRoutingSettings(settings)
-		if err := settings.Validate(); err != nil {
-			writeError(writer, http.StatusUnprocessableEntity, "invalid_routing_settings", err.Error())
+		// The dimensions live in the classifier-settings singleton, not in this
+		// document, so the save path supplies them: without the read a rule
+		// naming a user-defined dimension would be refused here even though the
+		// dimension-aware validator accepts it, and the feature would be
+		// unreachable through the API entirely. A store that cannot be read
+		// leaves the set empty, which is the built-in-only validation this path
+		// has always applied.
+		var dimensions []contract.ClassifierDimension
+		if handler.classifierSettings != nil {
+			if classifier, readErr := handler.classifierSettings.GetClassifierSettings(request.Context()); readErr == nil {
+				dimensions = classifier.Dimensions
+			}
+		}
+		if err := settings.ValidateWithDimensions(dimensions); err != nil {
+			code := "invalid_routing_settings"
+			if strings.Contains(err.Error(), "unsupported_routing_field") {
+				code = "unsupported_routing_field"
+			}
+			writeError(writer, http.StatusUnprocessableEntity, code, err.Error())
 			return
 		}
 		if _, ok := patch["builtin_tools"]; ok && !handler.toolProvidersUsable(writer, request, settings.BuiltinTools) {
 			return
 		}
-		if err := handler.routingSettings.UpdateRoutingSettings(request.Context(), settings); err != nil {
-			handler.writeStoreError(writer, err)
+		var updateErr error
+		if coordinator, ok := handler.routingSettings.(storage.ModelRoutingWriteCoordinator); ok {
+			updateErr = coordinator.UpdateRoutingSettingsAtomic(request.Context(), settings)
+		} else {
+			updateErr = handler.routingSettings.UpdateRoutingSettings(request.Context(), settings)
+		}
+		if updateErr != nil {
+			handler.writeStoreError(writer, updateErr)
 			return
 		}
 		writeJSON(writer, http.StatusOK, settings)
@@ -181,6 +207,9 @@ func (handler *Handler) toolProvidersUsable(writer http.ResponseWriter, request 
 func normalizeRoutingSettings(settings contract.RoutingSettings) contract.RoutingSettings {
 	if settings.ModelRedirects == nil {
 		settings.ModelRedirects = []contract.ModelRedirect{}
+	}
+	if settings.ModelRoutingGroups == nil {
+		settings.ModelRoutingGroups = []contract.ModelRoutingGroup{}
 	}
 	return settings
 }

@@ -729,3 +729,41 @@ func TestSubscriptionServicesAcceptOnlyProviderEgressConversions(t *testing.T) {
 		t.Fatalf("persisted capabilities = %#v, %v", saved.Service.Capabilities, err)
 	}
 }
+
+// A service a model routing group depends on cannot lose what the group uses.
+// The change is refused as a conflict that names the group and the member, not
+// as a storage failure.
+func TestServiceChangeARoutingGroupDependsOnIsAConflict(t *testing.T) {
+	ctx := context.Background()
+	store, handler := newServiceHandler(t, "service_routed")
+	service := createServiceForTest(t, handler, `{"name":"API","kind":"openai","models":["fast-model","strong-model"],"http":{"base_url":"https://api.example/v1","auth":{"scheme":"none"}},"capabilities":[{"protocol":"openai.chat","mode":"native","streaming":true}]}`)
+	settings := contract.DefaultRoutingSettings()
+	settings.ModelRoutingGroups = []contract.ModelRoutingGroup{{
+		ID: "superclaude", Enabled: true,
+		Members: []contract.ModelRoutingMember{
+			{ID: "fast", ServiceID: service.ID, Model: "fast-model"},
+			{ID: "strong", ServiceID: service.ID, Model: "strong-model"},
+		},
+		DefaultMemberID: "fast", Rules: []contract.ModelRoutingRule{},
+	}}
+	if err := store.UpdateRoutingSettings(ctx, settings); err != nil {
+		t.Fatal(err)
+	}
+	record, err := store.GetService(ctx, service.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, response := range map[string]*httptest.ResponseRecorder{
+		"dropping a member's model": serviceRequestForTest(t, handler, http.MethodPatch, ServicesPath+"/"+string(service.ID), "application/merge-patch+json", `{"models":["fast-model"]}`, record.ETag),
+		"disabling the service":     serviceRequestForTest(t, handler, http.MethodPatch, ServicesPath+"/"+string(service.ID), "application/merge-patch+json", `{"enabled":false}`, record.ETag),
+		"deleting the service":      serviceRequestForTest(t, handler, http.MethodDelete, ServicesPath+"/"+string(service.ID), "", "", record.ETag),
+	} {
+		body := response.Body.String()
+		if response.Code != http.StatusConflict || !strings.Contains(body, `"code":"model_routing_reference"`) || !strings.Contains(body, "superclaude") {
+			t.Fatalf("%s = %d %s, want 409 model_routing_reference naming the group", name, response.Code, body)
+		}
+	}
+	if saved, err := store.GetService(ctx, service.ID); err != nil || saved.ETag != record.ETag {
+		t.Fatalf("refused changes altered the service: %v", err)
+	}
+}

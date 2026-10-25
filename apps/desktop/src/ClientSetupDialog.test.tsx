@@ -380,6 +380,89 @@ describe("ClientSetupDialog", () => {
     },
   );
 
+  it("offers an enabled routing group, opens its models' entries and names the ones that cannot", async () => {
+    mockChatProvider();
+    const anthropicOnly: Service = {
+      ...chatOnly,
+      id: "service_claude",
+      name: "Claude 订阅",
+      models: ["claude-model"],
+      capabilities: [
+        { protocol: "anthropic.messages", mode: "native", streaming: true },
+      ],
+    };
+    bridgeMocks.listServices.mockResolvedValue({
+      items: [chatOnly, anthropicOnly],
+    });
+    const member = (id: string, service_id: string, model: string) => ({
+      id,
+      service_id,
+      model,
+    });
+    bridgeMocks.getRoutingSettings.mockResolvedValue({
+      model_redirects: [],
+      model_routing_groups: [
+        {
+          id: "program",
+          enabled: true,
+          members: [
+            member("fast", "service_chat", "chat-model"),
+            member("strong", "service_claude", "claude-model"),
+          ],
+          default_member_id: "fast",
+          rules: [
+            {
+              id: "coding",
+              priority: 1,
+              when: { field: "task_type", in: ["coding"] },
+              target_member_id: "strong",
+            },
+          ],
+        },
+        {
+          id: "off",
+          enabled: false,
+          members: [member("fast", "service_chat", "chat-model")],
+          default_member_id: "fast",
+          rules: [],
+        },
+      ],
+    });
+    await renderDialog(undefined, engine);
+    await act(async () => card("Codex").click());
+    await act(async () =>
+      document.querySelector<HTMLInputElement>("#client-setup-model")!.click(),
+    );
+    const option = document.querySelector<HTMLElement>(
+      '[role="option"][aria-label="astrlink/program"]',
+    );
+    // Only enabled groups, under their own heading.
+    expect(
+      document.querySelector('[role="option"][aria-label="astrlink/off"]'),
+    ).toBeNull();
+    expect(document.body.textContent).toContain("智能路由");
+    // chat-model's provider can open a Responses entry; the Claude-only one
+    // cannot convert with this engine, and still stays selectable.
+    expect(
+      option?.querySelector("[data-client-setup-entries]")?.textContent,
+    ).toBe("需开启 1 个入口");
+    const incompatible = option?.querySelector<HTMLElement>(
+      "[data-client-setup-incompatible]",
+    );
+    expect(incompatible?.textContent).toBe("1 个模型不兼容");
+    expect(incompatible?.title).toContain("claude-model（Claude 订阅）");
+    await act(async () => option!.click());
+    expect(dialog().textContent).toContain(
+      "Chat provider 尚未开启 OpenAI Responses 入口",
+    );
+    await act(async () => button("写入配置").click());
+    expect(bridgeMocks.updateService).toHaveBeenCalledTimes(1);
+    expect(bridgeMocks.updateService.mock.calls[0][0]).toBe("service_chat");
+    expect(bridgeMocks.applyClientConfig).toHaveBeenCalledWith(
+      expect.objectContaining({ models: { model: "astrlink/program" } }),
+    );
+  });
+
   it("stops before writing when enabling the entry fails", async () => {
     mockChatProvider();
     bridgeMocks.updateService.mockRejectedValue(new Error("ETag conflict"));

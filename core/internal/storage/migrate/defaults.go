@@ -1097,5 +1097,46 @@ END`,
 			// so the request list can show what a conversation is doing.
 			`ALTER TABLE request_records ADD COLUMN output_json TEXT`,
 		}},
+		{Version: 56, Name: "model_routing", Statements: []string{
+			`ALTER TABLE request_records ADD COLUMN model_routing_json TEXT`,
+			`CREATE TABLE model_routing_bindings (
+    principal TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    protocol TEXT NOT NULL,
+    virtual_model_id TEXT NOT NULL,
+    group_id TEXT NOT NULL,
+    member_id TEXT NOT NULL,
+    service_id TEXT NOT NULL,
+    model TEXT NOT NULL,
+    config_snapshot_version TEXT NOT NULL,
+    request_id TEXT NOT NULL DEFAULT '',
+    request_started_at TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    PRIMARY KEY (principal, session_id, protocol, virtual_model_id)
+)`,
+			`CREATE INDEX model_routing_bindings_expires_at_idx ON model_routing_bindings (expires_at)`,
+			`CREATE INDEX model_routing_bindings_session_idx ON model_routing_bindings (session_id)`,
+			`CREATE TABLE model_routing_group_versions (
+    group_id TEXT NOT NULL,
+    version INTEGER NOT NULL CHECK (version > 0),
+    config_hash TEXT NOT NULL,
+    document_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (group_id, version)
+)`,
+			`CREATE INDEX model_routing_group_versions_hash_idx ON model_routing_group_versions (group_id, config_hash)`,
+			`CREATE TABLE classifier_settings (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    document_json TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+)`,
+			`CREATE TABLE classifier_credentials (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    credential_value BLOB NOT NULL,
+    sealed INTEGER NOT NULL DEFAULT 1
+)`,
+		}},
 	}
 }

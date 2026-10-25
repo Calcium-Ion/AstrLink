@@ -24,6 +24,7 @@ const (
 	builtinToolCredentialsTable  = "builtin_tool_credentials"
 	serviceProxyCredentialsTable = "service_proxy_credentials"
 	subscriptionCredentialsTable = "subscription_credentials"
+	classifierCredentialsTable   = "classifier_credentials"
 	syncKeyMaterialTable         = "sync_key_material"
 	syncBaselineTable            = "sync_baseline"
 
@@ -37,6 +38,18 @@ type secretColumn struct {
 	// flagged tables carry a sealed column; subscription_credentials is
 	// sealed from its first row.
 	flagged bool
+	// aadKey, when set, is the key every row of a singleton table is sealed
+	// under, in place of its row key: classifier_credentials keeps its one
+	// row at id 1 but seals it as "default", the name of its secret ref.
+	aadKey string
+}
+
+// sealedAs is the key a row's value is sealed under.
+func (column secretColumn) sealedAs(rowKey string) string {
+	if column.aadKey != "" {
+		return column.aadKey
+	}
+	return rowKey
 }
 
 var secretColumns = []secretColumn{
@@ -45,6 +58,7 @@ var secretColumns = []secretColumn{
 	{table: builtinToolCredentialsTable, key: "kind", value: "credential_value", flagged: true},
 	{table: serviceProxyCredentialsTable, key: "service_id", value: "credential_value", flagged: true},
 	{table: subscriptionCredentialsTable, key: "service_id", value: "credential_value"},
+	{table: classifierCredentialsTable, key: "id", value: "credential_value", flagged: true, aadKey: "default"},
 	{table: syncKeyMaterialTable, key: "key", value: "credential_value", flagged: true},
 	{table: syncBaselineTable, key: "key", value: "payload_blob", flagged: true},
 }
@@ -117,7 +131,7 @@ func (store *Store) sealPlaintextColumnTx(ctx context.Context, transaction *sql.
 		return 0, fmt.Errorf("read plaintext %s: %w", column.table, err)
 	}
 	for _, row := range pending {
-		sealedValue, err := store.keys.sealColumn(column.table, row.key, row.value)
+		sealedValue, err := store.keys.sealColumn(column.table, column.sealedAs(row.key), row.value)
 		if err != nil {
 			return 0, fmt.Errorf("seal %s: %w", column.table, err)
 		}
@@ -178,7 +192,7 @@ func (store *Store) countUnreadable(ctx context.Context, column secretColumn) (i
 		if err := rows.Scan(&key, &value); err != nil {
 			return 0, fmt.Errorf("read sealed %s: %w", column.table, err)
 		}
-		plaintext, err := store.openSecret(column.table, key, value, true)
+		plaintext, err := store.openSecret(column.table, column.sealedAs(key), value, true)
 		clear(plaintext)
 		if err != nil {
 			unreadable++

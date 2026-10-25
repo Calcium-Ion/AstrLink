@@ -2,11 +2,41 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
+
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/storage"
 )
+
+// routingSettingsDimensions reads the classifier-dimension singleton that a
+// routing-settings validation needs. A dimension-aware rule names a
+// user-defined classification dimension, and those live in the separate
+// classifier-settings document rather than on RoutingSettings, so every store
+// path that validates a group has to supply them.
+//
+// The read is deliberately best-effort and returns nil on any problem: absent
+// row, unreadable document, or malformed JSON. nil is the strict reading —
+// only built-in routing fields validate — so a failure here degrades to
+// refusing a custom-dimension rule, never to admitting an unvalidated one.
+//
+// A write passes its transaction, so the dimensions it validates against are
+// the ones it commits beside: a dimension removed concurrently either lands
+// first and refuses this write, or lands after and sees the rule that names it.
+func routingSettingsDimensions(ctx context.Context, query interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}) []contract.ClassifierDimension {
+	var document string
+	if err := query.QueryRowContext(ctx, `SELECT document_json FROM classifier_settings WHERE id = 1`).Scan(&document); err != nil {
+		return nil
+	}
+	var settings contract.ClassifierSettings
+	if err := json.Unmarshal([]byte(document), &settings); err != nil {
+		return nil
+	}
+	return settings.Dimensions
+}
 
 func (store *Store) GetRoutingSettings(ctx context.Context) (contract.RoutingSettings, error) {
 	var document string
@@ -25,6 +55,9 @@ func (store *Store) GetRoutingSettings(ctx context.Context) (contract.RoutingSet
 	if settings.ModelRedirects == nil {
 		settings.ModelRedirects = []contract.ModelRedirect{}
 	}
+	if settings.ModelRoutingGroups == nil {
+		settings.ModelRoutingGroups = []contract.ModelRoutingGroup{}
+	}
 	// Builds made before the reasoning modes got their current names saved
 	// passthrough as follow and adaptive as auto. They load under the current
 	// names, which the next save writes; a PATCH accepts only the current names.
@@ -34,28 +67,12 @@ func (store *Store) GetRoutingSettings(ctx context.Context) (contract.RoutingSet
 	case "auto":
 		settings.ReasoningMode = contract.ReasoningModeAdaptive
 	}
-	if err := settings.Validate(); err != nil {
+	if err := settings.ValidateWithDimensions(routingSettingsDimensions(ctx, store.db)); err != nil {
 		return settings, fmt.Errorf("%w: routing settings: %v", storage.ErrInvalidRecord, err)
 	}
 	return settings, nil
 }
 
-func (store *Store) UpdateRoutingSettings(ctx context.Context, settings contract.RoutingSettings) (err error) {
-	tx, err := store.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer rollbackOnError(tx, &err)
-	if err := settings.Validate(); err != nil {
-		return fmt.Errorf("%w: %v", storage.ErrInvalidArgument, err)
-	}
-	document, err := json.Marshal(settings)
-	if err != nil {
-		return err
-	}
-	_, err = tx.ExecContext(ctx, `UPDATE routing_settings SET document_json = ? WHERE id = 1`, string(document))
-	if err != nil {
-		return err
-	}
-	return tx.Commit()
+func (store *Store) UpdateRoutingSettings(ctx context.Context, settings contract.RoutingSettings) error {
+	return store.UpdateRoutingSettingsAtomic(ctx, settings)
 }

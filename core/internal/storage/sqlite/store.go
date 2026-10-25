@@ -597,6 +597,9 @@ func (store *Store) DeleteEndpoint(ctx context.Context, id contract.ServiceID, e
 }
 
 func (store *Store) Get(ctx context.Context, ref secretstore.Ref) ([]byte, error) {
+	if strings.HasPrefix(string(ref), classifierRefPrefix) {
+		return store.classifierCredential(ctx, ref, "get", nil)
+	}
 	if strings.HasPrefix(string(ref), "local://builtin-tool/") {
 		return store.builtinCredential(ctx, ref, "get", nil)
 	}
@@ -614,6 +617,10 @@ func (store *Store) Get(ctx context.Context, ref secretstore.Ref) ([]byte, error
 }
 
 func (store *Store) Put(ctx context.Context, ref secretstore.Ref, secret []byte) (err error) {
+	if strings.HasPrefix(string(ref), classifierRefPrefix) {
+		_, err := store.classifierCredential(ctx, ref, "put", secret)
+		return err
+	}
 	if strings.HasPrefix(string(ref), "local://builtin-tool/") {
 		_, err := store.builtinCredential(ctx, ref, "put", secret)
 		return err
@@ -645,6 +652,10 @@ func (store *Store) Put(ctx context.Context, ref secretstore.Ref, secret []byte)
 }
 
 func (store *Store) Delete(ctx context.Context, ref secretstore.Ref) error {
+	if strings.HasPrefix(string(ref), classifierRefPrefix) {
+		_, err := store.classifierCredential(ctx, ref, "delete", nil)
+		return err
+	}
 	if strings.HasPrefix(string(ref), "local://builtin-tool/") {
 		_, err := store.builtinCredential(ctx, ref, "delete", nil)
 		return err

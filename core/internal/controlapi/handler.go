@@ -15,12 +15,23 @@ import (
 
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/accesstoken"
+	"github.com/QuantumNous/astrlink/core/internal/modelrouting"
 	"github.com/QuantumNous/astrlink/core/internal/pricing"
 	"github.com/QuantumNous/astrlink/core/internal/privacy"
 	"github.com/QuantumNous/astrlink/core/internal/relaykitbridge"
 	"github.com/QuantumNous/astrlink/core/internal/storage"
 	"github.com/QuantumNous/astrlink/core/internal/subscription"
 )
+
+// ModelClassificationCaller classifies text through the existing_model
+// classifier source exactly as production routing does — the same
+// instruction, bounded in-process call, strict parsing and failure codes —
+// and returns the shared carrier with the score the model gave its label.
+// The control plane consumes it for the classifier dry-run; the ingress
+// handler is the production implementation.
+type ModelClassificationCaller interface {
+	ExistingModelTaskType(ctx context.Context, text string, group *contract.ModelRoutingGroup, settings contract.ClassifierSettings) (modelrouting.TaskTypeOutcome, float64)
+}
 
 const (
 	HealthPath                   = "/control/v1/health"
@@ -75,9 +86,16 @@ type Dependencies struct {
 	RateLimits RateLimitReleaser
 	// CodingPlans reads first-party plan quotas for API-key coding plan
 	// services (Kimi, GLM, MiniMax, OpenCode Go). Optional.
-	CodingPlans      CodingPlanUsage
-	ServiceModels    ServiceModelProber
-	ServiceTester    ServiceTester
+	CodingPlans   CodingPlanUsage
+	ServiceModels ServiceModelProber
+	ServiceTester ServiceTester
+	// ModelClassifier classifies through existing_model classifier sources;
+	// the classifier dry-run shares the production classification path
+	// through it. Optional: without it, dry-runs of existing_model sources
+	// report the unavailable fallback. Declared locally so controlapi does
+	// not import the ingress package; the ingress handler satisfies it
+	// structurally.
+	ModelClassifier  ModelClassificationCaller
 	AutoClassifiers  AutoClassifierRegistry
 	AutoClassifier   AutoClassifier
 	ControlToken     string
@@ -126,45 +144,47 @@ type PrivacyModelRegistry interface {
 }
 
 type Handler struct {
-	builtinToolTester BuiltinToolTester
-	pricingStore      PricingStore
-	pricingManager    *pricing.Manager
-	routingSettings   storage.RoutingSettingsStore
-	routingSettingsMu sync.Mutex
-	version           contract.VersionResponse
-	capabilities      contract.CapabilitiesResponse
-	serviceStore      storage.ServiceStore
-	accessTokens      AccessTokenManager
-	policyStore       storage.PolicyStore
-	privacyModels     PrivacyModelRegistry
-	privacyFilter     privacy.Filter
-	privacyWarnings   PrivacyWarningFeed
-	policyChanged     func(contract.Policy)
-	preparation       func(contract.PrivacyModelID) *contract.PrivacyModelPreparation
-	requestRecords    storage.RequestRecordStore
-	auditSettings     storage.AuditSettingsStore
-	auditKeys         storage.AuditKeyStore
-	auditBlobs        storage.AuditBlobStore
-	rawVault          RawVault
-	rawGrants         *rawGrantManager
-	localData         storage.LocalDataStore
-	clientIdentities  ClientIdentityReporter
-	subscriptions     *subscription.Manager
-	rateLimits        RateLimitReleaser
-	codingPlans       CodingPlanUsage
-	serviceModels     ServiceModelProber
-	serviceTester     ServiceTester
-	autoClassifiers   AutoClassifierRegistry
-	autoClassifier    AutoClassifier
-	controlToken      []byte
-	observerToken     []byte
-	newServiceID      func() (contract.ServiceID, error)
-	mux               *http.ServeMux
-	privacyMu         sync.Mutex
-	shutdown          context.CancelFunc
-	observers         *observerTracker
-	consoleSessions   ConsoleSessions
-	syncManager       SyncManager
+	builtinToolTester  BuiltinToolTester
+	pricingStore       PricingStore
+	pricingManager     *pricing.Manager
+	routingSettings    storage.RoutingSettingsStore
+	routingSettingsMu  sync.Mutex
+	classifierSettings storage.ClassifierSettingsStore
+	version            contract.VersionResponse
+	capabilities       contract.CapabilitiesResponse
+	serviceStore       storage.ServiceStore
+	accessTokens       AccessTokenManager
+	policyStore        storage.PolicyStore
+	privacyModels      PrivacyModelRegistry
+	privacyFilter      privacy.Filter
+	privacyWarnings    PrivacyWarningFeed
+	policyChanged      func(contract.Policy)
+	preparation        func(contract.PrivacyModelID) *contract.PrivacyModelPreparation
+	requestRecords     storage.RequestRecordStore
+	auditSettings      storage.AuditSettingsStore
+	auditKeys          storage.AuditKeyStore
+	auditBlobs         storage.AuditBlobStore
+	rawVault           RawVault
+	rawGrants          *rawGrantManager
+	localData          storage.LocalDataStore
+	clientIdentities   ClientIdentityReporter
+	subscriptions      *subscription.Manager
+	rateLimits         RateLimitReleaser
+	codingPlans        CodingPlanUsage
+	serviceModels      ServiceModelProber
+	serviceTester      ServiceTester
+	modelClassifier    ModelClassificationCaller
+	autoClassifiers    AutoClassifierRegistry
+	autoClassifier     AutoClassifier
+	controlToken       []byte
+	observerToken      []byte
+	newServiceID       func() (contract.ServiceID, error)
+	mux                *http.ServeMux
+	privacyMu          sync.Mutex
+	shutdown           context.CancelFunc
+	observers          *observerTracker
+	consoleSessions    ConsoleSessions
+	syncManager        SyncManager
 }
 
 func New(version contract.VersionResponse) *Handler {
@@ -199,43 +219,46 @@ func newHandler(version contract.VersionResponse, dependencies Dependencies) (*H
 		capabilities.ConversionEngine = relaykitbridge.Descriptor(dependencies.ConversionEngine)
 	}
 	routingSettings, _ := dependencies.ServiceStore.(storage.RoutingSettingsStore)
+	classifierSettings, _ := dependencies.ServiceStore.(storage.ClassifierSettingsStore)
 	handler := &Handler{
 		builtinToolTester: dependencies.BuiltinToolTester,
 		clientIdentities:  dependencies.ClientIdentities,
 		pricingStore:      dependencies.PricingStore, pricingManager: dependencies.PricingManager,
-		routingSettings: routingSettings,
-		version:         version,
-		capabilities:    capabilities,
-		serviceStore:    dependencies.ServiceStore,
-		accessTokens:    dependencies.AccessTokenManager,
-		policyStore:     dependencies.PolicyStore,
-		privacyModels:   dependencies.PrivacyModels,
-		privacyFilter:   dependencies.PrivacyFilter,
-		privacyWarnings: dependencies.PrivacyWarnings,
-		policyChanged:   dependencies.PolicyChanged,
-		preparation:     dependencies.ModelPreparation,
-		requestRecords:  dependencies.RequestRecords,
-		auditSettings:   dependencies.AuditSettings,
-		auditKeys:       dependencies.AuditKeys,
-		auditBlobs:      dependencies.AuditBlobs,
-		rawVault:        dependencies.RawVault,
-		rawGrants:       newRawGrantManager(),
-		localData:       dependencies.LocalData,
-		subscriptions:   dependencies.Subscriptions,
-		rateLimits:      dependencies.RateLimits,
-		codingPlans:     dependencies.CodingPlans,
-		serviceModels:   dependencies.ServiceModels,
-		serviceTester:   dependencies.ServiceTester,
-		autoClassifiers: dependencies.AutoClassifiers,
-		autoClassifier:  dependencies.AutoClassifier,
-		controlToken:    []byte(dependencies.ControlToken),
-		observerToken:   []byte(dependencies.ObserverToken),
-		newServiceID:    dependencies.NewServiceID,
-		shutdown:        dependencies.Shutdown,
-		consoleSessions: dependencies.ConsoleSessions,
-		syncManager:     dependencies.Sync,
-		mux:             http.NewServeMux(),
-		observers:       newObserverTracker(),
+		routingSettings:    routingSettings,
+		classifierSettings: classifierSettings,
+		version:            version,
+		capabilities:       capabilities,
+		serviceStore:       dependencies.ServiceStore,
+		accessTokens:       dependencies.AccessTokenManager,
+		policyStore:        dependencies.PolicyStore,
+		privacyModels:      dependencies.PrivacyModels,
+		privacyFilter:      dependencies.PrivacyFilter,
+		privacyWarnings:    dependencies.PrivacyWarnings,
+		policyChanged:      dependencies.PolicyChanged,
+		preparation:        dependencies.ModelPreparation,
+		requestRecords:     dependencies.RequestRecords,
+		auditSettings:      dependencies.AuditSettings,
+		auditKeys:          dependencies.AuditKeys,
+		auditBlobs:         dependencies.AuditBlobs,
+		rawVault:           dependencies.RawVault,
+		rawGrants:          newRawGrantManager(),
+		localData:          dependencies.LocalData,
+		subscriptions:      dependencies.Subscriptions,
+		rateLimits:         dependencies.RateLimits,
+		codingPlans:        dependencies.CodingPlans,
+		serviceModels:      dependencies.ServiceModels,
+		serviceTester:      dependencies.ServiceTester,
+		modelClassifier:    dependencies.ModelClassifier,
+		autoClassifiers:    dependencies.AutoClassifiers,
+		autoClassifier:     dependencies.AutoClassifier,
+		controlToken:       []byte(dependencies.ControlToken),
+		observerToken:      []byte(dependencies.ObserverToken),
+		newServiceID:       dependencies.NewServiceID,
+		shutdown:           dependencies.Shutdown,
+		consoleSessions:    dependencies.ConsoleSessions,
+		syncManager:        dependencies.Sync,
+		mux:                http.NewServeMux(),
+		observers:          newObserverTracker(),
 	}
 	handler.observers.pending = handler.rawGrants.pendingCount
 	handler.observers.active = handler.rawGrants.activeCount
@@ -248,6 +271,13 @@ func newHandler(version contract.VersionResponse, dependencies Dependencies) (*H
 	handler.mux.HandleFunc(ModelMetadataPath, handler.authenticated(handler.getOnly(handler.getModelMetadata), RoleObserver))
 	handler.mux.HandleFunc(BuiltinToolsPath, handler.authenticated(handler.builtinToolResource, RoleOperator))
 	handler.mux.HandleFunc(RoutingSettingsPath, handler.authenticated(handler.routingSettingsResource, RoleObserver))
+	handler.mux.HandleFunc(ModelRoutingVersionsPath+"/", handler.authenticated(handler.modelRoutingGroupVersion, RoleObserver))
+	if classifierSettings != nil {
+		// GET reads at observer parity with routing settings; PUT and the
+		// credential/dry-run subresources require the operator role.
+		handler.mux.HandleFunc(ClassifierSettingsPath, handler.authenticated(handler.classifierResource, RoleObserver))
+		handler.mux.HandleFunc(ClassifierSettingsPath+"/", handler.authenticated(handler.classifierSubResource, RoleOperator))
+	}
 	// Sync configuration names the remote and its credentials, and the
 	// passphrase unlocks the package, so the surface is operator-only. The
 	// route is always registered: without an engine it answers 503, which is
