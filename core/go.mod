@@ -4,7 +4,7 @@ go 1.26.10
 
 require (
 	github.com/QuantumNous/astrlink/convo v0.0.0
-	github.com/QuantumNous/new-api/relaykit v0.3.2
+	github.com/QuantumNous/new-api/relaykit v0.3.5
 	github.com/deepteams/webp v1.2.8
 	github.com/expr-lang/expr v1.17.8
 	github.com/gorilla/websocket v1.5.3
