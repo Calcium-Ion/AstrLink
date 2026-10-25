@@ -976,7 +976,12 @@ describe("RequestRecords", () => {
       board
         .querySelector('[data-testid="activity-clients"]')
         ?.getAttribute("aria-label"),
-    ).toBe("Codex 1 个、Claude Code 1 个");
+    ).toBe(
+      new Intl.ListFormat("zh-CN", { style: "narrow" }).format([
+        "Codex 1 个",
+        "Claude Code 1 个",
+      ]),
+    );
     // The list below holds none of these; the board does not follow it.
     expect(
       container.querySelector('[data-testid="active-sessions"]'),
