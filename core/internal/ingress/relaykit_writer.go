@@ -64,7 +64,11 @@ func (writer *relayKitResponseWriter) WriteHeader(status int) {
 	writer.passthrough = status < 200 || status >= 300
 	if writer.passthrough {
 		writer.ResponseWriter.WriteHeader(status)
+		return
 	}
+	// Conversion changes the body length, including SSE frames. Let the HTTP
+	// server frame the converted output instead of retaining upstream's length.
+	writer.Header().Del("Content-Length")
 }
 
 func (writer *relayKitResponseWriter) Write(value []byte) (int, error) {
