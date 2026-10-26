@@ -1028,6 +1028,31 @@ describe("subagent links", () => {
   });
 });
 
+describe("request activity", () => {
+  it("reads the output tokens of ended calls", () => {
+    const ended = {
+      session_id: "session_a",
+      started_at: "2026-10-24T10:00:00Z",
+      completed_at: "2026-10-24T10:00:20Z",
+      status: "succeeded",
+    };
+    const activity = parseRequestActivity({
+      now: "2026-10-24T10:01:00Z",
+      calls: [{ ...ended, output_tokens: 420 }, ended],
+    });
+    expect(activity.calls[0].output_tokens).toBe(420);
+    expect(activity.calls[1]).not.toHaveProperty("output_tokens");
+    for (const output_tokens of [-1, 1.5, "420"]) {
+      expect(() =>
+        parseRequestActivity({
+          now: "2026-10-24T10:01:00Z",
+          calls: [{ ...ended, output_tokens }],
+        }),
+      ).toThrow();
+    }
+  });
+});
+
 describe("client attribution", () => {
   it.each([
     "codex",

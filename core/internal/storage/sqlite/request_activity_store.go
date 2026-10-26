@@ -16,11 +16,12 @@ import (
 const maxActivityCallSpan = time.Hour
 
 // ListRequestActivity reads the spans of root model calls running at or after
-// since, newest first. A call that ended before since on the tool calls it
-// asked for is read too while its conversation has made no later call before
-// since: the client may still be running those tools. A call the core
-// interrupted is left out: recovery stamps when the core came back, not when
-// the call stopped, so its span would cover the downtime.
+// since, newest first, with the output tokens of those that ended. A call that
+// ended before since on the tool calls it asked for is read too while its
+// conversation has made no later call before since: the client may still be
+// running those tools. A call the core interrupted is left out: recovery
+// stamps when the core came back, not when the call stopped, so its span would
+// cover the downtime.
 func (store *Store) ListRequestActivity(
 	ctx context.Context,
 	since time.Time,
@@ -31,7 +32,8 @@ func (store *Store) ListRequestActivity(
 	// next one only when this read could list it.
 	rows, err := store.db.QueryContext(ctx, `
 SELECT COALESCE(root.session_id, root.id), root.client_type, root.started_at, root.completed_at,
-       root.status, root.http_status, root.output_json, root.parent_session_id
+       root.status, root.http_status, root.output_json, root.parent_session_id,
+       json_extract(root.usage_json, '$.output_tokens'), json_extract(root.usage_json, '$.billing_incomplete')
 FROM request_records AS root INDEXED BY request_records_root_started_idx
 WHERE root.parent_request_id IS NULL
   AND root.started_at >= ?
@@ -65,8 +67,10 @@ ORDER BY root.started_at DESC, root.id DESC`,
 	for rows.Next() {
 		var sessionID, startedAt, status string
 		var clientType, completedAt, output, parent sql.NullString
-		var httpStatus sql.NullInt64
-		if err := rows.Scan(&sessionID, &clientType, &startedAt, &completedAt, &status, &httpStatus, &output, &parent); err != nil {
+		var httpStatus, outputTokens sql.NullInt64
+		var incomplete sql.NullBool
+		if err := rows.Scan(&sessionID, &clientType, &startedAt, &completedAt, &status, &httpStatus, &output, &parent,
+			&outputTokens, &incomplete); err != nil {
 			return nil, fmt.Errorf("scan request activity: %w", err)
 		}
 		call := contract.RequestActivityCall{
@@ -86,6 +90,10 @@ ORDER BY root.started_at DESC, root.id DESC`,
 				return nil, fmt.Errorf("parse request activity completion: %w", err)
 			}
 			call.CompletedAt = &completed
+			// A stream cut short keeps the usage it saw so far, which undercounts.
+			if outputTokens.Valid && outputTokens.Int64 > 0 && !incomplete.Bool {
+				call.OutputTokens = int(outputTokens.Int64)
+			}
 		}
 		record := contract.RequestRecord{Status: contract.RequestStatus(status)}
 		if httpStatus.Valid {

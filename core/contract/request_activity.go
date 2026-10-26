@@ -16,11 +16,16 @@ type RequestActivityCall struct {
 	Status      RequestStatus `json:"status"`
 	// Output is what the call produced, as on its record.
 	Output *OutputActivity `json:"output,omitempty"`
+	// OutputTokens is what the upstream reported the call generated,
+	// reasoning included. Absent while the call runs, when no usage came back,
+	// and when the stream stopped before its usage was final.
+	OutputTokens int `json:"output_tokens,omitempty"`
 }
 
 // RequestActivity lists the model calls that overlap a recent window, for the
-// live view of how many conversations run at once. Now is the gateway's clock,
-// so a client charts the window against it instead of its own.
+// live view of how many conversations run at once and how many tokens the
+// models generate. Now is the gateway's clock, so a client charts the window
+// against it instead of its own.
 type RequestActivity struct {
 	Now   time.Time             `json:"now"`
 	Calls []RequestActivityCall `json:"calls"`

@@ -400,6 +400,11 @@ export interface RequestActivityCall {
   status: RequestStatus;
   /** What the call produced; absent before any output and on old records. */
   output?: OutputActivity;
+  /**
+   * Tokens the upstream reported the call generated, reasoning included;
+   * absent while it runs and when no final usage came back.
+   */
+  output_tokens?: number;
 }
 
 /** Model calls that overlap a recent window, with the gateway's clock. */
@@ -1497,6 +1502,14 @@ export function parseRequestActivity(value: unknown): RequestActivity {
         ),
         status: call.status as RequestStatus,
         ...optionalOutput(call.output, `${path}.output`),
+        ...(call.output_tokens == null
+          ? {}
+          : {
+              output_tokens: nonNegativeIntAt(
+                call.output_tokens,
+                `${path}.output_tokens`,
+              ),
+            }),
       };
     }),
   };

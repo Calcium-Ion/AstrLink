@@ -85,10 +85,31 @@ function Unit({ children }: { children: string }) {
   );
 }
 
+/** A metric's label with the button that explains how it is counted. */
+function HelpLabel({
+  children,
+  help,
+  hint,
+}: {
+  children: string;
+  help: string;
+  hint: string;
+}) {
+  return (
+    <span className="inline-flex items-center gap-0.5">
+      {children}
+      {/* The help button is taller than the label line; keep the row even. */}
+      <span className="-my-1 inline-flex">
+        <HelpPopover label={help}>{hint}</HelpPopover>
+      </span>
+    </span>
+  );
+}
+
 /**
  * The live band above the request list: how many conversations are going on
- * right now, how many calls they run, recent failures, and how the count
- * moved over the last five minutes. It covers every model call,
+ * right now, how many tokens the models put out, recent failures, and how the
+ * count moved over the last five minutes. It covers every model call,
  * whatever the list below is filtered to.
  */
 export function RequestActivityBoard({
@@ -105,6 +126,7 @@ export function RequestActivityBoard({
   const snapshot = isReady ? (live?.snapshot ?? null) : null;
   const points = live?.points ?? [];
   const conversations = snapshot?.conversations ?? null;
+  const throughput = snapshot?.outputTokensPerSecond ?? null;
   const failures = snapshot?.failures ?? 0;
   const peak = Math.max(0, ...points.map((sample) => sample.value));
   const timeFormat = new Intl.DateTimeFormat(currentLocale(), {
@@ -114,6 +136,9 @@ export function RequestActivityBoard({
     hour12: false,
   });
   const clientList = new Intl.ListFormat(currentLocale(), { style: "narrow" });
+  const throughputFormat = new Intl.NumberFormat(currentLocale(), {
+    maximumFractionDigits: throughput !== null && throughput < 10 ? 1 : 0,
+  });
 
   return (
     <Panel
@@ -125,15 +150,12 @@ export function RequestActivityBoard({
       <MetricGroup className="grid-cols-[repeat(2,minmax(6.5rem,auto))] border-r @min-[640px]/workspace-surface:grid-cols-[repeat(3,minmax(6.5rem,auto))]">
         <Metric
           label={
-            <span className="inline-flex items-center gap-0.5">
+            <HelpLabel
+              help={t("records.activityInProgressHelp")}
+              hint={t("records.activityInProgressHint")}
+            >
               {t("records.activityInProgress")}
-              {/* The help button is taller than the label line; keep the row even. */}
-              <span className="-my-1 inline-flex">
-                <HelpPopover label={t("records.activityInProgressHelp")}>
-                  {t("records.activityInProgressHint")}
-                </HelpPopover>
-              </span>
-            </span>
+            </HelpLabel>
           }
           size="sm"
           value={
@@ -152,15 +174,22 @@ export function RequestActivityBoard({
           }
         />
         <Metric
-          label={t("records.activityCalls")}
+          label={
+            <HelpLabel
+              help={t("records.activityThroughputHelp")}
+              hint={t("records.activityThroughputHint")}
+            >
+              {t("records.activityThroughput")}
+            </HelpLabel>
+          }
           size="sm"
           value={
-            <ValueTransition
-              data-testid="activity-calls"
-              valueKey={String(snapshot?.calls)}
-            >
-              {snapshot?.calls ?? "—"}
-            </ValueTransition>
+            // The average slides every second while tokens are in its window;
+            // fading each change would flicker.
+            <span data-testid="activity-throughput">
+              {throughput === null ? "—" : throughputFormat.format(throughput)}
+              {throughput === null ? null : <Unit>tok/s</Unit>}
+            </span>
           }
         />
         <Metric

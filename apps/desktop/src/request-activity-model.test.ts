@@ -8,6 +8,7 @@ import {
   laneTrail,
   LANE_TRAIL_STEPS,
   nestSubagents,
+  outputThroughput,
   splitActiveSessions,
   summarizeActivity,
   TOOL_WAIT_MS,
@@ -120,7 +121,7 @@ function call(
 }
 
 describe("summarizeActivity", () => {
-  it("counts conversations, running calls and recent failures at the gateway's now", () => {
+  it("counts conversations and recent failures at the gateway's now", () => {
     const { now, snapshot } = summarizeActivity({
       now: at(0),
       calls: [
@@ -139,7 +140,7 @@ describe("summarizeActivity", () => {
     // g recovered after its failure, so it counts as in progress, not failed.
     expect(snapshot).toEqual({
       conversations: 4,
-      calls: 3,
+      outputTokensPerSecond: 0,
       failures: 1,
       clients: [{ clientType: "unknown", count: 4 }],
     });
@@ -248,7 +249,6 @@ describe("summarizeActivity", () => {
     );
     // Four calls run, in two conversations.
     expect(snapshot.conversations).toBe(2);
-    expect(snapshot.calls).toBe(4);
     expect(points.at(-1)?.value).toBe(2);
   });
 
@@ -264,6 +264,27 @@ describe("summarizeActivity", () => {
       ],
     });
     expect(snapshot.failures).toBe(1);
+  });
+
+  it("averages the output tokens of the last minute over it", () => {
+    const { snapshot } = summarizeActivity({
+      now: at(0),
+      calls: [
+        call("a", -30_000, -10_000, { output_tokens: 600 }),
+        // Half of its span lies inside the minute, and half its tokens.
+        call("b", -90_000, -30_000, { output_tokens: 1200 }),
+        call("c", -5_000, -5_000, { output_tokens: 60 }),
+        call("d", -200_000, -100_000, { output_tokens: 5000 }),
+        call("e", -20_000, null),
+      ],
+    });
+    expect(snapshot.outputTokensPerSecond).toBe((600 + 600 + 60) / 60);
+  });
+
+  it("drops a call's tokens as its span leaves the window", () => {
+    const calls = [call("a", -40_000, -20_000, { output_tokens: 300 })];
+    expect(outputThroughput(calls, NOW, 30_000)).toBe(150 / 30);
+    expect(outputThroughput(calls, NOW, 15_000)).toBe(0);
   });
 
   it("reads from the window plus the grace before it", () => {

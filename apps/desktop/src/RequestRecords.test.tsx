@@ -963,6 +963,7 @@ describe("RequestRecords", () => {
           started_at: "2026-07-28T11:59:50Z",
           completed_at: "2026-07-28T12:00:00Z",
           status: "succeeded",
+          output_tokens: 300,
         },
         {
           session_id: "live_failed",
@@ -978,7 +979,7 @@ describe("RequestRecords", () => {
     const text = (testId: string) =>
       board.querySelector(`[data-testid="${testId}"]`)?.textContent;
     expect(text("activity-conversations")).toBe("2个对话");
-    expect(text("activity-calls")).toBe("2");
+    expect(text("activity-throughput")).toBe("5tok/s");
     expect(
       board
         .querySelector('[data-slot="live-trend-plot"]')

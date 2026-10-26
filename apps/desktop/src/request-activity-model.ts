@@ -31,6 +31,9 @@ export const ACTIVITY_WINDOW_MS = 5 * 60_000;
 /** The chart reads the count once per step across the window. */
 export const ACTIVITY_STEP_MS = 1000;
 
+/** The span the board averages the models' output over. */
+export const THROUGHPUT_WINDOW_MS = 60_000;
+
 export type ConversationActivity =
   | {
       state: "calling";
@@ -132,8 +135,11 @@ export interface ActivityClient {
 export interface ActivitySnapshot {
   /** Conversations running a call or waiting between calls. */
   conversations: number;
-  /** Calls in flight across those conversations. */
-  calls: number;
+  /**
+   * Tokens the models generated per second over the last
+   * `THROUGHPUT_WINDOW_MS`, from the calls that reported them.
+   */
+  outputTokensPerSecond: number;
   /** Conversations whose latest call failed within the window. */
   failures: number;
   /** The clients those conversations come from, busiest first. */
@@ -255,12 +261,40 @@ export function summarizeActivity(
     now,
     snapshot: {
       conversations: current.value,
-      calls: activity.calls.filter((call) => call.completed_at === null).length,
+      outputTokensPerSecond: outputThroughput(activity.calls, now),
       failures,
       clients: [...current.clients],
     },
     points,
   };
+}
+
+/**
+ * Tokens the models generated per second over the `windowMs` before `now`.
+ * Upstreams report a call's tokens once it ends, so a running call adds
+ * nothing yet. An ended call spreads its tokens evenly over its span, and the
+ * window takes the share it overlaps.
+ */
+export function outputThroughput(
+  calls: readonly RequestActivityCall[],
+  now: number,
+  windowMs: number = THROUGHPUT_WINDOW_MS,
+): number {
+  const from = now - windowMs;
+  let tokens = 0;
+  for (const call of calls) {
+    if (!call.output_tokens || call.completed_at === null) continue;
+    const start = Date.parse(call.started_at);
+    const end = Date.parse(call.completed_at);
+    if (!Number.isFinite(start) || !Number.isFinite(end)) continue;
+    if (end <= start) {
+      if (from < end && end <= now) tokens += call.output_tokens;
+      continue;
+    }
+    const overlap = Math.min(end, now) - Math.max(start, from);
+    if (overlap > 0) tokens += (call.output_tokens * overlap) / (end - start);
+  }
+  return (tokens * 1000) / windowMs;
 }
 
 function rankClients(perClient: Map<ClientType, number>): ActivityClient[] {

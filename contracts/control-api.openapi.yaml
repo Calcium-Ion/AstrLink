@@ -3336,13 +3336,13 @@ paths:
       summary: List the spans of model calls that overlap a recent window.
       description: |
         Returns root model calls still running or ended at or after since, so a
-        client can chart how many conversations ran at once. A call that ended
-        earlier on tool calls it asked for is returned too while its
-        conversation has made no later call before since, because the client
-        may still be running those tools. Calls that started more than an hour
-        before since, model discovery, and calls a Core restart interrupted are
-        left out. Retries stay inside their root's span. Does not return
-        request or response content.
+        client can chart how many conversations ran at once and how many tokens
+        the models generated. A call that ended earlier on tool calls it asked
+        for is returned too while its conversation has made no later call
+        before since, because the client may still be running those tools.
+        Calls that started more than an hour before since, model discovery,
+        and calls a Core restart interrupted are left out. Retries stay inside
+        their root's span. Does not return request or response content.
       parameters:
         - name: since
           in: query
@@ -7232,6 +7232,13 @@ components:
           $ref: "#/components/schemas/RequestStatus"
         output:
           $ref: "#/components/schemas/OutputActivity"
+        output_tokens:
+          type: integer
+          minimum: 1
+          description: >
+            Tokens the upstream reported the call generated, reasoning
+            included. Absent while the call runs, when no usage came back, and
+            when the stream stopped before its usage was final.
       additionalProperties: false
     RequestSession:
       type: object
