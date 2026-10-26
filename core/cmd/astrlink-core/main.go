@@ -54,6 +54,7 @@ func main() {
 	localKeyStdin := false
 	localKeyFile := ""
 	outboundProxy := "environment"
+	rawUnlockUntilLock := false
 	maxConcurrentInspections := ingress.DefaultMaxConcurrentInspections
 	var maxRequestBodyMiB uint64
 	responseStartTimeoutSeconds := ingress.DefaultResponseStartTimeoutSeconds
@@ -69,9 +70,10 @@ func main() {
 	flag.BoolVar(&localKeyStdin, "kek-stdin", false, "read the local key as 64 hex digits from the second stdin line")
 	flag.StringVar(&localKeyFile, "kek-file", "", "local key file path; defaults to $"+localkey.EnvKeyFile+", then <data-dir>/"+localkey.FileName)
 	flag.IntVar(&maxConcurrentInspections, "max-concurrent-inspections", maxConcurrentInspections, "maximum requests that may parse and classify at once")
-	flag.Uint64Var(&maxRequestBodyMiB, "max-request-body-mib", 0, "maximum inference request body size in MiB; 0 means unlimited")
+	flag.Uint64Var(&maxRequestBodyMiB, "max-request-body-mib", 0, "maximum inference request body size in MiB, a compressed body counted after decoding; 0 means unlimited, though a compressed body still decodes to at most 256 MiB")
 	flag.IntVar(&responseStartTimeoutSeconds, "response-start-timeout-seconds", responseStartTimeoutSeconds, "seconds to wait for upstream response headers before failing over; 0 waits indefinitely")
 	flag.StringVar(&outboundProxy, "outbound-proxy", outboundProxy, "outbound proxy mode: environment, system, or direct")
+	flag.BoolVar(&rawUnlockUntilLock, "raw-unlock-until-lock", false, "keep a raw unlock open until the desktop locks it (screen lock, sleep, or its Lock) instead of ending it after 15 idle minutes")
 	flag.CommandLine.SetOutput(os.Stderr)
 	flag.Parse()
 
@@ -136,6 +138,7 @@ func main() {
 			maxConcurrentInspections: maxConcurrentInspections,
 			maxRequestBodyMiB:        uint32(maxRequestBodyMiB),
 			responseStartTimeout:     time.Duration(responseStartTimeoutSeconds) * time.Second,
+			rawUnlockUntilLock:       rawUnlockUntilLock,
 			shutdown:                 stopSignals,
 			logf:                     logger.Printf,
 		})

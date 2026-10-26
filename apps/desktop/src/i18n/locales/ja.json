@@ -15,10 +15,11 @@
     "add": "モデルを追加",
     "progress": "完了 {{done}} / {{total}}",
     "finished": "一括完了 {{done}} / {{total}}",
-    "stopping": "停止しています。送信済みのリクエストの完了を待っています…",
-    "stoppingShort": "停止中…",
+    "stopping": "実行中のリクエストをキャンセルしています…",
+    "stoppingShort": "キャンセル中…",
     "successCount": "成功 {{count}}",
     "failedCount": "失敗 {{count}}",
+    "cancelledCount": "キャンセル済み {{count}}",
     "stoppedCount": "未実行 {{count}}",
     "progressLabel": "一括テストの進捗",
     "status": "状態",
@@ -27,7 +28,7 @@
     "detailsNamed": "{{model}} のテストレスポンスを表示",
     "empty": "設定済みのモデルを検索するか、モデル ID を入力して追加してください。",
     "back": "モデルに戻る",
-    "stop": "キューを停止",
+    "stop": "テストをキャンセル",
     "retry": "失敗を再試行（{{count}}）",
     "start": "{{count}} 件のモデルをテスト",
     "state": {
@@ -36,6 +37,7 @@
       "running": "テスト中",
       "success": "成功",
       "failed": "失敗",
+      "cancelled": "キャンセル済み",
       "stopped": "未実行"
     }
   },
@@ -98,6 +100,13 @@
     "run": "テストを開始",
     "testing": "テスト中…",
     "running": "APIプロバイダーのレスポンスを待っています（最大 60 秒）…",
+    "cancel": "テストをキャンセル",
+    "cancelling": "キャンセル中…",
+    "cancelled": "テストをキャンセルしました",
+    "cancelledDescription": "プロバイダーの応答待ちを停止しました。",
+    "cancelFailed": "テストをキャンセルできませんでした。",
+    "alreadyRunning": "このプロバイダーではテストが実行中です。",
+    "invalidId": "テストリクエストの ID が無効です。",
     "success": "テスト成功",
     "failed": "テスト失敗",
     "output": "APIプロバイダーのレスポンス",
@@ -638,31 +647,23 @@
     "description": "既存のモデルサービスをAstrLinkに追加し、ローカルのゲートウェイ経由でクライアントを接続します。",
     "skip": "あとで設定",
     "open": "セットアップガイド",
-    "progress": "4ステップ中 {{count}} 完了",
+    "progress": "3ステップ中 {{count}} 完了",
     "steps": "セットアップ手順",
     "step": "ステップ {{count}}",
     "resumeHint": "進捗は保存されています。概要の右下にあるセットアップガイドから、いつでも戻れます。",
     "deferredHint": "右下のセットアップガイドから、いつでもセットアップを続けられます。",
-    "passwordTitle": "リクエスト原文を保護",
-    "passwordShort": "原文を見られるのはあなただけ",
     "serviceTitle": "APIプロバイダーを追加",
     "serviceShort": "既存のモデルサービスを接続",
     "tokenTitle": "アクセストークンを作成",
     "tokenShort": "クライアントにローカルキーを渡す",
     "clientTitle": "クライアントを接続",
     "clientShort": "最初のリクエストを成功させる",
-    "passwordBody": "リクエストとレスポンスの原文は、設定したパスワードで暗号化して保存されます。閲覧できるのはあなただけで、このコンピュータ上の他のプログラム（AI Agent を含む）は読み取れません。",
-    "passwordAction": "設定する",
-    "passwordDone": "原文保護を設定しました。",
-    "passwordLoading": "原文保護の状態を読み込み中…",
-    "passwordLoadFailed": "原文保護の状態を読み取れませんでした：{{message}}。まもなく再試行します。",
     "serviceBody": "AstrLinkにはモデルの提供元が必要です。すでに使っているAPIサービス、またはサブスクリプションアカウントを追加してください。",
     "serviceOptions": "APIキーはありますか？APIプロバイダーを選び、URLとキーを入力してください。サブスクリプションはありますか？サブスクリプションサービスを選び、アカウントを認可してください。",
     "serviceHelp": "何を準備すればよいですか？",
     "serviceHelpBody": "APIプロバイダーのAPI URLとAPIキーを用意するか、サブスクリプションアカウントでサインインしてください。保存する前に利用可能なモデルを取得または追加し、APIプロバイダーを有効のままにしてください。",
     "manageServices": "APIプロバイダーの設定を確認",
     "serviceIncomplete": "APIプロバイダーはまだ準備できていません。有効であること、モデルがあること、サブスクリプションの認可が完了していることを確認してください。",
-    "finishPassword": "APIプロバイダーを追加する前に、原文保護を設定してください。",
     "next": "続ける",
     "tokenBody": "アクセストークンを使うと、クライアントはローカルのAstrLinkゲートウェイに接続できます。利用状況を追うため、クライアントごとに別のアクセストークンを作成してください。",
     "tokenHelp": "「マイコーディングアシスタント」のように分かりやすい名前でアクセストークンを作成してください。このアクセストークンをクライアントのAPIキーとして使います。アップストリームのAPIキーは、APIプロバイダーの設定に残してください。",
@@ -1640,7 +1641,8 @@
       "allowlisted": "許可リストに一致するため、この一致は無視されます。",
       "placeholder": "すでにプレースホルダーのため、これ以上の置換は不要です。",
       "unrepresentable": "使える置換を生成できないため、一致は無視されます。",
-      "astrlink_identifier": "AstrLink 自身が生成した ID（アクセストークン ID など）です。アクセス権を与えないため、この一致は無視されます。"
+      "astrlink_identifier": "AstrLink 自身が生成した ID（アクセストークン ID など）です。アクセス権を与えないため、この一致は無視されます。",
+      "example_value": "決済サービスが公開しているテスト用のカード番号です。誰のものでもないため、この一致は無視されます。"
     },
     "testAction": {
       "allow": "現在のポリシーはリクエストを許可し、原文を保持します。",
@@ -1682,6 +1684,7 @@
     "redactTypesHint": "置き換える機密の値と、アップストリームでの表示形式を選んでください。",
     "title": "プライバシー保護",
     "description": "リクエストがアップストリームへ行く前に、ルールまたはローカルモデルで機密内容を検出します。",
+    "pageDescription": "リクエストがアップストリームへ送られる前に、このデバイスで機密内容を検出して置き換えます。既定ではシークレットだけを置き換えます。ほかの種類は必要に応じてオンにできます。",
     "readyHint": "ポリシーとモデルは、このマシンに残ります。",
     "waiting": "ゲートウェイの準備完了後に安全性ポリシーを管理できます",
     "enable": "有効にする",
@@ -1729,9 +1732,9 @@
       "policy": "現在のプライバシー設定を読み取れませんでした。右上の「更新」をクリックして、再試行してください。",
       "sample": "このテキストは、選択したリクエスト形式では検査できません。テキストを編集するか別の形式を選んで、再試行してください。"
     },
-    "importStarted": "ローカルモデルのインポートを開始しました。進捗は「インストール済み」で確認できます。",
-    "installStarted": "モデルのインストールを開始しました。進捗は「インストール済み」で確認できます。",
-    "updateStarted": "新しいバージョンをダウンロードしています。準備ができたら、「インストール済み」で切り替えてください。",
+    "importStarted": "ローカルモデルのインポートを開始しました。進捗はモデルのカードに表示されます。",
+    "installStarted": "モデルのダウンロードを開始しました。進捗はモデルのカードに表示されます。",
+    "updateStarted": "新しいバージョンをダウンロードしています。完了後、モデルのカードで切り替えられます。",
     "installFailed": "ローカルモデルのインストールを開始できません。",
     "probeMismatch": "確認したモデルが、選択したバージョンと一致しません。モデルカタログを更新して再試行してください。",
     "variantIncompatible": "このモデルバージョンは、現在のデバイスに対応していません。別のバージョンを選んで再試行してください。",
@@ -1966,7 +1969,7 @@
     "resetConfirm": "既定に戻す",
     "resetKindRulesTitle": "種類ごとのマスキングを既定に戻しますか？",
     "resetKindRulesWarnTitle": "種類ごとの検出と通知を既定に戻しますか？",
-    "resetKindRulesHint": "各種類のスイッチ、プレースホルダー形式、通知を既定に戻します。{{off}} はオフ、それ以外の種類はオン、すべての種類で通知します。新しいリクエストにすぐ適用されます。",
+    "resetKindRulesHint": "各種類のスイッチ、プレースホルダー形式、通知を既定に戻します。オンになるのは {{on}} だけで、ほかの種類はオフになり、すべての種類で通知します。新しいリクエストにすぐ適用されます。",
     "resetRestoreTitle": "リクエストとレスポンスを既定に戻しますか？",
     "resetRestoreHint": "これらのスイッチを既定に戻します。新しいリクエストにすぐ適用されます。",
     "defaultOn": "オン",
@@ -2291,6 +2294,7 @@
     "deleteSessionTitle": "このセッションを削除",
     "deleteSessionsTitle": "{{count}} 件のセッションを削除",
     "deleteSessionsBody": "{{calls}}と暗号化された監査内容を完全に削除します。",
+    "deleteSessionsWithSubagentsBody": "{{calls}}、{{subagents}}、暗号化された監査内容を完全に削除します。",
     "callCount_one": "{{count}} 件のリクエスト",
     "callCount_other": "{{count}} 件のリクエスト",
     "cleanUp": "整理",
@@ -2424,7 +2428,13 @@
     "moreFilters": "その他のフィルター",
     "activeFilters": "適用中のフィルター",
     "moreActiveFilters": "+{{count}} 件",
-    "filterCount": "{{count}} 件選択"
+    "filterCount": "{{count}} 件選択",
+    "subagent": "サブエージェント",
+    "subagentCount_one": "サブエージェント {{count}} 件",
+    "subagentCount_other": "サブエージェント {{count}} 件",
+    "subagentList": "この会話が起動したサブエージェント",
+    "parentConversation": "親の会話",
+    "parentConversationHint": "これを起動した会話を開く"
   },
   "conversation": {
     "tab": "要約",
@@ -2692,7 +2702,8 @@
       "low_confidence": "しきい値未満",
       "allowlisted": "許可リスト",
       "kind_disabled": "種類オフ",
-      "astrlink_identifier": "AstrLink の ID"
+      "astrlink_identifier": "AstrLink の ID",
+      "example_value": "テスト用カード"
     },
     "policyAllowHint": "ポリシーはリクエストを変更していません。本文は「クライアント」にあります。",
     "policyTrustedHint": "このプロバイダーは信頼済みのため、ポリシーはリクエストを検査せず、そのままアップストリームへ送りました。本文は「クライアント」にあります。",
@@ -2885,6 +2896,10 @@
     "rawAccess": {
       "notificationTitle": "Agent が原文の閲覧を申請しています",
       "notificationBody": "AstrLinkの承認ウィンドウで、承認または拒否してください。"
+    },
+    "rawBiometric": {
+      "unlockReason": "リクエスト原文のロックを解除",
+      "approveReason": "Agent による原文の閲覧を承認"
     },
     "privacyWarning": {
       "title": "そのままモデルへ送信：{{kinds}}",
@@ -3792,16 +3807,12 @@
     "providerWarning": "原文は、この Agent が使うモデルの APIプロバイダーへ送信されます。",
     "queued": "この後、{{count}} 件が待機中",
     "once": "1 回だけ許可",
-    "window5m": "5 分間許可",
     "window1h": "1 時間許可",
     "deny": "拒否",
     "onceHint": "「1 回だけ許可」では、この 1 件のリクエストの原文を 1 回だけ読み取れます。",
-    "timedWarning": "「5 分間許可」と「1 時間許可」では、時間内のすべてのリクエストの原文を、その間に行われたリクエストを含めて、何度でも読み取れます。",
-    "locked": "AstrLink はロックされているため、許可には原文パスワードが必要です。",
-    "lockedMeanwhile": "その間に AstrLink がロックされました。許可するには、原文パスワードを入力してください。",
+    "timedWarning": "「ロックまで許可」と「1 時間許可」では、後から行われたリクエストを含むすべてのリクエストの原文を、何度でも読み取れます。「ロックまで許可」は、画面のロック、スリープ、AstrLink の終了、または「ロック」のクリックで終わります。",
     "closeHint": "このウィンドウを閉じても、何も決まりません。申請は期限まで待機します。トレイからこのウィンドウを開き直せます。",
     "approvedOnce": "「{{client}}」は原文を 1 回読み取れます。",
-    "approved5m": "「{{client}}」は 5 分間、すべてのリクエストの原文を読み取れます。",
     "approved1h": "「{{client}}」は 1 時間、すべてのリクエストの原文を読み取れます。",
     "denied": "原文の読み取り申請を拒否しました。",
     "denyFailed": "原文の読み取り申請を拒否できませんでした: {{message}}",
@@ -3818,19 +3829,28 @@
       "revoke": "取り消し",
       "revoked": "「{{client}}」は原文を読み取れなくなりました。",
       "revokeFailed": "取り消せませんでした: {{message}}",
-      "closeKeeps": "このウィンドウを閉じた後も、これらの Agent は原文を読み取れます。トレイからも取り消せます。"
-    }
+      "closeKeeps": "このウィンドウを閉じた後も、これらの Agent は原文を読み取れます。トレイからも取り消せます。",
+      "untilLock": "画面のロックまで"
+    },
+    "untilLock": "ロックまで許可",
+    "approvedUntilLock": "「{{client}}」は画面がロックされるまで、すべてのリクエストの原文を読み取れます。",
+    "proofPassword": "許可には原文パスワードが必要です。",
+    "proofTouchId": "許可を選んだ後、Touch ID で確認します。",
+    "usePassword": "原文パスワードを使う",
+    "useTouchId": "Touch ID を使う"
   },
   "rawSealing": {
     "title": "原文保護",
     "state": {
       "unset": "未設定",
       "password": "パスワード",
-      "unknown": "不明"
+      "unknown": "不明",
+      "biometric": "パスワードと Touch ID"
     },
     "hint": {
       "unset": "セットアップが終わるまで、新しいリクエストの原文は保存されません。リクエストの転送には影響しません。",
-      "password": "原文の閲覧と、Agent 申請の承認にはパスワードが必要です。パスワードを忘れるとリセットしかできず、保存済みの原文はすべて破棄されます。"
+      "password": "原文の閲覧と、Agent 申請の承認にはパスワードが必要です。パスワードを忘れるとリセットしかできず、保存済みの原文はすべて破棄されます。",
+      "biometric": "原文の閲覧と Agent 申請の承認には、Touch ID かパスワードを使います。パスワードを忘れるとリセットしかできず、保存済みの原文はすべて破棄されます。"
     },
     "loadFailed": "原文保護の状態を読み取れませんでした：{{message}}",
     "set": "設定",
@@ -3897,13 +3917,30 @@
     "withheldDetail": "この部分は取得済みですが、この表示では出ません。",
     "notKept": "未保存",
     "notKeptDetail": "記録した時点で原文保護が未設定だったため、この原文は保存されませんでした。",
+    "notKeptHint": "原文保護を設定すると、新しいリクエストの原文が暗号化して保存されます。",
     "unlockTitle": "原文のロック解除",
     "unlockDescription": "ロック解除すると、このデバイスで暗号化済みの原文を表示します。{{minutes}} 分間操作がないと、再びロックされます。",
     "unlocked": "原文をロック解除しました",
     "unlockedHint": "原文はロック解除されています。{{minutes}} 分間操作がないとロックされます。",
     "lockedNow": "原文をロックしました",
     "lockFailed": "原文をロックできませんでした：{{message}}",
-    "unlockUnavailable": "原文保護が設定されていないため、原文をロック解除できません。"
+    "unlockUnavailable": "原文保護が設定されていないため、原文をロック解除できません。",
+    "unlockDescriptionUntilLock": "ロック解除すると、このデバイスで暗号化済みの原文を表示します。画面のロック、スリープ、AstrLink の終了で再びロックされます。",
+    "unlockedHintUntilLock": "原文はロック解除されています。画面のロック、スリープ、AstrLink の終了でロックされます。",
+    "biometric": {
+      "use": "Touch ID を使う",
+      "enable": "Touch ID をオンにする",
+      "disable": "Touch ID をオフにする",
+      "enableTitle": "Touch ID で原文を表示",
+      "enableDescription": "オンにすると、原文の閲覧と Agent 申請の承認を指紋で行えます。原文パスワードも引き続き使えます。オンにするには原文パスワードを入力してください。",
+      "enabled": "Touch ID をオンにしました",
+      "disabled": "Touch ID をオフにしました",
+      "disableTitle": "Touch ID をオフにしますか？",
+      "disableDescription": "オフにすると、原文の閲覧と Agent 申請の承認に原文パスワードが必要になります。",
+      "cancelled": "Touch ID がキャンセルされました。もう一度試すか、原文パスワードを入力してください。",
+      "unavailable": "Touch ID は現在使えません。原文パスワードを入力してください。",
+      "disableFailed": "Touch ID をオフにできませんでした：{{message}}"
+    }
   },
   "dataErrors": {
     "rawSealing": "無効な原文封印データ（{{path}}）: {{detail}}",

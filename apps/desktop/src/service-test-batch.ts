@@ -1,4 +1,5 @@
 import type { ServiceTestInput, ServiceTestResult } from "./service-test-model";
+import { isServiceTestCancelled } from "./service-test-cancellation";
 
 export const MAX_BATCH_MODELS = 100;
 export type ModelTestState =
@@ -6,6 +7,7 @@ export type ModelTestState =
   | "running"
   | "success"
   | "failed"
+  | "cancelled"
   | "stopped";
 export interface ModelTestRow {
   model: string;
@@ -14,7 +16,7 @@ export interface ModelTestRow {
   error?: string;
 }
 
-/** A bounded queue; stopping never pretends that an in-flight request was cancelled. */
+/** Runs a bounded queue and preserves each request's completion or cancellation. */
 export async function runModelTestBatch({
   models,
   input,
@@ -50,6 +52,10 @@ export async function runModelTestBatch({
         const result = await test({ ...snapshot, model });
         onUpdate({ model, state: result.ok ? "success" : "failed", result });
       } catch (error) {
+        if (isServiceTestCancelled(error)) {
+          onUpdate({ model, state: "cancelled" });
+          continue;
+        }
         onUpdate({
           model,
           state: "failed",

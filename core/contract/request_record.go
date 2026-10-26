@@ -134,20 +134,21 @@ func SessionStatusFromRequest(status RequestStatus) SessionStatus {
 // multimodal input such as images). cache_read_tokens / cache_write_tokens
 // are subsets of that input when the upstream reports them.
 type Usage struct {
-	CacheWrite1hTokens *int  `json:"cache_write_1h_tokens,omitempty"`
-	InputAudioTokens   *int  `json:"input_audio_tokens,omitempty"`
-	OutputAudioTokens  *int  `json:"output_audio_tokens,omitempty"`
-	ThinkingEnabled    *bool `json:"thinking_enabled,omitempty"`
-	BillingIncomplete  bool  `json:"billing_incomplete,omitempty"`
-	InputTokens        int   `json:"input_tokens"`
-	OutputTokens       int   `json:"output_tokens"`
-	TotalTokens        int   `json:"total_tokens"`
-	CacheReadTokens    *int  `json:"cache_read_tokens,omitempty"`
-	CacheWriteTokens   *int  `json:"cache_write_tokens,omitempty"`
+	CacheWrite1hTokens  *int  `json:"cache_write_1h_tokens,omitempty"`
+	CacheWrite12hTokens *int  `json:"cache_write_12h_tokens,omitempty"`
+	InputAudioTokens    *int  `json:"input_audio_tokens,omitempty"`
+	OutputAudioTokens   *int  `json:"output_audio_tokens,omitempty"`
+	ThinkingEnabled     *bool `json:"thinking_enabled,omitempty"`
+	BillingIncomplete   bool  `json:"billing_incomplete,omitempty"`
+	InputTokens         int   `json:"input_tokens"`
+	OutputTokens        int   `json:"output_tokens"`
+	TotalTokens         int   `json:"total_tokens"`
+	CacheReadTokens     *int  `json:"cache_read_tokens,omitempty"`
+	CacheWriteTokens    *int  `json:"cache_write_tokens,omitempty"`
 }
 
 func (usage Usage) Validate() error {
-	for _, count := range []*int{usage.CacheWrite1hTokens, usage.InputAudioTokens, usage.OutputAudioTokens} {
+	for _, count := range []*int{usage.CacheWrite1hTokens, usage.CacheWrite12hTokens, usage.InputAudioTokens, usage.OutputAudioTokens} {
 		if count != nil && *count < 0 {
 			return fmt.Errorf("billing token counts must be non-negative")
 		}
@@ -406,12 +407,15 @@ const (
 	// itself, such as a local access token id or a request id. It names a
 	// record without granting access to anything.
 	PrivacyIgnoreAstrLinkIdentifier PrivacyIgnoreReason = "astrlink_identifier"
+	// PrivacyIgnoreExampleValue is a value only documentation and tests use:
+	// a card number payment providers publish for test payments.
+	PrivacyIgnoreExampleValue PrivacyIgnoreReason = "example_value"
 )
 
 func (reason PrivacyIgnoreReason) Valid() bool {
 	switch reason {
 	case PrivacyIgnoreKindDisabled, PrivacyIgnoreLowConfidence, PrivacyIgnoreAllowlisted,
-		PrivacyIgnoreAstrLinkIdentifier:
+		PrivacyIgnoreAstrLinkIdentifier, PrivacyIgnoreExampleValue:
 		return true
 	default:
 		return false
@@ -617,6 +621,9 @@ type RequestRecord struct {
 	// SessionLink tells how this record joined its session; null when it
 	// started the session.
 	SessionLink *SessionLink `json:"session_link"`
+	// ParentSessionID names the conversation that started this record's
+	// session as a subagent; absent for a top-level conversation.
+	ParentSessionID *SessionID `json:"parent_session_id,omitempty"`
 	// Cursors are the typed values stored for this record: explicit cursors
 	// the request named plus everything the response produced.
 	Cursors    []SessionCursor `json:"cursors"`
@@ -750,6 +757,9 @@ func (record RequestRecord) Validate() error {
 			return fmt.Errorf("session_id: %w", err)
 		}
 	}
+	if err := validateParentSession(record.ParentSessionID, record.SessionID); err != nil {
+		return err
+	}
 	if record.PreviousResponseID != nil {
 		if err := validateProtocolCursor("previous_response_id", *record.PreviousResponseID); err != nil {
 			return err
@@ -859,6 +869,12 @@ type RequestSession struct {
 	// PrivacyWarned is set when the warn action let at least one call of the
 	// session through, so the list can mark it without loading every call.
 	PrivacyWarned bool `json:"privacy_warned,omitempty"`
+	// ParentSessionID names the conversation that started this one as a
+	// subagent; absent for a top-level conversation.
+	ParentSessionID *SessionID `json:"parent_session_id,omitempty"`
+	// SubagentCount is how many conversations this one started as
+	// subagents.
+	SubagentCount int `json:"subagent_count,omitempty"`
 }
 
 func (session RequestSession) Validate() error {
@@ -867,6 +883,12 @@ func (session RequestSession) Validate() error {
 	}
 	if err := session.ID.Validate(); err != nil {
 		return err
+	}
+	if err := validateParentSession(session.ParentSessionID, &session.ID); err != nil {
+		return err
+	}
+	if session.SubagentCount < 0 {
+		return fmt.Errorf("subagent_count must be non-negative")
 	}
 	if err := validateBoundedText("title", session.Title, MaxSessionTitleRunes, true); err != nil {
 		return err
@@ -948,6 +970,8 @@ type RequestSessionPage struct {
 type RequestSessionDetail struct {
 	RequestSession
 	Turns []RequestRecord `json:"turns"`
+	// Subagents are the conversations this one started, oldest first.
+	Subagents []RequestSession `json:"subagents,omitempty"`
 }
 
 func (detail RequestSessionDetail) Validate() error {
@@ -961,6 +985,26 @@ func (detail RequestSessionDetail) Validate() error {
 		if err := turn.Validate(); err != nil {
 			return fmt.Errorf("turns[%d]: %w", index, err)
 		}
+	}
+	for index, subagent := range detail.Subagents {
+		if err := subagent.Validate(); err != nil {
+			return fmt.Errorf("subagents[%d]: %w", index, err)
+		}
+	}
+	return nil
+}
+
+// validateParentSession checks a subagent's link to the conversation that
+// started it; a conversation cannot be its own parent.
+func validateParentSession(parent, own *SessionID) error {
+	if parent == nil {
+		return nil
+	}
+	if err := parent.Validate(); err != nil {
+		return fmt.Errorf("parent_session_id: %w", err)
+	}
+	if own != nil && *parent == *own {
+		return fmt.Errorf("parent_session_id must not equal the session id")
 	}
 	return nil
 }

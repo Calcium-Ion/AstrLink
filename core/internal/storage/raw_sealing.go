@@ -7,9 +7,10 @@ import (
 
 // RawKeyEnvelope is one stored wrapping of the raw sealing private key.
 type RawKeyEnvelope struct {
-	// Kind is "password".
+	// Kind is "password" or "biometric".
 	Kind string
-	// KDFJSON and Salt are the Argon2id parameters and salt.
+	// KDFJSON and Salt are the Argon2id parameters and salt of a password
+	// envelope, or the HKDF marker and salt of a biometric one.
 	KDFJSON   string
 	Salt      []byte
 	Nonce     []byte
@@ -27,6 +28,8 @@ type RawSealingState struct {
 	// pair is intact.
 	MACValid bool
 	Password *RawKeyEnvelope
+	// Biometric opens with the key the desktop keeps behind Touch ID.
+	Biometric *RawKeyEnvelope
 }
 
 // NewRawSealingKey is a key pair ready to store, already wrapped.
@@ -62,6 +65,9 @@ type RawSealingStore interface {
 	CreateRawSealingKey(context.Context, NewRawSealingKey) error
 	// PutRawKeyEnvelope adds or replaces one envelope of the stored key.
 	PutRawKeyEnvelope(context.Context, int64, RawKeyEnvelope) error
+	// DeleteRawKeyEnvelope removes one envelope of the stored key; removing
+	// one that is not there is no error.
+	DeleteRawKeyEnvelope(ctx context.Context, keyID int64, kind string) error
 	// RefreshRawSealingMAC re-authenticates the stored public key under the
 	// current audit key after a proof showed the pair is intact.
 	RefreshRawSealingMAC(context.Context, int64) error

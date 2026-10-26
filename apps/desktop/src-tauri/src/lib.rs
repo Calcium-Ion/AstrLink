@@ -15,12 +15,14 @@ mod kek_store;
 #[cfg(target_os = "macos")]
 mod macos_app;
 mod model_updates;
+mod os_lock;
 mod preferences;
 mod privacy_warnings;
 mod provider_import;
 mod proxy_check;
 mod raw_access;
 mod raw_approval;
+mod raw_biometric;
 mod raw_key_pin;
 mod recovery_path;
 mod service_proxy;
@@ -43,7 +45,10 @@ use preferences::{
     TrayPreferences,
 };
 use serde::{Deserialize, Serialize};
-use sidecar::{CoreManager, CoreSnapshot, PolicyRecordResponse, ServiceRecordResponse};
+use sidecar::{
+    CoreManager, CoreSnapshot, PolicyRecordResponse, ServiceRecordResponse, SERVICE_TEST_CANCELLED,
+    SERVICE_TEST_INVALID_ID,
+};
 use tauri::{Emitter, Manager, RunEvent, State, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_clipboard_manager::ClipboardExt;
@@ -729,7 +734,6 @@ fn hide_main_window_to_tray(app: &tauri::AppHandle) {
     // A tray-parked app must not leave a following inspector on screen showing
     // a request the operator can no longer reach. Pinned ones stay.
     close_unpinned_inspectors(app);
-    raw_approval::lock_on_hide(app);
     notify_hidden_to_tray(app);
 }
 
@@ -1445,11 +1449,46 @@ async fn reset_service_usage(
 
 #[tauri::command]
 async fn test_service(
+    window: tauri::WebviewWindow,
     service_id: String,
     input: serde_json::Value,
+    test_id: Option<String>,
     manager: State<'_, Arc<CoreManager>>,
 ) -> Result<serde_json::Value, String> {
-    manager.test_service(&service_id, input).await
+    let manager = Arc::clone(manager.inner());
+    let Some(test_id) = test_id else {
+        return manager.test_service(&service_id, input).await;
+    };
+    if service_id.is_empty() || service_id.len() > 128 || test_id.is_empty() || test_id.len() > 128
+    {
+        return Err(SERVICE_TEST_INVALID_ID.into());
+    }
+    let owner = window.label().to_owned();
+    let mut registration = match manager.register_service_test(&owner, &service_id, &test_id) {
+        Ok(registration) => registration,
+        Err(message) => return Err(message),
+    };
+    // Prefer a finished result if completion and cancellation are both ready.
+    let outcome = tokio::select! {
+        biased;
+        outcome = manager.test_service(&service_id, input) => outcome,
+        _ = registration.receiver() => Err(SERVICE_TEST_CANCELLED.into()),
+    };
+    outcome
+}
+
+#[tauri::command]
+fn cancel_service_test(
+    window: tauri::WebviewWindow,
+    service_id: String,
+    test_id: String,
+    manager: State<'_, Arc<CoreManager>>,
+) -> bool {
+    if service_id.is_empty() || service_id.len() > 128 || test_id.is_empty() || test_id.len() > 128
+    {
+        return false;
+    }
+    manager.cancel_service_test(window.label(), &service_id, &test_id)
 }
 
 #[tauri::command]
@@ -1686,14 +1725,66 @@ async fn list_raw_access(
 }
 
 /// Turns a window's proof into one for Core.
-fn raw_proof(arg: raw_access::ProofArg) -> raw_access::Proof {
+/// Turns what the dialog sent into a proof for Core. A Touch ID request
+/// shows the prompt here, in the app; the key it releases goes to Core and
+/// never to the webview. A dismissed or unavailable prompt comes back as the
+/// outcome the dialog shows.
+async fn raw_proof(
+    app: &tauri::AppHandle,
+    manager: &CoreManager,
+    arg: raw_access::ProofArg,
+    reason_key: &'static str,
+) -> Result<raw_access::Proof, raw_access::ProofOutcome> {
     match arg {
-        raw_access::ProofArg::Password { password } => raw_access::Proof::Password(password),
+        raw_access::ProofArg::Password { password } => Ok(raw_access::Proof::Password(password)),
+        raw_access::ProofArg::Biometric {} => {
+            let Some(data_directory) = manager.data_directory() else {
+                return Err(raw_access::ProofOutcome::BiometricUnavailable);
+            };
+            let account = kek_store::keychain_account(&data_directory);
+            let locale = app
+                .state::<Arc<PreferencesStore>>()
+                .snapshot()
+                .values
+                .locale;
+            let reason = i18n::t(locale, reason_key, &[]);
+            let release = tauri::async_runtime::spawn_blocking(move || {
+                raw_biometric::release(&account, &reason)
+            })
+            .await
+            .unwrap_or(raw_biometric::Release::Unavailable);
+            match release {
+                raw_biometric::Release::Key(key) => Ok(raw_access::Proof::Biometric(key)),
+                raw_biometric::Release::Cancelled => {
+                    Err(raw_access::ProofOutcome::BiometricCancelled)
+                }
+                raw_biometric::Release::Unavailable => {
+                    Err(raw_access::ProofOutcome::BiometricUnavailable)
+                }
+            }
+        }
+    }
+}
+
+fn proof_outcome_value(outcome: raw_access::ProofOutcome) -> Result<serde_json::Value, String> {
+    serde_json::to_value(outcome).map_err(|error| error.to_string())
+}
+
+/// Adds `biometric_available` to a raw sealing status: whether Touch ID can
+/// stand in for the raw password on this Mac and build. Whether it is set up
+/// for raw content is Core's `envelopes`.
+fn note_biometric(status: &mut serde_json::Value) {
+    if let Some(object) = status.as_object_mut() {
+        object.insert(
+            "biometric_available".to_string(),
+            raw_biometric::available().into(),
+        );
     }
 }
 
 #[tauri::command]
 async fn decide_raw_access(
+    app: tauri::AppHandle,
     grant_id: String,
     decision: String,
     proof: Option<raw_access::ProofArg>,
@@ -1701,7 +1792,12 @@ async fn decide_raw_access(
 ) -> Result<serde_json::Value, String> {
     // The desktop never keeps the proof: it is wiped once it has been sent.
     let proof = match proof {
-        Some(arg) if decision != "deny" => Some(raw_proof(arg)),
+        Some(arg) if decision != "deny" => {
+            match raw_proof(&app, &manager, arg, "host.rawBiometric.approveReason").await {
+                Ok(proof) => Some(proof),
+                Err(outcome) => return proof_outcome_value(outcome),
+            }
+        }
         _ => None,
     };
     let outcome = manager
@@ -1713,7 +1809,7 @@ async fn decide_raw_access(
     outcome
 }
 
-/// Ends a running timed agent grant before it expires.
+/// Ends a running lasting agent grant before it expires.
 #[tauri::command]
 async fn revoke_raw_grant(
     grant_id: String,
@@ -1732,6 +1828,7 @@ async fn raw_sealing_status(
     let _pinning = pins.guard().await;
     let mut status = manager.raw_sealing_status().await?;
     note_raw_key(&pins, &manager, &mut status, raw_key_pin::PinAction::Check).await;
+    note_biometric(&mut status);
     Ok(status)
 }
 
@@ -1803,6 +1900,7 @@ async fn note_raw_key_outcome(
     let mut outcome = result?;
     if let Some(status) = sealing_outcome_status(&mut outcome) {
         note_raw_key(pins, manager, status, action).await;
+        note_biometric(status);
     }
     Ok(outcome)
 }
@@ -1830,15 +1928,18 @@ async fn unlock_raw(
     manager: State<'_, Arc<CoreManager>>,
     pins: State<'_, Arc<raw_key_pin::RawKeyPins>>,
 ) -> Result<serde_json::Value, String> {
-    let proof = raw_proof(proof);
+    let proof = match raw_proof(&app, &manager, proof, "host.rawBiometric.unlockReason").await {
+        Ok(proof) => proof,
+        Err(outcome) => return proof_outcome_value(outcome),
+    };
     let _pinning = pins.guard().await;
     let result = manager.unlock_raw(&proof).await;
     let result = note_raw_key_outcome(&pins, &manager, result, raw_key_pin::PinAction::Check).await;
     broadcast_raw_sealing_change(&app, result)
 }
 
-/// The operator's own lock also revokes every agent grant; locking when the
-/// main window hides keeps them (`raw_approval::lock_on_hide`).
+/// The operator's own lock, which also revokes every agent grant, as the
+/// session lock does (`os_lock`).
 #[tauri::command]
 async fn lock_raw(
     app: tauri::AppHandle,
@@ -1846,9 +1947,10 @@ async fn lock_raw(
     pins: State<'_, Arc<raw_key_pin::RawKeyPins>>,
 ) -> Result<serde_json::Value, String> {
     let _pinning = pins.guard().await;
-    let result = match manager.lock_raw(false).await {
+    let result = match manager.lock_raw().await {
         Ok(mut status) => {
             note_raw_key(&pins, &manager, &mut status, raw_key_pin::PinAction::Check).await;
+            note_biometric(&mut status);
             Ok(status)
         }
         Err(error) => Err(error),
@@ -1866,7 +1968,11 @@ async fn acknowledge_raw_key(
     manager: State<'_, Arc<CoreManager>>,
     pins: State<'_, Arc<raw_key_pin::RawKeyPins>>,
 ) -> Result<serde_json::Value, String> {
-    let proof = raw_proof(proof);
+    // Only the replaced key's own password confirms it; Core refuses Touch ID.
+    let proof = match raw_proof(&app, &manager, proof, "host.rawBiometric.unlockReason").await {
+        Ok(proof) => proof,
+        Err(outcome) => return proof_outcome_value(outcome),
+    };
     let result = acknowledge_replaced_key(&manager, &pins, &proof).await;
     broadcast_raw_sealing_change(&app, result)
 }
@@ -1885,7 +1991,9 @@ async fn acknowledge_replaced_key(
 }
 
 /// Sets, changes, or resets the raw password. `password` is the new one;
-/// `proof` opens the existing key where Core needs it.
+/// `proof` opens the existing key where Core needs it. Core takes any Touch
+/// ID envelope out with the old password; where Touch ID is available the new
+/// password sets it up again at once.
 #[tauri::command]
 async fn set_raw_password(
     app: tauri::AppHandle,
@@ -1895,7 +2003,13 @@ async fn set_raw_password(
     manager: State<'_, Arc<CoreManager>>,
     pins: State<'_, Arc<raw_key_pin::RawKeyPins>>,
 ) -> Result<serde_json::Value, String> {
-    let proof = proof.map(raw_proof);
+    let proof = match proof {
+        Some(arg) => match raw_proof(&app, &manager, arg, "host.rawBiometric.unlockReason").await {
+            Ok(proof) => Some(proof),
+            Err(outcome) => return proof_outcome_value(outcome),
+        },
+        None => None,
+    };
     let _pinning = pins.guard().await;
     let result = manager
         .change_raw_password(
@@ -1905,7 +2019,121 @@ async fn set_raw_password(
         )
         .await;
     let pin_action = raw_key_pin::PinAction::after_password(&action);
-    let result = note_raw_key_outcome(&pins, &manager, result, pin_action).await;
+    let mut result = note_raw_key_outcome(&pins, &manager, result, pin_action).await;
+    if let (Ok(outcome), Some(password)) = (&mut result, password.as_deref()) {
+        if sealing_outcome_status(outcome).is_some() {
+            renew_biometric(&manager, password, outcome).await;
+        }
+    }
+    broadcast_raw_sealing_change(&app, result)
+}
+
+/// Replaces the Touch ID key after the raw password changed: the old key's
+/// envelope is gone, so the keychain item goes too, and where Touch ID is
+/// available a new key is enrolled with the new password. The outcome then
+/// reports the new status. A failure leaves the password working alone.
+async fn renew_biometric(manager: &CoreManager, password: &str, outcome: &mut serde_json::Value) {
+    let Some(data_directory) = manager.data_directory() else {
+        return;
+    };
+    let account = kek_store::keychain_account(&data_directory);
+    forget_biometric(account.clone()).await;
+    if !raw_biometric::available() {
+        return;
+    }
+    let mut enrolled = match enroll_biometric(manager, &account, password).await {
+        Ok(enrolled) => enrolled,
+        Err(error) => {
+            eprintln!("unable to set up Touch ID for raw content: {error}");
+            return;
+        }
+    };
+    let (Some(fresh), Some(status)) = (
+        sealing_outcome_status(&mut enrolled),
+        sealing_outcome_status(outcome),
+    ) else {
+        eprintln!("Core did not set up Touch ID for raw content");
+        return;
+    };
+    // The host's verdict on the key stays; Core's view is the newer one.
+    if let (Some(fresh), Some(replaced)) = (fresh.as_object_mut(), status.get("key_replaced")) {
+        fresh.insert("key_replaced".to_string(), replaced.clone());
+    }
+    note_biometric(fresh);
+    *status = fresh.take();
+}
+
+/// Generates a key, keeps it in the keychain and has Core wrap the raw key
+/// under it, opened with `password`. Returns Core's outcome; the keychain
+/// item is removed again unless Core set the envelope up.
+async fn enroll_biometric(
+    manager: &CoreManager,
+    account: &str,
+    password: &str,
+) -> Result<serde_json::Value, String> {
+    let key = raw_biometric::new_key()?;
+    {
+        let (account, key) = (account.to_string(), key.clone());
+        tauri::async_runtime::spawn_blocking(move || raw_biometric::store(&account, &key))
+            .await
+            .map_err(|error| error.to_string())??;
+    }
+    let mut outcome = manager.enroll_raw_biometric(password, &key).await;
+    let enrolled = match &mut outcome {
+        Ok(value) => sealing_outcome_status(value).is_some(),
+        Err(_) => false,
+    };
+    if !enrolled {
+        forget_biometric(account.to_string()).await;
+    }
+    outcome
+}
+
+async fn forget_biometric(account: String) {
+    let _ = tauri::async_runtime::spawn_blocking(move || raw_biometric::forget(&account)).await;
+}
+
+/// Sets up Touch ID for raw content with the raw password, for a password
+/// set before Touch ID was offered or after it was turned off. Refusals come
+/// back as outcomes, so the dialog can ask again.
+#[tauri::command]
+async fn enroll_raw_biometric(
+    app: tauri::AppHandle,
+    password: zeroize::Zeroizing<String>,
+    manager: State<'_, Arc<CoreManager>>,
+) -> Result<serde_json::Value, String> {
+    let Some(data_directory) = manager.data_directory() else {
+        return Err("AstrLink is not running".to_string());
+    };
+    if !raw_biometric::available() {
+        return proof_outcome_value(raw_access::ProofOutcome::BiometricUnavailable);
+    }
+    let account = kek_store::keychain_account(&data_directory);
+    let result = enroll_biometric(&manager, &account, &password)
+        .await
+        .map(|mut outcome| {
+            if let Some(status) = sealing_outcome_status(&mut outcome) {
+                note_biometric(status);
+            }
+            outcome
+        });
+    broadcast_raw_sealing_change(&app, result)
+}
+
+/// Turns Touch ID off for raw content: Core drops the envelope and the
+/// keychain item goes with it. The raw password keeps working.
+#[tauri::command]
+async fn remove_raw_biometric(
+    app: tauri::AppHandle,
+    manager: State<'_, Arc<CoreManager>>,
+) -> Result<serde_json::Value, String> {
+    let result = manager.remove_raw_biometric().await.map(|mut status| {
+        note_biometric(&mut status);
+        status
+    });
+    if let Some(data_directory) = manager.data_directory() {
+        forget_biometric(kek_store::keychain_account(&data_directory)).await;
+    }
     broadcast_raw_sealing_change(&app, result)
 }
 
@@ -2471,6 +2699,7 @@ pub fn run() {
             sync_config,
             reset_service_usage,
             test_service,
+            cancel_service_test,
             probe_service_models,
             probe_draft_service_models,
             probe_service_proxy,
@@ -2504,6 +2733,8 @@ pub fn run() {
             raw_sealing_status,
             unlock_raw,
             lock_raw,
+            enroll_raw_biometric,
+            remove_raw_biometric,
             acknowledge_raw_key,
             set_raw_password,
             builtin_tool_action,
@@ -2620,6 +2851,8 @@ pub fn run() {
             }
             tray::start(app.handle());
             model_updates::start(app.handle());
+            // The raw unlock and agent grants end with the session lock.
+            os_lock::watch(app.handle());
 
             let deep_link = app.deep_link();
             // Installers register the scheme; this repairs portable copies.
@@ -2690,26 +2923,6 @@ pub fn run() {
         {
             if label == tray::POPOVER_LABEL {
                 tray::on_popover_blur(app_handle);
-            }
-        }
-        if let RunEvent::WindowEvent {
-            label,
-            event: WindowEvent::Focused(focused),
-            ..
-        } = &event
-        {
-            if label == "main" {
-                raw_approval::on_main_focus(app_handle, *focused);
-            }
-        }
-        if let RunEvent::WindowEvent {
-            label,
-            event: WindowEvent::Resized(_),
-            ..
-        } = &event
-        {
-            if label == "main" {
-                raw_approval::on_main_resized(app_handle);
             }
         }
         if let RunEvent::WindowEvent {

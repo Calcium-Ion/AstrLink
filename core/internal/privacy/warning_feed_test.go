@@ -92,8 +92,10 @@ func TestWarningFeedLeavesOutKindsThatDoNotNotify(t *testing.T) {
 	stored := contract.DefaultPrivacyPolicy()
 	stored.Enabled = true
 	stored.RequestAction = contract.PolicyActionWarn
+	// Emails are detected but do not notify; the default leaves them off.
 	for index := range stored.KindRules {
 		if stored.KindRules[index].Kind == string(KindEmail) {
+			stored.KindRules[index].Enabled = true
 			stored.KindRules[index].Notify = false
 		}
 	}
@@ -116,7 +118,7 @@ func TestWarningFeedLeavesOutKindsThatDoNotNotify(t *testing.T) {
 		return result, event, fed
 	}
 
-	result, event, fed := report("alice@example.com " + token)
+	result, event, fed := report("alice@acme.io " + token)
 	if len(result.Findings) != 2 || len(result.Notified) != 1 ||
 		result.Notified[0].Kind != KindCommonSecret || len(result.Fingerprints) != 1 {
 		t.Fatalf("an email must stay recorded but not notify: %#v", result)
@@ -127,10 +129,10 @@ func TestWarningFeedLeavesOutKindsThatDoNotNotify(t *testing.T) {
 	}
 	// A new email beside the secret already warned about is no reason to
 	// notify again.
-	if _, event, fed = report("bob@example.com " + token); !fed || event.Notifiable {
+	if _, event, fed = report("bob@acme.io " + token); !fed || event.Notifiable {
 		t.Fatalf("event = %#v, fed %t", event, fed)
 	}
-	if result, _, fed = report("carol@example.com"); fed || len(result.Findings) != 1 {
+	if result, _, fed = report("carol@acme.io"); fed || len(result.Findings) != 1 {
 		t.Fatalf("a warning of emails only was fed: %#v", result)
 	}
 	if events := feed.Since(0).Events; len(events) != 2 || events[1].Sequence != 2 {

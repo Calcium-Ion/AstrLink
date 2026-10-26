@@ -160,10 +160,11 @@ func PlaceholderStyleLocked(kind string) bool {
 
 // DefaultPrivacyKindRules seeds one rule per kind.
 //
-// url, ip_address, and private_date default to disabled: they are the dominant
-// false-positive sources for coding agents, whose prompts are dense with
-// documentation links, loopback addresses, repository URLs, and log or release
-// dates that carry no user PII. Every kind notifies.
+// Only common_secret is enabled. A leaked credential can be used by whoever
+// reads it, and its shapes are distinctive enough to find with few false
+// alarms. Names, contact details, numbers, and addresses are everywhere in a
+// coding agent's prompts as test data, documentation, and log lines, so each
+// of those kinds is one switch away instead of on. Every kind notifies.
 func DefaultPrivacyKindRules() []PolicyKindRule {
 	rules := make([]PolicyKindRule, 0, len(PrivacyKinds()))
 	for _, kind := range PrivacyKinds() {
@@ -171,8 +172,7 @@ func DefaultPrivacyKindRules() []PolicyKindRule {
 		if PlaceholderStyleLocked(kind) {
 			style = PlaceholderStyleToken
 		}
-		enabled := kind != "url" && kind != "ip_address" && kind != "private_date"
-		rules = append(rules, PolicyKindRule{Kind: kind, Enabled: enabled, Style: style, Notify: true})
+		rules = append(rules, PolicyKindRule{Kind: kind, Enabled: kind == "common_secret", Style: style, Notify: true})
 	}
 	return rules
 }
@@ -231,12 +231,20 @@ func (rule PolicyAllowlistRule) Validate() error {
 }
 
 // DefaultPrivacyAllowlistRules seeds the hosts and ranges that are effectively
-// never user PII but are matched aggressively by the url and ip_address rules.
+// never user PII but are matched aggressively by the url and ip_address rules,
+// and the domains RFC 2606 and RFC 6761 reserve for examples and tests, whose
+// addresses reach nobody and fill documentation and test data.
 func DefaultPrivacyAllowlistRules() []PolicyAllowlistRule {
 	return []PolicyAllowlistRule{
 		{Type: PolicyAllowlistTypeDomainSuffix, Value: "localhost"},
 		{Type: PolicyAllowlistTypeDomainSuffix, Value: "github.com"},
 		{Type: PolicyAllowlistTypeDomainSuffix, Value: "githubusercontent.com"},
+		{Type: PolicyAllowlistTypeDomainSuffix, Value: "example.com"},
+		{Type: PolicyAllowlistTypeDomainSuffix, Value: "example.net"},
+		{Type: PolicyAllowlistTypeDomainSuffix, Value: "example.org"},
+		{Type: PolicyAllowlistTypeDomainSuffix, Value: "example"},
+		{Type: PolicyAllowlistTypeDomainSuffix, Value: "test"},
+		{Type: PolicyAllowlistTypeDomainSuffix, Value: "invalid"},
 		{Type: PolicyAllowlistTypeCIDR, Value: "127.0.0.0/8"},
 		{Type: PolicyAllowlistTypeCIDR, Value: "::1/128"},
 		{Type: PolicyAllowlistTypeCIDR, Value: "10.0.0.0/8"},
@@ -550,11 +558,14 @@ func (policy Policy) Validate() error {
 	return nil
 }
 
+// DefaultPrivacyPolicy is the policy a fresh install starts with: on, with
+// the regex detector, replacing credentials only, so it needs no model
+// download and leaves requests without one untouched.
 func DefaultPrivacyPolicy() Policy {
 	return Policy{
 		ID:                   DefaultPrivacyPolicyID,
 		Name:                 DefaultPrivacyPolicyName,
-		Enabled:              false,
+		Enabled:              true,
 		Priority:             DefaultPrivacyPolicyPriority,
 		Detector:             PolicyDetectorRegex,
 		LocalModelID:         nil,

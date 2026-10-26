@@ -31,7 +31,7 @@ func (store *Store) ListRequestActivity(
 	// next one only when this read could list it.
 	rows, err := store.db.QueryContext(ctx, `
 SELECT COALESCE(root.session_id, root.id), root.client_type, root.started_at, root.completed_at,
-       root.status, root.http_status, root.output_json
+       root.status, root.http_status, root.output_json, root.parent_session_id
 FROM request_records AS root INDEXED BY request_records_root_started_idx
 WHERE root.parent_request_id IS NULL
   AND root.started_at >= ?
@@ -64,14 +64,18 @@ ORDER BY root.started_at DESC, root.id DESC`,
 	calls := make([]contract.RequestActivityCall, 0)
 	for rows.Next() {
 		var sessionID, startedAt, status string
-		var clientType, completedAt, output sql.NullString
+		var clientType, completedAt, output, parent sql.NullString
 		var httpStatus sql.NullInt64
-		if err := rows.Scan(&sessionID, &clientType, &startedAt, &completedAt, &status, &httpStatus, &output); err != nil {
+		if err := rows.Scan(&sessionID, &clientType, &startedAt, &completedAt, &status, &httpStatus, &output, &parent); err != nil {
 			return nil, fmt.Errorf("scan request activity: %w", err)
 		}
 		call := contract.RequestActivityCall{
 			SessionID:  contract.SessionID(sessionID),
 			ClientType: contract.ClientType(clientType.String),
+		}
+		if parent.Valid && parent.String != "" && parent.String != sessionID {
+			value := contract.SessionID(parent.String)
+			call.ParentSessionID = &value
 		}
 		if call.StartedAt, err = time.Parse(time.RFC3339Nano, startedAt); err != nil {
 			return nil, fmt.Errorf("parse request activity start: %w", err)

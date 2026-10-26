@@ -195,6 +195,60 @@ func TestCodexSessionScopeMapsOnlyPresentIdentifiers(t *testing.T) {
 	}
 }
 
+func TestCodexSessionScopeMapsThreadIdentityEverywhere(t *testing.T) {
+	const root = "019a2b3c-4d5e-7f60-8a9b-0c1d2e3f4a5b"
+	const thread = "019a2b3c-4d5e-7f60-8a9b-0c1d2e3f4a6c"
+	turn := `{"session_id":"` + root + `","thread_id":"` + thread + `","parent_thread_id":"` + root + `","request_kind":"turn"}`
+	metadata, _ := json.Marshal(map[string]string{
+		"session_id": root, "thread_id": thread, "x-codex-parent-thread-id": root,
+		"x-codex-window-id": thread + ":0", "x-codex-turn-metadata": turn, "x-codex-installation-id": "install-1",
+	})
+	body := `{"model":"gpt-6-astra","input":[{"role":"user","content":"thread ` + thread + ` stays in the prompt"}],"stream":true,` +
+		`"prompt_cache_key":"` + root + `","client_metadata":` + string(metadata) + `}`
+	upstream := newCapturedUpstream(t, http.StatusOK, "text/event-stream", "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"output\":[]}}\n\n")
+	candidate := riskCodexCandidate("service_codex_a", upstream.url)
+	header := http.Header{
+		"Session-Id": {root}, "Thread-Id": {thread}, "X-Client-Request-Id": {thread}, "X-Codex-Parent-Thread-Id": {root},
+		"X-Codex-Window-Id": {thread + ":0"}, "X-Codex-Turn-Metadata": {turn},
+	}
+	response := serveProtectedRequest(t, protectionSettings(true), nil, candidate, "/v1/responses", body, header)
+	if response.Code != http.StatusOK {
+		t.Fatalf("response = %d %s", response.Code, response.Body.String())
+	}
+	forwarded, raw := upstream.request(t)
+	scopedRoot := accountauth.ScopedSessionID("service_codex_a", root)
+	scopedThread := accountauth.ScopedSessionID("service_codex_a", thread)
+	for name, want := range map[string]string{
+		"Session-Id": scopedRoot, "Thread-Id": scopedThread, "X-Client-Request-Id": scopedThread,
+		"X-Codex-Parent-Thread-Id": scopedRoot, "X-Codex-Window-Id": scopedThread + ":0",
+	} {
+		if got := forwarded.Get(name); got != want {
+			t.Fatalf("%s = %q, want %q", name, got, want)
+		}
+	}
+	if got := forwarded.Get("X-Codex-Turn-Metadata"); strings.Contains(got, root) || strings.Contains(got, thread) ||
+		!strings.Contains(got, scopedRoot) || !strings.Contains(got, `"request_kind":"turn"`) {
+		t.Fatalf("turn metadata = %s", got)
+	}
+	var fields struct {
+		Input          json.RawMessage   `json:"input"`
+		PromptCacheKey string            `json:"prompt_cache_key"`
+		ClientMetadata map[string]string `json:"client_metadata"`
+	}
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		t.Fatal(err)
+	}
+	// The cache key names the root thread like the session header does.
+	if fields.PromptCacheKey != scopedRoot || fields.ClientMetadata["session_id"] != scopedRoot ||
+		fields.ClientMetadata["thread_id"] != scopedThread || fields.ClientMetadata["x-codex-window-id"] != scopedThread+":0" ||
+		fields.ClientMetadata["x-codex-installation-id"] != "install-1" || strings.Contains(fields.ClientMetadata["x-codex-turn-metadata"], thread) {
+		t.Fatalf("body identity = %s", raw)
+	}
+	if !strings.Contains(string(fields.Input), "thread "+thread+" stays in the prompt") {
+		t.Fatalf("prompt was rewritten: %s", fields.Input)
+	}
+}
+
 func TestClaudeProtectionSwitches(t *testing.T) {
 	const body = `{"model":"claude-sonnet-4-5","max_tokens":4096,"top_k":5,` +
 		`"thinking":{"type":"enabled","budget_tokens":2048},"metadata":{"user_id":"client-user","tier":"keep"},` +

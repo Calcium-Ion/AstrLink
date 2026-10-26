@@ -7,7 +7,6 @@ import {
   Connect as Cable,
   Copy,
   Key,
-  LockKeyhole,
   RefreshCw,
   Server,
 } from "@/components/icons";
@@ -39,12 +38,6 @@ import type { AppSnapshot } from "./core-model";
 import type { AccessTokenCatalog } from "./AccessTokenManager";
 import type { ServiceCatalog } from "./Overview";
 import { PageHeader } from "./PageHeader";
-import type { RawSealingState } from "./raw-sealing-model";
-import {
-  RawSealingDialogs,
-  useRawSetupNeeded,
-  type RawDialog,
-} from "./RawSealingControls";
 import { useT } from "./i18n";
 import { notify } from "./notify";
 import type { useOnboarding } from "./use-onboarding";
@@ -65,8 +58,6 @@ export function GettingStarted({
   onOpenRecords,
   onRefresh,
   onRestart,
-  onRawSealingStatus,
-  rawSealing,
 }: {
   conversionEngine?: ConversionEngineCapability | null;
   onboarding: ReturnType<typeof useOnboarding>;
@@ -82,13 +73,9 @@ export function GettingStarted({
   onOpenRecords: () => void;
   onRefresh: () => void;
   onRestart: () => void;
-  onRawSealingStatus: (next: RawSealingState) => void;
-  rawSealing: { status: RawSealingState | null; error: string | null };
 }) {
   const t = useT();
   const [selectedStep, setSelectedStep] = useState(onboarding.step);
-  const [rawDialog, setRawDialog] = useState<RawDialog | null>(null);
-  const passwordMissing = useRawSetupNeeded(rawSealing.status);
   const [protocol, setProtocol] = useState<"openai" | "anthropic">("openai");
   const [manualClient, setManualClient] = useState<DirectClient | "other">(
     "claude",
@@ -123,11 +110,6 @@ export function GettingStarted({
     onboarding.tokenReady &&
     onboarding.requestReady;
   const steps = [
-    {
-      title: t("onboarding.passwordTitle"),
-      description: t("onboarding.passwordShort"),
-      complete: onboarding.passwordReady,
-    },
     {
       title: t("onboarding.serviceTitle"),
       description: t("onboarding.serviceShort"),
@@ -349,7 +331,6 @@ export function GettingStarted({
                 <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
                   {t(
                     [
-                      "onboarding.passwordBody",
                       "onboarding.serviceBody",
                       "onboarding.tokenBody",
                       "onboarding.clientBody",
@@ -359,62 +340,9 @@ export function GettingStarted({
               </div>
               {selectedStep === 0 ? (
                 <>
-                  {onboarding.passwordReady ? (
-                    <FormMessage
-                      data-slot="onboarding-password-done"
-                      tone="success"
-                    >
-                      {t("onboarding.passwordDone")}
-                    </FormMessage>
-                  ) : rawSealing.status === null ? (
-                    rawSealing.error ? (
-                      <FormMessage tone="error">
-                        {t("onboarding.passwordLoadFailed", {
-                          message: rawSealing.error,
-                        })}
-                      </FormMessage>
-                    ) : isReady ? (
-                      <p
-                        role="status"
-                        className="text-sm text-muted-foreground"
-                      >
-                        {t("onboarding.passwordLoading")}
-                      </p>
-                    ) : null
-                  ) : null}
-                  <div className="flex flex-wrap gap-2">
-                    {passwordMissing ? (
-                      <Button onClick={() => setRawDialog({ kind: "set" })}>
-                        <LockKeyhole aria-hidden="true" />
-                        {t("onboarding.passwordAction")}
-                      </Button>
-                    ) : null}
-                    {onboarding.passwordReady ? (
-                      <Button
-                        variant="outline"
-                        onClick={() => setSelectedStep(1)}
-                      >
-                        {t("onboarding.next")}
-                        <ArrowRight aria-hidden="true" />
-                      </Button>
-                    ) : null}
-                  </div>
-                  {rawSealing.status?.password_required ? (
-                    <p className="text-sm leading-relaxed">
-                      {t("rawSealing.hint.unset")}
-                    </p>
-                  ) : null}
-                </>
-              ) : selectedStep === 1 ? (
-                <>
-                  {passwordMissing ? (
-                    <FormMessage tone="notice">
-                      {t("onboarding.finishPassword")}
-                    </FormMessage>
-                  ) : null}
                   <div className="flex flex-wrap gap-2">
                     <Button
-                      disabled={!onboarding.catalogsReady || passwordMissing}
+                      disabled={!onboarding.catalogsReady}
                       onClick={
                         catalog.items.length ? onManageServices : onAddService
                       }
@@ -429,7 +357,7 @@ export function GettingStarted({
                     {onboarding.serviceReady ? (
                       <Button
                         variant="outline"
-                        onClick={() => setSelectedStep(2)}
+                        onClick={() => setSelectedStep(1)}
                       >
                         {t("onboarding.next")}
                         <ArrowRight aria-hidden="true" />
@@ -448,7 +376,7 @@ export function GettingStarted({
                     </HelpDisclosure>
                   </div>
                 </>
-              ) : selectedStep === 2 ? (
+              ) : selectedStep === 1 ? (
                 <>
                   {!onboarding.serviceReady ? (
                     <FormMessage tone="notice">
@@ -472,7 +400,7 @@ export function GettingStarted({
                     {onboarding.tokenReady && onboarding.serviceReady ? (
                       <Button
                         variant="outline"
-                        onClick={() => setSelectedStep(3)}
+                        onClick={() => setSelectedStep(2)}
                       >
                         {t("onboarding.next")}
                         <ArrowRight aria-hidden="true" />
@@ -671,12 +599,6 @@ export function GettingStarted({
           onClose={() => setImportOpen(false)}
         />
       ) : null}
-      <RawSealingDialogs
-        dialog={rawDialog}
-        onClose={() => setRawDialog(null)}
-        onStatus={onRawSealingStatus}
-        status={rawSealing.status}
-      />
     </section>
   );
 }

@@ -171,11 +171,11 @@ func commandCatalog() []command {
 				"Raw content enters your context and is sent to the model provider you use, so first tell the user why you need it and pass that as --reason. " +
 				"The command then waits while the user decides in the AstrLink desktop; never try to approve it yourself. " +
 				"It prints the audit with content_view raw once approved, or exits with an error if the user denies it, raw access is unavailable, or the wait ends. " +
-				"The user may approve one read, or approve for 5 minutes or 1 hour. A timed approval covers every request and prints raw_grant.grant_token: " +
+				"The user may approve one read, or approve until their screen locks or for 1 hour. A lasting approval covers every request and prints raw_grant.grant_token: " +
 				"reuse it with --grant for the rest of the investigation, follow raw_grant.usage, and revoke it with raw-revoke when the investigation ends.",
 			Flags: []commandFlag{
 				{Name: "reason", Key: "reason", Usage: "why you need the raw parts, as you told the user; shown in the approval window (required without --grant)"},
-				{Name: "grant", Key: "grant", Usage: "raw_grant.grant_token from an earlier timed approval; reads without asking again"},
+				{Name: "grant", Key: "grant", Usage: "raw_grant.grant_token from an earlier lasting approval; reads without asking again"},
 				{Name: "agent", Key: "agent", Usage: "your product name, shown to the user beside the request"},
 				{Name: "wait", Key: "wait", Kind: flagDuration, Usage: "how long to wait for the decision (at most 10m)"},
 			},
@@ -329,7 +329,7 @@ func annotateAuditPayload(raw json.RawMessage, view string) (map[string]any, err
 		wrapped["withheld_parts"] = withheld
 	case len(withheld) > 0 && rawAvailable:
 		wrapped["withheld_parts"] = withheld
-		wrapped["hint"] = "Some parts are withheld. Work from the shareable parts and privacy_findings first. If you still need the raw parts, tell the user why, then run `astrlink raw-audit <id> --reason <why>`, or `astrlink raw-audit <id> --grant <token>` with a timed grant from this same investigation; the user must approve new requests in the AstrLink desktop."
+		wrapped["hint"] = "Some parts are withheld. Work from the shareable parts and privacy_findings first. If you still need the raw parts, tell the user why, then run `astrlink raw-audit <id> --reason <why>`, or `astrlink raw-audit <id> --grant <token>` with a lasting grant from this same investigation; the user must approve new requests in the AstrLink desktop."
 	case len(withheld) > 0:
 		wrapped["withheld_parts"] = withheld
 		wrapped["hint"] = "Some parts are withheld and raw access is not available: the user has not set a raw password, or has turned off agent raw access requests. Do not run raw-audit; work from the shareable parts and privacy_findings."

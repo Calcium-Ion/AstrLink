@@ -1,6 +1,7 @@
 package convo
 
 import (
+	"bytes"
 	"context"
 	"time"
 )
@@ -24,6 +25,10 @@ type Policy struct {
 	MaxOutputEchoIDs int
 	// MaxUserTextBytes bounds RequestSummary.LastUserText and FirstUserText.
 	MaxUserTextBytes int
+	// MaxContinuationUsers bounds RequestSummary.UserDigests: how many of a
+	// request's newest user messages Resolve may compare with an earlier
+	// call of its thread.
+	MaxContinuationUsers int
 	// MaxResponseBytes bounds how much of a non-streaming body, or a single
 	// streaming line, ResponseObserver.Write buffers before giving up.
 	MaxResponseBytes int
@@ -42,19 +47,27 @@ type Policy struct {
 	// assistant message, then counts as the user's; the rest of its run and
 	// user messages after tool results are notes.
 	NotesFollowPrompt bool
+	// ToolFreeHelpers is for a client that offers its tools on every call
+	// of a conversation, as coding agents do. One of its calls that offers
+	// none and continues no call of its thread is then a helper call, such
+	// as a title request, and keeps the thread's turn. A chat client may
+	// never offer tools, so without this such a call moves the
+	// conversation on, as an edited first message does.
+	ToolFreeHelpers bool
 }
 
 // DefaultPolicy returns the recommended limits.
 func DefaultPolicy() Policy {
 	return Policy{
-		Window:              7 * 24 * time.Hour,
-		MinFingerprintRunes: 32,
-		MaxInboundEchoIDs:   32,
-		MaxOutputEchoIDs:    16,
-		MaxUserTextBytes:    4096,
-		MaxResponseBytes:    8 << 20,
-		EntropyCheck:        HasCursorEntropy,
-		StripLeadingThink:   true,
+		Window:               7 * 24 * time.Hour,
+		MinFingerprintRunes:  32,
+		MaxInboundEchoIDs:    32,
+		MaxOutputEchoIDs:     16,
+		MaxUserTextBytes:     4096,
+		MaxContinuationUsers: 32,
+		MaxResponseBytes:     8 << 20,
+		EntropyCheck:         HasCursorEntropy,
+		StripLeadingThink:    true,
 	}
 }
 
@@ -86,6 +99,13 @@ func (policy Policy) maxUserTextBytes() int {
 	return DefaultPolicy().MaxUserTextBytes
 }
 
+func (policy Policy) maxContinuationUsers() int {
+	if policy.MaxContinuationUsers > 0 {
+		return policy.MaxContinuationUsers
+	}
+	return DefaultPolicy().MaxContinuationUsers
+}
+
 func (policy Policy) maxResponseBytes() int {
 	if policy.MaxResponseBytes > 0 {
 		return policy.MaxResponseBytes
@@ -110,6 +130,14 @@ func (policy Policy) minFingerprintRunes() int {
 //     and Window;
 //  3. KindFingerprint with the same restriction, skipped when fp is nil or
 //     the request carries no assistant digest.
+//
+// An explicit identity names a thread, and a client may send helper calls
+// (titles, summaries, forks that go nowhere) under it. When the newest call
+// of the thread is not one the request's history continues, Resolve looks up
+// the newest one it does continue (Scope.Continues) and places the request
+// after that call. When there is none, a request that offers no tools from a
+// client under Policy.ToolFreeHelpers is a helper call (Decision.SideCall)
+// and keeps the thread's turn state.
 //
 // lookup may be nil, in which case Resolve only computes Inbound and Turn.
 // Errors from lookup abort Resolve.
@@ -190,12 +218,98 @@ func (policy Policy) Resolve(
 			matched = &anchor
 		}
 	}
+	sideCall := summary.SideCall
+	if matched != nil && matched.Kind == KindExplicit && !sideCall && lookup != nil {
+		if continuation := policy.continuation(summary, fp); continuation.leaves(matched.Turn, summary.UserTurnCount) {
+			// The newest call naming this identity is not on this request's
+			// line: a helper call or a fork that ended there, or an edit
+			// further back. Continue from the newest call the history does
+			// extend. With none, a coding agent's request without tools is
+			// itself a helper call; any other moved the conversation on, as
+			// after a compaction.
+			found, ok, err := lookup(ctx, KindExplicit, explicit[:1], Scope{Continues: continuation})
+			if err != nil {
+				return decision, err
+			}
+			switch {
+			case ok && found.SessionID == matched.SessionID && continuation.Holds(found.Turn):
+				if found.Kind == "" {
+					found.Kind = KindExplicit
+				}
+				matched = &found
+				decision.Match = found
+			case policy.ToolFreeHelpers && !summary.HasTools:
+				sideCall = true
+			}
+		}
+	}
+	if sideCall {
+		decision.SideCall = true
+		decision.Turn = sideCallTurn(matched)
+		return decision, nil
+	}
 	var userFingerprint string
 	if fp != nil {
 		userFingerprint = fp.Fingerprint(summary.LastUserDigest)
 	}
 	decision.Turn = policy.NextTurn(summary, matched, userFingerprint)
 	return decision, nil
+}
+
+// continuation describes the request's newest user messages as turn points,
+// or nil when there is nothing to compare: no fingerprint key, a stateful
+// delta, or no user text.
+func (policy Policy) continuation(summary RequestSummary, fp *Fingerprinter) *Continuation {
+	if fp == nil || summary.Stateful || len(summary.UserDigests) == 0 {
+		return nil
+	}
+	first := summary.UserTurnCount - len(summary.UserDigests) + 1
+	points := make([]TurnPoint, 0, len(summary.UserDigests))
+	var previous []byte
+	var fingerprint string
+	for index, digest := range summary.UserDigests {
+		if index == 0 || !bytes.Equal(digest, previous) {
+			fingerprint = fp.Fingerprint(digest)
+			previous = digest
+		}
+		if fingerprint != "" {
+			points = append(points, TurnPoint{UserMessages: first + index, LastUserFingerprint: fingerprint})
+		}
+	}
+	if len(points) == 0 {
+		return nil
+	}
+	return &Continuation{Points: points}
+}
+
+// leaves reports whether a history with userTurnCount user messages provably
+// does not continue the record that ended on turn. A record without a user
+// fingerprint, or ending before the oldest point, cannot be judged.
+func (continuation *Continuation) leaves(turn *TurnState, userTurnCount int) bool {
+	if continuation == nil || turn == nil || turn.UserMessages < 1 || turn.LastUserFingerprint == "" {
+		return false
+	}
+	if turn.UserMessages > userTurnCount {
+		return true
+	}
+	if turn.UserMessages < continuation.Points[0].UserMessages {
+		return false
+	}
+	return !continuation.Holds(turn)
+}
+
+// sideCallTurn is the turn a helper call takes: the matched record's, so the
+// thread's state is unchanged, or turn 1 with nothing to compare when it
+// opens the session.
+func sideCallTurn(matched *Match) *TurnState {
+	if matched == nil {
+		return &TurnState{Index: 1}
+	}
+	if matched.Turn == nil {
+		return nil
+	}
+	turn := *matched.Turn
+	return &turn
 }
 
 // NextTurn places a request relative to the record it continues.
@@ -216,8 +330,9 @@ func (policy Policy) Resolve(
 // count accumulates so a later full replay still compares correctly.
 //
 // A match whose record stored no turn cannot be compared and restarts the
-// count at 1. nil means the request has no user turns at all (completions,
-// a bare tool result on a stateful chain without a comparable match).
+// count at 1; one whose turn a helper call opened keeps that turn. nil means
+// the request has no user turns at all (completions, a bare tool result on a
+// stateful chain without a comparable match).
 func (policy Policy) NextTurn(summary RequestSummary, matched *Match, userFingerprint string) *TurnState {
 	if matched == nil || matched.Turn == nil || matched.Turn.Index < 1 {
 		if !summary.HasUserMessage {
@@ -226,6 +341,14 @@ func (policy Policy) NextTurn(summary RequestSummary, matched *Match, userFinger
 		return &TurnState{Index: 1, UserMessages: summary.UserTurnCount, LastUserFingerprint: userFingerprint}
 	}
 	previous := *matched.Turn
+	if previous.UserMessages < 1 && previous.LastUserFingerprint == "" {
+		// A helper call opened the session: the turn is its, but it holds
+		// nothing to compare against.
+		if !summary.HasUserMessage {
+			return &TurnState{Index: previous.Index}
+		}
+		return &TurnState{Index: previous.Index, UserMessages: summary.UserTurnCount, LastUserFingerprint: userFingerprint}
+	}
 	next := TurnState{Index: previous.Index, UserMessages: previous.UserMessages, LastUserFingerprint: previous.LastUserFingerprint}
 	if summary.Stateful {
 		if summary.HasUserMessage {

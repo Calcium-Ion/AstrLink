@@ -20,7 +20,7 @@ func TestEnginePreservesCodeInToolResultsWhileRedactingSensitiveValues(t *testin
 <path d="M0 0 c 175 105 101 38 184 51 328"/>
 <path d="M0 0 c-18 1248 3 1319 4 1322 21 2"/>
 <path d="M0 0 c 33 532 175 650 70 59 97 75"/>
-contact alice@example.com; card 4242 4242 4242 4242`
+contact alice@example.com; card 4539 1488 0343 6467`
 	encodedText, err := json.Marshal(toolText)
 	if err != nil {
 		t.Fatal(err)
@@ -41,7 +41,7 @@ contact alice@example.com; card 4242 4242 4242 4242`
 			if result.Decision != DecisionRedact || len(result.Redactions) != 2 {
 				t.Fatalf("decision = %s, redactions = %#v", result.Decision, result.Redactions)
 			}
-			for _, sensitive := range []string{"alice@example.com", "4242 4242 4242 4242"} {
+			for _, sensitive := range []string{"alice@example.com", "4539 1488 0343 6467"} {
 				if bytes.Contains(result.Body, []byte(sensitive)) {
 					t.Fatalf("sensitive value %q was not redacted", sensitive)
 				}
@@ -88,13 +88,13 @@ func TestEngineProtocolAwareRedactionFixtures(t *testing.T) {
 				"input":[{
 					"role":"user",
 					"content":[
-						{"type":"input_text","text":"Card 4242 4242 4242 4242"},
+						{"type":"input_text","text":"Card 4539 1488 0343 6467"},
 						{"type":"input_image","image_url":"https://binary.example/private"}
 					],
 					"tool_call":{"arguments":"{\"email\":\"tool@example.com\"}"}
 				}]
 			}`,
-			mustRedact:   []string{"admin@example.com", "4242 4242 4242 4242", "tool@example.com"},
+			mustRedact:   []string{"admin@example.com", "4539 1488 0343 6467", "tool@example.com"},
 			mustPreserve: []string{"model@example.com", "https://binary.example/private"},
 		},
 		{
@@ -113,10 +113,10 @@ func TestEngineProtocolAwareRedactionFixtures(t *testing.T) {
 				"messages":[
 					{"role":"system","content":"secret=abcdefghijklmnop123456"},
 					{"role":"user","content":[{"type":"text","text":"alice@example.com"}]},
-					{"role":"assistant","tool_calls":[{"function":{"arguments":"{\"card\":\"4242424242424242\"}"}}]}
+					{"role":"assistant","tool_calls":[{"function":{"arguments":"{\"card\":\"4539148803436467\"}"}}]}
 				]
 			}`,
-			mustRedact:   []string{"abcdefghijklmnop123456", "alice@example.com", "4242424242424242"},
+			mustRedact:   []string{"abcdefghijklmnop123456", "alice@example.com", "4539148803436467"},
 			mustPreserve: []string{"gpt@example.com", "secret="},
 		},
 		{

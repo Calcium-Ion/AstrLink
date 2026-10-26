@@ -2,7 +2,7 @@ import { invalidData, type DataProblem } from "./ipc-data-error";
 
 /**
  * An agent's request to read raw audit parts (plan §5.11). It names the
- * request the agent asked about; a timed approval reaches every request.
+ * request the agent asked about; a lasting approval reaches every request.
  */
 export interface RawAccessGrant {
   grant_id: string;
@@ -17,7 +17,8 @@ export interface RawAccessGrant {
   /** The agent's self-reported name (the CLI's `--agent`); it authorizes nothing. */
   client_name: string;
   created_at: string;
-  expires_at: string;
+  /** Null for an approved `until_lock` grant, which only a lock ends. */
+  expires_at: string | null;
 }
 
 export type RawAccessGrantStatus =
@@ -28,19 +29,21 @@ export type RawAccessGrantStatus =
   | "consumed"
   | "revoked";
 
-export type RawAccessDecision = "once" | "window_5m" | "window_1h" | "deny";
+/**
+ * `until_lock` runs until the screen locks, the computer sleeps, the
+ * operator locks, or AstrLink quits; `window_1h` also ends after an hour.
+ */
+export type RawAccessDecision = "once" | "until_lock" | "window_1h" | "deny";
 
-/** `request` for a one-time approval, `all_requests` for a timed one. */
+/** `request` for a one-time approval, `all_requests` for a lasting one. */
 export type RawAccessScope = "request" | "all_requests";
 
 /** What the approval window shows, read in one call. */
 export interface RawAccessList {
   /** Requests awaiting the operator. */
   pending: RawAccessGrant[];
-  /** Timed grants still running. */
+  /** Lasting grants still running. */
   active: RawAccessGrant[];
-  /** Core's unlock session is open, so approving needs no password. */
-  unlocked: boolean;
 }
 
 /**
@@ -52,7 +55,9 @@ export type RawAccessProofOutcome =
   | { outcome: "proof_required" }
   | { outcome: "password_invalid" }
   | { outcome: "backoff"; retry_after_seconds: number }
-  | { outcome: "not_pending" };
+  | { outcome: "not_pending" }
+  | { outcome: "biometric_cancelled" }
+  | { outcome: "biometric_unavailable" };
 
 type JsonObject = Record<string, unknown>;
 
@@ -66,7 +71,7 @@ const statuses = new Set<RawAccessGrantStatus>([
 ]);
 const decisions = new Set<RawAccessDecision>([
   "once",
-  "window_5m",
+  "until_lock",
   "window_1h",
   "deny",
 ]);
@@ -129,7 +134,10 @@ function parseGrant(value: unknown, path: string): RawAccessGrant {
     reason: stringAt(grant.reason, `${path}.reason`, 4096),
     client_name: stringAt(grant.client_name, `${path}.client_name`, 256),
     created_at: timestampAt(grant.created_at, `${path}.created_at`),
-    expires_at: timestampAt(grant.expires_at, `${path}.expires_at`),
+    expires_at:
+      grant.expires_at === null
+        ? null
+        : timestampAt(grant.expires_at, `${path}.expires_at`),
   };
 }
 
@@ -137,7 +145,6 @@ export function parseRawAccessList(value: unknown): RawAccessList {
   const list = objectAt(value, "$");
   if (!Array.isArray(list.items)) invalid("$.items", "array");
   if (!Array.isArray(list.active)) invalid("$.active", "array");
-  if (typeof list.unlocked !== "boolean") invalid("$.unlocked", "boolean");
   return {
     pending: list.items.map((item, index) =>
       parseGrant(item, `$.items[${index}]`),
@@ -145,7 +152,6 @@ export function parseRawAccessList(value: unknown): RawAccessList {
     active: list.active.map((item, index) =>
       parseGrant(item, `$.active[${index}]`),
     ),
-    unlocked: list.unlocked,
   };
 }
 
@@ -167,6 +173,8 @@ export function parseRawAccessProofOutcome(
     case "proof_required":
     case "password_invalid":
     case "not_pending":
+    case "biometric_cancelled":
+    case "biometric_unavailable":
       return { outcome: outcome.outcome };
     case "backoff": {
       const seconds = outcome.retry_after_seconds;
@@ -199,6 +207,11 @@ export function oldestPendingGrant(
     }
   }
   return oldest;
+}
+
+/** Whether a running grant still runs at `now`; one without an end does. */
+export function grantRunning(grant: RawAccessGrant, now: number): boolean {
+  return grant.expires_at === null || Date.parse(grant.expires_at) > now;
 }
 
 /** Time left on a grant as `m:ss`, or `h:mm:ss` from an hour up. */

@@ -123,7 +123,8 @@ export type PrivacyIgnoreReason =
   | "kind_disabled"
   | "low_confidence"
   | "allowlisted"
-  | "astrlink_identifier";
+  | "astrlink_identifier"
+  | "example_value";
 
 /** Matches of one kind the policy left in the request for one reason. */
 export interface PrivacyIgnored {
@@ -322,6 +323,8 @@ export interface RequestRecord {
    */
   turn_index: number | null;
   session_link: SessionLink | null;
+  /** The conversation that started this record's one as a subagent. */
+  parent_session_id?: string;
   cursors: SessionCursor[];
   events: RequestEvent[];
 }
@@ -368,6 +371,10 @@ export interface RequestSession {
    * otherwise and from a Core that predates it.
    */
   privacy_warned?: boolean;
+  /** The conversation that started this one as a subagent. */
+  parent_session_id?: string;
+  /** How many conversations this one started as subagents; absent for none. */
+  subagent_count?: number;
 }
 
 export interface RequestSessionPage {
@@ -377,11 +384,15 @@ export interface RequestSessionPage {
 
 export interface RequestSessionDetail extends RequestSession {
   turns: RequestRecord[];
+  /** The conversations this one started as subagents, oldest first. */
+  subagents?: RequestSession[];
 }
 
 /** One root model call's span. Retries stay inside it. */
 export interface RequestActivityCall {
   session_id: string;
+  /** Set on a subagent's calls: the conversation that started it. */
+  parent_session_id?: string;
   /** Original inbound client; absent on historical records. */
   client_type?: ClientType;
   started_at: string;
@@ -850,6 +861,7 @@ const privacyIgnoreReasons = new Set<PrivacyIgnoreReason>([
   "low_confidence",
   "allowlisted",
   "astrlink_identifier",
+  "example_value",
 ]);
 
 function optionalPrivacyIgnored(
@@ -1203,6 +1215,7 @@ function parseRequestRecordAt(value: unknown, path: string): RequestRecord {
       : null,
     turn_index: parseTurnIndex(record.turn_index, `${path}.turn_index`),
     session_link: parseSessionLink(record.session_link, `${path}.session_link`),
+    ...optionalParentSession(record.parent_session_id, path),
     cursors: parseSessionCursors(record.cursors, `${path}.cursors`),
     events: parseRequestEvents(record.events, `${path}.events`),
   };
@@ -1416,7 +1429,32 @@ function parseRequestSessionAt(value: unknown, path: string): RequestSession {
             `${path}.privacy_warned`,
           ),
         }),
+    ...optionalParentSession(session.parent_session_id, path),
+    ...(session.subagent_count == null
+      ? {}
+      : {
+          subagent_count: nonNegativeIntAt(
+            session.subagent_count,
+            `${path}.subagent_count`,
+          ),
+        }),
   };
+}
+
+/** The optional link of a subagent's conversation to its parent. */
+function optionalParentSession(
+  value: unknown,
+  path: string,
+): { parent_session_id?: string } {
+  return value == null
+    ? {}
+    : { parent_session_id: stringAt(value, `${path}.parent_session_id`) };
+}
+
+function nonNegativeIntAt(value: unknown, path: string): number {
+  const count = intAt(value, path);
+  if (count < 0) invalid(path, "nonNegativeInteger");
+  return count;
 }
 
 export function parseRequestSessionPage(value: unknown): RequestSessionPage {
@@ -1450,6 +1488,7 @@ export function parseRequestActivity(value: unknown): RequestActivity {
       }
       return {
         session_id: stringAt(call.session_id, `${path}.session_id`),
+        ...optionalParentSession(call.parent_session_id, path),
         ...optionalClientType(call.client_type),
         started_at: stringAt(call.started_at, `${path}.started_at`),
         completed_at: nullableStringAt(
@@ -1469,11 +1508,21 @@ export function parseRequestSessionDetail(
   const session = parseRequestSessionAt(value, "$");
   const detail = objectAt(value, "$");
   if (!Array.isArray(detail.turns)) invalid("$.turns", "array");
+  if (detail.subagents != null && !Array.isArray(detail.subagents)) {
+    invalid("$.subagents", "array");
+  }
   return {
     ...session,
     turns: detail.turns.map((item, index) =>
       parseRequestRecordAt(item, `$.turns[${index}]`),
     ),
+    ...(Array.isArray(detail.subagents)
+      ? {
+          subagents: detail.subagents.map((item, index) =>
+            parseRequestSessionAt(item, `$.subagents[${index}]`),
+          ),
+        }
+      : {}),
   };
 }
 

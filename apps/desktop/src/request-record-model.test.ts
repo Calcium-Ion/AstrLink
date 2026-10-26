@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   parseAuditContent,
   parsePurgeResult,
+  parseRequestActivity,
   parseRequestRecord,
   parseRequestRecordPage,
   parseRequestSession,
@@ -961,6 +962,70 @@ it("parses performance samples and rejects invalid timing and rates", () => {
   expect(() =>
     parseRequestRecord({ ...fullRecord, first_answer_ms: 1.5 }),
   ).toThrow("first_answer_ms");
+});
+
+describe("subagent links", () => {
+  const sessionFields = {
+    id: "session_child",
+    title: "find the router files",
+    started_at: "2026-10-24T10:00:00Z",
+    last_started_at: "2026-10-24T10:00:05Z",
+    duration_ms: 120,
+    running_since: null,
+    active_request_starts: [],
+    completed_at: "2026-10-24T10:00:06Z",
+    turn_count: 1,
+    call_count: 2,
+    status: "succeeded",
+    requested_model: "gpt-4.1",
+    input_protocol: "anthropic.messages",
+    service_id: null,
+    local_access_token_id: null,
+  };
+
+  it("reads the parent and the subagents a conversation started", () => {
+    const child = parseRequestSession({
+      ...sessionFields,
+      parent_session_id: "session_parent",
+    });
+    expect(child.parent_session_id).toBe("session_parent");
+    expect(child.subagent_count).toBeUndefined();
+    const parent = parseRequestSessionDetail({
+      ...sessionFields,
+      id: "session_parent",
+      subagent_count: 1,
+      turns: [{ ...fullRecord, parent_session_id: "session_grand" }],
+      subagents: [{ ...sessionFields, parent_session_id: "session_parent" }],
+    });
+    expect(parent.subagent_count).toBe(1);
+    expect(parent.subagents?.map((item) => item.id)).toEqual(["session_child"]);
+    expect(parent.turns[0].parent_session_id).toBe("session_grand");
+    const activity = parseRequestActivity({
+      now: "2026-10-24T10:01:00Z",
+      calls: [
+        {
+          session_id: "session_child",
+          parent_session_id: "session_parent",
+          started_at: "2026-10-24T10:00:00Z",
+          completed_at: null,
+          status: "pending",
+        },
+      ],
+    });
+    expect(activity.calls[0].parent_session_id).toBe("session_parent");
+  });
+
+  it("rejects malformed subagent fields", () => {
+    expect(() =>
+      parseRequestSession({ ...sessionFields, subagent_count: -1 }),
+    ).toThrow();
+    expect(() =>
+      parseRequestSession({ ...sessionFields, parent_session_id: 7 }),
+    ).toThrow();
+    expect(() =>
+      parseRequestSessionDetail({ ...sessionFields, turns: [], subagents: {} }),
+    ).toThrow();
+  });
 });
 
 describe("client attribution", () => {

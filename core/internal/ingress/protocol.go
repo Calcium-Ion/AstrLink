@@ -58,6 +58,12 @@ type Request struct {
 	// own image and search requests for that turn go to the provider that
 	// served it.
 	codexTurn codexTurnRef
+	// thread is the agent thread the client says sent the request; it
+	// links a subagent's conversation to the one that started it.
+	thread agentThread
+	// sentBodyHeaders are the Content-Encoding and Content-Length the client
+	// sent with a body ingress decoded on arrival; the record keeps them.
+	sentBodyHeaders http.Header
 }
 
 // routingModel is the model id used to select services and sent upstream.
@@ -181,21 +187,26 @@ func classify(request *http.Request, maxBodyBytes int64) (Request, error) {
 	if result.Protocol == contract.ProtocolOpenAIResponses {
 		result.codexTurn = metadata.codexTurn.or(codexTurnFromHeader(request.Header))
 	}
-	if result.Protocol == contract.ProtocolOpenAIResponses || result.Protocol == contract.ProtocolOpenAIResponsesCompact {
-		// Read the caller's identity before subscription forwarding scopes it
-		// to an upstream account. A fork can retain its parent's cache key and
-		// history, so the session header is authoritative for record grouping.
-		for _, name := range codexSessionHeaders {
-			cursor := convo.Cursor{Kind: convo.KindExplicit, Direction: convo.DirectionIn, Value: strings.TrimSpace(request.Header.Get(name))}
-			if cursor.Validate() == nil {
-				result.Conversation.SessionCursor = cursor.Value
-				result.ConversationID = cursor.Value
-				break
-			}
-		}
-	}
+	// Read the caller's identity before subscription forwarding scopes it
+	// to an upstream account.
+	attachAgentThread(&result, request.Header, metadata.fields)
 	attachAutoClassifyText(&result, request, metadata.raw, maxBodyBytes)
 	return validateClassifiedRequest(result)
+}
+
+// attachAgentThread reads the client's thread identity. A thread id names
+// the conversation with authority: a fork or subagent can retain its
+// parent's cache key and history, so it outranks the cursors in the body.
+func attachAgentThread(result *Request, header http.Header, fields map[string]json.RawMessage) {
+	if _, ok := convoProtocol(result.Protocol); !ok || fields == nil {
+		return
+	}
+	result.thread = readAgentThread(header, result.Protocol, detectClientType(header), fields, result.Conversation)
+	if result.thread.cursor != "" {
+		result.Conversation.SessionCursor = result.thread.cursor
+		result.ConversationID = result.thread.cursor
+	}
+	result.Conversation.SideCall = result.thread.helper
 }
 
 func validateClassifiedRequest(request Request) (Request, error) {
@@ -254,12 +265,15 @@ type requestMetadata struct {
 	Conversation       convo.RequestSummary
 	codexTurn          codexTurnRef
 	raw                []byte
+	// fields is the decoded top level of raw.
+	fields map[string]json.RawMessage
 }
 
 // inspectConversationBestEffort summarises the replayed history of protocols
 // whose bodies AstrLink otherwise treats as opaque (Gemini: model and
-// streaming come from the path). Encoded or malformed bodies are forwarded
-// untouched and simply do not link; the configured size limit still applies.
+// streaming come from the path). Malformed bodies, and bodies in a coding
+// decodeRequestBody does not know, are forwarded untouched and simply do not
+// link; the configured size limit still applies.
 // The buffered bytes are returned so the auto classifier can reuse them.
 func inspectConversationBestEffort(result *Request, request *http.Request, maxBodyBytes int64) ([]byte, error) {
 	convoProto, ok := convoProtocol(result.Protocol)
@@ -286,6 +300,7 @@ func inspectConversationBestEffort(result *Request, request *http.Request, maxBo
 	result.Conversation = summary
 	result.ConversationID = conversationCursor(summary, "")
 	result.InputPreview = sanitizePreview(summary.LastUserText)
+	attachAgentThread(result, request.Header, fields)
 	return raw, nil
 }
 
@@ -340,8 +355,8 @@ func readAndReplayRequestBody(request *http.Request, maxBodyBytes int64) ([]byte
 
 // inspectJSONMetadata observes routing fields without changing bytes that are
 // forwarded. Malformed JSON is rejected locally because planning cannot safely
-// infer its streaming/model requirements; encoded JSON is likewise rejected
-// unless it explicitly uses the no-op identity encoding.
+// infer its streaming/model requirements; JSON in a coding decodeRequestBody
+// does not know is likewise rejected, and identity is a no-op.
 func inspectJSONMetadata(request *http.Request, protocol contract.ProtocolID, maxBodyBytes int64) (requestMetadata, error) {
 	raw, err := bufferRequestBody(request, maxBodyBytes)
 	if err != nil {
@@ -403,6 +418,7 @@ func inspectJSONMetadata(request *http.Request, protocol contract.ProtocolID, ma
 		return io.NopCloser(bytes.NewReader(raw)), nil
 	}
 	metadata.raw = raw
+	metadata.fields = fields
 	return metadata, nil
 }
 

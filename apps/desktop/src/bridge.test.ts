@@ -59,6 +59,7 @@ import {
   probeServiceModels,
   probeServiceProxy,
   testService,
+  cancelServiceTest,
   probePrivacyModel,
   restartCore,
   updateService,
@@ -145,12 +146,10 @@ describe("desktop bridge contract", () => {
     invokeMock.mockResolvedValueOnce({
       items: [grant],
       active: [running],
-      unlocked: true,
     });
     await expect(listRawAccess()).resolves.toEqual({
       pending: [{ ...grant, decision: null, scope: null }],
       active: [running],
-      unlocked: true,
     });
     expect(invokeMock).toHaveBeenLastCalledWith("list_raw_access");
 
@@ -192,7 +191,7 @@ describe("desktop bridge contract", () => {
       retry_after_seconds: 8,
     });
     await expect(
-      decideRawAccess(grant.grant_id, "window_5m", {
+      decideRawAccess(grant.grant_id, "until_lock", {
         kind: "password",
         password: "wrong",
       }),
@@ -221,10 +220,9 @@ describe("desktop bridge contract", () => {
     invokeMock.mockResolvedValueOnce({
       items: [{ ...grant, grant_id: "x" }],
       active: [],
-      unlocked: false,
     });
     await expect(listRawAccess()).rejects.toThrow("$.items[0].grant_id");
-    invokeMock.mockResolvedValueOnce({ items: [], unlocked: false });
+    invokeMock.mockResolvedValueOnce({ items: [] });
     await expect(listRawAccess()).rejects.toThrow("$.active");
     invokeMock.mockResolvedValueOnce({ outcome: "approved" });
     await expect(decideRawAccess(grant.grant_id, "deny")).rejects.toThrow(
@@ -247,6 +245,7 @@ describe("desktop bridge contract", () => {
       password_min_length: 8,
       password_max_length: 128,
       key_replaced: false,
+      biometric_available: false,
     };
     invokeMock.mockResolvedValueOnce(status);
     await expect(getRawSealingStatus()).resolves.toEqual(status);
@@ -289,7 +288,11 @@ describe("desktop bridge contract", () => {
     await expect(getRawSealingStatus()).resolves.toMatchObject({
       key_replaced: false,
     });
-    const { key_replaced: _verdict, ...withoutVerdict } = status;
+    const {
+      key_replaced: _verdict,
+      biometric_available: _touchID,
+      ...withoutVerdict
+    } = status;
     invokeMock.mockResolvedValueOnce(withoutVerdict);
     await expect(lockRaw()).resolves.toEqual(status);
     invokeMock.mockResolvedValueOnce({ ...status, key_replaced: "yes" });
@@ -813,6 +816,7 @@ describe("desktop bridge contract", () => {
       id: "token_01",
       name: "VS Code",
       hint: "astr_…K8Q2",
+      source: "user",
       created_at: "2026-07-24T10:30:00Z",
     };
 
@@ -1677,6 +1681,39 @@ describe("desktop bridge contract", () => {
 });
 
 describe("provider test bridge", () => {
+  it("uses the same cancellation ID for the test and cancel commands", async () => {
+    vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+    const input = {
+      protocol: "openai.chat" as const,
+      model: "test",
+      stream: true,
+    };
+    let reject!: (reason: string) => void;
+    invokeMock.mockImplementationOnce(
+      () =>
+        new Promise((_resolve, rejectTest) => {
+          reject = rejectTest;
+        }),
+    );
+    const pending = testService("service_test", input, "test_active");
+    expect(invokeMock).toHaveBeenLastCalledWith("test_service", {
+      serviceId: "service_test",
+      input,
+      testId: "test_active",
+    });
+    invokeMock.mockResolvedValueOnce(true);
+    await expect(
+      cancelServiceTest("service_test", "test_active"),
+    ).resolves.toBe(true);
+    expect(invokeMock).toHaveBeenLastCalledWith("cancel_service_test", {
+      serviceId: "service_test",
+      testId: "test_active",
+    });
+    reject("service_test_cancelled");
+    await expect(pending).rejects.toThrow("service_test_cancelled");
+    vi.unstubAllGlobals();
+  });
+
   it("passes the selected provider and validates its result", async () => {
     vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
     const input = {

@@ -66,6 +66,10 @@ type persistentOptions struct {
 	// rawBackoffCap raises the raw vault's wrong-password backoff cap;
 	// zero keeps the desktop's.
 	rawBackoffCap time.Duration
+	// rawUnlockUntilLock keeps the operator's raw unlock open until the
+	// desktop locks it, with no idle deadline; see
+	// controlapi.RawVaultOptions.UnlockUntilLock.
+	rawUnlockUntilLock bool
 	// testNetwork is set only by tests; production leaves it nil.
 	testNetwork *testNetwork
 	shutdown    context.CancelFunc
@@ -125,7 +129,9 @@ func openPersistentCore(ctx context.Context, options persistentOptions) (*persis
 	} else if recovered > 0 {
 		logf("recovered %d interrupted request record(s)", recovered)
 	}
-	rawVault := controlapi.NewRawVault(store, controlapi.RawVaultOptions{Logf: logf, BackoffCap: options.rawBackoffCap})
+	rawVault := controlapi.NewRawVault(store, controlapi.RawVaultOptions{
+		Logf: logf, BackoffCap: options.rawBackoffCap, UnlockUntilLock: options.rawUnlockUntilLock,
+	})
 	// The server edition sets the password on its web page and says so once
 	// it listens; the offline command this warning names is the desktop's.
 	if options.consoleSessions == nil {

@@ -1,11 +1,12 @@
 //! Desktop side of raw audit content (plan §5.11.6, §5.11.9). The operator
 //! decides an agent's pending request in the approval window, revokes the
-//! timed grants still running, unlocks raw parts for their own reading, and
-//! manages the raw password here. Every proof is forwarded once and never
-//! kept.
+//! lasting grants still running, unlocks raw parts for their own reading, and
+//! manages the raw password and Touch ID here. Every proof is forwarded once
+//! and never kept.
 
 use std::time::Duration;
 
+use base64::{engine::general_purpose::STANDARD, Engine};
 use reqwest::{Method, StatusCode};
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
@@ -17,6 +18,10 @@ pub const RAW_UNLOCK_PATH: &str = "/control/v1/audit/raw-unlock";
 pub const RAW_LOCK_PATH: &str = "/control/v1/audit/raw-lock";
 /// Checks a proof without starting or touching Core's unlock session.
 pub const RAW_VERIFY_PATH: &str = "/control/v1/audit/raw-verify";
+/// Adds (POST) or takes out (DELETE) the envelope the Touch ID key opens.
+pub const RAW_BIOMETRIC_PATH: &str = "/control/v1/audit/raw-biometric";
+/// The size of the key the keychain keeps behind Touch ID, as Core expects.
+pub const BIOMETRIC_KEY_BYTES: usize = 32;
 /// Proof checks run a memory-hard KDF in Core; a slow machine needs longer
 /// than an ordinary control call.
 pub const PROOF_TIMEOUT: Duration = Duration::from_secs(20);
@@ -37,26 +42,34 @@ pub enum ProofOutcome {
     Sealing {
         status: serde_json::Value,
     },
-    /// Core's unlock session had closed, so the approval needs the raw
-    /// password after all.
+    /// The call carried no proof Core accepts there.
     ProofRequired,
     PasswordInvalid,
     Backoff {
         retry_after_seconds: u64,
     },
     NotPending,
+    /// The Touch ID prompt was dismissed.
+    BiometricCancelled,
+    /// Touch ID cannot stand in for the password right now: none on this
+    /// Mac, none set up for raw content, or its key no longer opens it.
+    BiometricUnavailable,
 }
 
-/// The proof the dialog collected. The password is wiped when this drops.
+/// The proof the dialog collected. The password is wiped when this drops;
+/// `biometric` asks the host for Touch ID, so no key passes the webview.
 #[derive(Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ProofArg {
     Password { password: Zeroizing<String> },
+    Biometric {},
 }
 
-/// A proof ready for Core. The password is wiped when this drops.
+/// A proof ready for Core. Its secret is wiped when this drops.
 pub enum Proof {
     Password(Zeroizing<String>),
+    /// The key the keychain released after Touch ID.
+    Biometric(Zeroizing<Vec<u8>>),
 }
 
 pub fn validate_grant_id(id: &str) -> Result<(), String> {
@@ -77,7 +90,7 @@ pub fn decision_path(grant_id: &str) -> String {
     format!("{RAW_ACCESS_PATH}/{grant_id}/decision")
 }
 
-/// DELETE revokes one running timed grant.
+/// DELETE revokes one running lasting grant.
 pub fn grant_path(grant_id: &str) -> Result<String, String> {
     validate_grant_id(grant_id)?;
     Ok(format!("{RAW_ACCESS_PATH}/{grant_id}"))
@@ -91,6 +104,7 @@ pub fn is_proof_request(method: &Method, path: &str) -> bool {
         && (path == RAW_PASSWORD_PATH
             || path == RAW_UNLOCK_PATH
             || path == RAW_VERIFY_PATH
+            || path == RAW_BIOMETRIC_PATH
             || path
                 .strip_prefix(RAW_ACCESS_PATH)
                 .and_then(|rest| rest.strip_prefix('/'))
@@ -98,15 +112,20 @@ pub fn is_proof_request(method: &Method, path: &str) -> bool {
 }
 
 #[derive(Serialize)]
-struct ProofBody<'a> {
-    password: &'a str,
+#[serde(untagged)]
+enum ProofBody<'a> {
+    Password { password: &'a str },
+    Biometric { biometric: Zeroizing<String> },
 }
 
 impl Proof {
     fn body(&self) -> Result<ProofBody<'_>, String> {
         match self {
-            Proof::Password(password) => Ok(ProofBody {
+            Proof::Password(password) => Ok(ProofBody::Password {
                 password: checked_password(password)?,
+            }),
+            Proof::Biometric(key) => Ok(ProofBody::Biometric {
+                biometric: encode_key(key)?,
             }),
         }
     }
@@ -115,8 +134,19 @@ impl Proof {
     fn secret_len(&self) -> usize {
         match self {
             Proof::Password(password) => password.len(),
+            Proof::Biometric(key) => key.len().div_ceil(3) * 4,
         }
     }
+}
+
+/// Encodes a Touch ID key as Core reads it, into a buffer sized up front.
+fn encode_key(key: &[u8]) -> Result<Zeroizing<String>, String> {
+    if key.len() != BIOMETRIC_KEY_BYTES {
+        return Err("the Touch ID key is invalid".to_string());
+    }
+    let mut encoded = Zeroizing::new(String::with_capacity(key.len().div_ceil(3) * 4));
+    STANDARD.encode_string(key, &mut encoded);
+    Ok(encoded)
 }
 
 fn checked_password(password: &str) -> Result<&str, String> {
@@ -136,9 +166,8 @@ struct DecisionBody<'a> {
     proof: Option<ProofBody<'a>>,
 }
 
-/// Encodes one decision. A denial never carries a proof; an approval
-/// carries one only when the window asked for the password, since Core
-/// approves without one while its unlock session lasts.
+/// Encodes one decision. A denial never carries a proof; Core refuses an
+/// approval without one, unlocked or not.
 pub fn decision_body(
     grant_id: &str,
     decision: &str,
@@ -147,10 +176,10 @@ pub fn decision_body(
     validate_grant_id(grant_id)?;
     let proof = match decision {
         "deny" => None,
-        "once" | "window_5m" | "window_1h" => proof,
+        "once" | "until_lock" | "window_1h" => proof,
         _ => {
             return Err(
-                "raw access decision must be once, window_5m, window_1h, or deny".to_string(),
+                "raw access decision must be once, until_lock, window_1h, or deny".to_string(),
             )
         }
     };
@@ -170,6 +199,27 @@ pub fn unlock_body(proof: &Proof) -> Result<Zeroizing<Vec<u8>>, String> {
             proof: proof.body()?,
         },
         proof.secret_len(),
+    )
+}
+
+#[derive(Serialize)]
+struct BiometricBody<'a> {
+    proof: ProofBody<'a>,
+    key: Zeroizing<String>,
+}
+
+/// Encodes a Touch ID enrollment: the raw password opens the key, which is
+/// then wrapped under `key`.
+pub fn biometric_body(password: &str, key: &[u8]) -> Result<Zeroizing<Vec<u8>>, String> {
+    let proof = ProofBody::Password {
+        password: checked_password(password)?,
+    };
+    encode_secret_json(
+        &BiometricBody {
+            proof,
+            key: encode_key(key)?,
+        },
+        password.len() + key.len().div_ceil(3) * 4,
     )
 }
 
@@ -245,6 +295,10 @@ fn proof_refusal(status: StatusCode, body: &[u8]) -> Option<ProofOutcome> {
         (StatusCode::TOO_MANY_REQUESTS, "raw_password_backoff") => Some(ProofOutcome::Backoff {
             retry_after_seconds: retry_after.unwrap_or(1).max(1),
         }),
+        (StatusCode::FORBIDDEN, "raw_biometric_invalid")
+        | (StatusCode::CONFLICT, "raw_biometric_unavailable") => {
+            Some(ProofOutcome::BiometricUnavailable)
+        }
         _ => None,
     }
 }
@@ -295,8 +349,7 @@ pub fn parse_sealing_status(body: &[u8]) -> Result<serde_json::Value, String> {
     Ok(value)
 }
 
-/// The pending requests, the timed grants still running, and whether Core's
-/// unlock session lets an approval skip the password.
+/// The pending requests and the lasting grants still running.
 pub fn parse_list(body: &[u8]) -> Result<serde_json::Value, String> {
     let value: serde_json::Value = serde_json::from_slice(body)
         .map_err(|error| format!("raw access list returned invalid JSON: {error}"))?;
@@ -304,12 +357,6 @@ pub fn parse_list(body: &[u8]) -> Result<serde_json::Value, String> {
         if !value.get(key).is_some_and(serde_json::Value::is_array) {
             return Err(format!("raw access list omitted {key}"));
         }
-    }
-    if !value
-        .get("unlocked")
-        .is_some_and(serde_json::Value::is_boolean)
-    {
-        return Err("raw access list omitted unlocked".to_string());
     }
     Ok(value)
 }
@@ -358,12 +405,17 @@ mod tests {
         );
         let body = decision_body(GRANT, "deny", Some(&password("ignored"))).unwrap();
         assert_eq!(json(&body), serde_json::json!({"decision":"deny"}));
-        // While Core is unlocked an approval is one click.
-        let body = decision_body(GRANT, "window_5m", None).unwrap();
-        assert_eq!(json(&body), serde_json::json!({"decision":"window_5m"}));
+        let key = Proof::Biometric(Zeroizing::new(vec![0xfb; BIOMETRIC_KEY_BYTES]));
+        let body = decision_body(GRANT, "until_lock", Some(&key)).unwrap();
+        assert_eq!(
+            json(&body),
+            serde_json::json!({"decision":"until_lock","proof":{"biometric":STANDARD.encode([0xfb; BIOMETRIC_KEY_BYTES])}})
+        );
 
-        assert!(decision_body(GRANT, "window_15m", None).is_err());
-        assert!(decision_body(GRANT, "window_5m", Some(&password(""))).is_err());
+        assert!(decision_body(GRANT, "window_5m", Some(&password("secret"))).is_err());
+        assert!(decision_body(GRANT, "until_lock", Some(&password(""))).is_err());
+        let short = Proof::Biometric(Zeroizing::new(vec![0; 16]));
+        assert!(decision_body(GRANT, "once", Some(&short)).is_err());
         assert!(decision_body(GRANT, "always", Some(&password("secret"))).is_err());
         assert!(decision_body("rawgrant_bad", "deny", None).is_err());
         let long = "x".repeat(MAX_PASSWORD_CHARS + 1);
@@ -377,6 +429,17 @@ mod tests {
             serde_json::json!({"proof":{"password":"open sesame"}})
         );
         assert!(unlock_body(&password("")).is_err());
+        let key = Proof::Biometric(Zeroizing::new(vec![7; BIOMETRIC_KEY_BYTES]));
+        assert_eq!(
+            json(&unlock_body(&key).unwrap()),
+            serde_json::json!({"proof":{"biometric":STANDARD.encode([7; BIOMETRIC_KEY_BYTES])}})
+        );
+        assert_eq!(
+            json(&biometric_body("open sesame", &[9; BIOMETRIC_KEY_BYTES]).unwrap()),
+            serde_json::json!({"proof":{"password":"open sesame"},"key":STANDARD.encode([9; BIOMETRIC_KEY_BYTES])})
+        );
+        assert!(biometric_body("", &[9; BIOMETRIC_KEY_BYTES]).is_err());
+        assert!(biometric_body("open sesame", &[9; 31]).is_err());
 
         assert_eq!(
             json(&password_body("set", Some("new phrase"), None).unwrap()),
@@ -410,16 +473,20 @@ mod tests {
     }
 
     #[test]
-    fn proof_arguments_take_the_password_only() {
+    fn proof_arguments_take_a_password_or_ask_for_touch_id() {
         let arg: ProofArg =
             serde_json::from_str(r#"{"kind":"password","password":"open sesame"}"#).unwrap();
         assert!(
             matches!(arg, ProofArg::Password { ref password } if password.as_str() == "open sesame")
         );
+        // The webview only asks for Touch ID; it never carries the key.
+        let arg: ProofArg = serde_json::from_str(r#"{"kind":"biometric"}"#).unwrap();
+        assert!(matches!(arg, ProofArg::Biometric {}));
         for invalid in [
             r#"{"password":"open sesame"}"#,
             r#"{"kind":"password","password":"open sesame","extra":"x"}"#,
             r#"{"kind":"password"}"#,
+            r#"{"kind":"biometric","biometric":"AAAA"}"#,
             r#"{"kind":"token"}"#,
         ] {
             assert!(
@@ -434,7 +501,10 @@ mod tests {
         // The deserialised password is wiped on drop, not just freed.
         fn assert_zeroizing(_: &Zeroizing<String>) {}
         let ProofArg::Password { password } =
-            serde_json::from_str(r#"{"kind":"password","password":"p"}"#).unwrap();
+            serde_json::from_str(r#"{"kind":"password","password":"p"}"#).unwrap()
+        else {
+            panic!("a password proof parsed as another kind");
+        };
         assert_zeroizing(&password);
     }
 
@@ -513,6 +583,16 @@ mod tests {
             ),
             None
         );
+        for (status, code) in [
+            (StatusCode::FORBIDDEN, "raw_biometric_invalid"),
+            (StatusCode::CONFLICT, "raw_biometric_unavailable"),
+        ] {
+            let body = format!(r#"{{"error":{{"code":"{code}"}}}}"#);
+            assert_eq!(
+                decision_outcome(status, body.as_bytes()),
+                Some(ProofOutcome::BiometricUnavailable)
+            );
+        }
         assert_eq!(decision_outcome(StatusCode::OK, b"{}"), None);
         let outcome = serde_json::to_value(ProofOutcome::Backoff {
             retry_after_seconds: 2,
@@ -530,6 +610,8 @@ mod tests {
         assert!(is_proof_request(&Method::POST, RAW_UNLOCK_PATH));
         assert!(is_proof_request(&Method::POST, RAW_VERIFY_PATH));
         assert!(is_proof_request(&Method::POST, RAW_PASSWORD_PATH));
+        assert!(is_proof_request(&Method::POST, RAW_BIOMETRIC_PATH));
+        assert!(!is_proof_request(&Method::DELETE, RAW_BIOMETRIC_PATH));
         assert!(!is_proof_request(&Method::POST, RAW_LOCK_PATH));
         assert!(!is_proof_request(&Method::GET, RAW_SEALING_PATH));
         assert!(!is_proof_request(&Method::GET, &decision_path(GRANT)));
@@ -541,10 +623,9 @@ mod tests {
     }
 
     #[test]
-    fn lists_must_carry_pending_active_and_unlocked() {
-        assert!(parse_list(br#"{"items":[],"active":[],"unlocked":false}"#).is_ok());
-        assert!(parse_list(br#"{"items":[],"unlocked":true}"#).is_err());
-        assert!(parse_list(br#"{"items":[],"active":[]}"#).is_err());
+    fn lists_must_carry_pending_and_active() {
+        assert!(parse_list(br#"{"items":[],"active":[]}"#).is_ok());
+        assert!(parse_list(br#"{"items":[]}"#).is_err());
         assert!(parse_list(br#"{}"#).is_err());
         assert!(parse_list(b"not json").is_err());
     }

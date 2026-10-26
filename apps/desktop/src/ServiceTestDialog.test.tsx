@@ -6,9 +6,18 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   testService: vi.fn(),
+  cancelServiceTest: vi.fn(),
+  notifyError: vi.fn(),
   failRendering: false,
 }));
-vi.mock("./bridge", () => ({ testService: mocks.testService }));
+vi.mock("./bridge", () => ({
+  testService: mocks.testService,
+  cancelServiceTest: mocks.cancelServiceTest,
+  SERVICE_TEST_CANCELLED_ERROR: "service_test_cancelled",
+  SERVICE_TEST_ALREADY_RUNNING_ERROR: "service_test_already_running",
+  SERVICE_TEST_INVALID_ID_ERROR: "service_test_invalid_id",
+}));
+vi.mock("./notify", () => ({ notify: { error: mocks.notifyError } }));
 vi.mock("./components/MarkdownRenderer", async (importOriginal) => {
   const actual =
     await importOriginal<typeof import("./components/MarkdownRenderer")>();
@@ -45,6 +54,8 @@ beforeEach(() => {
     globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
   ).IS_REACT_ACT_ENVIRONMENT = true;
   mocks.testService.mockReset();
+  mocks.cancelServiceTest.mockReset();
+  mocks.notifyError.mockReset();
   mocks.failRendering = false;
   vi.spyOn(console, "error").mockImplementation(() => undefined);
   container = document.createElement("div");
@@ -136,12 +147,16 @@ it.each([false, true])(
         await act(async () => modelOptions()[index].click());
       }
       await act(async () => button("开始测试").click());
-      expect(mocks.testService).toHaveBeenLastCalledWith(service.id, {
-        protocol,
-        model: vertex.models[index],
-        stream,
-        prompt: "keep my prompt",
-      });
+      expect(mocks.testService).toHaveBeenLastCalledWith(
+        service.id,
+        {
+          protocol,
+          model: vertex.models[index],
+          stream,
+          prompt: "keep my prompt",
+        },
+        expect.any(String),
+      );
     }
     await typeModel(modelInput(), "unknown");
     expect(button("开始测试").disabled).toBe(true);
@@ -200,11 +215,15 @@ it("opens the full model list with a preselected value and reopens it after choo
   expect(modelOptions().map((item) => item.title)).toEqual(models);
   await press(input, "Escape");
   await act(async () => button("开始测试").click());
-  expect(mocks.testService).toHaveBeenCalledWith(service.id, {
-    protocol: "openai.chat",
-    model: models[1],
-    stream: true,
-  });
+  expect(mocks.testService).toHaveBeenCalledWith(
+    service.id,
+    {
+      protocol: "openai.chat",
+      model: models[1],
+      stream: true,
+    },
+    expect.any(String),
+  );
 });
 
 it("filters only while typing, preserves custom IDs, and clears the filter when reopened", async () => {
@@ -232,11 +251,15 @@ it("filters only while typing, preserves custom IDs, and clears the filter when 
   expect(input.value).toBe("custom-model");
   expect(input.getAttribute("aria-expanded")).toBe("false");
   await act(async () => button("开始测试").click());
-  expect(mocks.testService).toHaveBeenCalledWith(service.id, {
-    protocol: "openai.chat",
-    model: "custom-model",
-    stream: true,
-  });
+  expect(mocks.testService).toHaveBeenCalledWith(
+    service.id,
+    {
+      protocol: "openai.chat",
+      model: "custom-model",
+      stream: true,
+    },
+    expect.any(String),
+  );
 });
 
 it.each([0, 1, 2])(
@@ -370,11 +393,15 @@ it("accepts a manual model without saved models and disables selection while tes
   expect(button("开始测试").disabled).toBe(true);
   await typeModel(input, "custom-model");
   await act(async () => button("开始测试").click());
-  expect(mocks.testService).toHaveBeenCalledWith(service.id, {
-    protocol: "openai.chat",
-    model: "custom-model",
-    stream: true,
-  });
+  expect(mocks.testService).toHaveBeenCalledWith(
+    service.id,
+    {
+      protocol: "openai.chat",
+      model: "custom-model",
+      stream: true,
+    },
+    expect.any(String),
+  );
   expect(input.disabled).toBe(true);
   expect(
     document.querySelector<HTMLButtonElement>('button[aria-label="测试模型"]')!
@@ -393,6 +420,89 @@ it("accepts a manual model without saved models and disables selection while tes
       output: "OK",
     }),
   );
+});
+
+it("cancels a running provider test and returns to an idle state", async () => {
+  let reject!: (reason: unknown) => void;
+  mocks.testService.mockImplementationOnce(
+    () =>
+      new Promise((_resolve, rejectPromise) => {
+        reject = rejectPromise;
+      }),
+  );
+  mocks.cancelServiceTest.mockResolvedValueOnce(true);
+  await act(async () =>
+    root.render(<ServiceTestDialog service={service} onClose={() => {}} />),
+  );
+  await act(async () => button("开始测试").click());
+  const testId = mocks.testService.mock.calls[0][2];
+  expect(testId).toEqual(expect.any(String));
+  await act(async () => button("取消测试").click());
+  expect(mocks.cancelServiceTest).toHaveBeenCalledWith(service.id, testId);
+  expect(button("正在取消…").disabled).toBe(true);
+  expect(document.querySelector('[role="status"]')?.textContent).toContain(
+    "正在取消…",
+  );
+  await act(async () => reject(new Error("service_test_cancelled")));
+  const dialog = document.querySelector('[role="dialog"]')!;
+  expect(dialog.textContent).toContain("测试已取消");
+  expect(dialog.textContent).toContain("已停止等待提供商响应。");
+  expect(button("重新测试").disabled).toBe(false);
+  expect(button("关闭").disabled).toBe(false);
+  expect(mocks.notifyError).not.toHaveBeenCalled();
+});
+
+it("treats an aborted web request as cancelled", async () => {
+  let reject!: (reason: unknown) => void;
+  mocks.testService.mockImplementationOnce(
+    () =>
+      new Promise((_resolve, rejectPromise) => {
+        reject = rejectPromise;
+      }),
+  );
+  mocks.cancelServiceTest.mockResolvedValueOnce(true);
+  await act(async () =>
+    root.render(<ServiceTestDialog service={service} onClose={() => {}} />),
+  );
+  await act(async () => button("开始测试").click());
+  await act(async () => button("取消测试").click());
+  await act(async () => reject(new DOMException("Aborted", "AbortError")));
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain(
+    "测试已取消",
+  );
+});
+
+it("localizes duplicate and invalid test requests", async () => {
+  mocks.testService.mockRejectedValueOnce(
+    new Error("service_test_already_running"),
+  );
+  await act(async () =>
+    root.render(<ServiceTestDialog service={service} onClose={() => {}} />),
+  );
+  await act(async () => button("开始测试").click());
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain(
+    "此提供商已有一个测试在运行。",
+  );
+  mocks.testService.mockRejectedValueOnce(new Error("service_test_invalid_id"));
+  await act(async () => button("重新测试").click());
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain(
+    "测试请求的 ID 无效。",
+  );
+});
+
+it("keeps testing and reports a failed cancellation", async () => {
+  mocks.testService.mockImplementationOnce(() => new Promise(() => {}));
+  mocks.cancelServiceTest.mockRejectedValueOnce(new Error("offline"));
+  await act(async () =>
+    root.render(<ServiceTestDialog service={service} onClose={() => {}} />),
+  );
+  await act(async () => button("开始测试").click());
+  await act(async () => {
+    button("取消测试").click();
+    await Promise.resolve();
+  });
+  expect(mocks.notifyError).toHaveBeenCalledWith("无法取消测试。");
+  expect(button("取消测试").disabled).toBe(false);
 });
 
 it("shows header, post-header, first-text and complete timings without treating missing data as zero", async () => {

@@ -44,6 +44,7 @@ afterEach(async () => {
 type Submit = (actionId: string, proof: ProofInput) => Promise<ProofResult>;
 
 function Harness({
+  biometricLabel,
   dismissable,
   onCancel = vi.fn(),
   onSubmit,
@@ -51,6 +52,7 @@ function Harness({
   submitDisabled,
   withField = false,
 }: {
+  biometricLabel?: string;
   dismissable?: boolean;
   onCancel?: () => void;
   onSubmit: Submit;
@@ -66,6 +68,7 @@ function Harness({
         { id: "once", label: "仅本次" },
         { id: "window_15m", label: "15 分钟内" },
       ]}
+      biometricLabel={biometricLabel}
       cancelLabel="拒绝"
       description={<p>申请说明</p>}
       dismissable={dismissable}
@@ -372,6 +375,45 @@ describe("ProofConfirmDialog", () => {
 
     await act(async () => finish({ kind: "done" }));
     expect(onCancel).not.toHaveBeenCalled();
+  });
+
+  it("offers Touch ID for the first action beside the password", async () => {
+    const onSubmit = vi
+      .fn<Submit>()
+      .mockResolvedValueOnce({ kind: "error", message: "Touch ID 已取消。" })
+      .mockResolvedValueOnce({ kind: "done" });
+    await act(async () =>
+      root.render(
+        <Harness biometricLabel="使用 Touch ID" onSubmit={onSubmit} />,
+      ),
+    );
+
+    // Touch ID needs no typed password; the password still fills in.
+    expect(button("仅本次").disabled).toBe(true);
+    expect(button("使用 Touch ID").disabled).toBe(false);
+    await act(async () => button("使用 Touch ID").click());
+    expect(onSubmit).toHaveBeenLastCalledWith("once", { kind: "biometric" });
+    expect(dialog()?.textContent).toContain("Touch ID 已取消。");
+
+    await typePassword("correct horse");
+    await pressEnter();
+    expect(onSubmit).toHaveBeenLastCalledWith("once", {
+      kind: "password",
+      password: "correct horse",
+    });
+  });
+
+  it("offers no Touch ID where no password is asked for", async () => {
+    await act(async () =>
+      root.render(
+        <Harness
+          biometricLabel="使用 Touch ID"
+          onSubmit={vi.fn<Submit>()}
+          proof="confirm"
+        />,
+      ),
+    );
+    expect(document.querySelector('[data-slot="proof-biometric"]')).toBeNull();
   });
 
   it("asks for a plain confirmation without a password", async () => {

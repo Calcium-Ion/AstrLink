@@ -1,9 +1,12 @@
 use crate::failure_policy::{validate_failure_policy, validate_routing_settings};
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     fmt::Write as _,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, MutexGuard},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, Mutex, MutexGuard,
+    },
     time::{Duration, Instant},
 };
 
@@ -49,6 +52,11 @@ const MAX_CONTROL_BODY: usize = 8 * 1024 * 1024;
 // Decrypted audit content may reach response_content_max_bytes (64 MiB).
 const MAX_AUDIT_CONTENT_BODY: usize = 96 * 1024 * 1024;
 const AUDIT_CONTENT_TIMEOUT: Duration = Duration::from_secs(60);
+/// Stable machine-readable error codes for the provider-test command. The
+/// frontend matches these codes instead of human-readable messages.
+pub const SERVICE_TEST_CANCELLED: &str = "service_test_cancelled";
+pub const SERVICE_TEST_ALREADY_RUNNING: &str = "service_test_already_running";
+pub const SERVICE_TEST_INVALID_ID: &str = "service_test_invalid_id";
 const SUPPORTED_CONTROL_API_VERSION: &str = "v1";
 const SUPPORTED_PROTOCOL_CONTRACT_VERSION: &str = "v1";
 const PRIVACY_MODEL_CATALOG_PATH: &str = "/control/v1/privacy-model-catalog";
@@ -290,6 +298,11 @@ fn sidecar_args(
             if use_system_proxy { "system" } else { "direct" }
         ),
     ]);
+    // The raw unlock follows the session lock this host reports; see
+    // `os_lock`.
+    if crate::os_lock::FOLLOWS_SESSION {
+        arguments.push("--raw-unlock-until-lock".to_string());
+    }
     Ok(arguments)
 }
 
@@ -815,11 +828,49 @@ impl CoreInner {
     }
 }
 
+/// One provider test is scoped to the window, service, and test ID that
+/// registered it, so a sibling window cannot cancel another service's test by
+/// guessing an ID.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct ServiceTestKey {
+    owner: String,
+    service_id: String,
+    test_id: String,
+}
+
 pub struct CoreManager {
     inner: Mutex<CoreInner>,
     client: Client,
     /// Latest `CoreView`, republished whenever a lock release changed it.
     changes: tokio::sync::watch::Sender<CoreView>,
+    /// Cancellation senders for provider tests currently in flight, keyed by
+    /// owner, service, and test ID. The generation prevents an old guard from
+    /// releasing a newer test that reused the same key.
+    service_test_cancellations:
+        Mutex<HashMap<ServiceTestKey, (u64, tokio::sync::oneshot::Sender<()>)>>,
+    service_test_sequence: AtomicU64,
+}
+
+/// Keeps one provider-test registration alive and removes it on drop, so a
+/// cancelled command future cannot leave a stale or uncancellable entry.
+pub struct ServiceTestRegistration {
+    manager: Arc<CoreManager>,
+    key: ServiceTestKey,
+    generation: u64,
+    receiver: tokio::sync::oneshot::Receiver<()>,
+}
+
+impl ServiceTestRegistration {
+    pub fn receiver(&mut self) -> &mut tokio::sync::oneshot::Receiver<()> {
+        &mut self.receiver
+    }
+}
+
+impl Drop for ServiceTestRegistration {
+    fn drop(&mut self) {
+        self.manager
+            .release_service_test(&self.key, self.generation);
+    }
 }
 
 /// Every mutation path goes through `lock_inner`, so publishing from the
@@ -898,6 +949,73 @@ impl CoreManager {
             inner: Mutex::new(CoreInner::default()),
             client,
             changes,
+            service_test_cancellations: Mutex::new(HashMap::new()),
+            service_test_sequence: AtomicU64::new(0),
+        }
+    }
+
+    /// Registers a cancellation channel for one in-flight provider test.
+    /// Duplicate keys are rejected rather than replacing another test.
+    pub fn register_service_test(
+        self: &Arc<Self>,
+        owner: &str,
+        service_id: &str,
+        test_id: &str,
+    ) -> Result<ServiceTestRegistration, String> {
+        let key = ServiceTestKey {
+            owner: owner.to_owned(),
+            service_id: service_id.to_owned(),
+            test_id: test_id.to_owned(),
+        };
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        let generation = self.service_test_sequence.fetch_add(1, Ordering::Relaxed);
+        {
+            let mut tests = self
+                .service_test_cancellations
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if tests.contains_key(&key) {
+                return Err(SERVICE_TEST_ALREADY_RUNNING.into());
+            }
+            tests.insert(key.clone(), (generation, sender));
+        }
+        Ok(ServiceTestRegistration {
+            manager: Arc::clone(self),
+            key,
+            generation,
+            receiver,
+        })
+    }
+
+    /// Signals an in-flight provider test to stop. Returns whether a test was
+    /// still registered under this owner, service, and ID.
+    pub fn cancel_service_test(&self, owner: &str, service_id: &str, test_id: &str) -> bool {
+        let key = ServiceTestKey {
+            owner: owner.to_owned(),
+            service_id: service_id.to_owned(),
+            test_id: test_id.to_owned(),
+        };
+        self.service_test_cancellations
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(&key)
+            .map(|(_, sender)| sender.send(()).is_ok())
+            .unwrap_or(false)
+    }
+
+    /// Drops a registration once its test finished or was cancelled. The
+    /// generation check keeps an older guard from removing a newer test that
+    /// reused the same key after cancellation.
+    fn release_service_test(&self, key: &ServiceTestKey, generation: u64) {
+        let mut tests = self
+            .service_test_cancellations
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if tests
+            .get(key)
+            .is_some_and(|(current, _)| *current == generation)
+        {
+            tests.remove(key);
         }
     }
 
@@ -1747,13 +1865,36 @@ impl CoreManager {
         serde_json::to_value(outcome).map_err(|error| error.to_string())
     }
 
-    /// Ends the operator's raw unlock session at once. The operator's own
-    /// lock also revokes every agent grant; the automatic lock when the main
-    /// window hides keeps them.
-    pub async fn lock_raw(&self, keep_agent_grants: bool) -> Result<serde_json::Value, String> {
-        let body = keep_agent_grants.then(|| serde_json::json!({"keep_agent_grants": true}));
+    /// Ends the operator's raw unlock session and every agent grant at
+    /// once: on the operator's Lock, the screen locking, or sleep.
+    pub async fn lock_raw(&self) -> Result<serde_json::Value, String> {
         let (_, body) = self
-            .authenticated_control(Method::POST, crate::raw_access::RAW_LOCK_PATH, body, None)
+            .authenticated_control(Method::POST, crate::raw_access::RAW_LOCK_PATH, None, None)
+            .await?;
+        crate::raw_access::parse_sealing_status(&body)
+    }
+
+    /// Lets the Touch ID key open raw content: Core opens the raw key with
+    /// the password and wraps it under `key` as well.
+    pub async fn enroll_raw_biometric(
+        &self,
+        password: &str,
+        key: &[u8],
+    ) -> Result<serde_json::Value, String> {
+        let body = crate::raw_access::biometric_body(password, key)?;
+        self.send_sealing_proof(crate::raw_access::RAW_BIOMETRIC_PATH, &body)
+            .await
+    }
+
+    /// Takes the Touch ID envelope out of Core.
+    pub async fn remove_raw_biometric(&self) -> Result<serde_json::Value, String> {
+        let (_, body) = self
+            .authenticated_control(
+                Method::DELETE,
+                crate::raw_access::RAW_BIOMETRIC_PATH,
+                None,
+                None,
+            )
             .await?;
         crate::raw_access::parse_sealing_status(&body)
     }
@@ -3929,7 +4070,8 @@ fn validate_privacy_suppression_reason(value: &serde_json::Value) -> Result<(), 
             | "allowlisted"
             | "placeholder"
             | "unrepresentable"
-            | "astrlink_identifier",
+            | "astrlink_identifier"
+            | "example_value",
         ) => Ok(()),
         _ => Err("privacy policy dry-run finding reason is unknown".to_string()),
     }
@@ -5783,6 +5925,63 @@ mod tests {
     }
 
     #[test]
+    fn service_test_cancellation_is_single_use() {
+        let manager = Arc::new(CoreManager::new());
+        let mut registration = manager
+            .register_service_test("main", "service_a", "test_one")
+            .unwrap();
+        assert!(
+            matches!(
+                manager.register_service_test("main", "service_a", "test_one"),
+                Err(ref message) if message == SERVICE_TEST_ALREADY_RUNNING
+            ),
+            "duplicate test keys must not replace the first registration"
+        );
+        assert!(
+            !manager.cancel_service_test("main", "service_b", "test_one"),
+            "another service must not cancel this test"
+        );
+        assert!(
+            !manager.cancel_service_test("other", "service_a", "test_one"),
+            "another window must not cancel this test"
+        );
+        assert!(manager.cancel_service_test("main", "service_a", "test_one"));
+        assert!(
+            matches!(registration.receiver().try_recv(), Ok(())),
+            "the registered test should receive the cancellation signal"
+        );
+        drop(registration);
+        assert!(
+            !manager.cancel_service_test("main", "service_a", "test_one"),
+            "a cancelled test must not be signalled twice"
+        );
+
+        let registration = manager
+            .register_service_test("main", "service_a", "test_two")
+            .unwrap();
+        drop(registration);
+        assert!(!manager.cancel_service_test("main", "service_a", "test_two"));
+    }
+
+    #[test]
+    fn stale_service_test_registration_does_not_release_a_newer_test() {
+        let manager = Arc::new(CoreManager::new());
+        let first = manager
+            .register_service_test("main", "service_a", "test_reused")
+            .unwrap();
+        assert!(manager.cancel_service_test("main", "service_a", "test_reused"));
+        let second = manager
+            .register_service_test("main", "service_a", "test_reused")
+            .unwrap();
+        drop(first);
+        assert!(
+            manager.cancel_service_test("main", "service_a", "test_reused"),
+            "dropping an older registration must not release the newer test"
+        );
+        drop(second);
+    }
+
+    #[test]
     fn service_risk_events_path_bounds_the_limit() {
         assert_eq!(
             super::service_risk_events_path("service_claude", None).unwrap(),
@@ -7174,6 +7373,10 @@ mod tests {
             parse_privacy_dry_run_result(&serde_json::to_vec(&own_identifier).unwrap()).is_ok()
         );
 
+        let mut example = result.clone();
+        example["suppressed_findings"][0]["reason"] = serde_json::json!("example_value");
+        assert!(parse_privacy_dry_run_result(&serde_json::to_vec(&example).unwrap()).is_ok());
+
         let mut unknown_reason = result.clone();
         unknown_reason["suppressed_findings"][0]["reason"] = serde_json::json!("vibes");
         assert!(
@@ -7774,29 +7977,31 @@ mod tests {
             true,
         )
         .expect("test path should be valid UTF-8");
-        assert_eq!(
-            arguments,
-            [
-                "--parent-pid".to_string(),
-                "4242".to_string(),
-                "--data-dir".to_string(),
-                "/tmp/astrlink-data".to_string(),
-                "--inference-listen".to_string(),
-                "127.0.0.1:8317".to_string(),
-                "--inference-port-fallback".to_string(),
-                "--control-listen".to_string(),
-                "127.0.0.1:0".to_string(),
-                "--control-token-stdin".to_string(),
-                "--observer-token-stdin".to_string(),
-                "--max-concurrent-inspections".to_string(),
-                "16".to_string(),
-                "--response-start-timeout-seconds".to_string(),
-                "0".to_string(),
-                "--max-request-body-mib".to_string(),
-                "0".to_string(),
-                "--outbound-proxy=system".to_string(),
-            ]
-        );
+        let mut expected = vec![
+            "--parent-pid".to_string(),
+            "4242".to_string(),
+            "--data-dir".to_string(),
+            "/tmp/astrlink-data".to_string(),
+            "--inference-listen".to_string(),
+            "127.0.0.1:8317".to_string(),
+            "--inference-port-fallback".to_string(),
+            "--control-listen".to_string(),
+            "127.0.0.1:0".to_string(),
+            "--control-token-stdin".to_string(),
+            "--observer-token-stdin".to_string(),
+            "--max-concurrent-inspections".to_string(),
+            "16".to_string(),
+            "--response-start-timeout-seconds".to_string(),
+            "0".to_string(),
+            "--max-request-body-mib".to_string(),
+            "0".to_string(),
+            "--outbound-proxy=system".to_string(),
+        ];
+        // Where the host follows the session lock, Core's unlock does too.
+        if crate::os_lock::FOLLOWS_SESSION {
+            expected.push("--raw-unlock-until-lock".to_string());
+        }
+        assert_eq!(arguments, expected);
         let direct = sidecar_args(
             4242,
             Path::new("/tmp/astrlink-data"),

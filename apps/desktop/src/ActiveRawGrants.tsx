@@ -8,14 +8,19 @@ import { cn } from "@/lib/utils";
 
 import { revokeRawGrant } from "./bridge";
 import { useT } from "./i18n";
-import { formatRemaining, type RawAccessGrant } from "./raw-access-model";
+import {
+  formatRemaining,
+  grantRunning,
+  type RawAccessGrant,
+} from "./raw-access-model";
 
 const TICK_MS = 1_000;
 
 /**
- * The timed grants still running, each with the time it has left and a way
- * to end it now. Shared by the approval window and the tray popover; the
- * caller refreshes the list once `onRevoked` reports a grant gone.
+ * The lasting grants still running, each with the time it has left, or the
+ * lock that ends it, and a way to end it now. Shared by the approval window
+ * and the tray popover; the caller refreshes the list once `onRevoked`
+ * reports a grant gone.
  */
 export function ActiveRawGrants({
   className,
@@ -37,13 +42,15 @@ export function ActiveRawGrants({
   const [revoking, setRevoking] = useState<ReadonlySet<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
 
-  const running = grants.filter((grant) => Date.parse(grant.expires_at) > now);
+  const running = grants.filter((grant) => grantRunning(grant, now));
   const hasRunning = running.length > 0;
+  // Only a grant with an end needs the clock.
+  const counting = running.some((grant) => grant.expires_at !== null);
   useEffect(() => {
-    if (!hasRunning) return;
+    if (!counting) return;
     const timer = setInterval(() => setNow(Date.now()), TICK_MS);
     return () => clearInterval(timer);
-  }, [hasRunning]);
+  }, [counting]);
 
   const revoke = (grant: RawAccessGrant) => {
     setError(null);
@@ -90,9 +97,11 @@ export function ActiveRawGrants({
                     : "rawAccess.active.scopeRequest",
                 )}
                 {" · "}
-                {t("rawAccess.active.remaining", {
-                  time: formatRemaining(grant.expires_at, now),
-                })}
+                {grant.expires_at === null
+                  ? t("rawAccess.active.untilLock")
+                  : t("rawAccess.active.remaining", {
+                      time: formatRemaining(grant.expires_at, now),
+                    })}
               </span>
             </div>
             <Button

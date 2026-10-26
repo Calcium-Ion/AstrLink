@@ -2,10 +2,17 @@ import { parseBillingAmounts, type BillingAmounts } from "./pricing-model";
 import { parseUsagePerformance } from "./usage-summary-model";
 import type { ServicePerformance } from "./usage-range";
 
+/**
+ * `system_default` is the bootstrap token this installation issued on its
+ * first start; `user` is one someone created.
+ */
+export type AccessTokenSource = "user" | "system_default";
+
 export interface AccessTokenSummary {
   id: string;
   name: string;
   hint: string;
+  source: AccessTokenSource;
   created_at: string;
 }
 
@@ -82,7 +89,18 @@ function stringAt(
 
 function parseAccessToken(value: unknown, path: string): AccessTokenSummary {
   const token = objectAt(value, path);
-  exactKeys(token, ["id", "name", "hint", "created_at"], path);
+  // Older Core versions list no source; their tokens read as created ones.
+  exactKeys(
+    token,
+    [
+      "id",
+      "name",
+      "hint",
+      ...("source" in token ? ["source"] : []),
+      "created_at",
+    ],
+    path,
+  );
 
   const id = stringAt(token.id, `${path}.id`, 3, 96);
   if (!resourceIDPattern.test(id)) invalid(`${path}.id`, "invalid token ID");
@@ -95,11 +113,16 @@ function parseAccessToken(value: unknown, path: string): AccessTokenSummary {
   if (!rfc3339Pattern.test(createdAt) || Number.isNaN(Date.parse(createdAt))) {
     invalid(`${path}.created_at`, "expected an RFC 3339 timestamp");
   }
+  const source = token.source ?? "user";
+  if (source !== "user" && source !== "system_default") {
+    invalid(`${path}.source`, "expected user or system_default");
+  }
 
   return {
     id,
     name,
     hint,
+    source,
     created_at: createdAt,
   };
 }

@@ -26,7 +26,12 @@ import {
   type RawAccessList,
   type RawAccessProofOutcome,
 } from "./raw-access-model";
-import { rawPasswordUnset, type RawSealingState } from "./raw-sealing-model";
+import {
+  rawBiometricReady,
+  rawPasswordUnset,
+  type RawProof,
+  type RawSealingState,
+} from "./raw-sealing-model";
 import { rawSealingErrorMessage } from "./raw-sealing-ui";
 
 export const RAW_ACCESS_POLL_MS = 2_000;
@@ -35,13 +40,13 @@ type Approval = Exclude<RawAccessDecision, "deny">;
 
 const approvals: ReadonlyArray<{ decision: Approval; label: string }> = [
   { decision: "once", label: "rawAccess.once" },
-  { decision: "window_5m", label: "rawAccess.window5m" },
+  { decision: "until_lock", label: "rawAccess.untilLock" },
   { decision: "window_1h", label: "rawAccess.window1h" },
 ];
 
 const approvedKeys: Record<Approval, string> = {
   once: "rawAccess.approvedOnce",
-  window_5m: "rawAccess.approved5m",
+  until_lock: "rawAccess.approvedUntilLock",
   window_1h: "rawAccess.approved1h",
 };
 
@@ -71,11 +76,12 @@ function messageOf(error: unknown): string {
 }
 
 /**
- * The one place an agent's raw access request is decided (plan §5.11.6,
- * D14). The host opens this window without focus and nothing here takes
- * it, and there is no form: a keystroke meant for another window, or Enter,
- * approves nothing. While Core's unlock session is open an approval is one
- * click; otherwise it needs the raw password, which lives only in this
+ * The one place an agent's raw access request is decided (plan §5.11.6).
+ * The host opens this window without focus and nothing here takes it, and
+ * there is no form: a keystroke meant for another window, or Enter,
+ * approves nothing. Every approval needs a fresh proof, even while raw
+ * content is unlocked, so UI automation cannot approve alone: Touch ID,
+ * which the host prompts for, or the raw password, which lives only in this
  * state until it is sent. Closing the window decides nothing and ends no
  * grant.
  */
@@ -88,8 +94,9 @@ export function RawAccessApprovalWindow() {
   const [facts, setFacts] = useState<RequestFacts | null>(null);
   const [sealing, setSealing] = useState<SealingFacts | null>(null);
   const [password, setPassword] = useState("");
-  // Core locked after the list said it was open; ask for the password.
-  const [proofDemanded, setProofDemanded] = useState(false);
+  // The operator chose the password over Touch ID, or Touch ID could not
+  // answer.
+  const [usePassword, setUsePassword] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [retryAt, setRetryAt] = useState<number | null>(null);
@@ -120,7 +127,7 @@ export function RawAccessApprovalWindow() {
     const timer = setInterval(() => void refresh(), RAW_ACCESS_POLL_MS);
     let active = true;
     let stop: (() => void) | null = null;
-    // Locking and unlocking change whether an approval needs the password.
+    // A lock ends running grants; the list shows it at once.
     void listenRawSealingChanged(() => void refresh()).then(
       (unlisten) => {
         if (active) stop = unlisten;
@@ -158,7 +165,7 @@ export function RawAccessApprovalWindow() {
     setPassword("");
     setError(null);
     setRetryAt(null);
-    setProofDemanded(false);
+    setUsePassword(false);
   }, [grantId]);
 
   // Read how to prove on every new request, since the raw password may have
@@ -200,12 +207,6 @@ export function RawAccessApprovalWindow() {
     };
   }, [requestId]);
 
-  const needsPassword = proofDemanded || list?.unlocked !== true;
-  // The field goes once Core is open again; so does what was typed into it.
-  useEffect(() => {
-    if (!needsPassword) setPassword("");
-  }, [needsPassword]);
-
   const settle = (id: string) =>
     setSettled((previous) => new Set(previous).add(id));
   const unsettle = (id: string) =>
@@ -220,6 +221,12 @@ export function RawAccessApprovalWindow() {
   // Core reads raw content only through the raw password; without one only
   // denying is left.
   const unreachable = sealingState !== null && rawPasswordUnset(sealingState);
+  const touchID = sealingState !== null && rawBiometricReady(sealingState);
+  const needsPassword = !touchID || usePassword;
+  // The field goes with Touch ID; so does what was typed into it.
+  useEffect(() => {
+    if (!needsPassword) setPassword("");
+  }, [needsPassword]);
   const approveBlocked =
     busy ||
     currentSealing === null ||
@@ -229,9 +236,9 @@ export function RawAccessApprovalWindow() {
 
   const approve = async (target: RawAccessGrant, decision: Approval) => {
     if (busyRef.current || approveBlocked) return;
-    const proof = needsPassword
-      ? ({ kind: "password", password } as const)
-      : undefined;
+    const proof: RawProof = needsPassword
+      ? { kind: "password", password }
+      : { kind: "biometric" };
     // Nothing keeps the password once it is on its way.
     setPassword("");
     setError(null);
@@ -258,8 +265,18 @@ export function RawAccessApprovalWindow() {
         notify.info(t("rawAccess.notPending"));
         break;
       case "proof_required":
-        setProofDemanded(true);
-        break;
+      case "biometric_unavailable":
+        // Touch ID cannot answer now; the password always can.
+        setUsePassword(true);
+        setError(
+          outcome.outcome === "biometric_unavailable"
+            ? t("rawSealing.biometric.unavailable")
+            : null,
+        );
+        return;
+      case "biometric_cancelled":
+        setError(t("rawSealing.biometric.cancelled"));
+        return;
       case "password_invalid":
         setError(t("proofDialog.passwordInvalid"));
         return;
@@ -342,7 +359,11 @@ export function RawAccessApprovalWindow() {
               />
               <DataField
                 label={t("rawAccess.expires")}
-                value={formatTimestamp(grant.expires_at)}
+                value={
+                  grant.expires_at
+                    ? formatTimestamp(grant.expires_at)
+                    : t("common.unknown")
+                }
               />
             </div>
             <DataField
@@ -391,20 +412,45 @@ export function RawAccessApprovalWindow() {
           className="grid gap-3 border-t bg-muted/40 px-4 py-3"
           data-slot="raw-access-decision"
         >
-          {needsPassword && !unreachable ? (
-            <div className="grid gap-2">
-              <FormMessage tone="notice">
-                {t(
-                  proofDemanded
-                    ? "rawAccess.lockedMeanwhile"
-                    : "rawAccess.locked",
-                )}
+          {!unreachable ? (
+            <div className="grid gap-2" data-slot="raw-access-proof">
+              <FormMessage
+                className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1"
+                tone="notice"
+              >
+                <span className="min-w-0">
+                  {t(
+                    needsPassword
+                      ? "rawAccess.proofPassword"
+                      : "rawAccess.proofTouchId",
+                  )}
+                </span>
+                {touchID ? (
+                  <Button
+                    className="h-auto px-0 text-xs"
+                    disabled={busy}
+                    onClick={() => {
+                      setError(null);
+                      setUsePassword(!usePassword);
+                    }}
+                    type="button"
+                    variant="link"
+                  >
+                    {t(
+                      usePassword
+                        ? "rawAccess.useTouchId"
+                        : "rawAccess.usePassword",
+                    )}
+                  </Button>
+                ) : null}
               </FormMessage>
-              <ProofPasswordField
-                disabled={busy}
-                onChange={setPassword}
-                value={password}
-              />
+              {needsPassword ? (
+                <ProofPasswordField
+                  disabled={busy}
+                  onChange={setPassword}
+                  value={password}
+                />
+              ) : null}
             </div>
           ) : null}
           {retryAt !== null ? (

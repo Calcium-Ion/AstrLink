@@ -146,3 +146,32 @@ func TestPayAsYouGoDefaultPricingProviders(t *testing.T) {
 		}
 	}
 }
+
+func TestOpenAITwelveHourCacheWrites(t *testing.T) {
+	// gpt-6-astra as LLM Metadata published it on 2026-10-25.
+	const astra = `len <= 272000 ? tier("0_272k", p * 10 + cr * 1 + cc * 12.5 + cc12h * 25 + c * 50) : tier("272k_plus", p * 20 + cr * 2 + cc * 25 + cc12h * 50 + c * 75)`
+	if err := ValidateExpression(astra); err != nil {
+		t.Fatalf("published price rejected: %v", err)
+	}
+	tests := []struct {
+		name, expression string
+		usage            contract.Usage
+		want             string
+	}{
+		// Counts of a gpt-6-astra request AstrLink 0.2.18 left unpriced.
+		{"no cache writes", astra, contract.Usage{InputTokens: 126800, OutputTokens: 4997, CacheReadTokens: ptr(126592)}, "0.378522000"},
+		{"ttl split", astra, contract.Usage{InputTokens: 100000, OutputTokens: 1000, CacheReadTokens: ptr(40000), CacheWriteTokens: ptr(30000), CacheWrite12hTokens: ptr(10000)}, "0.890000000"},
+		{"unsplit writes bill short-lived", astra, contract.Usage{InputTokens: 100000, OutputTokens: 1000, CacheReadTokens: ptr(40000), CacheWriteTokens: ptr(30000)}, "0.765000000"},
+		{"long tier", astra, contract.Usage{InputTokens: 300000, CacheWriteTokens: ptr(100000), CacheWrite12hTokens: ptr(100000)}, "9.000000000"},
+		{"12h without its price bills short-lived", `tier("standard", p * 10 + cc * 12.5)`, contract.Usage{InputTokens: 1000, CacheWriteTokens: ptr(400), CacheWrite12hTokens: ptr(100)}, "0.011000000"},
+		{"12h larger than writes is cut", astra, contract.Usage{InputTokens: 1000, CacheWriteTokens: ptr(100), CacheWrite12hTokens: ptr(500)}, "0.011500000"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := Evaluate(tt.expression, &tt.usage, time.Now())
+			if err != nil || got.AmountUSD != tt.want {
+				t.Fatalf("got=%+v err=%v want=%s", got, err, tt.want)
+			}
+		})
+	}
+}

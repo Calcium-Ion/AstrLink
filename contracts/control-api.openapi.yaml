@@ -121,6 +121,8 @@ x-astrlink-implementation:
     - POST /control/v1/audit/raw-unlock
     - POST /control/v1/audit/raw-lock
     - POST /control/v1/audit/raw-verify
+    - POST /control/v1/audit/raw-biometric
+    - DELETE /control/v1/audit/raw-biometric
     - GET /control/v1/local-data
     - GET /control/v1/client-identities
     - GET /control/v1/observers
@@ -2747,7 +2749,7 @@ paths:
       x-astrlink-role: operator
       tags: [Requests]
       operationId: listRawAuditAccess
-      summary: List agent raw access grants awaiting a decision and timed grants still running.
+      summary: List agent raw access grants awaiting a decision and lasting grants still running.
       description: Grant tokens are never returned.
       responses:
         "200":
@@ -2759,7 +2761,7 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [items, active, unlocked]
+                required: [items, active]
                 properties:
                   items:
                     type: array
@@ -2771,12 +2773,7 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/RawAccessGrant"
-                    description: Approved timed grants that have not ended.
-                  unlocked:
-                    type: boolean
-                    description: |
-                      True while the operator's unlock session lasts, so an
-                      approval needs no password.
+                    description: Approved lasting grants that have not ended.
                 additionalProperties: false
         "401":
           $ref: "#/components/responses/Unauthorized"
@@ -2795,10 +2792,10 @@ paths:
       x-astrlink-role: operator
       tags: [Requests]
       operationId: revokeRawAuditAccess
-      summary: Revoke a running timed grant.
+      summary: Revoke a running lasting grant.
       description: |
         Ends the grant and zeroes the raw key it holds. A grant that is not a
-        running timed grant returns 409 `raw_access_not_active`.
+        running lasting grant returns 409 `raw_access_not_active`.
       responses:
         "200":
           description: The revoked grant.
@@ -2833,13 +2830,16 @@ paths:
       summary: Approve or deny a pending agent raw access grant.
       description: |
         `deny` needs no proof. `once` allows one read of the requested record.
-        `window_5m` and `window_1h` allow unlimited reads of every request,
-        including ones recorded while the grant runs, until the window ends;
-        the grant keeps its own copy of the raw key, which is zeroed when it
-        ends, is revoked, or Core exits. While the operator's unlock session
-        lasts an approval needs no proof; otherwise it needs the raw password
-        and returns 422 `raw_proof_required` without one. Repeated wrong
-        passwords back off exponentially and return 429 with `Retry-After`.
+        `until_lock` and `window_1h` allow unlimited reads of every request,
+        including ones recorded while the grant runs. `until_lock` runs until
+        the next `raw-lock`, which the desktop sends when the screen locks, the
+        computer sleeps, or the operator locks, or until Core exits.
+        `window_1h` also ends after an hour. The grant keeps its own copy of
+        the raw key, which is zeroed when it ends, is revoked, or Core exits.
+        Every approval needs a fresh proof, the raw password or the Touch ID
+        key, even while the operator's unlock session lasts, and returns 422
+        `raw_proof_required` without one. Repeated wrong proofs back off
+        exponentially and return 429 with `Retry-After`.
       requestBody:
         required: true
         content:
@@ -3012,12 +3012,14 @@ paths:
       operationId: unlockRawSealing
       summary: Unlock raw parts for the desktop operator.
       description: |
-        Opens the raw key with a proof and keeps it in Core memory until 15
-        minutes pass without a raw read, `raw-lock` is called, or Core exits.
-        While it lasts, approving an agent request needs no password; the
-        approved grant keeps its own key and outlives it. Without a raw password
-        it returns 409 `raw_access_unavailable`. Repeated wrong proofs return
-        429 with `Retry-After`.
+        Opens the raw key with a proof, the raw password or the Touch ID key,
+        and keeps it in Core memory until `raw-lock` is called or Core exits.
+        A Core started without `--raw-unlock-until-lock`, as the server edition
+        is, also ends it after 15 minutes without a raw read. Approving an
+        agent request still needs its own proof. Without a raw password it
+        returns 409 `raw_access_unavailable`; a Touch ID key for a key with no
+        biometric envelope returns 409 `raw_biometric_unavailable`. Repeated
+        wrong proofs return 429 with `Retry-After`.
       requestBody:
         required: true
         content:
@@ -3056,11 +3058,13 @@ paths:
       operationId: verifyRawSealing
       summary: Check a raw proof without unlocking.
       description: |
-        Checks a proof like `raw-unlock` and zeroes the raw key at once. It
-        neither starts nor extends the unlock session, and it leaves an open
-        session as it was. Wrong passwords count toward the same backoff as
-        every other proof, and a backoff returns 429 with `Retry-After`.
-        Without a raw password it returns 409 `raw_access_unavailable`.
+        Checks a raw password like `raw-unlock` and zeroes the raw key at once.
+        It neither starts nor extends the unlock session, and it leaves an open
+        session as it was. Only the password is accepted: the desktop uses this
+        to confirm a key replaced outside it. Wrong passwords count toward the
+        same backoff as every other proof, and a backoff returns 429 with
+        `Retry-After`. Without a raw password it returns 409
+        `raw_access_unavailable`.
       requestBody:
         required: true
         content:
@@ -3100,8 +3104,8 @@ paths:
       summary: End the operator's raw unlock session now.
       description: |
         Clears the raw private key from Core memory and revokes every agent
-        grant. The desktop's automatic lock, when its window is hidden or
-        minimized, sends `keep_agent_grants: true` to leave the grants running.
+        grant. The desktop sends it when the screen locks, the computer sleeps,
+        or the operator locks.
       requestBody:
         required: false
         content:
@@ -3111,6 +3115,73 @@ paths:
       responses:
         "200":
           description: The locked raw sealing state.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RawSealingStatus"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+  /control/v1/audit/raw-biometric:
+    x-astrlink-implementation-status: implemented
+    post:
+      x-astrlink-role: operator
+      tags: [Requests]
+      operationId: enrollRawBiometric
+      summary: Let Touch ID unlock raw content.
+      description: |
+        Wraps the raw private key, opened with the raw password, under `key`:
+        32 random bytes the desktop generated and keeps in the macOS keychain,
+        where it releases them only after Touch ID. Core stores the envelope,
+        never the key. Only the password enrolls. The server edition answers
+        403 `raw_biometric_unavailable`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RawBiometricRequest"
+      responses:
+        "200":
+          description: The raw sealing state with `biometric` among its envelopes.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RawSealingStatus"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+    delete:
+      x-astrlink-role: operator
+      tags: [Requests]
+      operationId: removeRawBiometric
+      summary: Stop Touch ID from unlocking raw content.
+      description: Takes the biometric envelope out. It needs no proof, since it only gives access up.
+      responses:
+        "200":
+          description: The raw sealing state without `biometric`.
           headers:
             Cache-Control:
               $ref: "#/components/headers/NoStore"
@@ -4204,7 +4275,7 @@ components:
                 $ref: "#/components/schemas/ServicePerformance"
     AccessToken:
       type: object
-      required: [id, name, hint, created_at]
+      required: [id, name, hint, source, created_at]
       properties:
         id:
           $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
@@ -4217,6 +4288,12 @@ components:
           minLength: 1
           maxLength: 32
           description: Non-secret display hint that cannot be used to authenticate.
+        source:
+          type: string
+          enum: [user, system_default]
+          description: |
+            system_default for the bootstrap token this installation issued on
+            its first start, user for a token someone created.
         created_at:
           type: string
           format: date-time
@@ -5737,6 +5814,7 @@ components:
             - placeholder
             - unrepresentable
             - astrlink_identifier
+            - example_value
           description: >
             Why the span was left in the request. Absent on accepted findings.
             placeholder means the value already belonged to a placeholder
@@ -5745,6 +5823,8 @@ components:
             stand-ins and fell back to a token placeholder. astrlink_identifier
             means the value is an identifier AstrLink generated itself, such as
             a local access token id or a request id, which grants no access.
+            example_value means only documentation and tests use the value: a
+            card number payment providers publish for test payments.
       additionalProperties: false
     PolicyDryRunRedaction:
       type: object
@@ -6752,6 +6832,10 @@ components:
             - $ref: "#/components/schemas/SessionLink"
             - type: "null"
           description: How this record joined an existing session; null when it started the session.
+        parent_session_id:
+          allOf:
+            - $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+          description: The conversation that started this record's session as a subagent. Absent for a top-level conversation.
         cursors:
           type: [array, "null"]
           maxItems: 48
@@ -6864,14 +6948,21 @@ components:
         Matches of one kind the policy left in the request for one reason. A
         match that was already a placeholder is not counted. astrlink_identifier
         counts identifiers AstrLink generated itself, such as local access token
-        ids, which grant no access. Never carries the matched value.
+        ids, which grant no access. example_value counts card numbers payment
+        providers publish for test payments. Never carries the matched value.
       properties:
         kind:
           $ref: "#/components/schemas/PrivacyCanonicalKind"
         reason:
           type: string
           enum:
-            [kind_disabled, low_confidence, allowlisted, astrlink_identifier]
+            [
+              kind_disabled,
+              low_confidence,
+              allowlisted,
+              astrlink_identifier,
+              example_value,
+            ]
         count:
           type: integer
           minimum: 1
@@ -7124,6 +7215,10 @@ components:
       properties:
         session_id:
           $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+        parent_session_id:
+          allOf:
+            - $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+          description: Set on a subagent's calls; the conversation that started it.
         client_type:
           $ref: "#/components/schemas/ClientType"
         started_at:
@@ -7223,6 +7318,14 @@ components:
         privacy_warned:
           type: boolean
           description: Present and true when the privacy policy's warn action let at least one call of the session through.
+        parent_session_id:
+          allOf:
+            - $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+          description: The conversation that started this one as a subagent. Absent for a top-level conversation.
+        subagent_count:
+          type: integer
+          minimum: 1
+          description: How many conversations this one started as subagents. Absent when it started none.
       additionalProperties: false
     RequestSessionPage:
       type: object
@@ -7245,6 +7348,11 @@ components:
               type: array
               items:
                 $ref: "#/components/schemas/RequestRecord"
+            subagents:
+              type: array
+              description: The conversations this one started as subagents, oldest first. Absent when it started none.
+              items:
+                $ref: "#/components/schemas/RequestSession"
           additionalProperties: false
     Usage:
       type: object
@@ -7272,6 +7380,7 @@ components:
           type: integer
           minimum: 0
         cache_write_1h_tokens: { type: integer, minimum: 0 }
+        cache_write_12h_tokens: { type: integer, minimum: 0 }
         input_audio_tokens: { type: integer, minimum: 0 }
         output_audio_tokens: { type: integer, minimum: 0 }
         thinking_enabled: { type: boolean }
@@ -7598,17 +7707,13 @@ components:
       additionalProperties: false
     RawLockRequest:
       type: object
-      properties:
-        keep_agent_grants:
-          type: boolean
-          default: false
       additionalProperties: false
     RawAccessGrantStatus:
       type: string
       enum: [pending, approved, denied, expired, consumed, revoked]
     RawAccessDecisionMode:
       type: string
-      enum: [once, window_5m, window_1h, deny]
+      enum: [once, until_lock, window_1h, deny]
     RawAccessGrant:
       allOf:
         - $ref: "#/components/schemas/RawAccessGrantFields"
@@ -7640,7 +7745,7 @@ components:
           enum: [request, all_requests]
           description: |
             Present once decided: `request` for a `once` grant, `all_requests`
-            for a timed grant.
+            for an `until_lock` or `window_1h` grant.
         reason:
           type: string
           minLength: 1
@@ -7653,8 +7758,11 @@ components:
           type: string
           format: date-time
         expires_at:
-          type: string
+          type: [string, "null"]
           format: date-time
+          description: |
+            When the grant ends unless revoked earlier; null for an approved
+            `until_lock` grant, which only a lock or a revocation ends.
     RawAccessGrantCreated:
       allOf:
         - $ref: "#/components/schemas/RawAccessGrantFields"
@@ -7668,18 +7776,34 @@ components:
           description: Bearer for `X-AstrLink-Raw-Grant`. Returned once; keep it in memory only.
       unevaluatedProperties: false
     RawProof:
-      type: object
-      required: [password]
-      properties:
-        kind:
-          type: string
-          const: password
-        password:
-          type: string
-          minLength: 1
-          maxLength: 128
-          writeOnly: true
-      additionalProperties: false
+      oneOf:
+        - type: object
+          required: [password]
+          properties:
+            kind:
+              type: string
+              const: password
+            password:
+              type: string
+              minLength: 1
+              maxLength: 128
+              writeOnly: true
+          additionalProperties: false
+        - type: object
+          required: [biometric]
+          description: |
+            The key the desktop releases from the macOS keychain after Touch
+            ID, as standard base64. Accepted by `raw-unlock` and approvals.
+          properties:
+            kind:
+              type: string
+              const: biometric
+            biometric:
+              type: string
+              minLength: 44
+              maxLength: 44
+              writeOnly: true
+          additionalProperties: false
     RawAccessDecision:
       type: object
       required: [decision]
@@ -7691,8 +7815,8 @@ components:
             - $ref: "#/components/schemas/RawProof"
             - type: "null"
           description: |
-            The raw password. Needed to approve while the operator's unlock
-            session is closed; ignored for `deny`.
+            The raw password or the Touch ID key. Needed for every approval;
+            ignored for `deny`.
       additionalProperties: false
     RawAccessEvent:
       type: object
@@ -7816,11 +7940,14 @@ components:
             forwarding are unaffected.
         envelopes:
           type: array
-          maxItems: 1
+          maxItems: 2
           uniqueItems: true
           items:
             type: string
-            enum: [password]
+            enum: [password, biometric]
+          description: |
+            `biometric` is listed once the desktop set up Touch ID beside the
+            raw password. A password change or reset takes it out.
         key_verified:
           type: boolean
           description: |
@@ -7831,10 +7958,15 @@ components:
         unlock_expires_at:
           type: [string, "null"]
           format: date-time
-          description: When the idle unlock session ends unless a raw read extends it.
+          description: |
+            When the idle unlock session ends unless a raw read extends it;
+            null while locked and for an unlock that lasts until `raw-lock`.
         unlock_idle_seconds:
           type: integer
-          minimum: 1
+          minimum: 0
+          description: |
+            How long an unlock lasts without a raw read; 0 when it lasts until
+            `raw-lock`, as on a desktop that locks it with the screen.
         retry_after_seconds:
           type: integer
           minimum: 0
@@ -7871,7 +8003,9 @@ components:
           oneOf:
             - $ref: "#/components/schemas/RawProof"
             - type: "null"
-          description: The current password; required for `change`, ignored for `set` and `reset`.
+          description: |
+            The current password; required for `change`, ignored for `set` and
+            `reset`. A Touch ID key is not accepted here.
       additionalProperties: false
     RawPasswordResponse:
       allOf:
@@ -7897,6 +8031,20 @@ components:
       properties:
         proof:
           $ref: "#/components/schemas/RawProof"
+      additionalProperties: false
+    RawBiometricRequest:
+      type: object
+      required: [proof, key]
+      properties:
+        proof:
+          $ref: "#/components/schemas/RawProof"
+          description: The raw password; a Touch ID key cannot enroll.
+        key:
+          type: string
+          minLength: 44
+          maxLength: 44
+          writeOnly: true
+          description: 32 random bytes as standard base64.
       additionalProperties: false
     ObserversResponse:
       type: object
@@ -7943,8 +8091,9 @@ components:
         raw_password_required:
           type: boolean
           description: |
-            True while no raw password protects the raw key, so the desktop can
-            point at the setup from the tray as well as the main window.
+            True while body capture is on and no raw password protects the raw
+            key, so captured raw parts are dropped. The desktop points at the
+            setup from the tray as well as the main window.
       additionalProperties: false
     PurgeRequest:
       type: object

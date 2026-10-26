@@ -40,7 +40,7 @@ func parseExpression(source string) (*expression, error) {
 		case *ast.IntegerNode, *ast.FloatNode, *ast.StringNode, *ast.BoolNode:
 			return nil
 		case *ast.IdentifierNode:
-			if !strings.Contains("|p|c|cr|cc|cc1h|ai|ao|len|image_count|", "|"+n.Value+"|") {
+			if !strings.Contains("|p|c|cr|cc|cc1h|cc12h|ai|ao|len|image_count|", "|"+n.Value+"|") {
 				return fmt.Errorf("unsupported billing variable")
 			}
 			e.vars[n.Value] = true
@@ -102,7 +102,7 @@ func Evaluate(source string, u *contract.Usage, at time.Time) (Valuation, error)
 	}
 	// Value what the provider reported, as new-api settles a request, instead
 	// of leaving the call unpriced: an interrupted stream bills its partial
-	// usage, cache writes without a TTL split bill at the 5-minute rate,
+	// usage, cache writes without a TTL split bill at the short-lived rate,
 	// unreported audio bills as text, cache hits count as text, and a part
 	// larger than its total is cut down to the total.
 	count := func(v *int) int64 {
@@ -115,10 +115,11 @@ func Evaluate(source string, u *contract.Usage, at time.Time) (Valuation, error)
 	read := min(count(u.CacheReadTokens), in)
 	write := min(count(u.CacheWriteTokens), in-read)
 	oneHour := min(count(u.CacheWrite1hTokens), write)
+	twelveHour := min(count(u.CacheWrite12hTokens), write-oneHour)
 	if e.vars["cr"] {
 		in -= read
 	}
-	if e.vars["cc"] || e.vars["cc1h"] {
+	if e.vars["cc"] || e.vars["cc1h"] || e.vars["cc12h"] {
 		in -= write
 	}
 	audioIn, audioOut := min(count(u.InputAudioTokens), in), min(count(u.OutputAudioTokens), out)
@@ -131,7 +132,10 @@ func Evaluate(source string, u *contract.Usage, at time.Time) (Valuation, error)
 	if !e.vars["cc1h"] {
 		oneHour = 0
 	}
-	values := map[string]int64{"p": in, "c": out, "cr": read, "cc": write - oneHour, "cc1h": oneHour, "ai": audioIn, "ao": audioOut, "len": int64(u.InputTokens)}
+	if !e.vars["cc12h"] {
+		twelveHour = 0
+	}
+	values := map[string]int64{"p": in, "c": out, "cr": read, "cc": write - oneHour - twelveHour, "cc1h": oneHour, "cc12h": twelveHour, "ai": audioIn, "ao": audioOut, "len": int64(u.InputTokens)}
 	tier := ""
 	var eval func(ast.Node) (any, error)
 	num := func(v any) (*big.Rat, error) {

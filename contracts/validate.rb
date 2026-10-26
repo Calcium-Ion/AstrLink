@@ -186,9 +186,17 @@ end
 # A public key fingerprint identifies the key without being key material.
 leaked_key_fields = raw_sealing_fields.grep(/(?<!pass)key(?!_verified|_fingerprint)|secret|salt|nonce|envelope_/)
 raise "RawSealingStatus must not carry key material: #{leaked_key_fields.join(", ")}" unless leaked_key_fields.empty?
-# The raw password is the only proof that opens the raw key.
-unless openapi.dig("components", "schemas", "RawProof", "properties")&.keys&.sort == %w[kind password]
-  raise "RawProof must carry only the raw password"
+# The raw key opens with the raw password, or with the key the desktop keeps
+# behind Touch ID; a proof carries exactly one of them, never in a response.
+raw_proof_shapes = openapi.dig("components", "schemas", "RawProof", "oneOf")&.map do |shape|
+  shape.fetch("properties").keys.sort
+end
+unless raw_proof_shapes == [%w[kind password], %w[biometric kind]]
+  raise "RawProof must be either the raw password or the Touch ID key"
+end
+openapi.dig("components", "schemas", "RawProof", "oneOf").each do |shape|
+  secret = shape.fetch("properties").fetch(shape.fetch("required").first)
+  raise "RawProof secrets must be write-only" unless secret["writeOnly"] == true
 end
 # A wrong password on the desktop's own unlock names no grant or request.
 raw_event_required = openapi.dig("components", "schemas", "RawAccessEvent", "required")
@@ -386,8 +394,8 @@ end
 end
 
 access_token = openapi.dig("components", "schemas", "AccessToken")
-raise "access-token metadata shape drifted" unless access_token.fetch("required") == %w[id name hint created_at]
-raise "access-token source remains on the public contract" if access_token.fetch("properties").key?("source")
+raise "access-token metadata shape drifted" unless access_token.fetch("required") == %w[id name hint source created_at]
+raise "access-token source must name the bootstrap token" unless access_token.dig("properties", "source", "enum") == %w[user system_default]
 
 access_token_list = openapi.dig("components", "schemas", "AccessTokenList")
 raise "access-token list must reserve a null cursor" unless access_token_list.fetch("required") == %w[items next_cursor] &&

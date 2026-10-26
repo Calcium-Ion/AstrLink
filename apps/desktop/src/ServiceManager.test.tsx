@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const bridgeMocks = vi.hoisted(() => ({
   beginServiceAuthorization: vi.fn(),
   cancelServiceAuthorization: vi.fn(),
+  cancelServiceTest: vi.fn(),
   clearServiceRisk: vi.fn(),
   completeServiceAuthorization: vi.fn(),
   createService: vi.fn(),
@@ -29,6 +30,9 @@ const bridgeMocks = vi.hoisted(() => ({
   probeServiceModels: vi.fn(),
   probeServiceProxy: vi.fn(),
   testService: vi.fn(),
+  SERVICE_TEST_CANCELLED_ERROR: "service_test_cancelled",
+  SERVICE_TEST_ALREADY_RUNNING_ERROR: "service_test_already_running",
+  SERVICE_TEST_INVALID_ID_ERROR: "service_test_invalid_id",
   updateService: vi.fn(),
   listTerminalApps: vi.fn(),
   getClientConfigStatus: vi.fn(),
@@ -490,12 +494,17 @@ describe("ServiceManager", () => {
       start.click();
     });
     expect(bridgeMocks.testService).toHaveBeenCalledTimes(1);
-    expect(bridgeMocks.testService).toHaveBeenCalledWith("service_gateway", {
-      protocol: "openai.responses",
-      model: "gpt-5",
-      stream: true,
-    });
-    expect(start.disabled).toBe(true);
+    expect(bridgeMocks.testService).toHaveBeenCalledWith(
+      "service_gateway",
+      {
+        protocol: "openai.responses",
+        model: "gpt-5",
+        stream: true,
+      },
+      expect.any(String),
+    );
+    expect(start.textContent).toBe("取消测试");
+    expect(start.disabled).toBe(false);
     expect(
       dialog.querySelector<HTMLInputElement>('input[aria-label="测试模型"]')!
         .disabled,

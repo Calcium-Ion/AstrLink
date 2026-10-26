@@ -67,6 +67,11 @@ func (openAIResponsesAdapter) inspectItem(item json.RawMessage) requestItem {
 	user := role == "user" && (itemType == "" || itemType == "message")
 	result.assistant = role == "assistant" && (itemType == "" || itemType == "message")
 	result.toolResult = responsesIsToolOutput(itemType)
+	if itemType == "additional_tools" {
+		// Responses Lite declares its tools in the input, not at the top.
+		tools, _ := jsonx.Array(object["tools"])
+		result.declaresTools = len(tools) > 0
+	}
 	if user {
 		texts, hasMedia := stringOrTextParts(object["content"], responsesUserTextTypes, responsesSkipTypes)
 		result.userText = joinVisible(texts, "\n")

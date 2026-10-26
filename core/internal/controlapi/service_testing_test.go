@@ -4,9 +4,12 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/astrlink/core/contract"
+	"github.com/QuantumNous/astrlink/core/internal/storage"
 )
 
 type recordingServiceTester struct {
@@ -20,6 +23,101 @@ func (tester *recordingServiceTester) Test(_ context.Context, service contract.S
 	tester.service = service
 	tester.input = input
 	return contract.ServiceTestResult{ServiceID: service.ID, Protocol: input.Protocol, Model: input.Model, Stream: input.Stream, OK: false, StatusCode: 429, DurationMS: 12, ErrorCode: "upstream_error", Message: "Quota exceeded"}
+}
+
+type blockingServiceTester struct {
+	started  chan struct{}
+	canceled chan struct{}
+	release  chan struct{}
+}
+
+func (tester *blockingServiceTester) Test(ctx context.Context, service contract.Service, input contract.ServiceTestRequest) contract.ServiceTestResult {
+	close(tester.started)
+	select {
+	case <-ctx.Done():
+		close(tester.canceled)
+	case <-tester.release:
+	}
+	return contract.ServiceTestResult{
+		ServiceID: service.ID,
+		Protocol:  input.Protocol,
+		Model:     input.Model,
+		Stream:    input.Stream,
+		ErrorCode: "timeout",
+	}
+}
+
+func TestServiceTestCancellationFromClientDisconnect(t *testing.T) {
+	store, err := openControlTestStore(t, context.Background(), t.TempDir()+"/astrlink.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if _, err := store.CreateService(context.Background(), contract.Service{
+		ID: "service_test", Name: "Test provider", Kind: contract.ServiceKindOpenAI, Enabled: true,
+		Models: []string{"test-model"},
+		HTTP:   &contract.HTTPConnection{BaseURL: "https://example.test", Auth: contract.ServiceAuth{Scheme: contract.AuthSchemeNone}},
+		Capabilities: []contract.Capability{{
+			Protocol: contract.ProtocolOpenAIChat, Mode: contract.CapabilityModeNative, Streaming: true,
+		}},
+	}, storage.CredentialMutation{}); err != nil {
+		t.Fatal(err)
+	}
+	tester := &blockingServiceTester{started: make(chan struct{}), canceled: make(chan struct{}), release: make(chan struct{})}
+	handler, err := NewWithDependencies(contract.DefaultVersionResponse("test", "abc1234"), Dependencies{
+		ServiceStore: store, ServiceTester: tester, ControlToken: testControlToken,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handlerDone := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		handler.ServeHTTP(writer, request)
+		close(handlerDone)
+	}))
+	defer server.Close()
+	defer close(tester.release)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, server.URL+ServicesPath+"/service_test/test", strings.NewReader(`{"protocol":"openai.chat","model":"test-model","stream":true}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Authorization", "Bearer "+testControlToken)
+	request.Header.Set("Content-Type", "application/json")
+	clientDone := make(chan struct{})
+	go func() {
+		defer close(clientDone)
+		response, _ := server.Client().Do(request)
+		if response != nil {
+			_ = response.Body.Close()
+		}
+	}()
+	select {
+	case <-tester.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("service test did not reach the tester")
+	}
+	if ctx.Err() != nil {
+		t.Fatal("client context was already canceled before the test began")
+	}
+	cancel()
+	select {
+	case <-tester.canceled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("tester context was not canceled after the client disconnected")
+	}
+	select {
+	case <-handlerDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("control handler did not finish after cancellation")
+	}
+	select {
+	case <-clientDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("canceled client request did not return")
+	}
 }
 
 func TestServiceTestAPI(t *testing.T) {

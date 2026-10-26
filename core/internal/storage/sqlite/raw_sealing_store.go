@@ -187,6 +187,8 @@ FROM raw_key_envelopes WHERE key_id = ?`, state.KeyID)
 		switch envelope.Kind {
 		case rawseal.KindPassword:
 			state.Password = &envelope
+		case rawseal.KindBiometric:
+			state.Biometric = &envelope
 		}
 	}
 	if err := envelopeRows.Err(); err != nil {
@@ -220,6 +222,10 @@ func validateRawKeyEnvelope(envelope storagecontract.RawKeyEnvelope) error {
 	case rawseal.KindPassword:
 		if _, err := rawseal.ParseKDFJSON(envelope.KDFJSON); err != nil || len(envelope.Salt) != rawseal.SaltBytes {
 			return fmt.Errorf("%w: raw password envelope", storagecontract.ErrInvalidArgument)
+		}
+	case rawseal.KindBiometric:
+		if envelope.KDFJSON != rawseal.BiometricKDFJSON || len(envelope.Salt) != rawseal.SaltBytes {
+			return fmt.Errorf("%w: raw biometric envelope", storagecontract.ErrInvalidArgument)
 		}
 	default:
 		return fmt.Errorf("%w: raw key envelope kind", storagecontract.ErrInvalidArgument)
@@ -315,6 +321,21 @@ func (store *Store) PutRawKeyEnvelope(ctx context.Context, keyID int64, envelope
 		}
 		if envelope.Kind == rawseal.KindPassword {
 			store.rawKey.notePassword(keyID)
+		}
+		return nil
+	})
+}
+
+// DeleteRawKeyEnvelope removes an envelope on a secure-delete connection, so
+// a biometric envelope taken out after a password change leaves no bytes in
+// free pages.
+func (store *Store) DeleteRawKeyEnvelope(ctx context.Context, keyID int64, kind string) error {
+	if kind == rawseal.KindPassword {
+		return fmt.Errorf("%w: the password envelope is replaced, never removed", storagecontract.ErrInvalidArgument)
+	}
+	return store.withSecureDelete(ctx, true, func(conn *sql.Conn) error {
+		if _, err := conn.ExecContext(ctx, `DELETE FROM raw_key_envelopes WHERE key_id = ? AND kind = ?`, keyID, kind); err != nil {
+			return fmt.Errorf("delete raw key envelope: %w", err)
 		}
 		return nil
 	})

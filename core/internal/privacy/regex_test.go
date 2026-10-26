@@ -479,3 +479,104 @@ func TestBuiltinRegexRulesKeepValueGroupsInCustomMode(t *testing.T) {
 		}
 	}
 }
+
+// The generic rules match whatever follows a key name or Bearer, so they are
+// the ones that see code and docs naming a credential instead of holding one.
+func TestGenericSecretRulesSkipReferencesTemplatesAndPlaceholders(t *testing.T) {
+	for _, text := range []string{
+		// Environment and configuration references.
+		"api_key = process.env.OPENAI_API_KEY",
+		"apiKey: import.meta.env.VITE_OPENAI_KEY",
+		"token = os.environ.get(\"GITHUB_TOKEN\")",
+		"secret = settings.SECRET_KEY_2024",
+		"auth_token: this.props.authToken2",
+		"password = config.database.password1",
+		// Function calls and indexing.
+		"password = get_password_from_vault()",
+		"token=load_token_v2(path)",
+		"api_key=api_secrets_v2[\"openai\"]",
+		// Templates and variables.
+		"api_key=${OPENAI_API_KEY}",
+		`token: "{{ secrets.GITHUB_TOKEN }}"`,
+		"password: ${{ secrets.DB_PASSWORD }}",
+		"token=prefix_1234567890${SUFFIX}",
+		"token=abc123def456%SUFFIX%",
+		"api_key=<your-api-key-0001>",
+		"Authorization: Bearer ${TOKEN}",
+		// Placeholders and examples.
+		"api_key=your_api_key_here",
+		"API_KEY=YOUR_API_KEY_1234",
+		"token: xxxxxxxxxxxxxxxxxxxx",
+		"token: xxxx-xxxx-xxxx-1234",
+		"password=changeme123456",
+		"api_key=test-key-12345678",
+		"token: example-token-0123456789",
+		"api_key: sample_key_000111222",
+		"secret=REDACTED_VALUE_000",
+		"api_key=dummy_secret_value_42",
+		"token=fake_token_for_ci_42",
+		"Authorization: Bearer YOUR_ACCESS_TOKEN",
+		"Authorization: Bearer your-token-goes-here-123",
+		"Authorization: Bearer xxxxxxxxxxxxxxxxxxxxxxxx",
+		// Values that repeat too much or carry no digit.
+		"token: aaaaaaaaaaaa1111",
+		"password=abababababab1212",
+		"api_key=someLongVariableName",
+		"Authorization: Bearer authentication_scheme_name",
+	} {
+		t.Run(text, func(t *testing.T) {
+			if got := regexFindingTexts(t, NewRegexDetector(), text); len(got) != 0 {
+				t.Fatalf("findings = %q", got)
+			}
+		})
+	}
+}
+
+func TestGenericSecretRulesKeepGeneratedCredentials(t *testing.T) {
+	const jwt = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U"
+	// Split so GitHub push protection does not take the fake for a Slack token.
+	const slackToken = "xox" + "b-283749105628-3948571029384-Qw8Rt2Yp5Lm9Nx3Vb7Kc1Zd4"
+	tests := []struct {
+		text string
+		want string
+	}{
+		{"api_key=9f3a1c7e5b2d4f6a8c0e1b3d5f7a9c2e", "9f3a1c7e5b2d4f6a8c0e1b3d5f7a9c2e"},
+		{"X-API-Key: 4f9e2b7c1a8d3e6f0b5c2a9d7e4f1b3c", "4f9e2b7c1a8d3e6f0b5c2a9d7e4f1b3c"},
+		{`{"secret": "7d793037a0760186574b0282f2f435e7"}`, "7d793037a0760186574b0282f2f435e7"},
+		{"token: ya29.a0AfH6SMBx3k9qz8Q7rT2LmNcV0pWdYe1uI4oS", "ya29.a0AfH6SMBx3k9qz8Q7rT2LmNcV0pWdYe1uI4oS"},
+		{"refresh_token=1//0gK7xQ9vL2mN8pR4tW6yZ1aB3cD5eF7gH9iJ", "1//0gK7xQ9vL2mN8pR4tW6yZ1aB3cD5eF7gH9iJ"},
+		{"token: " + slackToken, slackToken},
+		{"password=Tr0ub4dor3xyz", "Tr0ub4dor3xyz"},
+		{"api_key=AbcD3fGhIjK1mNoP", "AbcD3fGhIjK1mNoP"},
+		{"Authorization: Bearer 9f3a1c7e5b2d4f6a8c0e", "9f3a1c7e5b2d4f6a8c0e"},
+		{"Authorization: Bearer " + jwt, jwt},
+		// A credential pasted next to code is still found.
+		{"token = 'k8Jd2nQ7xR4mT9pL3vZ6' # rotate monthly", "k8Jd2nQ7xR4mT9pL3vZ6"},
+	}
+	detector := NewRegexDetector()
+	for _, test := range tests {
+		t.Run(test.text, func(t *testing.T) {
+			got := regexFindingTexts(t, detector, test.text)
+			if want := []string{"common_secret:" + test.want}; !slices.Equal(got, want) {
+				t.Fatalf("findings = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+func TestVendorSecretRulesKeepTheirShapesWhateverTheValue(t *testing.T) {
+	// Vendor prefixes are evidence enough; the generic checks do not apply.
+	for _, text := range []string{
+		"key sk-proj-abcdefghijklmnopqrstuvwxyz",
+		"key AKIAABCDEFGHIJKLMNOP",
+		"key ghp_abcdefghijklmnopqrstuvwxyz",
+		"key github_pat_abcdefghijklmnopqrstuvwxyz",
+	} {
+		t.Run(text, func(t *testing.T) {
+			got := regexFindingTexts(t, NewRegexDetector(), text)
+			if len(got) != 1 || !strings.HasPrefix(got[0], "common_secret:") {
+				t.Fatalf("findings = %q", got)
+			}
+		})
+	}
+}

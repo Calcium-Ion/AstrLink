@@ -55,41 +55,47 @@ describe("raw access proof outcomes", () => {
 });
 
 describe("raw access lists", () => {
-  it("reads pending requests, running grants, and the unlock state", () => {
+  it("reads pending requests and running grants, one of them until lock", () => {
     const running = {
       ...grant,
       grant_id: "rawgrant_1111111111111111",
       status: "approved",
-      decision: "window_5m",
+      decision: "until_lock",
       scope: "all_requests",
+      expires_at: null,
     };
     expect(
-      parseRawAccessList({ items: [grant], active: [running], unlocked: true }),
+      parseRawAccessList({ items: [grant], active: [running] }),
     ).toMatchObject({
       pending: [{ grant_id: grant.grant_id, scope: null }],
-      active: [{ decision: "window_5m", scope: "all_requests" }],
-      unlocked: true,
+      active: [
+        { decision: "until_lock", scope: "all_requests", expires_at: null },
+      ],
     });
   });
 
   it("rejects removed decisions, unknown scopes, and missing fields", () => {
-    expect(() =>
-      parseRawAccessList({
-        items: [{ ...grant, decision: "window_15m" }],
-        active: [],
-        unlocked: false,
-      }),
-    ).toThrow("$.items[0].decision");
+    for (const decision of ["window_15m", "window_5m"]) {
+      expect(() =>
+        parseRawAccessList({
+          items: [{ ...grant, decision }],
+          active: [],
+        }),
+      ).toThrow("$.items[0].decision");
+    }
     expect(() =>
       parseRawAccessList({
         items: [],
         active: [{ ...grant, scope: "session" }],
-        unlocked: false,
       }),
     ).toThrow("$.active[0].scope");
-    expect(() => parseRawAccessList({ items: [], active: [] })).toThrow(
-      "$.unlocked",
-    );
+    expect(() =>
+      parseRawAccessList({
+        items: [{ ...grant, expires_at: "soon" }],
+        active: [],
+      }),
+    ).toThrow("$.items[0].expires_at");
+    expect(() => parseRawAccessList({ items: [] })).toThrow("$.active");
   });
 });
 

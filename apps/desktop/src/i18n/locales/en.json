@@ -15,10 +15,11 @@
     "add": "Add model",
     "progress": "Completed {{done}} / {{total}}",
     "finished": "Batch completed {{done}} / {{total}}",
-    "stopping": "Stopping; waiting for requests already sent…",
-    "stoppingShort": "Stopping…",
+    "stopping": "Cancelling active requests…",
+    "stoppingShort": "Cancelling…",
     "successCount": "Passed {{count}}",
     "failedCount": "Failed {{count}}",
+    "cancelledCount": "Cancelled {{count}}",
     "stoppedCount": "Not run {{count}}",
     "progressLabel": "Batch test progress",
     "status": "Status",
@@ -27,7 +28,7 @@
     "detailsNamed": "View test response for {{model}}",
     "empty": "Search configured models, or enter and add a model ID.",
     "back": "Back to models",
-    "stop": "Stop queue",
+    "stop": "Cancel tests",
     "retry": "Retry failed ({{count}})",
     "start": "Test {{count}} models",
     "state": {
@@ -36,6 +37,7 @@
       "running": "Testing",
       "success": "Passed",
       "failed": "Failed",
+      "cancelled": "Cancelled",
       "stopped": "Not run"
     }
   },
@@ -98,6 +100,13 @@
     "run": "Start test",
     "testing": "Testing…",
     "running": "Waiting for the API provider response (up to 60 seconds)…",
+    "cancel": "Cancel test",
+    "cancelling": "Cancelling…",
+    "cancelled": "Test cancelled",
+    "cancelledDescription": "Stopped waiting for the provider response.",
+    "cancelFailed": "Could not cancel the test.",
+    "alreadyRunning": "A test is already running for this provider.",
+    "invalidId": "The test request has an invalid ID.",
     "success": "Test passed",
     "failed": "Test failed",
     "output": "API provider response",
@@ -638,31 +647,23 @@
     "description": "Add your existing model services to AstrLink, then connect your clients through the local gateway.",
     "skip": "Set up later",
     "open": "Setup guide",
-    "progress": "{{count}} of 4 steps complete",
+    "progress": "{{count}} of 3 steps complete",
     "steps": "Setup steps",
     "step": "Step {{count}}",
     "resumeHint": "Your progress is saved. Return anytime through Setup guide at the bottom right of Overview.",
     "deferredHint": "Continue setup anytime from Setup guide at the bottom right.",
-    "passwordTitle": "Protect raw request content",
-    "passwordShort": "Only you can view raw content",
     "serviceTitle": "Add an API provider",
     "serviceShort": "Connect an existing model service",
     "tokenTitle": "Create an access token",
     "tokenShort": "Give your client a local key",
     "clientTitle": "Connect your client",
     "clientShort": "Make your first successful request",
-    "passwordBody": "Raw requests and responses are stored encrypted with a password you set. Only you can view them; other programs on this computer, AI agents included, cannot read them.",
-    "passwordAction": "Set up",
-    "passwordDone": "Raw protection is set up.",
-    "passwordLoading": "Reading the raw protection state…",
-    "passwordLoadFailed": "Could not read the raw protection state: {{message}}. It is retried shortly.",
     "serviceBody": "AstrLink needs a model source. Add an API service or subscription account you already use.",
     "serviceOptions": "Have an API key? Choose your provider and enter its URL and key. Have a subscription? Choose the subscription service and authorize your account.",
     "serviceHelp": "What do I need to prepare?",
     "serviceHelpBody": "Have your provider’s API URL and API key ready, or sign in with a subscription account. Fetch or add available models before saving, and keep the provider enabled.",
     "manageServices": "Check provider setup",
     "serviceIncomplete": "The provider is not ready yet. Make sure it is enabled, has models, and any subscription authorization is complete.",
-    "finishPassword": "Set up raw protection before adding an API provider.",
     "next": "Continue",
     "tokenBody": "An access token lets your client connect to the local AstrLink gateway. Create a separate token for each client to track usage.",
     "tokenHelp": "Create a token with a recognizable name, such as “My coding assistant”. Use this access token as the client’s API key. Keep your upstream API key in the provider configuration.",
@@ -1640,7 +1641,8 @@
       "allowlisted": "Matches the allowlist, so the match is ignored.",
       "placeholder": "Already a placeholder; no further replacement is needed.",
       "unrepresentable": "No usable replacement can be generated, so the match is ignored.",
-      "astrlink_identifier": "An ID AstrLink generated itself, such as an access token ID. It grants no access, so the match is ignored."
+      "astrlink_identifier": "An ID AstrLink generated itself, such as an access token ID. It grants no access, so the match is ignored.",
+      "example_value": "A card number payment providers publish for test payments. It belongs to no one, so the match is ignored."
     },
     "testAction": {
       "allow": "The current policy allows the request and keeps the original.",
@@ -1682,6 +1684,7 @@
     "redactTypesHint": "Choose which sensitive values to replace and how they appear upstream.",
     "title": "Privacy protection",
     "description": "Detect sensitive content with rules or a local model before the request goes upstream.",
+    "pageDescription": "Finds and replaces sensitive content on this device before a request goes upstream. By default only common secrets are replaced. Turn on other kinds as needed.",
     "readyHint": "Policies and models stay on this machine.",
     "waiting": "You can manage the safety policy after the gateway is ready",
     "enable": "Enable privacy protection",
@@ -1729,9 +1732,9 @@
       "policy": "Couldn't read the current privacy settings. Click Refresh at the top right and try again.",
       "sample": "This text can't be checked in the selected request format. Edit the text or choose another format, then try again."
     },
-    "importStarted": "Local model import started. Watch progress under Installed.",
-    "installStarted": "Model install started. Watch progress under Installed.",
-    "updateStarted": "The new version is downloading. When it is ready, switch to it under Installed.",
+    "importStarted": "Local model import started. Progress is shown on the model card.",
+    "installStarted": "Model download started. Progress is shown on the model card.",
+    "updateStarted": "The new version is downloading. Switch to it from the model card when it is ready.",
     "installFailed": "Unable to start installing the local model.",
     "probeMismatch": "The checked model does not match the selected version. Refresh the model catalog and try again.",
     "variantIncompatible": "This model version does not support the current device. Choose another version and try again.",
@@ -1966,7 +1969,7 @@
     "resetConfirm": "Restore defaults",
     "resetKindRulesTitle": "Restore per-kind redaction defaults?",
     "resetKindRulesWarnTitle": "Restore per-kind detection and notification defaults?",
-    "resetKindRulesHint": "Every kind's switch, placeholder style, and notification return to their defaults: {{off}} off, every other kind on, and every kind notifies. New requests use it immediately.",
+    "resetKindRulesHint": "Every kind's switch, placeholder style, and notification return to their defaults. Only {{on}} stays on, every other kind turns off, and every kind notifies. New requests use it immediately.",
     "resetRestoreTitle": "Restore request & response defaults?",
     "resetRestoreHint": "These switches return to their defaults. New requests use them immediately.",
     "defaultOn": "On",
@@ -2291,6 +2294,7 @@
     "deleteSessionTitle": "Delete this session",
     "deleteSessionsTitle": "Delete {{count}} sessions",
     "deleteSessionsBody": "This permanently deletes {{calls}} and any encrypted audit content.",
+    "deleteSessionsWithSubagentsBody": "This permanently deletes {{calls}}, {{subagents}} and any encrypted audit content.",
     "callCount_one": "{{count}} call",
     "callCount_other": "{{count}} calls",
     "cleanUp": "Clean up",
@@ -2424,7 +2428,13 @@
     "moreFilters": "More filters",
     "activeFilters": "Active filters",
     "moreActiveFilters": "+{{count}} more",
-    "filterCount": "{{count}} selected"
+    "filterCount": "{{count}} selected",
+    "subagent": "Subagent",
+    "subagentCount_one": "{{count}} subagent",
+    "subagentCount_other": "{{count}} subagents",
+    "subagentList": "Subagents it started",
+    "parentConversation": "Parent conversation",
+    "parentConversationHint": "Open the conversation that started this one"
   },
   "conversation": {
     "tab": "Summary",
@@ -2692,7 +2702,8 @@
       "low_confidence": "Below threshold",
       "allowlisted": "Allowlisted",
       "kind_disabled": "Type off",
-      "astrlink_identifier": "AstrLink ID"
+      "astrlink_identifier": "AstrLink ID",
+      "example_value": "Test card"
     },
     "policyAllowHint": "The policy left the request unchanged; the body is under Client.",
     "policyTrustedHint": "This provider is trusted, so the policy did not check the request and it went upstream as written. The body is under Client.",
@@ -2885,6 +2896,10 @@
     "rawAccess": {
       "notificationTitle": "An agent asks to read raw content",
       "notificationBody": "Approve or deny it in the AstrLink approval window."
+    },
+    "rawBiometric": {
+      "unlockReason": "unlock raw request content",
+      "approveReason": "approve an agent's request to read raw content"
     },
     "privacyWarning": {
       "title": "Sent to the model as is: {{kinds}}",
@@ -3792,16 +3807,12 @@
     "providerWarning": "The raw content will be sent to the model provider this agent uses.",
     "queued": "{{count}} more waiting after this one",
     "once": "Approve once",
-    "window5m": "Approve for 5 minutes",
     "window1h": "Approve for 1 hour",
     "deny": "Deny",
     "onceHint": "“Approve once” lets it read this one request's raw content, one time.",
-    "timedWarning": "“Approve for 5 minutes” and “Approve for 1 hour” let it read the raw content of all requests until the time is up, including requests made in that time, as often as it wants.",
-    "locked": "AstrLink is locked, so approving needs the raw password.",
-    "lockedMeanwhile": "AstrLink locked in the meantime. Enter the raw password to approve.",
+    "timedWarning": "“Approve until lock” and “Approve for 1 hour” let it read the raw content of all requests, including requests made later, as often as it wants. “Approve until lock” ends when the screen locks, the computer sleeps, AstrLink quits, or you click “Lock”.",
     "closeHint": "Closing this window decides nothing. The request waits until it expires, and you can reopen this window from the tray.",
     "approvedOnce": "“{{client}}” may read the raw content once",
-    "approved5m": "“{{client}}” may read the raw content of all requests for 5 minutes",
     "approved1h": "“{{client}}” may read the raw content of all requests for 1 hour",
     "denied": "Raw access request denied",
     "denyFailed": "Could not deny the raw access request: {{message}}",
@@ -3818,19 +3829,28 @@
       "revoke": "Revoke",
       "revoked": "“{{client}}” can no longer read raw content",
       "revokeFailed": "Could not revoke: {{message}}",
-      "closeKeeps": "These agents can still read raw content after you close this window. You can also revoke access from the tray."
-    }
+      "closeKeeps": "These agents can still read raw content after you close this window. You can also revoke access from the tray.",
+      "untilLock": "until the screen locks"
+    },
+    "untilLock": "Approve until lock",
+    "approvedUntilLock": "“{{client}}” may read the raw content of all requests until the screen locks",
+    "proofPassword": "Approving needs the raw password.",
+    "proofTouchId": "After you click an approval, confirm it with Touch ID.",
+    "usePassword": "Use the raw password",
+    "useTouchId": "Use Touch ID"
   },
   "rawSealing": {
     "title": "Raw protection",
     "state": {
       "unset": "Not set",
       "password": "Password",
-      "unknown": "Unknown"
+      "unknown": "Unknown",
+      "biometric": "Password and Touch ID"
     },
     "hint": {
       "unset": "Until setup is done, raw content of new requests is not saved. Request forwarding is unaffected.",
-      "password": "Viewing raw content and approving agent requests need the password. A forgotten password can only be reset, which discards all saved raw content."
+      "password": "Viewing raw content and approving agent requests need the password. A forgotten password can only be reset, which discards all saved raw content.",
+      "biometric": "Viewing raw content and approving agent requests take Touch ID or the password. A forgotten password can only be reset, which discards all saved raw content."
     },
     "loadFailed": "Could not read the raw protection state: {{message}}",
     "set": "Set",
@@ -3897,13 +3917,30 @@
     "withheldDetail": "This part was captured but is not shown in this view.",
     "notKept": "Not saved",
     "notKeptDetail": "Raw protection was not set up when this was recorded, so this raw content was not saved.",
+    "notKeptHint": "With raw protection set up, new requests save their raw content encrypted.",
     "unlockTitle": "Unlock raw content",
     "unlockDescription": "Unlocking shows sealed raw content on this device. It locks again after {{minutes}} minutes without activity.",
     "unlocked": "Raw content unlocked",
     "unlockedHint": "Raw content is unlocked. It locks after {{minutes}} minutes without activity.",
     "lockedNow": "Raw content locked",
     "lockFailed": "Could not lock raw content: {{message}}",
-    "unlockUnavailable": "Raw protection is not set up, so raw content cannot be unlocked."
+    "unlockUnavailable": "Raw protection is not set up, so raw content cannot be unlocked.",
+    "unlockDescriptionUntilLock": "Unlocking shows sealed raw content on this device. It locks again when the screen locks, the computer sleeps, or AstrLink quits.",
+    "unlockedHintUntilLock": "Raw content is unlocked. It locks when the screen locks, the computer sleeps, or AstrLink quits.",
+    "biometric": {
+      "use": "Use Touch ID",
+      "enable": "Turn on Touch ID",
+      "disable": "Turn off Touch ID",
+      "enableTitle": "Use Touch ID for raw content",
+      "enableDescription": "With Touch ID on, viewing raw content and approving agent requests take your fingerprint. The raw password keeps working. Enter it to turn Touch ID on.",
+      "enabled": "Touch ID is on",
+      "disabled": "Touch ID is off",
+      "disableTitle": "Turn off Touch ID?",
+      "disableDescription": "Viewing raw content and approving agent requests will take the raw password again.",
+      "cancelled": "Touch ID was canceled. Try again, or enter the raw password.",
+      "unavailable": "Touch ID is not available right now. Enter the raw password.",
+      "disableFailed": "Could not turn off Touch ID: {{message}}"
+    }
   },
   "dataErrors": {
     "rawSealing": "Invalid raw sealing data ({{path}}): {{detail}}",
