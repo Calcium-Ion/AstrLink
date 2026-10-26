@@ -2318,7 +2318,7 @@
     "toolDuration": "Tool time",
     "averageTTFT": "Average TTFT",
     "outputSpeed": "Output speed (TPS)",
-    "modelDurationHint": "Model time sums individual model calls, including retries. Active calls update live; gaps between calls are excluded.",
+    "modelDurationHint": "Model time is the total time model calls were running, including retries. Overlapping calls count once, running calls update live, and gaps between calls are excluded.",
     "toolDurationHint": "Tool time is estimated from gaps between model calls in the same user turn. It includes client scheduling, network and possible waiting time, excludes gaps between user turns and retry backoff, and is not exact tool execution time.",
     "averageTTFTHint": "TTFT averages the time from sending the upstream request to receiving the first non-empty text, reasoning or tool call content, using streaming calls with recorded first-token timing.",
     "outputSpeedHint": "TPS divides total output tokens by total call duration for eligible calls. Duration runs from the request to the end of the response, TTFT included, and covers streaming and non-streaming calls. Calls without complete usage are excluded.",

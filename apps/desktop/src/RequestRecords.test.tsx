@@ -243,7 +243,7 @@ function sessionFromRecord(
   record: RequestRecord,
   overrides: Partial<RequestSession> = {},
 ): RequestSession {
-  return {
+  const session: RequestSession = {
     id: record.session_id ?? record.id,
     title: record.input_preview ?? record.requested_model ?? "",
     started_at: record.started_at,
@@ -254,6 +254,7 @@ function sessionFromRecord(
       (record.completed_at
         ? Date.parse(record.completed_at) - Date.parse(record.started_at)
         : 0),
+    running_since: null,
     active_request_starts:
       record.status === "pending" &&
       record.latency_ms === null &&
@@ -269,6 +270,15 @@ function sessionFromRecord(
     local_access_token_id: record.local_access_token_id,
     ...overrides,
   };
+  // The client adds the time since the one merged running block, so fixtures
+  // that only name the starts begin it at the earliest one.
+  if (
+    session.active_request_starts.length > 0 &&
+    session.running_since === null
+  ) {
+    session.running_since = session.active_request_starts[0]!;
+  }
+  return session;
 }
 
 function sessionDetail(record: RequestRecord) {
@@ -915,6 +925,7 @@ describe("RequestRecords", () => {
           status: "succeeded",
           completed_at: "2026-07-28T12:00:11Z",
           duration_ms: 23_000,
+          running_since: null,
           active_request_starts: [],
         },
       ],

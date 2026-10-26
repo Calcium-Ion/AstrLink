@@ -57,6 +57,7 @@ const fullSession = {
   started_at: "2026-08-16T10:00:00Z",
   last_started_at: "2026-08-16T10:01:00Z",
   duration_ms: 120,
+  running_since: null,
   active_request_starts: [],
   completed_at: "2026-08-16T10:01:30Z",
   turn_count: 2,
@@ -93,21 +94,28 @@ const nullOptionalRecord = {
 };
 
 describe("reasoning effort metadata", () => {
-  it("validates recorded runtime and active request timestamps", () => {
+  it("validates recorded runtime, the running block and active request timestamps", () => {
     expect(
       parseRequestSession({
         ...fullSession,
         duration_ms: 5000,
+        running_since: "2026-08-16T10:01:00Z",
         active_request_starts: ["2026-08-16T10:01:00Z"],
       }),
     ).toMatchObject({
       duration_ms: 5000,
+      running_since: "2026-08-16T10:01:00Z",
       active_request_starts: ["2026-08-16T10:01:00Z"],
     });
     for (const duration_ms of [-1, 1.5, "12"]) {
       expect(() =>
         parseRequestSession({ ...fullSession, duration_ms }),
       ).toThrow(/duration_ms/);
+    }
+    for (const running_since of [undefined, "invalid", 42]) {
+      expect(() =>
+        parseRequestSession({ ...fullSession, running_since }),
+      ).toThrow(/running_since/);
     }
     for (const active_request_starts of [null, "invalid", ["invalid"], [42]]) {
       expect(() =>
@@ -651,6 +659,7 @@ describe("request-record IPC contract", () => {
         started_at: "2026-08-16T10:00:00Z",
         last_started_at: "2026-08-16T10:01:00Z",
         duration_ms: 120,
+        running_since: null,
         active_request_starts: [],
         completed_at: "2026-08-16T10:01:30Z",
         turn_count: 2,
@@ -667,6 +676,7 @@ describe("request-record IPC contract", () => {
       started_at: "2026-08-16T10:00:00Z",
       last_started_at: "2026-08-16T10:01:00Z",
       duration_ms: 120,
+      running_since: null,
       tool_duration_ms: null,
       average_ttft_ms: null,
       output_tokens_per_second: null,
@@ -687,6 +697,7 @@ describe("request-record IPC contract", () => {
       started_at: "2026-08-16T10:00:00Z",
       last_started_at: "2026-08-16T10:00:00Z",
       duration_ms: 120,
+      running_since: null,
       active_request_starts: [],
       completed_at: "2026-08-16T10:00:01Z",
       turn_count: 1,
@@ -960,6 +971,7 @@ describe("subagent links", () => {
     started_at: "2026-10-24T10:00:00Z",
     last_started_at: "2026-10-24T10:00:05Z",
     duration_ms: 120,
+    running_since: null,
     active_request_starts: [],
     completed_at: "2026-10-24T10:00:06Z",
     turn_count: 1,

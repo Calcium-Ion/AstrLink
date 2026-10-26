@@ -332,6 +332,7 @@ function sessionSummaryKey(session: RequestSession): string {
     session.last_started_at,
     session.completed_at ?? "",
     session.duration_ms,
+    session.running_since ?? "",
     session.tool_duration_ms ?? "",
     session.average_ttft_ms ?? "",
     session.output_tokens_per_second ?? "",
@@ -2558,7 +2559,7 @@ export function RequestRecords({
  * a label counting up.
  */
 function SessionDuration({ session }: { session: RequestSession }) {
-  const nowMs = useLiveClock(session.active_request_starts.length > 0);
+  const nowMs = useLiveClock(session.running_since !== null);
   return <>{formatDuration(sessionRuntimeMs(session, nowMs))}</>;
 }
 
@@ -2827,7 +2828,7 @@ const DiscoveryRow = memo(function DiscoveryRow({
   onOpen: (sessionId: string) => void;
 }) {
   const t = useT();
-  const nowMs = useLiveClock(session.active_request_starts.length > 0);
+  const nowMs = useLiveClock(session.running_since !== null);
   const service = requestServiceIdentity(session, services);
   const behavior = rowBehavior(session, checked, selected, onOpen, t);
   return (
@@ -2912,7 +2913,7 @@ const SessionRow = memo(function SessionRow({
   const t = useT();
   // The elapsed time is interpolated into a translated sentence, so the row is
   // the smallest thing that can repaint it. Only active requests tick.
-  const nowMs = useLiveClock(session.active_request_starts.length > 0);
+  const nowMs = useLiveClock(session.running_since !== null);
   const service = requestServiceIdentity(session, services);
   const behavior = rowBehavior(session, checked, selected, onOpen, t);
   const title = compactTitle(session.title) || t("records.untitledSession");

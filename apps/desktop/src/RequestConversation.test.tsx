@@ -103,6 +103,7 @@ const session: RequestSession = {
   last_started_at: calls[4]!.started_at,
   completed_at: calls[4]!.completed_at,
   duration_ms: 46_000,
+  running_since: null,
   active_request_starts: [],
   turn_count: 2,
   call_count: 5,

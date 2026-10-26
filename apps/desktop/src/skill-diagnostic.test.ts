@@ -146,6 +146,7 @@ const session: RequestSession = {
   last_started_at: root.started_at,
   completed_at: root.completed_at,
   duration_ms: root.latency_ms ?? 0,
+  running_since: null,
   active_request_starts: [],
   turn_count: 1,
   call_count: 2,

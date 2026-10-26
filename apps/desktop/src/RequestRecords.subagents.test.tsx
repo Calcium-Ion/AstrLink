@@ -68,6 +68,7 @@ function session(overrides: Partial<RequestSession>): RequestSession {
     last_started_at: "2026-10-24T11:59:00Z",
     completed_at: "2026-10-24T11:59:02Z",
     duration_ms: 2000,
+    running_since: null,
     active_request_starts: [],
     turn_count: 1,
     call_count: 3,
@@ -130,6 +131,7 @@ const working = session({
   last_started_at: "2026-10-24T12:00:05Z",
   completed_at: null,
   status: "pending",
+  running_since: "2026-10-24T12:00:05Z",
   active_request_starts: ["2026-10-24T12:00:05Z"],
 });
 const finished = session({
@@ -334,6 +336,7 @@ describe("RequestRecords subagents", () => {
       ...working,
       status: "succeeded" as const,
       completed_at: "2026-10-24T11:59:30Z",
+      running_since: null,
       active_request_starts: [],
     };
     const orphan = session({

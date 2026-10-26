@@ -28,6 +28,7 @@ function session(overrides: Partial<RequestSession> = {}): RequestSession {
     last_started_at: at(-30_000),
     completed_at: at(-20_000),
     duration_ms: 10_000,
+    running_since: null,
     active_request_starts: [],
     turn_count: 1,
     call_count: 3,

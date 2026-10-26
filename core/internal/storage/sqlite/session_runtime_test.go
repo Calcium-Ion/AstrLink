@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -59,6 +60,9 @@ func TestSessionRuntimeExcludesIdleGapsAndIncludesRetryCalls(t *testing.T) {
 	if detail.DurationMs != 5000 || detail.CallCount != 3 || len(detail.ActiveRequestStarts) != 0 {
 		t.Fatalf("runtime=%+v", detail.RequestSession)
 	}
+	if detail.RunningSince != nil {
+		t.Fatalf("idle session started a running block: %v", detail.RunningSince)
+	}
 }
 
 func TestSessionRuntimeTracksAllActiveCallsAndFreezesTerminalRecords(t *testing.T) {
@@ -93,7 +97,7 @@ func TestSessionRuntimeTracksAllActiveCallsAndFreezesTerminalRecords(t *testing.
 			t.Fatal(err)
 		}
 	}
-	assertRuntime := func(wantMs int64, wantStarts []time.Time) {
+	assertRuntime := func(wantMs int64, wantStarts []time.Time, wantRunningSince *time.Time) {
 		t.Helper()
 		page, err := store.ListRequestSessions(ctx, storagecontract.RequestSessionListOptions{})
 		if err != nil || len(page.Items) != 1 {
@@ -103,11 +107,15 @@ func TestSessionRuntimeTracksAllActiveCallsAndFreezesTerminalRecords(t *testing.
 		if err != nil || !reflect.DeepEqual(page.Items[0], detail.RequestSession) {
 			t.Fatalf("list=%+v detail=%+v err=%v", page.Items[0], detail.RequestSession, err)
 		}
-		if detail.DurationMs != wantMs || !reflect.DeepEqual(detail.ActiveRequestStarts, wantStarts) {
-			t.Fatalf("runtime=%d active=%v; want %d %v", detail.DurationMs, detail.ActiveRequestStarts, wantMs, wantStarts)
+		if detail.DurationMs != wantMs || !reflect.DeepEqual(detail.ActiveRequestStarts, wantStarts) ||
+			!reflect.DeepEqual(detail.RunningSince, wantRunningSince) {
+			t.Fatalf("runtime=%d active=%v running_since=%v; want %d %v %v",
+				detail.DurationMs, detail.ActiveRequestStarts, detail.RunningSince, wantMs, wantStarts, wantRunningSince)
 		}
 	}
-	assertRuntime(120, []time.Time{active.StartedAt, concurrent.StartedAt})
+	// The finished call overlaps both running calls, so its runtime joins the
+	// one open block instead of ticking twice.
+	assertRuntime(0, []time.Time{active.StartedAt, concurrent.StartedAt}, &start)
 	for _, record := range []contract.RequestRecord{active, concurrent} {
 		record.Status = contract.RequestStatusCancelled
 		record.LatencyMs = ptrInt(2500)
@@ -116,5 +124,101 @@ func TestSessionRuntimeTracksAllActiveCallsAndFreezesTerminalRecords(t *testing.
 			t.Fatal(err)
 		}
 	}
-	assertRuntime(5120, []time.Time{})
+	// [start, start+2.5s] and [start+1s, start+3.5s] merge to 3.5 s.
+	assertRuntime(3500, []time.Time{}, nil)
+}
+
+func TestSessionRuntimeCountsOverlappingCallsOnce(t *testing.T) {
+	start := time.Date(2026, 9, 20, 0, 0, 0, 0, time.UTC)
+	at := func(seconds int) time.Time { return start.Add(time.Duration(seconds) * time.Second) }
+	type call struct {
+		offset  int // seconds from the session start
+		runtime int // seconds; ignored for a running call
+		running bool
+		retry   bool
+	}
+	cases := []struct {
+		name      string
+		calls     []call
+		wantMs    int64
+		wantSince *time.Time
+	}{
+		{
+			name:   "identical calls count once",
+			calls:  []call{{offset: 0, runtime: 10}, {offset: 0, runtime: 10}},
+			wantMs: 10_000,
+		},
+		{
+			name:   "partial overlap counts the shared time once",
+			calls:  []call{{offset: 0, runtime: 10}, {offset: 2, runtime: 10}},
+			wantMs: 12_000,
+		},
+		{
+			name:   "a call nested in another counts once",
+			calls:  []call{{offset: 0, runtime: 10}, {offset: 2, runtime: 1}},
+			wantMs: 10_000,
+		},
+		{
+			name:   "a gap between calls stays excluded",
+			calls:  []call{{offset: 0, runtime: 10}, {offset: 20, runtime: 5}},
+			wantMs: 15_000,
+		},
+		{
+			name:   "retry children add their sequential runtime",
+			calls:  []call{{offset: 0, runtime: 5}, {offset: -1, runtime: 1, retry: true}},
+			wantMs: 6_000,
+		},
+		{
+			// Finished [0 s, 10 s] and running since 5 s merge to one block from
+			// 0 s, so the client adds the time since 0 s, not 10 s plus 15 s.
+			name:      "a running call absorbs the finished call it overlaps",
+			calls:     []call{{offset: 0, runtime: 10}, {offset: 5, running: true}},
+			wantSince: ptrTime(at(0)),
+		},
+		{
+			name:      "every running call joins one block",
+			calls:     []call{{offset: 0, runtime: 4}, {offset: 5, running: true}, {offset: 7, running: true}},
+			wantMs:    4_000,
+			wantSince: ptrTime(at(5)),
+		},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			store := openTestStore(t, filepath.Join(t.TempDir(), "runtime.db"))
+			defer store.Close()
+			ctx := context.Background()
+			sessionID := contract.SessionID("session_overlap")
+			rootID := contract.RequestID("request_0")
+			for index, item := range test.calls {
+				record := contract.RequestRecord{
+					ID: contract.RequestID(fmt.Sprintf("request_%d", index)), SessionID: &sessionID,
+					StartedAt: at(item.offset), Status: contract.RequestStatusSucceeded,
+					InputProtocol: contract.ProtocolOpenAIResponses,
+					Audit:         contract.NotCapturedAuditSummary(),
+				}
+				if item.retry {
+					record.SessionID = nil
+					record.ParentRequestID = &rootID
+				}
+				if item.running {
+					record.Status = contract.RequestStatusPending
+				} else {
+					record.LatencyMs = ptrInt(item.runtime * 1000)
+					record.CompletedAt = ptrTime(at(item.offset + item.runtime))
+				}
+				if err := store.InsertRequestRecord(ctx, record); err != nil {
+					t.Fatal(err)
+				}
+			}
+			page, err := store.ListRequestSessions(ctx, storagecontract.RequestSessionListOptions{})
+			if err != nil || len(page.Items) != 1 {
+				t.Fatalf("page=%+v err=%v", page, err)
+			}
+			session := page.Items[0]
+			if session.DurationMs != test.wantMs || !reflect.DeepEqual(session.RunningSince, test.wantSince) {
+				t.Fatalf("duration=%d running_since=%v; want %d %v",
+					session.DurationMs, session.RunningSince, test.wantMs, test.wantSince)
+			}
+		})
+	}
 }

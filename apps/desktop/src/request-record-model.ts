@@ -349,6 +349,8 @@ export interface RequestSession {
   last_started_at: string;
   completed_at: string | null;
   duration_ms: number;
+  /** Start of the one merged block of running calls; null when none run. */
+  running_since: string | null;
   tool_duration_ms?: number | null;
   average_ttft_ms?: number | null;
   output_tokens_per_second?: number | null;
@@ -1350,6 +1352,13 @@ function parseRequestSessionAt(value: unknown, path: string): RequestSession {
   }
   const durationMs = intAt(session.duration_ms, `${path}.duration_ms`);
   if (durationMs < 0) invalid(`${path}.duration_ms`, "nonNegativeInteger");
+  const runningSince = nullableStringAt(
+    session.running_since,
+    `${path}.running_since`,
+  );
+  if (runningSince !== null && !Number.isFinite(Date.parse(runningSince))) {
+    invalid(`${path}.running_since`, "timestamp");
+  }
   if (!Array.isArray(session.active_request_starts)) {
     invalid(`${path}.active_request_starts`, "array");
   }
@@ -1375,6 +1384,7 @@ function parseRequestSessionAt(value: unknown, path: string): RequestSession {
       `${path}.completed_at`,
     ),
     duration_ms: durationMs,
+    running_since: runningSince,
     tool_duration_ms: optionalPerformanceNumber(
       session.tool_duration_ms,
       `${path}.tool_duration_ms`,

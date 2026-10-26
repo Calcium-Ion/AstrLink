@@ -840,7 +840,13 @@ type RequestSession struct {
 	StartedAt     time.Time  `json:"started_at"`
 	LastStartedAt time.Time  `json:"last_started_at"`
 	CompletedAt   *time.Time `json:"completed_at"`
-	DurationMs    int64      `json:"duration_ms"`
+	// DurationMs is the union of finished call runtimes: overlapping calls
+	// count once, and gaps between calls never count.
+	DurationMs int64 `json:"duration_ms"`
+	// RunningSince starts the one merged runtime block that contains every call
+	// still running, so a client adds the elapsed time once instead of once per
+	// call. Nil when nothing runs.
+	RunningSince *time.Time `json:"running_since"`
 	// ToolDurationMs estimates gaps between calls in the same user turn;
 	// retry backoff and gaps between user turns are excluded. Nil if unknown.
 	ToolDurationMs        *int64        `json:"tool_duration_ms"`
@@ -895,6 +901,9 @@ func (session RequestSession) Validate() error {
 	}
 	if session.DurationMs < 0 {
 		return fmt.Errorf("duration_ms must be non-negative")
+	}
+	if session.RunningSince != nil && session.RunningSince.IsZero() {
+		return fmt.Errorf("running_since must be a valid timestamp")
 	}
 	if session.ToolDurationMs != nil && *session.ToolDurationMs < 0 {
 		return fmt.Errorf("tool_duration_ms must be non-negative")
