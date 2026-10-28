@@ -73,7 +73,7 @@ jobs:
           # symlink into the ort download cache; build-sidecar.mjs now stores
           # a real copy, so older entries must never be reused.
           "workers=windows-workers-v3-$hash-$env:WORKER_HASH" >> $env:GITHUB_OUTPUT
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           shared-key: astrlink-native
           env-vars: ImageOS ImageVersion MACOSX_DEPLOYMENT_TARGET
