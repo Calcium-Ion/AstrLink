@@ -1561,12 +1561,17 @@ async fn save_text_file(
     contents: String,
 ) -> Result<Option<String>, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let Some(file) = app
-            .dialog()
-            .file()
-            .set_file_name(&default_filename)
-            .blocking_save_file()
-        else {
+        let dialog = app.dialog().file().set_file_name(&default_filename);
+        // Windows uses the filter's extension when saving a name without a suffix.
+        let dialog = match std::path::Path::new(&default_filename)
+            .extension()
+            .and_then(|extension| extension.to_str())
+        {
+            Some("md") => dialog.add_filter("Markdown (*.md)", &["md"]),
+            Some("txt") => dialog.add_filter("TXT (*.txt)", &["txt"]),
+            _ => dialog,
+        };
+        let Some(file) = dialog.blocking_save_file() else {
             return Ok(None);
         };
         let path = file.into_path().map_err(|error| error.to_string())?;
