@@ -16,6 +16,7 @@ import (
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/accesstoken"
 	"github.com/QuantumNous/astrlink/core/internal/controlapi"
+	"github.com/QuantumNous/astrlink/core/internal/storage"
 	"github.com/QuantumNous/astrlink/core/internal/storage/rawseal"
 	"github.com/QuantumNous/astrlink/core/internal/storage/sqlite"
 )
@@ -49,6 +50,7 @@ type fixture struct {
 	console *Handler
 	vault   *controlapi.Vault
 	clock   *testClock
+	store   *sqlite.Store
 }
 
 // newFixture wires the console to a real control API and raw vault the way
@@ -59,6 +61,11 @@ func newFixture(t *testing.T, password string) fixture {
 }
 
 func newFixtureWith(t *testing.T, password string, passwordReset bool) fixture {
+	t.Helper()
+	return newFixtureWithVaultStore(t, password, passwordReset, nil)
+}
+
+func newFixtureWithVaultStore(t *testing.T, password string, passwordReset bool, wrap func(storage.RawSealingStore) storage.RawSealingStore) fixture {
 	t.Helper()
 	ctx := context.Background()
 	clock := &testClock{now: time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)}
@@ -76,7 +83,11 @@ func newFixtureWith(t *testing.T, password string, passwordReset bool) fixture {
 	if err != nil {
 		t.Fatalf("access token manager: %v", err)
 	}
-	vault := controlapi.NewRawVault(store, controlapi.RawVaultOptions{KDF: testKDF, Now: clock.Now})
+	var vaultStore storage.RawSealingStore = store
+	if wrap != nil {
+		vaultStore = wrap(vaultStore)
+	}
+	vault := controlapi.NewRawVault(vaultStore, controlapi.RawVaultOptions{KDF: testKDF, Now: clock.Now})
 	sessions := NewSessions()
 	control, err := controlapi.NewWithDependencies(contract.DefaultVersionResponse("0.1.0-test", "abc1234"), controlapi.Dependencies{
 		ServiceStore:       store,
@@ -102,7 +113,7 @@ func newFixtureWith(t *testing.T, password string, passwordReset bool) fixture {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	return fixture{console: console, vault: vault, clock: clock}
+	return fixture{console: console, vault: vault, clock: clock, store: store}
 }
 
 func (f fixture) rawStatus(t *testing.T) controlapi.RawVaultStatus {
