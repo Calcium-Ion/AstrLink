@@ -351,6 +351,7 @@ describe("buildRecordBundle diagnosis context", () => {
     last_started_at: liveTurn.started_at,
     completed_at: null,
     duration_ms: 520_000,
+    running_since: liveTurn.started_at,
     active_request_starts: [liveTurn.started_at],
     turn_count: 2,
     call_count: 2,

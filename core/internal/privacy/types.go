@@ -154,6 +154,10 @@ const (
 	// record without granting access, and an agent reading AstrLink's own
 	// records needs it intact.
 	SuppressionAstrLinkIdentifier SuppressionReason = "astrlink_identifier"
+	// SuppressionExampleValue marks a value only documentation and tests
+	// use: a card number payment providers publish for test payments.
+	// Nobody's private data stands behind it.
+	SuppressionExampleValue SuppressionReason = "example_value"
 )
 
 // Finding identifies a byte range without retaining or returning the matched

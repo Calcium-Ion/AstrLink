@@ -14,8 +14,11 @@ var ErrInvalidJSON = errors.New("convo: request body is not a JSON object")
 // The public Adapter interface stays compatible with custom protocols.
 type requestItem struct {
 	user, assistant, toolResult bool
-	userText                    string
-	echoIDs                     []string
+	// declaresTools is set on an item that offers the model tools, such as
+	// a Responses Lite additional_tools item.
+	declaresTools bool
+	userText      string
+	echoIDs       []string
 }
 
 type requestItemInspector interface {
@@ -71,6 +74,23 @@ type RequestSummary struct {
 	// visible text, or nil when there is none. Policy.NextTurn fingerprints
 	// it to notice a new turn whose history has the same user-message count.
 	LastUserDigest []byte
+	// UserDigests lists, for each of the newest user messages that count
+	// (at most Policy.MaxContinuationUsers), the digest LastUserDigest had
+	// at that message: the newest visible user text at or before it. They
+	// are oldest first and the last equals LastUserDigest, so the digest of
+	// the n-th counted user message is UserDigests[n-1-(UserTurnCount-
+	// len(UserDigests))]. Policy.Resolve uses them to tell which earlier
+	// call of a thread the history continues. Nil when Stateful.
+	UserDigests [][]byte
+	// HasTools is set when the request offers the model tools. Under
+	// Policy.ToolFreeHelpers a request without tools whose history
+	// continues no call of its thread is a helper call, such as a title,
+	// not the conversation's next call.
+	HasTools bool
+	// SideCall is set by the host for a request it recognizes as a helper
+	// call of the conversation, such as a title request. Policy.Resolve
+	// keeps it in the matched turn instead of placing it by its history.
+	SideCall bool
 	// LastUserText and FirstUserText are visible user texts bounded by
 	// Policy.MaxUserTextBytes. They are raw: hosts must redact before display.
 	LastUserText  string
@@ -109,6 +129,7 @@ func (policy Policy) InspectFields(protocol Protocol, fields map[string]json.Raw
 	}
 	summary.ExplicitCursors = adapter.ExplicitCursors(fields)
 	summary.Stateful = adapter.IsStateful(fields)
+	summary.HasTools = offersTools(fields)
 
 	history := fields[adapter.HistoryField()]
 	if text, ok := jsonx.String(history); ok {
@@ -119,6 +140,9 @@ func (policy Policy) InspectFields(protocol Protocol, fields map[string]json.Raw
 			summary.LastUserText = truncateBytes(visible, policy.maxUserTextBytes())
 			summary.FirstUserText = summary.LastUserText
 			summary.LastUserDigest = DigestText(visible, false)
+			if !summary.Stateful {
+				summary.UserDigests = [][]byte{summary.LastUserDigest}
+			}
 		}
 		return summary, nil
 	}
@@ -132,11 +156,16 @@ func (policy Policy) InspectFields(protocol Protocol, fields map[string]json.Raw
 		lastAssistant json.RawMessage
 		haveAssistant bool
 		lastUserText  string
+		// userTexts holds, for each of the newest counted user messages,
+		// the newest user text at or before it; they are digested once the
+		// walk knows which messages are the newest.
+		userTexts = make([]string, 0, min(len(items), policy.maxContinuationUsers()))
 		// opensTurn is whether the next user message would open a turn.
 		opensTurn = true
 	)
 	for _, item := range items {
 		inspected := inspectRequestItem(adapter, item)
+		summary.HasTools = summary.HasTools || inspected.declaresTools
 		user := inspected.user
 		if policy.NotesFollowPrompt {
 			switch {
@@ -158,6 +187,12 @@ func (policy Policy) InspectFields(protocol Protocol, fields map[string]json.Raw
 				summary.LastUserText = truncateBytes(text, policy.maxUserTextBytes())
 				lastUserText = text
 			}
+			if lastUserText != "" {
+				if len(userTexts) == cap(userTexts) {
+					userTexts = append(userTexts[:0], userTexts[1:]...)
+				}
+				userTexts = append(userTexts, lastUserText)
+			}
 		}
 		echoIDs = append(echoIDs, inspected.echoIDs...)
 		if inspected.assistant {
@@ -167,6 +202,19 @@ func (policy Policy) InspectFields(protocol Protocol, fields map[string]json.Raw
 	}
 	if lastUserText != "" {
 		summary.LastUserDigest = DigestText(lastUserText, false)
+	}
+	if !summary.Stateful && len(userTexts) > 0 {
+		summary.UserDigests = make([][]byte, len(userTexts))
+		for index, text := range userTexts {
+			switch {
+			case index == len(userTexts)-1:
+				summary.UserDigests[index] = summary.LastUserDigest
+			case index > 0 && text == userTexts[index-1]:
+				summary.UserDigests[index] = summary.UserDigests[index-1]
+			default:
+				summary.UserDigests[index] = DigestText(text, false)
+			}
+		}
 	}
 	summary.EchoIDs = policy.selectInboundEchoIDs(echoIDs)
 	if haveAssistant {
@@ -178,6 +226,18 @@ func (policy Policy) InspectFields(protocol Protocol, fields map[string]json.Raw
 		}
 	}
 	return summary, nil
+}
+
+// offersTools reports whether the request body declares tools at the top
+// level: tools in every protocol, and OpenAI Chat's legacy functions. An
+// empty list declares none.
+func offersTools(fields map[string]json.RawMessage) bool {
+	for _, name := range []string{"tools", "functions"} {
+		if items, ok := jsonx.Array(fields[name]); ok && len(items) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // selectInboundEchoIDs keeps the newest ids, which sit at the end of the

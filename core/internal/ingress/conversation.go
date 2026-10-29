@@ -18,9 +18,16 @@ var conversationPolicy = convo.DefaultPolicy()
 // conversationPolicyFor reads a request body the way its client lays out
 // user messages. DeepSeek Harness sends its runtime and clock snapshots as
 // plain user messages after the prompt, so only its turn openers are typed.
+// The coding agents named here offer their tools on every call, so a call of
+// theirs without tools that continues none of its thread is a helper call,
+// such as a title.
 func conversationPolicyFor(client contract.ClientType) convo.Policy {
 	policy := conversationPolicy
 	policy.NotesFollowPrompt = client == contract.ClientDeepSeekHarness
+	switch client {
+	case contract.ClientClaudeCode, contract.ClientCodex, contract.ClientOpenCode, contract.ClientDeepSeekHarness:
+		policy.ToolFreeHelpers = true
+	}
 	return policy
 }
 
@@ -53,58 +60,70 @@ func convoProtocol(protocol contract.ProtocolID) (convo.Protocol, bool) {
 	}
 }
 
-// sessionFingerprints lazily derives and caches the fingerprint key from the
-// audit master key. The cache only fills on success so a transient storage
-// error on the first request does not disable fingerprints for the process.
+// sessionFingerprints lazily derives and caches the fingerprint keys from the
+// audit master key: the session key convo links calls with, and the key of
+// the link fingerprints that tie a subagent or a title request to its
+// conversation. The cache only fills on success so a transient storage error
+// on the first request does not disable fingerprints for the process.
 type sessionFingerprints struct {
 	mu          sync.Mutex
 	fingerprint *convo.Fingerprinter
+	link        *convo.Fingerprinter
 }
 
-func (cache *sessionFingerprints) get(ctx context.Context, blobs AuditBlobPersister, logf func(string, ...any)) *convo.Fingerprinter {
+func (cache *sessionFingerprints) get(ctx context.Context, blobs AuditBlobPersister, logf func(string, ...any)) (session, link *convo.Fingerprinter) {
 	if cache == nil || blobs == nil {
-		return nil
+		return nil, nil
 	}
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
 	if cache.fingerprint != nil {
-		return cache.fingerprint
+		return cache.fingerprint, cache.link
 	}
 	master, err := blobs.GetOrCreateAuditKey(ctx)
 	if err != nil {
 		if logf != nil {
 			logf("session fingerprint key unavailable: %v", err)
 		}
-		return nil
+		return nil, nil
 	}
 	cache.fingerprint = convo.NewFingerprinter(convo.DeriveFingerprintKey(master, sessionFingerprintInfo))
-	return cache.fingerprint
+	cache.link = convo.NewFingerprinter(convo.DeriveFingerprintKey(master, linkFingerprintInfo))
+	return cache.fingerprint, cache.link
 }
 
 // sessionLookup adapts the record store to convo.Lookup, binding the
 // principal to the local access token that authenticated this request.
-// statuses, when not nil, learns each matched record's status under
-// matchKey, since convo.Match has no room for it.
+// learned, when not nil, learns each matched record's status and parent link
+// under matchKey, since convo.Match has no room for them.
 func sessionLookup(
 	store RequestRecordStore,
 	accessTokenID *contract.AccessTokenID,
-	statuses map[string]contract.RequestStatus,
+	learned map[string]matchFacts,
 ) convo.Lookup {
 	if store == nil {
 		return nil
 	}
 	return func(ctx context.Context, kind convo.Kind, values []string, scope convo.Scope) (convo.Match, bool, error) {
-		match, ok, err := store.FindSessionLink(ctx, contract.SessionCursorKind(kind), values, storage.SessionCursorScope{
+		cursorScope := storage.SessionCursorScope{
 			SamePrincipal:      scope.SamePrincipal,
 			LocalAccessTokenID: accessTokenID,
 			NotBefore:          scope.NotBefore,
-		})
+		}
+		if scope.Continues != nil {
+			for _, point := range scope.Continues.Points {
+				cursorScope.Continues = append(cursorScope.Continues, storage.SessionTurnPoint{
+					UserMessages: point.UserMessages, Fingerprint: point.LastUserFingerprint,
+				})
+			}
+		}
+		match, ok, err := store.FindSessionLink(ctx, contract.SessionCursorKind(kind), values, cursorScope)
 		if err != nil || !ok {
 			return convo.Match{}, false, err
 		}
 		result := convo.Match{SessionID: string(match.SessionID), Kind: kind, Value: match.Value}
-		if statuses != nil {
-			statuses[matchKey(result)] = match.Status
+		if learned != nil {
+			learned[matchKey(result)] = matchFacts{status: match.Status, parent: match.ParentSessionID}
 		}
 		// A row that stored a turn but no comparison state (written before
 		// migration v23) cannot tell the next request whether it is a new
@@ -119,6 +138,13 @@ func sessionLookup(
 		}
 		return result, true, nil
 	}
+}
+
+// matchFacts is what a lookup learned about a matched record beyond
+// convo.Match.
+type matchFacts struct {
+	status contract.RequestStatus
+	parent *contract.SessionID
 }
 
 // matchKey names a match by the cursor that found it.

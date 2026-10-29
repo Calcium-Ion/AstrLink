@@ -22,15 +22,22 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 
-import { acknowledgeRawKey, setRawPassword, unlockRaw } from "./bridge";
+import {
+  acknowledgeRawKey,
+  enrollRawBiometric,
+  removeRawBiometric,
+  setRawPassword,
+  unlockRaw,
+} from "./bridge";
 import { i18n, useT } from "./i18n";
 import { notify } from "./notify";
 import {
   newPasswordIssue,
+  rawBiometricReady,
   rawPasswordUnset,
   rawProofMode,
   rawProtection,
-  rawSetupNeeded,
+  unlockLastsUntilLock,
   type RawPasswordAction,
   type RawProtection,
   type RawSealingOutcome,
@@ -45,8 +52,8 @@ import { useRawSealingStatus } from "./use-raw-sealing-status";
 
 /**
  * A raw sealing dialog the page asks for; `capture` also turns capture on,
- * `required` is the one the app keeps up until a raw password is set, and
- * `replaced` the one it keeps up for a key replaced outside the desktop.
+ * `replaced` is the one the app keeps up for a key replaced outside the
+ * desktop, and `biometric` and `biometric_off` turn Touch ID on and off.
  */
 export type RawDialog =
   | { kind: "set" }
@@ -54,25 +61,45 @@ export type RawDialog =
   | { kind: "reset" }
   | { kind: "unlock" }
   | { kind: "capture" }
-  | { kind: "required" }
-  | { kind: "replaced" };
+  | { kind: "replaced" }
+  | { kind: "biometric" }
+  | { kind: "biometric_off" };
+
+/** What the raw password summary can ask the page to do. */
+export type RawPanelAction = RawPasswordAction | "biometric" | "biometric_off";
 
 /** Minutes before Core locks an idle unlock session, for the copy. */
 export function unlockIdleMinutes(status: RawSealingState): number {
   return Math.max(1, Math.round(status.unlock_idle_seconds / 60));
 }
 
+/**
+ * When an unlock ends, for the copy: at the screen lock on the desktop, or
+ * after idle minutes where Core keeps that timeout, as the server edition
+ * does. `state` picks the dialog's wording or the open unlock's.
+ */
+export function unlockEndText(
+  status: RawSealingState,
+  state: "dialog" | "unlocked",
+): string {
+  if (unlockLastsUntilLock(status)) {
+    return i18n.t(
+      state === "dialog"
+        ? "rawSealing.unlockDescriptionUntilLock"
+        : "rawSealing.unlockedHintUntilLock",
+    );
+  }
+  return i18n.t(
+    state === "dialog"
+      ? "rawSealing.unlockDescription"
+      : "rawSealing.unlockedHint",
+    { minutes: unlockIdleMinutes(status) },
+  );
+}
+
 /** No raw password protects the raw key, so raw parts are not kept. */
 export function rawPasswordMissing(status: RawSealingState | null): boolean {
   return status?.password_required === true;
-}
-
-/**
- * A raw password still needs setting (see `rawSetupNeeded`); unknown while
- * the status is.
- */
-export function useRawSetupNeeded(status: RawSealingState | null): boolean {
-  return status !== null && rawSetupNeeded(status);
 }
 
 /**
@@ -90,7 +117,7 @@ export function RawPasswordPanel({
   agentAccess?: boolean;
   busy: boolean;
   error: string | null;
-  onAction: (action: RawPasswordAction) => void;
+  onAction: (action: RawPanelAction) => void;
   /** Shows the agent access toggle. */
   onAgentAccessChange?: (enabled: boolean) => void;
   status: RawSealingState | null;
@@ -104,9 +131,21 @@ export function RawPasswordPanel({
 
   const tone = protectionTone(state, missing);
   const label = rawProtectionLabel(state);
-  const hint = state === "password" ? t("rawSealing.hint.password") : null;
+  const hint =
+    state === "biometric"
+      ? t("rawSealing.hint.biometric")
+      : state === "password"
+        ? t("rawSealing.hint.password")
+        : null;
+  // Touch ID is offered where the host can prompt for it.
+  const biometricAction =
+    state === "biometric"
+      ? "biometric_off"
+      : state === "password" && status?.biometric_available
+        ? "biometric"
+        : null;
 
-  const action = (id: RawPasswordAction, text: string) => (
+  const action = (id: RawPanelAction, text: string) => (
     <Button
       disabled={busy}
       key={id}
@@ -119,8 +158,20 @@ export function RawPasswordPanel({
     </Button>
   );
   const actions =
-    state === "password"
+    state === "password" || state === "biometric"
       ? [
+          ...(biometricAction
+            ? [
+                action(
+                  biometricAction,
+                  t(
+                    biometricAction === "biometric"
+                      ? "rawSealing.biometric.enable"
+                      : "rawSealing.biometric.disable",
+                  ),
+                ),
+              ]
+            : []),
           action("change", t("rawSealing.change")),
           ...(isWebEdition ? [] : [action("reset", t("rawSealing.reset"))]),
         ]
@@ -193,7 +244,7 @@ function protectionTone(
   state: RawProtection | null,
   missing: boolean,
 ): StatusTone {
-  if (state === "password") return "positive";
+  if (state === "password" || state === "biometric") return "positive";
   return missing ? "pending" : "neutral";
 }
 
@@ -202,6 +253,8 @@ function rawProtectionLabel(state: RawProtection | null): string {
   switch (state) {
     case "password":
       return i18n.t("rawSealing.state.password");
+    case "biometric":
+      return i18n.t("rawSealing.state.biometric");
     case "unset":
       return i18n.t("rawSealing.state.unset");
     case null:
@@ -272,30 +325,21 @@ export function RawPasswordEntry({
 }
 
 /**
- * Keeps the raw password setup up until it is done: only setting a raw
- * password closes it, and the gateway keeps serving meanwhile. A key
- * replaced outside the desktop keeps its own warning up the same way, until
- * the operator confirms it with its password or resets it.
- * `suspended` holds it back while the first-run guide asks for the password
- * in its own step, or before it is known whether that guide opens.
+ * Keeps the warning about a raw key replaced outside the desktop up until
+ * the operator confirms it with its password or resets it; the gateway
+ * keeps serving meanwhile. A missing raw password asks for nothing here:
+ * turning on capture sets one up, and so can the Safety page.
  */
-export function RawPasswordGate({
+export function RawKeyReplacedGate({
   onStatus,
   status,
-  suspended,
 }: {
   onStatus: (next: RawSealingState) => void;
   status: RawSealingState | null;
-  suspended: boolean;
 }) {
-  const setupNeeded = useRawSetupNeeded(status);
-  const replaced = !suspended && status?.key_replaced === true;
-  const required = !isWebEdition && !suspended && setupNeeded;
   return (
     <RawSealingDialogs
-      dialog={
-        replaced ? { kind: "replaced" } : required ? { kind: "required" } : null
-      }
+      dialog={status?.key_replaced === true ? { kind: "replaced" } : null}
       onClose={() => {}}
       onStatus={onStatus}
       status={status}
@@ -379,7 +423,7 @@ export function RawSealingDialogs({
       notify.success(i18n.t("rawSealing.changed"));
     } else if (action === "reset") {
       notify.success(resetNotice(outcome));
-    } else if (kind === "set" || kind === "required") {
+    } else if (kind === "set") {
       notify.success(i18n.t("rawSealing.saved"));
     }
     close(true);
@@ -404,6 +448,37 @@ export function RawSealingDialogs({
     return { kind: "done" };
   };
 
+  const submitBiometric = async (input: ProofInput): Promise<ProofResult> => {
+    // Only the raw password sets Touch ID up.
+    if (input.kind !== "password") return { kind: "password_invalid" };
+    let outcome: RawSealingOutcome;
+    try {
+      outcome = await enrollRawBiometric(input.password);
+    } catch (error) {
+      return { kind: "error", message: rawSealingErrorMessage(error) };
+    }
+    const settled = settle(outcome);
+    if (!settled.done) return settled.result;
+    notify.success(i18n.t("rawSealing.biometric.enabled"));
+    close(true);
+    return { kind: "done" };
+  };
+
+  const turnBiometricOff = async () => {
+    try {
+      onStatus(await removeRawBiometric());
+    } catch (error) {
+      notify.error(
+        i18n.t("rawSealing.biometric.disableFailed", {
+          message: rawSealingErrorMessage(error),
+        }),
+      );
+      return;
+    }
+    notify.success(i18n.t("rawSealing.biometric.disabled"));
+    close(true);
+  };
+
   const submitAcknowledge = async (input: ProofInput): Promise<ProofResult> => {
     // Only the replaced key's own password shows the operator set it.
     const proof = rawProofOf(input);
@@ -424,7 +499,7 @@ export function RawSealingDialogs({
   const invalidNew =
     status !== null &&
     newPasswordIssue(password, confirmation, status) !== null;
-  const settingUp = kind === "capture" || kind === "set" || kind === "required";
+  const settingUp = kind === "capture" || kind === "set";
   const fields = status ? (
     <RawPasswordFields
       confirmation={confirmation}
@@ -482,7 +557,6 @@ export function RawSealingDialogs({
           ? t("records.confirmEnable")
           : t("rawSealing.setupPasswordAction"),
       description,
-      dismissable: kind !== "required",
       focusNew: true,
       note: passwordWarning,
       proof: "confirm",
@@ -561,18 +635,25 @@ export function RawSealingDialogs({
   } else if (kind === "unlock") {
     proofDialog = {
       action: t("rawSealing.unlock"),
-      description: (
-        <p>
-          {t("rawSealing.unlockDescription", {
-            minutes: unlockIdleMinutes(status),
-          })}
-        </p>
-      ),
+      biometricLabel: rawBiometricReady(status)
+        ? t("rawSealing.biometric.use")
+        : undefined,
+      description: <p>{unlockEndText(status, "dialog")}</p>,
       focusNew: false,
       proof: rawProofMode(status),
       withFields: false,
       submit: submitUnlock,
       title: t("rawSealing.unlockTitle"),
+    };
+  } else if (kind === "biometric") {
+    proofDialog = {
+      action: t("rawSealing.biometric.enable"),
+      description: <p>{t("rawSealing.biometric.enableDescription")}</p>,
+      focusNew: false,
+      proof: "password",
+      withFields: false,
+      submit: submitBiometric,
+      title: t("rawSealing.biometric.enableTitle"),
     };
   }
 
@@ -582,6 +663,14 @@ export function RawSealingDialogs({
     status !== null && kind === "replaced" && replaceStep === "confirm";
   return (
     <>
+      <ConfirmDialog
+        confirmLabel={t("rawSealing.biometric.disable")}
+        description={<p>{t("rawSealing.biometric.disableDescription")}</p>}
+        onCancel={() => close(false)}
+        onConfirm={() => void turnBiometricOff()}
+        open={status !== null && kind === "biometric_off"}
+        title={t("rawSealing.biometric.disableTitle")}
+      />
       <ConfirmDialog
         confirmLabel={t("rawSealing.resetConfirm")}
         description={<p>{t("rawSealing.resetDescription")}</p>}
@@ -627,6 +716,7 @@ export function RawSealingDialogs({
           proofDialog ? proofDialog.submit(input) : Promise.resolve(done)
         }
         open={proofDialog !== null}
+        biometricLabel={proofDialog?.biometricLabel}
         passwordLabel={proofDialog?.passwordLabel}
         proof={proofDialog?.proof ?? "confirm"}
         submitDisabled={proofDialog?.withFields === true && invalidNew}
@@ -638,6 +728,8 @@ export function RawSealingDialogs({
 
 interface ProofDialogCopy {
   action: string;
+  /** Offers Touch ID beside the password. */
+  biometricLabel?: string;
   cancelLabel?: string;
   description: ReactNode;
   /** False keeps the dialog up until the action is done. */

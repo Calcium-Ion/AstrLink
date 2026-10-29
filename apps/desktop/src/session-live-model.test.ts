@@ -22,6 +22,7 @@ function session(
     last_started_at: "2026-07-25T10:00:00Z",
     completed_at: "2026-07-25T10:00:02Z",
     duration_ms: 2000,
+    running_since: null,
     active_request_starts: [],
     turn_count: 1,
     call_count: 1,

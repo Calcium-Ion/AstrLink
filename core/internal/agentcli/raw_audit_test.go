@@ -429,17 +429,20 @@ func TestRawAuditWaitsForTheUsersDecision(t *testing.T) {
 	}
 }
 
-func TestRawAuditReusesATimedGrantUntilRevoked(t *testing.T) {
+func TestRawAuditReusesALastingGrantUntilRevoked(t *testing.T) {
 	fixture := newCLIRawFixture(t)
 	grant, done := startRawAudit(t, fixture, map[string]any{"id": cliRawRequestID, "reason": "debug the email field"})
-	fixture.decide(t, grant["grant_id"].(string), `{"decision":"window_5m","proof":{"password":"`+cliRawPassword+`"}}`)
+	fixture.decide(t, grant["grant_id"].(string), `{"decision":"until_lock","proof":{"password":"`+cliRawPassword+`"}}`)
 	approved := <-done
 	if approved.err != nil {
 		t.Fatal(approved.err)
 	}
 	printed, _ := approved.decoded["raw_grant"].(map[string]any)
 	token, _ := printed["grant_token"].(string)
-	if token == "" || printed["decision"] != "window_5m" || !strings.Contains(printed["usage"].(string), "raw-revoke --grant") ||
+	// It names no time; the agent is told what ends it instead.
+	ends, _ := printed["ends"].(string)
+	if token == "" || printed["decision"] != "until_lock" || printed["expires_at"] != nil ||
+		!strings.Contains(ends, "screen locks") || !strings.Contains(printed["usage"].(string), "raw-revoke --grant") ||
 		!strings.Contains(approved.text, cliRawMarker) {
 		t.Fatalf("approved=%s", approved.text)
 	}

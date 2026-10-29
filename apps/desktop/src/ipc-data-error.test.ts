@@ -36,7 +36,7 @@ describe("host data errors", () => {
     expect(() =>
       parseRawSealingStatus({ ...status, unlock_idle_seconds: -1 }),
     ).toThrow(
-      "Invalid raw sealing data ($.unlock_idle_seconds): expected an integer of at least 1",
+      "Invalid raw sealing data ($.unlock_idle_seconds): expected an integer of at least 0",
     );
     expect(() => parseRawAccessList({ items: "none" })).toThrow(
       "Invalid raw access request data ($.items): expected an array",
@@ -57,7 +57,7 @@ describe("host data errors", () => {
     );
     expect(() =>
       parseRawSealingStatus({ ...status, unlock_idle_seconds: -1 }),
-    ).toThrow("原文封存数据无效（$.unlock_idle_seconds）：应为不小于 1 的整数");
+    ).toThrow("原文封存数据无效（$.unlock_idle_seconds）：应为不小于 0 的整数");
     expect(() => parseLocalDataStatus({ services: 1 })).toThrow(
       "本地数据状态无效（$.services）：不支持的字段",
     );

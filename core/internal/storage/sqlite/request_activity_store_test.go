@@ -163,3 +163,47 @@ func TestListRequestActivityKeepsCallsWhoseToolsMayStillRun(t *testing.T) {
 		t.Fatalf("waiting call output = %+v", output)
 	}
 }
+
+func TestListRequestActivityReadsFinalOutputTokens(t *testing.T) {
+	store := openTestStore(t, filepath.Join(t.TempDir(), "activity.db"))
+	defer store.Close()
+	ctx := context.Background()
+	since := time.Date(2026, 10, 23, 6, 0, 0, 0, time.UTC)
+	call := func(id string, started time.Duration, usage *contract.Usage) contract.RequestRecord {
+		session := contract.SessionID("session_" + id)
+		return contract.RequestRecord{
+			ID: contract.RequestID("request_" + id), SessionID: &session,
+			StartedAt: since.Add(started), CompletedAt: ptrTime(since.Add(started + 10*time.Second)),
+			Status: contract.RequestStatusSucceeded, InputProtocol: contract.ProtocolAnthropicMessages,
+			Usage: usage, Audit: contract.NotCapturedAuditSummary(),
+		}
+	}
+	final := call("final", 3*time.Minute, &contract.Usage{InputTokens: 900, OutputTokens: 120, TotalTokens: 1020})
+	// The stream stopped before its last usage event; the count is partial.
+	cut := call("cut", 2*time.Minute, &contract.Usage{InputTokens: 900, OutputTokens: 1, TotalTokens: 901, BillingIncomplete: true})
+	cut.Status = contract.RequestStatusCancelled
+	unreported := call("unreported", time.Minute, nil)
+	for _, record := range []contract.RequestRecord{final, cut, unreported} {
+		if err := store.InsertRequestRecord(ctx, record); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	calls, err := store.ListRequestActivity(ctx, since)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := make(map[contract.SessionID]int, len(calls))
+	for _, item := range calls {
+		got[item.SessionID] = item.OutputTokens
+	}
+	want := map[contract.SessionID]int{"session_final": 120, "session_cut": 0, "session_unreported": 0}
+	if len(got) != len(want) {
+		t.Fatalf("output tokens = %v, want %v", got, want)
+	}
+	for session, tokens := range want {
+		if got[session] != tokens {
+			t.Fatalf("output tokens = %v, want %v", got, want)
+		}
+	}
+}

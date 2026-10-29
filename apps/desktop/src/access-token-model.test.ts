@@ -11,6 +11,7 @@ const token = {
   id: "token_01",
   name: "VS Code",
   hint: "astr_…K8Q2",
+  source: "user",
   created_at: "2026-07-24T10:30:00Z",
 };
 
@@ -120,6 +121,23 @@ describe("access-token IPC contract", () => {
     ).toEqual({ token, access_token: accessToken });
     expect(parseAccessTokenCopied(true)).toBe(true);
     expect(parseAccessTokenCopied(false)).toBe(false);
+  });
+
+  it("reads where a token came from, as created when Core does not say", () => {
+    const bootstrap = { ...token, source: "system_default" };
+    expect(
+      parseAccessTokenPage({ items: [bootstrap], next_cursor: null }).items,
+    ).toEqual([bootstrap]);
+    const { source: _source, ...older } = token;
+    expect(
+      parseAccessTokenPage({ items: [older], next_cursor: null }).items,
+    ).toEqual([token]);
+    expect(() =>
+      parseAccessTokenPage({
+        items: [{ ...token, source: "imported" }],
+        next_cursor: null,
+      }),
+    ).toThrow("$.items[0].source");
     expect(() => parseAccessTokenCopied({ access_token: accessToken })).toThrow(
       "boolean",
     );

@@ -52,9 +52,6 @@ func prepareCodexSubscriptionRequest(
 	protocol contract.ProtocolID,
 	options codexRequestOptions,
 ) (forcedStream bool, err error) {
-	if options.sessionScope != "" {
-		scopeCodexSessionHeaders(request.Header, options.sessionScope)
-	}
 	legacy := !options.normalize && options.converted && protocol == contract.ProtocolOpenAIResponses
 	repair := options.normalize || legacy
 	if !repair && options.sessionScope == "" {
@@ -67,6 +64,9 @@ func prepareCodexSubscriptionRequest(
 	}
 	var body map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &body); err != nil || body == nil {
+		if options.sessionScope != "" {
+			scopeCodexSessions(request.Header, nil, options.sessionScope)
+		}
 		if !repair {
 			// Session scoping alone never rejects a body the upstream judges.
 			replaceRecoveryRequestBody(request, raw)
@@ -80,6 +80,9 @@ func prepareCodexSubscriptionRequest(
 		changed, forcedStream = normalizeCodexSubscriptionBody(body, protocol)
 	case legacy:
 		changed = normalizeCodexConvertedBody(body)
+	}
+	if options.sessionScope != "" && scopeCodexSessions(request.Header, body, options.sessionScope) {
+		changed = true
 	}
 	if options.sessionScope != "" && scopeCodexPromptCacheKey(body, options.sessionScope) {
 		changed = true
@@ -153,17 +156,112 @@ func normalizeCodexConvertedBody(body map[string]json.RawMessage) bool {
 	return changed
 }
 
-// codexSessionHeaders carry the Codex client's conversation identity.
-var codexSessionHeaders = []string{"Session_id", "Conversation_id"}
+// codexSessionHeaders carry the Codex client's session and thread identity:
+// hyphenated since 0.131, with underscores in 0.129 and 0.130, and
+// Conversation_id in older clients. X-Client-Request-Id repeats the thread id
+// and a spawned thread names its parent's.
+var codexSessionHeaders = []string{
+	"Session-Id", "Session_id", "Thread-Id", "Thread_id", "Conversation_id",
+	"X-Client-Request-Id", codexParentThreadHeader,
+}
 
-// scopeCodexSessionHeaders maps session identifiers the caller sent; absent
-// ones are not invented.
-func scopeCodexSessionHeaders(header http.Header, scope contract.ServiceID) {
-	for _, name := range codexSessionHeaders {
-		if value := strings.TrimSpace(header.Get(name)); value != "" {
-			header.Set(name, accountauth.ScopedSessionID(scope, value))
+// codexSessionCarriers repeat those ids inside larger values: the window id
+// starts with the thread id and the turn metadata names the session, the
+// thread and its parent. client_metadata in the body repeats all of them.
+var codexSessionCarriers = []string{"X-Codex-Window-Id", codexTurnMetadataHeader}
+
+// codexSessionIDFields name the ids inside client_metadata and the turn
+// metadata.
+var codexSessionIDFields = []string{
+	"session_id", "thread_id", "parent_thread_id", "forked_from_thread_id", "x-codex-parent-thread-id",
+}
+
+// minCodexSessionIDLength keeps short ids, which could occur inside unrelated
+// text, from being mapped where a value only contains them. Codex ids are
+// UUIDs.
+const minCodexSessionIDLength = 8
+
+// scopeCodexSessions maps every session and thread id the caller sent, in the
+// session headers, the values that repeat them and body's client_metadata,
+// into scope's namespace with the function that maps prompt_cache_key, so a
+// value repeated in several places stays the same everywhere. Absent ids are
+// not invented. It reports whether body changed; a nil body leaves only the
+// headers to map.
+func scopeCodexSessions(header http.Header, body map[string]json.RawMessage, scope contract.ServiceID) bool {
+	mapped := map[string]string{}
+	note := func(value string) {
+		if value = strings.TrimSpace(value); value != "" {
+			mapped[value] = accountauth.ScopedSessionID(scope, value)
 		}
 	}
+	noteMetadata := func(metadata gjson.Result) {
+		for _, field := range codexSessionIDFields {
+			if value := metadata.Get(field); value.Type == gjson.String {
+				note(value.Str)
+			}
+		}
+	}
+	for _, name := range codexSessionHeaders {
+		note(header.Get(name))
+	}
+	noteMetadata(gjson.Parse(header.Get(codexTurnMetadataHeader)))
+	clientMetadata := gjson.ParseBytes(body["client_metadata"])
+	if clientMetadata.IsObject() {
+		noteMetadata(clientMetadata)
+		noteMetadata(gjson.Parse(clientMetadata.Get("x-codex-turn-metadata").String()))
+	}
+	if len(mapped) == 0 {
+		return false
+	}
+	// Longer ids first, so an id that contains another maps as a whole.
+	ids := slices.SortedFunc(maps.Keys(mapped), func(left, right string) int { return len(right) - len(left) })
+	scopeValue := func(value string) string {
+		if scoped, ok := mapped[value]; ok {
+			return scoped
+		}
+		for _, id := range ids {
+			if len(id) >= minCodexSessionIDLength {
+				value = strings.ReplaceAll(value, id, mapped[id])
+			}
+		}
+		return value
+	}
+	for _, name := range append(slices.Clone(codexSessionHeaders), codexSessionCarriers...) {
+		if values := header.Values(name); len(values) > 0 {
+			header.Set(name, scopeValue(strings.TrimSpace(values[0])))
+		}
+	}
+	if !clientMetadata.IsObject() {
+		return false
+	}
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(body["client_metadata"], &fields) != nil {
+		return false
+	}
+	changed := false
+	for key, raw := range fields {
+		var value string
+		if json.Unmarshal(raw, &value) != nil {
+			continue
+		}
+		if scoped := scopeValue(value); scoped != value {
+			encoded, err := json.Marshal(scoped)
+			if err != nil {
+				continue
+			}
+			fields[key] = encoded
+			changed = true
+		}
+	}
+	if !changed {
+		return false
+	}
+	encoded, err := json.Marshal(fields)
+	if err != nil {
+		return false
+	}
+	body["client_metadata"] = encoded
+	return true
 }
 
 func scopeCodexPromptCacheKey(body map[string]json.RawMessage, scope contract.ServiceID) bool {

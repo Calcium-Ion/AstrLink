@@ -52,8 +52,22 @@ tokio = { version = "=1.51.6", features = ["sync", "time", "macros"] }
 zeroize = { version = "=1.9.0", features = ["serde"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+# Touch ID for raw content and the screen lock and sleep notifications; the
+# objc2 crates are the ones AppKit is bound with, already in the tree.
+block2 = "=0.6.2"
 core-foundation = "=0.10.1"
 mac-notification-sys = "=0.6.15"
+objc2 = "=0.6.4"
+objc2-foundation = { version = "=0.3.2", default-features = false, features = [
+  "std",
+  "block2",
+  "NSDistributedNotificationCenter",
+  "NSError",
+  "NSNotification",
+  "NSOperation",
+  "NSString",
+] }
+objc2-local-authentication = { version = "=0.3.2", default-features = false, features = ["std", "block2", "LAContext", "LAError"] }
 objc2-app-kit = { version = "=0.3.2", default-features = false, features = [
   "std",
   "libc",
@@ -73,11 +87,15 @@ libc = "=0.2.189"
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "=0.61.2", features = [
   "Win32_Foundation",
+  "Win32_Graphics_Gdi",
   "Win32_Security",
   "Win32_Storage_FileSystem",
+  "Win32_System_LibraryLoader",
   "Win32_System_Registry",
   "Win32_System_JobObjects",
+  "Win32_System_RemoteDesktop",
   "Win32_System_Threading",
+  "Win32_UI_WindowsAndMessaging",
 ] }
 
 [target.'cfg(target_os = "linux")'.dependencies]

@@ -40,6 +40,7 @@ const token: AccessTokenSummary = {
   id: "token_01",
   name: "VS Code",
   hint: "astr_…K8Q2",
+  source: "user",
   created_at: "2026-07-24T10:30:00Z",
 };
 
@@ -47,6 +48,7 @@ const otherToken: AccessTokenSummary = {
   id: "token_02",
   name: "Terminal",
   hint: "astr_…7HT4",
+  source: "user",
   created_at: "2026-07-24T10:31:00Z",
 };
 

@@ -72,7 +72,7 @@ type observerTracker struct {
 	now         func() time.Time
 	// pending counts raw access requests awaiting a decision.
 	pending func() int
-	// active counts timed raw grants still running.
+	// active counts lasting raw grants still running.
 	active func() int
 	// passwordRequired reports whether raw capture waits for a raw password.
 	passwordRequired func(context.Context) bool
@@ -166,12 +166,13 @@ type ObserversResponse struct {
 	LastRawReadAt *time.Time `json:"last_raw_read_at"`
 	// PendingRawAccess counts agent raw access requests awaiting a decision.
 	PendingRawAccess int `json:"pending_raw_access"`
-	// ActiveRawGrants counts timed raw grants still running.
+	// ActiveRawGrants counts lasting raw grants still running.
 	ActiveRawGrants int `json:"active_raw_grants"`
 	// RawAccessEvents is the recent raw access log, oldest first.
 	RawAccessEvents []RawAccessEvent `json:"raw_access_events"`
-	// RawPasswordRequired is true while no raw password is set, so the
-	// desktop can point at the setup from outside the main window.
+	// RawPasswordRequired is true while body capture is on and no raw
+	// password is set, so the desktop can point at the setup from outside the
+	// main window.
 	RawPasswordRequired bool `json:"raw_password_required"`
 }
 

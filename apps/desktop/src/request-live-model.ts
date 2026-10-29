@@ -164,16 +164,21 @@ export function liveDurationMs(record: RequestRecord, nowMs: number): number {
   return Math.max(0, completed - started);
 }
 
+/**
+ * Model time: the union of finished call runtimes plus, while calls run, the
+ * time since the one merged running block started. Every running call shares
+ * that block, so the value grows once per second however many run at once.
+ */
 export function sessionRuntimeMs(
-  session: Pick<RequestSession, "duration_ms" | "active_request_starts">,
+  session: Pick<RequestSession, "duration_ms" | "running_since">,
   nowMs: number,
 ): number {
-  return session.active_request_starts.reduce((duration, startedAt) => {
-    const started = Date.parse(startedAt);
-    return (
-      duration + (Number.isFinite(started) ? Math.max(0, nowMs - started) : 0)
-    );
-  }, session.duration_ms);
+  if (session.running_since === null) return Math.max(0, session.duration_ms);
+  const runningSince = Date.parse(session.running_since);
+  const running = Number.isFinite(runningSince)
+    ? Math.max(0, nowMs - runningSince)
+    : 0;
+  return Math.max(0, session.duration_ms) + running;
 }
 
 export function formatDuration(milliseconds: number): string {

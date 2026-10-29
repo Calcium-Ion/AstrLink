@@ -12,8 +12,11 @@ import (
 // eligible root. The final sort has at most four candidates per input value,
 // regardless of how many calls have reused a conversation id. Keep producers
 // ahead of consumers even when a consumer is newer, including legacy columns.
+// With scope.Continues a branch walks on past the roots whose turn state is
+// not one of the points; those are a thread's own calls, so the walk stays
+// within one conversation.
 func sessionLinkQuery(kind contract.SessionCursorKind, values []string, scope storagecontract.SessionCursorScope) (string, []any) {
-	const fields = `r.session_id, r.turn_index, r.turn_user_messages, r.turn_user_fingerprint, r.status, r.started_at, r.id`
+	const fields = `r.session_id, r.turn_index, r.turn_user_messages, r.turn_user_fingerprint, r.status, r.started_at, r.id, r.parent_session_id`
 	branches := make([]string, 0, 4*len(values))
 	args := make([]any, 0, 16*len(values))
 	directions := []string{"out"}
@@ -58,14 +61,14 @@ WHERE r.` + column + ` = ? AND r.parent_request_id IS NULL AND r.session_id IS N
 			branches = append(branches, branch)
 		}
 	}
-	return `SELECT session_id, turn_index, turn_user_messages, turn_user_fingerprint, value, status
+	return `SELECT session_id, turn_index, turn_user_messages, turn_user_fingerprint, value, status, parent_session_id
 FROM (` + strings.Join(branches, " UNION ALL ") + `)
 ORDER BY priority ASC, started_at DESC, id DESC LIMIT 1`, args
 }
 
 func sessionLinkScope(alias string, scope storagecontract.SessionCursorScope) (string, []any) {
 	var clause strings.Builder
-	args := make([]any, 0, 2)
+	args := make([]any, 0, 2+2*len(scope.Continues))
 	if scope.SamePrincipal {
 		clause.WriteString(" AND " + alias + ".local_access_token_id IS ?")
 		args = append(args, scope.LocalAccessTokenID)
@@ -73,6 +76,17 @@ func sessionLinkScope(alias string, scope storagecontract.SessionCursorScope) (s
 	if !scope.NotBefore.IsZero() {
 		clause.WriteString(" AND " + alias + ".started_at >= ?")
 		args = append(args, scope.NotBefore.UTC().Format(time.RFC3339Nano))
+	}
+	if len(scope.Continues) > 0 {
+		clause.WriteString(" AND (r.turn_user_messages, r.turn_user_fingerprint) IN (VALUES ")
+		for index, point := range scope.Continues {
+			if index > 0 {
+				clause.WriteString(", ")
+			}
+			clause.WriteString("(?, ?)")
+			args = append(args, point.UserMessages, point.Fingerprint)
+		}
+		clause.WriteString(")")
 	}
 	return clause.String(), args
 }

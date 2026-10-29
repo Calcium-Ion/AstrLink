@@ -63,10 +63,14 @@ func TestAccessTokenControlAPICRUDSeparatesMetadataFromExplicitSecrets(t *testin
 	createdAt := time.Date(2026, time.July, 24, 12, 30, 0, 0, time.UTC)
 	token := accesstoken.Token{
 		ID: "token_primary", Name: "Primary", Hint: "astr_…CDEF",
-		CreatedAt: createdAt,
+		Source: storage.AccessTokenSourceUser, CreatedAt: createdAt,
+	}
+	bootstrap := accesstoken.Token{
+		ID: "token_bootstrap", Name: accesstoken.DefaultTokenName, Hint: "astr_…WXYZ",
+		Source: storage.AccessTokenSourceSystemDefault, CreatedAt: createdAt,
 	}
 	manager := &fakeAccessTokenManager{
-		tokens:   []accesstoken.Token{token},
+		tokens:   []accesstoken.Token{token, bootstrap},
 		created:  accesstoken.CreatedToken{Token: token, Value: raw},
 		revealed: map[contract.AccessTokenID]string{token.ID: raw},
 	}
@@ -84,10 +88,14 @@ func TestAccessTokenControlAPICRUDSeparatesMetadataFromExplicitSecrets(t *testin
 	}
 	var listed accessTokenListResponse
 	decode(t, response, &listed)
-	if len(listed.Items) != 1 || listed.Items[0].ID != token.ID ||
+	if len(listed.Items) != 2 || listed.Items[0].ID != token.ID ||
 		listed.Items[0].Name != token.Name || listed.Items[0].Hint != token.Hint ||
 		!listed.Items[0].CreatedAt.Equal(createdAt) || listed.NextCursor != nil {
 		t.Fatalf("list = %#v", listed)
+	}
+	// The desktop's guide tells a fresh install's bootstrap token apart.
+	if !strings.Contains(body, `"source":"user"`) || !strings.Contains(body, `"source":"system_default"`) {
+		t.Fatalf("list does not carry token sources: %s", body)
 	}
 
 	response = accessTokenRequest(t, handler, http.MethodPost, AccessTokensPath, "application/json", `{"name":" Primary "}`)

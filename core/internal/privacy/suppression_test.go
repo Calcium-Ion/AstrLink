@@ -21,7 +21,7 @@ func TestDisabledKindsAreSuppressedWithAReason(t *testing.T) {
 		t.Context(),
 		policy,
 		contract.ProtocolOpenAIChat,
-		[]byte(`{"messages":[{"role":"user","content":"mail alice@example.com card 4242 4242 4242 4242"}]}`),
+		[]byte(`{"messages":[{"role":"user","content":"mail alice@example.com card 4539 1488 0343 6467"}]}`),
 	)
 	if err != nil || result.Decision != DecisionRedact {
 		t.Fatalf("inspect: %#v %v", result, err)

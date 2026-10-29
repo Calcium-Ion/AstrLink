@@ -14,7 +14,8 @@ import {
 
 import type { AuditSettings } from "./audit-settings-model";
 import { useT } from "./i18n";
-import type { RawPasswordAction, RawSealingState } from "./raw-sealing-model";
+import type { RawSealingState } from "./raw-sealing-model";
+import type { RawPanelAction } from "./RawSealingControls";
 import { RawPasswordPanel } from "./RawSealingControls";
 
 const MIB = 1024 * 1024;
@@ -42,7 +43,7 @@ export function AuditSettingsDialog({
     value: AuditSettings[K],
   ) => void;
   onCancel: () => void;
-  onRawPasswordAction: (action: RawPasswordAction) => void;
+  onRawPasswordAction: (action: RawPanelAction) => void;
   onSave: () => void;
 }) {
   const t = useT();

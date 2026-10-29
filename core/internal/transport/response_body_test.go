@@ -11,15 +11,27 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/andybalholm/brotli"
+	"github.com/klauspost/compress/zstd"
 )
 
 func compressedBody(t *testing.T, body []byte, encoding string) []byte {
 	t.Helper()
 	var buffer bytes.Buffer
 	var writer io.WriteCloser
-	if encoding == "gzip" {
+	switch encoding {
+	case "gzip":
 		writer = gzip.NewWriter(&buffer)
-	} else {
+	case "br":
+		writer = brotli.NewWriter(&buffer)
+	case "zstd":
+		encoder, err := zstd.NewWriter(&buffer)
+		if err != nil {
+			t.Fatal(err)
+		}
+		writer = encoder
+	default:
 		writer = zlib.NewWriter(&buffer)
 	}
 	if _, err := writer.Write(body); err != nil {
@@ -42,8 +54,12 @@ func TestDecodeBodyContentEncodings(t *testing.T) {
 		{"identity", plain},
 		{"gzip", gzipped},
 		{" GZip ", gzipped},
+		{"x-gzip", gzipped},
 		{"deflate", compressedBody(t, plain, "deflate")},
+		{"br", compressedBody(t, plain, "br")},
+		{"zstd", compressedBody(t, plain, "zstd")},
 		{"gzip, identity, deflate", compressedBody(t, gzipped, "deflate")},
+		{"zstd, br", compressedBody(t, compressedBody(t, plain, "zstd"), "br")},
 	} {
 		t.Run(test.encoding, func(t *testing.T) {
 			body, err := DecodeBody(test.body, test.encoding, 1024)
@@ -68,12 +84,16 @@ func TestDecodeBodyRejectsInvalidAndOversizedEntities(t *testing.T) {
 		{"wire limit", "identity", plain, 1024, ErrResponseBodyTooLarge},
 		{"gzip expansion", "gzip", gzipped, 1024, ErrResponseBodyTooLarge},
 		{"deflate expansion", "deflate", compressedBody(t, plain, "deflate"), 1024, ErrResponseBodyTooLarge},
+		{"br expansion", "br", compressedBody(t, plain, "br"), 1024, ErrResponseBodyTooLarge},
+		{"zstd expansion", "zstd", compressedBody(t, plain, "zstd"), 1024, ErrResponseBodyTooLarge},
 		{"intermediate limit", "gzip, deflate", compressedBody(t, bytes.Repeat([]byte("x"), 1025), "deflate"), 1024, ErrResponseBodyTooLarge},
-		{"unknown encoding", "br", plain, 4096, nil},
-		{"malformed chain", "gzip,", gzipped, 4096, nil},
+		{"unknown encoding", "compress", plain, 4096, ErrUnsupportedContentEncoding},
+		{"malformed chain", "gzip,", gzipped, 4096, ErrUnsupportedContentEncoding},
 		{"too many layers", "gzip,gzip,gzip,gzip,gzip", gzipped, 4096, nil},
 		{"invalid gzip header", "gzip", plain, 4096, nil},
 		{"invalid deflate header", "deflate", plain, 4096, nil},
+		{"invalid br stream", "br", plain, 4096, nil},
+		{"invalid zstd frame", "zstd", plain, 4096, nil},
 		{"truncated gzip", "gzip", gzipped[:len(gzipped)-1], 4096, io.ErrUnexpectedEOF},
 		{"gzip checksum", "gzip", corrupt, 4096, gzip.ErrChecksum},
 	} {
@@ -89,6 +109,27 @@ func TestDecodeBodyRejectsInvalidAndOversizedEntities(t *testing.T) {
 	}
 	if _, err := DecodeBody(gzipped, "gzip", int64(len(plain))); err != nil {
 		t.Fatalf("exact decoded bound should succeed: %v", err)
+	}
+}
+
+func TestDecodableContentEncoding(t *testing.T) {
+	for encoding, want := range map[string]bool{
+		"":                         true,
+		"identity":                 true,
+		"gzip":                     true,
+		" X-Gzip ":                 true,
+		"deflate":                  true,
+		"br":                       true,
+		"zstd":                     true,
+		"gzip, zstd":               true,
+		"compress":                 false,
+		"gzip, snappy":             false,
+		"gzip,":                    false,
+		"gzip,gzip,gzip,gzip,gzip": false,
+	} {
+		if got := DecodableContentEncoding(encoding); got != want {
+			t.Errorf("DecodableContentEncoding(%q) = %t, want %t", encoding, got, want)
+		}
 	}
 }
 

@@ -267,9 +267,20 @@ type recordSession struct {
 	// continuesTurn is set when the call stays in a turn whose preview an
 	// earlier call already stored; the record then carries none.
 	continuesTurn bool
+	// sideCall is set for a helper call of its conversation, such as a
+	// title request: it keeps the turn and carries no preview.
+	sideCall bool
+	// parentSessionID names the conversation that started this one as a
+	// subagent.
+	parentSessionID *contract.SessionID
+	// linkCursors are keyed fingerprints that let a subagent or a title
+	// request find this conversation later.
+	linkCursors []contract.SessionCursor
 	// fingerprinter is nil when audit storage is unavailable; text-only
-	// linking is then skipped for this request.
-	fingerprinter *convo.Fingerprinter
+	// linking is then skipped for this request. linkFingerprinter keys the
+	// link cursors and is nil with it.
+	fingerprinter     *convo.Fingerprinter
+	linkFingerprinter *convo.Fingerprinter
 	// turn is the user turn convo placed this request in, with the state the
 	// next linked request compares against; nil when the protocol has none.
 	turn        *convo.TurnState
@@ -627,13 +638,17 @@ func (session *recordSession) recordSnapshot(
 		link := *session.sessionLink
 		record.SessionLink = &link
 	}
+	if session.parentSessionID != nil && *session.parentSessionID != session.sessionID {
+		parent := *session.parentSessionID
+		record.ParentSessionID = &parent
+	}
 	if session.modelRedirect != nil {
 		// Copy so a retry child never aliases the root's redirect.
 		redirect := *session.modelRedirect
 		record.ModelRedirect = &redirect
 	}
 	record.RoutingDecision = session.routingDecision()
-	record.Cursors = mergeSessionCursors(session.inboundCursors, session.outputCursors)
+	record.Cursors = mergeSessionCursors(session.inboundCursors, session.linkCursors, session.outputCursors)
 	return record
 }
 
@@ -672,6 +687,18 @@ func (session *recordSession) captureHTTPRequestMeta(request *http.Request) {
 		return
 	}
 	session.httpMeta = RedactRequestMeta(request)
+	// Ingress decoded a compressed body on arrival; record the request as it
+	// came, with the coding the client sent.
+	if sent := session.classified.sentBodyHeaders; len(sent) > 0 {
+		headers := request.Header.Clone()
+		if headers == nil {
+			headers = http.Header{}
+		}
+		for name, values := range sent {
+			headers[name] = values
+		}
+		session.httpMeta.RequestHeaders = redactHeaders(headers)
+	}
 	session.httpMetaCaptured = true
 }
 
@@ -1675,7 +1702,7 @@ func (session *recordSession) noteProtectedValues(values []string) {
 // shareable, masked once a redact or block decision withheld the body, and
 // absent while a gated body has no decision.
 func (session *recordSession) visibleInputPreview() string {
-	if session.continuesTurn {
+	if session.continuesTurn || session.sideCall {
 		return ""
 	}
 	if session.classified.Conversation.LastUserText == "" {
@@ -1837,7 +1864,8 @@ func logIngressAccess(logf func(string, ...any), session *recordSession) {
 
 // resolveSession attaches the request to an earlier session through the convo
 // policy (explicit cursor, then echoed ids, then the assistant-text
-// fingerprint) and derives its user turn. Lookup failures degrade to a fresh
+// fingerprint) and derives its user turn. A subagent's conversation is then
+// linked to the one that started it. Lookup failures degrade to a fresh
 // session so recording never blocks or fails the request.
 func (session *recordSession) resolveSession(ctx context.Context, store RequestRecordStore, logf func(string, ...any)) {
 	if session == nil {
@@ -1850,23 +1878,34 @@ func (session *recordSession) resolveSession(ctx context.Context, store RequestR
 	if cursor != "" {
 		session.previousResponseID = cursor
 	}
+	thread := session.classified.thread
 	summary := session.classified.Conversation
 	if len(summary.ExplicitCursors) == 0 && cursor != "" {
 		// Protocols without a convo adapter still honour the legacy cursor.
 		summary.ExplicitCursors = []string{cursor}
 	}
+	// A DeepSeek Harness subagent sends no ids: the opening message that
+	// names its parent names its thread, by keyed fingerprint only.
+	spawn := ""
+	if thread.spawnOpener != "" {
+		if threadCursor := spawnThreadCursor(session.linkFingerprinter, thread.spawnOpener); threadCursor != "" {
+			summary.SessionCursor = threadCursor
+		}
+		spawn = spawnFingerprint(session.linkFingerprinter, spawnPrompt(thread.spawnOpener))
+	}
 
 	lookupCtx, cancel := context.WithTimeout(ctx, sessionLookupTimeout)
 	defer cancel()
-	statuses := make(map[string]contract.RequestStatus)
-	decision, err := conversationPolicy.Resolve(
-		lookupCtx, summary, session.fingerprinter, sessionLookup(store, session.accessTokenID, statuses), time.Now(),
+	learned := make(map[string]matchFacts)
+	policy := conversationPolicyFor(session.clientType)
+	decision, err := policy.Resolve(
+		lookupCtx, summary, session.fingerprinter, sessionLookup(store, session.accessTokenID, learned), time.Now(),
 	)
 	if err != nil {
 		logRequestRecordFailure(logf, "session_lookup", err)
 		// Resolve aborts on the first lookup error, so the partial decision
 		// may lack Inbound and Turn; recompute both without storage.
-		decision, _ = conversationPolicy.Resolve(ctx, summary, session.fingerprinter, nil, time.Now())
+		decision, _ = policy.Resolve(ctx, summary, session.fingerprinter, nil, time.Now())
 	}
 	if decision.Matched {
 		session.sessionID = contract.SessionID(decision.Match.SessionID)
@@ -1877,19 +1916,124 @@ func (session *recordSession) resolveSession(ctx context.Context, store RequestR
 		// A turn shows its preview from the call that opened it. A call
 		// that stays in the turn of a record that succeeded would only
 		// repeat it; one after a failure or a pending call keeps its own,
-		// since that call may have stored none.
+		// since that call may have stored none. A helper call that opened
+		// the session stored none either.
 		matched := decision.Match.Turn
-		session.continuesTurn = matched != nil && decision.Turn != nil &&
-			decision.Turn.Index == matched.Index &&
-			statuses[matchKey(decision.Match)] == contract.RequestStatusSucceeded
+		facts := learned[matchKey(decision.Match)]
+		session.continuesTurn = matched != nil && matched.UserMessages > 0 && decision.Turn != nil &&
+			decision.Turn.Index == matched.Index && facts.status == contract.RequestStatusSucceeded
+		session.parentSessionID = facts.parent
 	}
+	session.sideCall = decision.SideCall
 	session.turn = decision.Turn
 	session.inboundCursors = contractCursors(decision.PersistentInbound())
+	if !decision.Matched && thread.quotedOpener != "" {
+		session.attachTitleRequest(lookupCtx, store, logf, thread.quotedOpener)
+	}
 	if session.sessionID == "" {
 		session.sessionID = newSessionID()
+		session.noteOpener()
+	}
+	if session.parentSessionID == nil {
+		session.findParent(lookupCtx, store, logf, thread.parent, spawn)
 	}
 	session.inputPreview = session.classified.InputPreview
 	session.addEvent(contract.RequestEventAccepted, contract.RequestStatusPending, session.acceptedSummary())
+}
+
+// sessionTurnFinder is a store that can read a conversation's newest turn.
+type sessionTurnFinder interface {
+	FindSessionTurn(context.Context, contract.SessionID) (storage.SessionLinkMatch, bool, error)
+}
+
+// attachTitleRequest puts a title request the client sends outside its
+// conversation, as a Codex title thread or DeepSeek Harness does, into the
+// conversation whose opening message it quotes: one the same access token
+// started recently. There it is a helper call that keeps the conversation's
+// turn. With no such conversation it stays on its own.
+func (session *recordSession) attachTitleRequest(ctx context.Context, store RequestRecordStore, logf func(string, ...any), quoted string) {
+	opener := openerFingerprint(session.linkFingerprinter, quoted)
+	if opener == "" || store == nil {
+		return
+	}
+	match, ok, err := store.FindSessionLink(ctx, contract.SessionCursorFingerprint, []string{opener}, storage.SessionCursorScope{
+		SamePrincipal: true, LocalAccessTokenID: session.accessTokenID, NotBefore: time.Now().Add(-titleLinkWindow),
+	})
+	if err != nil {
+		logRequestRecordFailure(logf, "title_link", err)
+		return
+	}
+	if !ok {
+		return
+	}
+	latest := match
+	if finder, ok := store.(sessionTurnFinder); ok {
+		if found, ok, err := finder.FindSessionTurn(ctx, match.SessionID); err == nil && ok {
+			latest = found
+		}
+	}
+	session.sessionID = match.SessionID
+	session.sessionLink = &contract.SessionLink{Kind: contract.SessionCursorFingerprint, Value: opener}
+	session.sideCall = true
+	session.parentSessionID = latest.ParentSessionID
+	session.turn = nil
+	if latest.TurnIndex != nil {
+		session.turn = &convo.TurnState{Index: *latest.TurnIndex, LastUserFingerprint: latest.TurnUserFingerprint}
+		if latest.TurnUserMessages != nil {
+			session.turn.UserMessages = *latest.TurnUserMessages
+		}
+	}
+}
+
+// noteOpener stores, on the call that opens a conversation, a keyed
+// fingerprint of its opening message, for clients that later send the title
+// request on its own.
+func (session *recordSession) noteOpener() {
+	switch session.clientType {
+	case contract.ClientCodex, contract.ClientDeepSeekHarness:
+	default:
+		return
+	}
+	if session.sideCall {
+		return
+	}
+	if opener := openerFingerprint(session.linkFingerprinter, session.classified.Conversation.LastUserText); opener != "" {
+		session.linkCursors = append(session.linkCursors, contract.SessionCursor{
+			Kind: contract.SessionCursorFingerprint, Direction: contract.SessionCursorOut, Value: opener,
+		})
+	}
+}
+
+// findParent links a subagent's conversation to the one that started it: by
+// the parent thread the client named, or, for a DeepSeek Harness subagent, by
+// the call of the same access token that gave it its prompt shortly before.
+func (session *recordSession) findParent(ctx context.Context, store RequestRecordStore, logf func(string, ...any), parent, spawn string) {
+	if store == nil {
+		return
+	}
+	var (
+		match storage.SessionLinkMatch
+		ok    bool
+		err   error
+	)
+	switch {
+	case parent != "":
+		match, ok, err = store.FindSessionLink(ctx, contract.SessionCursorExplicit, []string{parent}, storage.SessionCursorScope{})
+	case spawn != "":
+		match, ok, err = store.FindSessionLink(ctx, contract.SessionCursorFingerprint, []string{spawn}, storage.SessionCursorScope{
+			SamePrincipal: true, LocalAccessTokenID: session.accessTokenID, NotBefore: time.Now().Add(-spawnLinkWindow),
+		})
+	default:
+		return
+	}
+	if err != nil {
+		logRequestRecordFailure(logf, "parent_session_lookup", err)
+		return
+	}
+	if ok && match.SessionID != "" && match.SessionID != session.sessionID {
+		parentID := match.SessionID
+		session.parentSessionID = &parentID
+	}
 }
 
 func (session *recordSession) completedSummary() string {
@@ -2044,6 +2188,15 @@ func (session *recordSession) captureOutputCursors() {
 		summary.OutputID = session.outputResponseID
 	}
 	session.outputCursors = contractCursors(conversationPolicy.OutputCursors(summary, session.fingerprinter))
+	// A subagent tool call's prompt lets the subagent's conversation find
+	// this one; the record keeps only its keyed fingerprint.
+	for _, prompt := range session.scanner.spawnPrompts() {
+		if value := spawnFingerprint(session.linkFingerprinter, prompt); value != "" {
+			session.outputCursors = append(session.outputCursors, contract.SessionCursor{
+				Kind: contract.SessionCursorFingerprint, Direction: contract.SessionCursorOut, Value: value,
+			})
+		}
+	}
 }
 
 func eventsForAttempt(events []contract.RequestEvent, attempt int) []contract.RequestEvent {

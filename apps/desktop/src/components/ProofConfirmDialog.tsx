@@ -20,6 +20,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { Fingerprint } from "@/components/icons";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
@@ -87,10 +88,11 @@ export function ProofPasswordField({
 
 /**
  * What the user gave to prove the action; a plain `confirm` click proves
- * nothing more.
+ * nothing more, and `biometric` asks the host for Touch ID.
  */
 export type ProofInput =
   | { kind: "password"; password: string }
+  | { kind: "biometric" }
   | { kind: "confirm" };
 
 /** How a proof-carrying action ended. Only `done` lets the caller close. */
@@ -130,6 +132,11 @@ interface ProofConfirmDialogProps {
   proof: ProofMode;
   /** Labels the proof password, e.g. as the current one beside a new one. */
   passwordLabel?: string;
+  /**
+   * Offers Touch ID beside the password with this label. It runs the first
+   * action; the password stays as the way that always works.
+   */
+  biometricLabel?: string;
   /** Keeps every action disabled, e.g. while `children` hold an invalid form. */
   submitDisabled?: boolean;
   /** Receives focus on open instead of the proof, e.g. a field in `children`. */
@@ -165,12 +172,14 @@ export function ProofConfirmDialog(props: ProofConfirmDialogProps) {
     children,
     description,
     passwordLabel = t("proofDialog.passwordLabel"),
+    biometricLabel,
     proof,
     submitDisabled = false,
     title,
   } = useExitSnapshot(
     {
       actions: props.actions,
+      biometricLabel: props.biometricLabel,
       cancelLabel: props.cancelLabel,
       children: props.children,
       description: props.description,
@@ -229,11 +238,17 @@ export function ProofConfirmDialog(props: ProofConfirmDialogProps) {
       }),
     );
 
-  const submit = async (actionId: string) => {
-    if (pendingRef.current || !open || blocked) return;
-    const input: ProofInput = needsPassword
-      ? { kind: "password", password }
-      : { kind: "confirm" };
+  const biometric = needsPassword && biometricLabel !== undefined;
+  const biometricDisabled = pending || submitDisabled || retryAt !== null;
+
+  const submit = async (actionId: string, withBiometric = false) => {
+    if (pendingRef.current || !open) return;
+    if (withBiometric ? biometricDisabled : blocked) return;
+    const input: ProofInput = withBiometric
+      ? { kind: "biometric" }
+      : needsPassword
+        ? { kind: "password", password }
+        : { kind: "confirm" };
     // Nothing keeps the password once it is on its way.
     setPassword("");
     setError(null);
@@ -353,6 +368,18 @@ export function ProofConfirmDialog(props: ProofConfirmDialogProps) {
                 {action.label}
               </Button>
             ))}
+            {biometric ? (
+              <Button
+                data-slot="proof-biometric"
+                disabled={biometricDisabled}
+                onClick={() => void submit(defaultAction.id, true)}
+                type="button"
+                variant="outline"
+              >
+                <Fingerprint aria-hidden="true" />
+                {biometricLabel}
+              </Button>
+            ) : null}
             <Button
               disabled={actionsDisabled}
               ref={defaultActionRef}

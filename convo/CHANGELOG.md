@@ -5,6 +5,19 @@ follows semantic versioning; tags use the nested-module form `convo/vX.Y.Z`.
 
 ## Unreleased
 
+- Helper calls no longer move a thread's turn. A client may send title, summary
+  or fork requests under the same explicit identity as its conversation.
+  `RequestSummary.UserDigests` describes the newest user messages by position,
+  and when the newest call of the identity is not one the request's history
+  continues, `Policy.Resolve` looks up the newest call it does continue through
+  the new `Scope.Continues` (`Continuation`, `TurnPoint`). A request the host
+  marks with `RequestSummary.SideCall`, or, for a client under the new
+  `Policy.ToolFreeHelpers`, one that continues none and offers no tools
+  (`RequestSummary.HasTools`), keeps the matched turn state and is reported as
+  `Decision.SideCall`; one that opens its session holds turn 1 with no user
+  messages, which `Policy.NextTurn` treats as nothing to compare.
+  `Policy.MaxContinuationUsers` bounds the digests. Hosts whose `Lookup` ignores
+  `Scope.Continues` still work; `Resolve` checks what it returns.
 - Turns are relative, not counted. `Decision.TurnIndex` is replaced by
   `Decision.Turn *TurnState{Index, UserMessages, LastUserFingerprint}`; hosts
   store it and return it as `Match.Turn`. `Policy.NextTurn` starts a new turn

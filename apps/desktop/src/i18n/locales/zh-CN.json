@@ -647,31 +647,23 @@
     "description": "把已有的模型服务接入 AstrLink，再让客户端通过本地网关使用它们。",
     "skip": "稍后设置",
     "open": "上手引导",
-    "progress": "已完成 {{count}} / 4 步",
+    "progress": "已完成 {{count}} / 3 步",
     "steps": "接入步骤",
     "step": "第 {{count}} 步",
     "resumeHint": "进度会自动保留。你可以随时离开，再从运行概览右下角的「上手引导」继续。",
     "deferredHint": "稍后可点击右下角的「上手引导」继续设置。",
-    "passwordTitle": "保护请求原文",
-    "passwordShort": "只有你能查看原文",
     "serviceTitle": "接入 API 提供商",
     "serviceShort": "连接你已有的模型服务",
     "tokenTitle": "创建访问令牌",
     "tokenShort": "给客户端一把本地钥匙",
     "clientTitle": "连接客户端",
     "clientShort": "发起第一条成功请求",
-    "passwordBody": "请求和响应的原文会用你设置的口令加密保存。只有你能查看，本机的其他程序（包括 AI Agent）读不到。",
-    "passwordAction": "开始设置",
-    "passwordDone": "原文保护已设置。",
-    "passwordLoading": "正在读取原文保护状态…",
-    "passwordLoadFailed": "无法读取原文保护状态：{{message}}。稍后会自动重试。",
     "serviceBody": "AstrLink 需要一个模型来源。先添加你已经在使用的 API 服务或订阅账号。",
     "serviceOptions": "有 API Key？选择对应提供商并填写地址和密钥。有订阅账号？选择对应订阅服务并完成授权。",
     "serviceHelp": "配置时需要准备什么？",
     "serviceHelpBody": "准备提供商给出的 API 地址和 API Key，或可登录的订阅账号。保存前读取或添加可用模型，并保持提供商启用。",
     "manageServices": "检查提供商配置",
     "serviceIncomplete": "提供商还未准备好：请确认已启用、已添加模型，并完成订阅授权。",
-    "finishPassword": "先设置原文保护，再接入 API 提供商。",
     "next": "继续下一步",
     "tokenBody": "访问令牌用于让你的客户端连接本地 AstrLink 网关。可以按客户端分别创建，便于管理用量。",
     "tokenHelp": "点击创建后，填写容易识别的名称，例如「我的编程助手」。客户端的 API Key 填这里生成的访问令牌；提供商的密钥保留在提供商配置中。",
@@ -1649,7 +1641,8 @@
       "allowlisted": "匹配免脱敏名单，因此忽略。",
       "placeholder": "识别为已有占位符，无需重复替换。",
       "unrepresentable": "此内容无法生成可用的替换值，因此忽略。",
-      "astrlink_identifier": "这是 AstrLink 自己生成的 ID（如访问令牌 ID），不能用来访问任何内容，因此忽略。"
+      "astrlink_identifier": "这是 AstrLink 自己生成的 ID（如访问令牌 ID），不能用来访问任何内容，因此忽略。",
+      "example_value": "这是支付平台公开的测试卡号，只用于测试付款，不属于任何人，因此忽略。"
     },
     "testAction": {
       "allow": "当前策略允许请求，保留原文。",
@@ -1691,6 +1684,7 @@
     "redactTypesHint": "选择需要脱敏的信息类型，以及发送给上游的替换形态。",
     "title": "隐私保护",
     "description": "在请求发送到上游前使用规则或所选本地模型检测敏感内容。",
+    "pageDescription": "请求发往上游前，先在本机检测并替换敏感内容。默认只替换常见密钥，其他类型可以按需开启。",
     "readyHint": "策略和模型均在本机保存与执行。",
     "waiting": "网关就绪后可管理安全策略",
     "enable": "启用隐私保护",
@@ -1738,9 +1732,9 @@
       "policy": "当前隐私设置读取失败。请点击右上角的「刷新」，再试一次。",
       "sample": "这段文本无法按所选请求格式检测。请修改文本或换一种请求格式，再试一次。"
     },
-    "importStarted": "本地模型导入已开始，可在“已安装”中查看进度。",
-    "installStarted": "模型安装已开始，可在“已安装”中查看进度。",
-    "updateStarted": "新版本已开始下载，完成后请在“已安装”中改用新版本。",
+    "importStarted": "本地模型导入已开始，进度显示在对应模型卡片中。",
+    "installStarted": "模型下载已开始，进度显示在对应模型卡片中。",
+    "updateStarted": "新版本已开始下载，完成后可在模型卡片中切换。",
     "installFailed": "无法开始安装本地模型。",
     "probeMismatch": "模型检查结果与所选版本不一致。请刷新模型目录后重试。",
     "variantIncompatible": "这个模型版本暂不支持当前设备。请选择其他版本后重试。",
@@ -1975,7 +1969,7 @@
     "resetConfirm": "恢复默认",
     "resetKindRulesTitle": "将逐类型脱敏恢复默认？",
     "resetKindRulesWarnTitle": "将逐类型检测与通知恢复默认？",
-    "resetKindRulesHint": "每种信息类型的开关、占位符形态和通知方式都会恢复默认：{{off}}关闭，其他类型开启，所有类型都发送系统通知。新请求立即生效。",
+    "resetKindRulesHint": "每种类型的开关、占位符形态和通知方式会恢复默认。默认只开启{{on}}，其他类型关闭，所有类型都发送系统通知。新请求立即生效。",
     "resetRestoreTitle": "将请求与响应恢复默认？",
     "resetRestoreHint": "以下开关恢复为默认状态，新请求立即生效。",
     "defaultOn": "开启",
@@ -2204,7 +2198,9 @@
     "activityInProgressHint": "正在调用模型，或 1 分钟内调用过模型的对话。Agent 运行模型要求的工具时，对话会一直算在内，直到结果送回模型，最多 30 分钟。",
     "activityConversations_one": "个对话",
     "activityConversations_other": "个对话",
-    "activityCalls": "调用中",
+    "activityThroughput": "吞吐",
+    "activityThroughputHelp": "吞吐怎么算",
+    "activityThroughputHint": "近 1 分钟模型平均每秒输出的 token 数，思考也算在内。提供商在调用结束时报告用量，进行中的调用结束后才计入。",
     "activityFailures": "近 5 分钟失败",
     "activityShowFailures_one": "查看 {{count}} 个失败的对话",
     "activityShowFailures_other": "查看 {{count}} 个失败的对话",
@@ -2300,6 +2296,7 @@
     "deleteSessionTitle": "删除这个会话",
     "deleteSessionsTitle": "删除 {{count}} 个会话",
     "deleteSessionsBody": "将永久删除 {{calls}}和加密审计内容。",
+    "deleteSessionsWithSubagentsBody": "将永久删除 {{calls}}、{{subagents}}和加密审计内容。",
     "callCount_one": "{{count}} 次调用",
     "callCount_other": "{{count}} 次调用",
     "cleanUp": "清理",
@@ -2323,7 +2320,7 @@
     "toolDuration": "工具调用用时",
     "averageTTFT": "首 token 平均（TTFT）",
     "outputSpeed": "输出速度（TPS）",
-    "modelDurationHint": "模型用时：累计每次模型调用的耗时，包含重试；正在执行的调用实时累加，不包含调用之间的等待。",
+    "modelDurationHint": "模型用时：模型调用实际运行的总时长，包含重试；并行调用重叠的时间只计一次，正在执行的调用实时累加，不包含调用之间的等待。",
     "toolDurationHint": "工具调用用时（估算）：累计同一轮对话内，上次模型调用结束到下次调用开始的间隔。包含客户端调度、网络及可能的等待；排除轮次之间的用户等待与重试退避，不代表工具精确执行时长。",
     "averageTTFTHint": "TTFT：从发送上游请求到收到首个非空文本、思考或工具调用内容的平均耗时，仅统计有首 token 记录的流式调用。",
     "outputSpeedHint": "TPS：有效调用的输出 token 总数 ÷ 调用耗时总和。耗时从发出请求算到响应结束，包含 TTFT，流式和非流式调用都计入；缺少完整用量的调用不参与计算。",
@@ -2433,7 +2430,13 @@
     "moreFilters": "更多筛选",
     "activeFilters": "已启用筛选",
     "moreActiveFilters": "+{{count}} 项",
-    "filterCount": "{{count}} 项"
+    "filterCount": "{{count}} 项",
+    "subagent": "子代理",
+    "subagentCount_one": "{{count}} 个子代理",
+    "subagentCount_other": "{{count}} 个子代理",
+    "subagentList": "它启动的子代理",
+    "parentConversation": "上级对话",
+    "parentConversationHint": "打开启动它的对话"
   },
   "conversation": {
     "tab": "摘要",
@@ -2701,7 +2704,8 @@
       "low_confidence": "低于门槛",
       "allowlisted": "免脱敏名单",
       "kind_disabled": "类型已关闭",
-      "astrlink_identifier": "AstrLink 自有 ID"
+      "astrlink_identifier": "AstrLink 自有 ID",
+      "example_value": "测试卡号"
     },
     "policyAllowHint": "策略没有改动请求内容，请求体见「客户端」。",
     "policyTrustedHint": "此提供商已被信任，策略没有检查这次请求，按原文发往上游。请求体见「客户端」。",
@@ -2894,6 +2898,10 @@
     "rawAccess": {
       "notificationTitle": "Agent 申请读取原文",
       "notificationBody": "请在 AstrLink 的审批窗口中批准或拒绝。"
+    },
+    "rawBiometric": {
+      "unlockReason": "解锁请求原文",
+      "approveReason": "批准 Agent 查看原文"
     },
     "privacyWarning": {
       "title": "已按原文发给模型：{{kinds}}",
@@ -3801,16 +3809,12 @@
     "providerWarning": "原文将发送给该 Agent 使用的模型服务商。",
     "queued": "之后还有 {{count}} 个申请在等待",
     "once": "批准一次",
-    "window5m": "批准 5 分钟",
     "window1h": "批准 1 小时",
     "deny": "拒绝",
     "onceHint": "「批准一次」只允许它读取这一条请求的原文，读一次。",
-    "timedWarning": "「批准 5 分钟」和「批准 1 小时」会允许它在时间到之前读取所有请求的原文，包括这段时间里新产生的请求，次数不限。",
-    "locked": "AstrLink 已锁定，批准需要输入原文口令。",
-    "lockedMeanwhile": "AstrLink 刚刚已锁定，请输入原文口令后再批准。",
+    "timedWarning": "「批准到锁屏」和「批准 1 小时」会允许它读取所有请求的原文，包括之后新产生的请求，次数不限。「批准到锁屏」在锁屏、电脑睡眠、退出 AstrLink 或点击「锁定」时结束。",
     "closeHint": "关闭窗口不会批准或拒绝。申请会一直等到过期，可以从托盘重新打开这个窗口。",
     "approvedOnce": "已允许「{{client}}」读取一次原文",
-    "approved5m": "已允许「{{client}}」在 5 分钟内读取所有请求的原文",
     "approved1h": "已允许「{{client}}」在 1 小时内读取所有请求的原文",
     "denied": "已拒绝原文申请",
     "denyFailed": "拒绝原文申请失败：{{message}}",
@@ -3827,19 +3831,28 @@
       "revoke": "撤销",
       "revoked": "「{{client}}」已不能再读取原文",
       "revokeFailed": "撤销失败：{{message}}",
-      "closeKeeps": "关闭窗口后，这些 Agent 照常可以读取原文。也可以在托盘里撤销。"
-    }
+      "closeKeeps": "关闭窗口后，这些 Agent 照常可以读取原文。也可以在托盘里撤销。",
+      "untilLock": "到锁屏为止"
+    },
+    "untilLock": "批准到锁屏",
+    "approvedUntilLock": "已允许「{{client}}」在锁屏前读取所有请求的原文",
+    "proofPassword": "批准需要输入原文口令。",
+    "proofTouchId": "点击批准后，验证 Touch ID 即可。",
+    "usePassword": "改用原文口令",
+    "useTouchId": "改用 Touch ID"
   },
   "rawSealing": {
     "title": "原文保护",
     "state": {
       "unset": "未设置",
       "password": "口令",
-      "unknown": "未知"
+      "unknown": "未知",
+      "biometric": "口令和 Touch ID"
     },
     "hint": {
       "unset": "设置完成前，新请求的原文不会保存。请求转发不受影响。",
-      "password": "查看原文、批准 Agent 申请时输入口令。忘记后只能重置，已保存的原文会全部丢弃。"
+      "password": "查看原文、批准 Agent 申请时输入口令。忘记后只能重置，已保存的原文会全部丢弃。",
+      "biometric": "查看原文、批准 Agent 申请时验证 Touch ID，也可以输入口令。忘记口令后只能重置，已保存的原文会全部丢弃。"
     },
     "loadFailed": "无法读取原文保护状态：{{message}}",
     "set": "设置",
@@ -3906,13 +3919,30 @@
     "withheldDetail": "此部分已捕获，当前视图不显示。",
     "notKept": "未保存",
     "notKeptDetail": "记录时还没设置原文保护，这部分原文没有保存。",
+    "notKeptHint": "设置原文保护后，新请求的原文会加密保存。",
     "unlockTitle": "解锁原文",
     "unlockDescription": "解锁后可在本机查看已封存的原文，{{minutes}} 分钟无操作会自动锁定。",
     "unlocked": "原文已解锁",
     "unlockedHint": "原文已解锁，{{minutes}} 分钟无操作后自动锁定。",
     "lockedNow": "原文已锁定",
     "lockFailed": "锁定原文失败：{{message}}",
-    "unlockUnavailable": "还没设置原文保护，无法解锁原文。"
+    "unlockUnavailable": "还没设置原文保护，无法解锁原文。",
+    "unlockDescriptionUntilLock": "解锁后可在本机查看已封存的原文。锁屏、电脑睡眠或退出 AstrLink 时会自动锁定。",
+    "unlockedHintUntilLock": "原文已解锁，锁屏、电脑睡眠或退出 AstrLink 时自动锁定。",
+    "biometric": {
+      "use": "使用 Touch ID",
+      "enable": "启用 Touch ID",
+      "disable": "停用 Touch ID",
+      "enableTitle": "用 Touch ID 查看原文",
+      "enableDescription": "启用后，查看原文和批准 Agent 申请时验证指纹即可，原文口令仍然可用。输入原文口令以启用。",
+      "enabled": "已启用 Touch ID",
+      "disabled": "已停用 Touch ID",
+      "disableTitle": "停用 Touch ID？",
+      "disableDescription": "停用后，查看原文和批准 Agent 申请都要输入原文口令。",
+      "cancelled": "Touch ID 已取消。可以再试一次，或输入原文口令。",
+      "unavailable": "Touch ID 现在不可用，请输入原文口令。",
+      "disableFailed": "停用 Touch ID 失败：{{message}}"
+    }
   },
   "dataErrors": {
     "rawSealing": "原文封存数据无效（{{path}}）：{{detail}}",

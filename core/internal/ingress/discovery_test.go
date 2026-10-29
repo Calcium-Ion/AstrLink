@@ -663,7 +663,7 @@ func TestModelDiscoveryCompressedHTTPResponses(t *testing.T) {
 		{"openai deflate", "/v1/models", "deflate", `{"data":[{"id":"visible"}]}`, "", contract.ServiceKindOpenAI, contract.ProtocolOpenAIModels},
 		{"gemini gzip", "/v1beta/models", "gzip", `{"models":[{"name":"models/visible"}]}`, "", contract.ServiceKindGemini, contract.ProtocolGoogleModels},
 		{"expanded limit", "/v1/models", "gzip", strings.Repeat("x", maxResponseInspectionBytes+1), "exceeds limit", contract.ServiceKindOpenAI, contract.ProtocolOpenAIModels},
-		{"unsupported encoding", "/v1/models", "br", `{"data":[]}`, "unsupported HTTP content encoding", contract.ServiceKindOpenAI, contract.ProtocolOpenAIModels},
+		{"unsupported encoding", "/v1/models", "compress", `{"data":[]}`, "unsupported HTTP content encoding", contract.ServiceKindOpenAI, contract.ProtocolOpenAIModels},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			body := gzipBytes(t, []byte(test.body))

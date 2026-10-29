@@ -7,6 +7,8 @@ import {
   laneAction,
   laneTrail,
   LANE_TRAIL_STEPS,
+  nestSubagents,
+  outputThroughput,
   splitActiveSessions,
   summarizeActivity,
   TOOL_WAIT_MS,
@@ -27,6 +29,7 @@ function session(overrides: Partial<RequestSession> = {}): RequestSession {
     last_started_at: at(-30_000),
     completed_at: at(-20_000),
     duration_ms: 10_000,
+    running_since: null,
     active_request_starts: [],
     turn_count: 1,
     call_count: 3,
@@ -118,7 +121,7 @@ function call(
 }
 
 describe("summarizeActivity", () => {
-  it("counts conversations, running calls and recent failures at the gateway's now", () => {
+  it("counts conversations and recent failures at the gateway's now", () => {
     const { now, snapshot } = summarizeActivity({
       now: at(0),
       calls: [
@@ -137,7 +140,7 @@ describe("summarizeActivity", () => {
     // g recovered after its failure, so it counts as in progress, not failed.
     expect(snapshot).toEqual({
       conversations: 4,
-      calls: 3,
+      outputTokensPerSecond: 0,
       failures: 1,
       clients: [{ clientType: "unknown", count: 4 }],
     });
@@ -227,6 +230,63 @@ describe("summarizeActivity", () => {
     );
   });
 
+  it("counts subagents with the conversation that started them", () => {
+    const { snapshot, points } = summarizeActivity(
+      {
+        now: at(0),
+        calls: [
+          call("parent", -40_000, -30_000, {
+            output: { kind: "tool", tools: ["Agent"] },
+          }),
+          call("child_a", -25_000, null, { parent_session_id: "parent" }),
+          call("child_b", -20_000, null, { parent_session_id: "parent" }),
+          call("grandchild", -10_000, null, { parent_session_id: "child_b" }),
+          call("other", -5_000, null),
+        ],
+      },
+      60_000,
+      10_000,
+    );
+    // Four calls run, in two conversations.
+    expect(snapshot.conversations).toBe(2);
+    expect(points.at(-1)?.value).toBe(2);
+  });
+
+  it("reads a conversation's failure from its latest call, subagents included", () => {
+    const { snapshot } = summarizeActivity({
+      now: at(0),
+      calls: [
+        call("parent", -60_000, -50_000),
+        call("child", -40_000, -30_000, {
+          parent_session_id: "parent",
+          status: "failed",
+        }),
+      ],
+    });
+    expect(snapshot.failures).toBe(1);
+  });
+
+  it("averages the output tokens of the last minute over it", () => {
+    const { snapshot } = summarizeActivity({
+      now: at(0),
+      calls: [
+        call("a", -30_000, -10_000, { output_tokens: 600 }),
+        // Half of its span lies inside the minute, and half its tokens.
+        call("b", -90_000, -30_000, { output_tokens: 1200 }),
+        call("c", -5_000, -5_000, { output_tokens: 60 }),
+        call("d", -200_000, -100_000, { output_tokens: 5000 }),
+        call("e", -20_000, null),
+      ],
+    });
+    expect(snapshot.outputTokensPerSecond).toBe((600 + 600 + 60) / 60);
+  });
+
+  it("drops a call's tokens as its span leaves the window", () => {
+    const calls = [call("a", -40_000, -20_000, { output_tokens: 300 })];
+    expect(outputThroughput(calls, NOW, 30_000)).toBe(150 / 30);
+    expect(outputThroughput(calls, NOW, 15_000)).toBe(0);
+  });
+
   it("reads from the window plus the grace before it", () => {
     expect(activitySince(NOW)).toBe(at(-360_000));
   });
@@ -311,7 +371,61 @@ describe("laneTrail", () => {
   });
 });
 
+describe("nestSubagents", () => {
+  it("folds subagents under the conversation on the page that started them", () => {
+    const parent = session({ id: "parent", started_at: at(-900_000) });
+    const late = session({
+      id: "late",
+      parent_session_id: "parent",
+      started_at: at(-100_000),
+    });
+    const early = session({
+      id: "early",
+      parent_session_id: "parent",
+      started_at: at(-800_000),
+    });
+    const nested = session({
+      id: "nested",
+      parent_session_id: "early",
+      started_at: at(-700_000),
+    });
+    const orphan = session({ id: "orphan", parent_session_id: "elsewhere" });
+    const { roots, subagentsOf } = nestSubagents([
+      late,
+      parent,
+      nested,
+      orphan,
+      early,
+    ]);
+    expect(roots.map((item) => item.id)).toEqual(["parent", "orphan"]);
+    expect(subagentsOf.get("parent")?.map((item) => item.id)).toEqual([
+      "early",
+      "nested",
+      "late",
+    ]);
+  });
+
+  it("stands a loop of parents on its own", () => {
+    const left = session({ id: "left", parent_session_id: "right" });
+    const right = session({ id: "right", parent_session_id: "left" });
+    const { roots } = nestSubagents([left, right]);
+    expect(roots.map((item) => item.id)).toEqual(["left", "right"]);
+  });
+});
+
 describe("splitActiveSessions", () => {
+  it("keeps a conversation in progress while a subagent it started works", () => {
+    const parent = session({ id: "parent", completed_at: at(-600_000) });
+    const child = running({ id: "child", parent_session_id: "parent" });
+    const { active, rest } = splitActiveSessions(
+      [parent],
+      NOW,
+      new Map([["parent", [child]]]),
+    );
+    expect(active.map((item) => item.id)).toEqual(["parent"]);
+    expect(rest).toEqual([]);
+  });
+
   it("leads with conversations in progress, newest conversation first", () => {
     const older = running({ id: "older", started_at: at(-900_000) });
     const newer = session({ id: "newer", started_at: at(-60_000) });

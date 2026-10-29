@@ -784,9 +784,10 @@ export async function listRawAccess(): Promise<RawAccessList> {
 }
 
 /**
- * Decides one agent raw access request. While Core is unlocked an approval
- * needs no proof; otherwise it carries the raw password, which the host
- * forwards once and keeps no copy of. Denying carries none.
+ * Decides one agent raw access request. An approval always carries a proof:
+ * the raw password, which the host forwards once and keeps no copy of, or a
+ * request for Touch ID, which the host prompts for itself. Denying carries
+ * none.
  */
 export async function decideRawAccess(
   grantId: string,
@@ -803,7 +804,7 @@ export async function decideRawAccess(
   );
 }
 
-/** Ends a running timed grant before it expires. */
+/** Ends a running lasting grant before it ends on its own. */
 export async function revokeRawGrant(grantId: string): Promise<RawAccessGrant> {
   requireNativeBridge();
   return parseRawAccessGrant(
@@ -816,10 +817,33 @@ export async function getRawSealingStatus(): Promise<RawSealingState> {
   return parseRawSealingState(await invoke<unknown>("raw_sealing_status"));
 }
 
-/** Opens the operator's raw unlock session; Core ends it after idling. */
+/**
+ * Opens the operator's raw unlock session. On the desktop it lasts until the
+ * screen locks, the computer sleeps, or the operator locks; Core ends an idle
+ * one where it keeps that timeout.
+ */
 export async function unlockRaw(proof: RawProof): Promise<RawSealingOutcome> {
   requireNativeBridge();
   return parseRawSealingOutcome(await invoke<unknown>("unlock_raw", { proof }));
+}
+
+/**
+ * Lets Touch ID open raw content beside the raw password, which this takes
+ * once. The host keeps the key it generates in the keychain.
+ */
+export async function enrollRawBiometric(
+  password: string,
+): Promise<RawSealingOutcome> {
+  requireNativeBridge();
+  return parseRawSealingOutcome(
+    await invoke<unknown>("enroll_raw_biometric", { password }),
+  );
+}
+
+/** Stops Touch ID from opening raw content; the raw password keeps working. */
+export async function removeRawBiometric(): Promise<RawSealingStatus> {
+  requireNativeBridge();
+  return parseRawSealingStatus(await invoke<unknown>("remove_raw_biometric"));
 }
 
 /**

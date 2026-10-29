@@ -50,13 +50,14 @@ func (client *Client) progress(format string, args ...any) {
 	}
 }
 
-// rawGrantView is the part of a grant's state the CLI reads.
+// rawGrantView is the part of a grant's state the CLI reads. ExpiresAt is
+// nil for a grant that lasts until the user locks.
 type rawGrantView struct {
-	GrantID   string    `json:"grant_id"`
-	Status    string    `json:"status"`
-	Decision  string    `json:"decision"`
-	Scope     string    `json:"scope"`
-	ExpiresAt time.Time `json:"expires_at"`
+	GrantID   string     `json:"grant_id"`
+	Status    string     `json:"status"`
+	Decision  string     `json:"decision"`
+	Scope     string     `json:"scope"`
+	ExpiresAt *time.Time `json:"expires_at"`
 }
 
 const rawGrantUsage = "Use this same token for every raw read in this investigation, on any request: " +
@@ -67,8 +68,8 @@ const rawGrantUsage = "Use this same token for every raw read in this investigat
 	"run `astrlink raw-revoke --grant <token>` exactly once, before giving your final result."
 
 // requestRawAudit reads a request's raw parts. With --grant it reads through
-// a timed grant the user already approved. Otherwise it asks the user and
-// waits for the decision; a timed approval prints its token so the rest of
+// a lasting grant the user already approved. Otherwise it asks the user and
+// waits for the decision; a lasting approval prints its token so the rest of
 // the investigation reuses it, while a once approval's token stays in this
 // process.
 func requestRawAudit(ctx context.Context, client *Client, arguments map[string]any) (json.RawMessage, error) {
@@ -82,7 +83,7 @@ func requestRawAudit(ctx context.Context, client *Client, arguments map[string]a
 	}
 	reason, err := requiredString(arguments, "reason")
 	if err != nil {
-		return nil, fmt.Errorf("%w (or pass --grant with a token from an earlier timed approval)", err)
+		return nil, fmt.Errorf("%w (or pass --grant with a token from an earlier lasting approval)", err)
 	}
 	if utf8.RuneCountInString(reason) > maxRawReasonRunes {
 		return nil, fmt.Errorf("reason must be at most %d characters", maxRawReasonRunes)
@@ -197,18 +198,22 @@ func readRawAudit(ctx context.Context, client *Client, auditPath, token string, 
 	}
 	wrapped["status"] = "approved"
 	if state.Scope == "all_requests" {
-		wrapped["raw_grant"] = map[string]any{
+		grant := map[string]any{
 			"grant_token": token,
 			"decision":    state.Decision,
 			"scope":       "all requests, including ones recorded while the grant runs",
 			"expires_at":  state.ExpiresAt,
 			"usage":       rawGrantUsage,
 		}
+		if state.ExpiresAt == nil {
+			grant["ends"] = "when the user's screen locks, the computer sleeps, or AstrLink locks, quits, or restarts"
+		}
+		wrapped["raw_grant"] = grant
 	}
 	return json.Marshal(wrapped)
 }
 
-// revokeRawGrant gives up a timed grant. Whoever holds the token may revoke
+// revokeRawGrant gives up a lasting grant. Whoever holds the token may revoke
 // it; revoking one that already ended reports its final state.
 func revokeRawGrant(ctx context.Context, client *Client, arguments map[string]any) (json.RawMessage, error) {
 	token, err := requiredString(arguments, "grant")

@@ -171,7 +171,7 @@ describe("request live merge model", () => {
   });
 
   it("keeps finished call runtime fixed even days after the session started", () => {
-    const session = { duration_ms: 12_000, active_request_starts: [] };
+    const session = { duration_ms: 12_000, running_since: null };
     expect(sessionRuntimeMs(session, Date.parse("2026-08-17T04:46:00Z"))).toBe(
       12_000,
     );
@@ -180,28 +180,39 @@ describe("request live merge model", () => {
     );
   });
 
-  it("adds only currently running calls to the recorded runtime", () => {
+  it("grows once per second however many calls run at the same time", () => {
+    // Two running calls, but the server merged them and the finished calls
+    // they overlap into one block that began at 04:45:50.
     const session = {
       duration_ms: 12_000,
-      active_request_starts: ["2026-08-17T04:45:50Z", "2026-08-17T04:45:55Z"],
+      running_since: "2026-08-17T04:45:50Z",
     };
     const now = Date.parse("2026-08-17T04:46:00Z");
-    expect(sessionRuntimeMs(session, now)).toBe(27_000);
-    expect(sessionRuntimeMs(session, now + 1000)).toBe(29_000);
+    expect(sessionRuntimeMs(session, now)).toBe(22_000);
+    expect(sessionRuntimeMs(session, now + 1000)).toBe(23_000);
     expect(
       sessionRuntimeMs(
-        { duration_ms: 29_000, active_request_starts: [] },
+        { duration_ms: 23_000, running_since: null },
         now + 86_400_000,
       ),
-    ).toBe(29_000);
+    ).toBe(23_000);
   });
 
-  it("does not subtract runtime when an active start is ahead of the local clock", () => {
+  it("counts a finished call overlapping the running block once", () => {
+    // Finished call [0 s, 10 s], running call since 5 s; at 20 s the answer is
+    // 20 s, not 10 s + 15 s.
+    const session = { duration_ms: 0, running_since: "2026-08-17T04:46:00Z" };
+    expect(sessionRuntimeMs(session, Date.parse("2026-08-17T04:46:20Z"))).toBe(
+      20_000,
+    );
+  });
+
+  it("does not subtract runtime when the running block starts ahead of the local clock", () => {
     expect(
       sessionRuntimeMs(
         {
           duration_ms: 120,
-          active_request_starts: ["2026-08-17T04:46:01Z"],
+          running_since: "2026-08-17T04:46:01Z",
         },
         Date.parse("2026-08-17T04:46:00Z"),
       ),

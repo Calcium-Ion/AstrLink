@@ -129,6 +129,7 @@ func (index *Index) LookupFor(principal string) convo.Lookup {
 // Lookup returns the most recent record storing any of values under kind.
 // Records that produced a value (DirectionOut) win over records that only
 // named it (DirectionIn); the latter are consulted for KindExplicit only.
+// With scope.Continues, only records whose turn state it holds qualify.
 func (index *Index) Lookup(_ context.Context, principal string, kind convo.Kind, values []string, scope convo.Scope) (convo.Match, bool, error) {
 	index.mu.Lock()
 	defer index.mu.Unlock()
@@ -147,6 +148,9 @@ func (index *Index) Lookup(_ context.Context, principal string, kind convo.Kind,
 					continue
 				}
 				if !scope.NotBefore.IsZero() && record.At.Before(scope.NotBefore) {
+					continue
+				}
+				if scope.Continues != nil && !scope.Continues.Holds(record.Turn) {
 					continue
 				}
 				if !recordHasCursor(record, kind, direction, value) {

@@ -27,7 +27,7 @@ const requestRecordSelectColumns = `
            WHERE request_record_cursors.request_id = request_records.id
            ORDER BY kind, direction, value)) AS cursors_json, first_token_ms, model_redirect_json,
     routing_decision_json, client_type, privacy_decision, privacy_findings_json, conversion_diagnostics_json,
-    first_answer_ms, privacy_ignored_json, output_json`
+    first_answer_ms, privacy_ignored_json, output_json, parent_session_id`
 
 const requestRecordInsertColumns = `
     id, parent_request_id, attempt_index, started_at, completed_at, status, input_protocol,
@@ -36,9 +36,9 @@ const requestRecordInsertColumns = `
     session_id, previous_response_id, output_response_id, input_preview, events_json, created_at,
     turn_index, session_link_json, turn_user_messages, turn_user_fingerprint, recovery_json, first_token_ms,
     model_redirect_json, routing_decision_json, client_type, privacy_decision, privacy_findings_json,
-    conversion_diagnostics_json, first_answer_ms, privacy_ignored_json, output_json`
+    conversion_diagnostics_json, first_answer_ms, privacy_ignored_json, output_json, parent_session_id`
 
-const requestRecordInsertValues = `(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+const requestRecordInsertValues = `(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 func (row requestRecordRow) insertArgs() []any {
 	return []any{
@@ -49,7 +49,7 @@ func (row requestRecordRow) insertArgs() []any {
 		row.outputResponseID, row.inputPreview, row.eventsJSON, row.createdAt,
 		row.turnIndex, row.sessionLinkJSON, row.turnUserMessages, row.turnUserFingerprint, row.recoveryJSON, row.firstTokenMs,
 		row.modelRedirectJSON, row.routingDecisionJSON, row.clientType, row.privacyDecision, row.privacyFindingsJSON,
-		row.conversionDiagnosticsJSON, row.firstAnswerMs, row.privacyIgnoredJSON, row.outputJSON,
+		row.conversionDiagnosticsJSON, row.firstAnswerMs, row.privacyIgnoredJSON, row.outputJSON, row.parentSessionID,
 	}
 }
 
@@ -143,7 +143,8 @@ ON CONFLICT(id) DO UPDATE SET
     privacy_findings_json = excluded.privacy_findings_json,
     privacy_ignored_json = excluded.privacy_ignored_json,
     conversion_diagnostics_json = excluded.conversion_diagnostics_json,
-    output_json = excluded.output_json
+    output_json = excluded.output_json,
+    parent_session_id = COALESCE(excluded.parent_session_id, request_records.parent_session_id)
 WHERE request_records.status = 'pending' OR excluded.status <> 'pending'`,
 		row.insertArgs()...,
 	)
@@ -646,10 +647,11 @@ WHERE parent_request_id IN (
 	}
 }
 
-// purgeRequestSessions deletes the named conversations: their roots with
-// every retry attempt, cursor and audit part. A root still running stays,
-// since its attempts and final snapshot are yet to be written; the
-// conversation keeps it and loses the rest.
+// purgeRequestSessions deletes the named conversations and the subagent
+// conversations they started: their roots with every retry attempt, cursor
+// and audit part. A root still running stays, since its attempts and final
+// snapshot are yet to be written; the conversation keeps it and loses the
+// rest.
 func purgeRequestSessions(
 	ctx context.Context,
 	transaction *sql.Tx,
@@ -661,9 +663,9 @@ func purgeRequestSessions(
 	if _, err := transaction.ExecContext(ctx, `UPDATE request_records SET id = id WHERE 0`); err != nil {
 		return contract.PurgeResult{}, fmt.Errorf("lock request records: %w", err)
 	}
-	args := make([]any, len(sessionIDs))
-	for index, id := range sessionIDs {
-		args[index] = string(id)
+	args, err := withSubagentSessions(ctx, transaction, sessionIDs)
+	if err != nil {
+		return contract.PurgeResult{}, err
 	}
 	withDoomed := `WITH roots AS (
     SELECT id FROM request_records INDEXED BY request_records_session_turns_idx
@@ -709,6 +711,54 @@ func purgeRequestSessions(
 	return result, nil
 }
 
+// maxSubagentDepth bounds how many levels of subagents a purge follows.
+const maxSubagentDepth = 8
+
+// withSubagentSessions returns sessionIDs plus every conversation they
+// started as subagents, down to maxSubagentDepth levels, as query arguments.
+func withSubagentSessions(ctx context.Context, transaction *sql.Tx, sessionIDs []contract.SessionID) ([]any, error) {
+	seen := make(map[string]struct{}, len(sessionIDs))
+	args := make([]any, 0, len(sessionIDs))
+	frontier := make([]any, 0, len(sessionIDs))
+	for _, id := range sessionIDs {
+		if _, ok := seen[string(id)]; ok {
+			continue
+		}
+		seen[string(id)] = struct{}{}
+		args = append(args, string(id))
+		frontier = append(frontier, string(id))
+	}
+	for depth := 0; depth < maxSubagentDepth && len(frontier) > 0; depth++ {
+		rows, err := transaction.QueryContext(ctx, `SELECT DISTINCT COALESCE(session_id, id) FROM request_records
+WHERE parent_session_id IS NOT NULL AND parent_session_id IN (`+sessionPlaceholders(len(frontier))+`)
+  AND parent_request_id IS NULL`, frontier...)
+		if err != nil {
+			return nil, fmt.Errorf("list subagent sessions: %w", err)
+		}
+		next := make([]any, 0)
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				return nil, fmt.Errorf("scan subagent session: %w", err)
+			}
+			if _, ok := seen[id]; ok {
+				continue
+			}
+			seen[id] = struct{}{}
+			args = append(args, id)
+			next = append(next, id)
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("iterate subagent sessions: %w", err)
+		}
+		rows.Close()
+		frontier = next
+	}
+	return args, nil
+}
+
 type requestRecordRow struct {
 	clientType                any
 	recoveryJSON              any
@@ -751,6 +801,7 @@ type requestRecordRow struct {
 	privacyIgnoredJSON        any
 	conversionDiagnosticsJSON any
 	outputJSON                any
+	parentSessionID           any
 }
 
 func encodeRequestRecordRow(record contract.RequestRecord, createdAt time.Time) (requestRecordRow, error) {
@@ -887,6 +938,9 @@ func encodeRequestRecordRow(record contract.RequestRecord, createdAt time.Time) 
 	if record.SessionID != nil {
 		row.sessionID = string(*record.SessionID)
 	}
+	if record.ParentSessionID != nil {
+		row.parentSessionID = string(*record.ParentSessionID)
+	}
 	if record.PreviousResponseID != nil {
 		row.previousResponseID = *record.PreviousResponseID
 	}
@@ -929,7 +983,7 @@ type scannable interface {
 func scanRequestRecord(row scannable) (contract.RequestRecord, error) {
 	var recoveryJSON, modelRedirectJSON, routingDecisionJSON, clientType sql.NullString
 	var privacyDecision, privacyFindingsJSON, privacyIgnoredJSON, conversionDiagnosticsJSON sql.NullString
-	var outputJSON sql.NullString
+	var outputJSON, parentSessionID sql.NullString
 	var firstTokenMs, firstAnswerMs sql.NullInt64
 	var (
 		id, startedAt, status, inputProtocol, auditJSON, createdAt        string
@@ -950,7 +1004,7 @@ func scanRequestRecord(row scannable) (contract.RequestRecord, error) {
 		&sessionID, &previousResponseID, &outputResponseID, &inputPreview, &eventsJSON,
 		&createdAt, &turnIndex, &sessionLinkJSON, &turnUserMessages, &turnUserFingerprint, &recoveryJSON, &childCount, &cursorsJSON, &firstTokenMs,
 		&modelRedirectJSON, &routingDecisionJSON, &clientType, &privacyDecision, &privacyFindingsJSON,
-		&conversionDiagnosticsJSON, &firstAnswerMs, &privacyIgnoredJSON, &outputJSON,
+		&conversionDiagnosticsJSON, &firstAnswerMs, &privacyIgnoredJSON, &outputJSON, &parentSessionID,
 	); err != nil {
 		return contract.RequestRecord{}, err
 	}
@@ -990,6 +1044,10 @@ func scanRequestRecord(row scannable) (contract.RequestRecord, error) {
 	if parentRequestID.Valid {
 		value := contract.RequestID(parentRequestID.String)
 		record.ParentRequestID = &value
+	}
+	if parentSessionID.Valid && parentSessionID.String != "" {
+		value := contract.SessionID(parentSessionID.String)
+		record.ParentSessionID = &value
 	}
 	if completedAt.Valid {
 		completed, err := time.Parse(time.RFC3339Nano, completedAt.String)

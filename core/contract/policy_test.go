@@ -12,8 +12,9 @@ func TestDefaultPrivacyPolicyIsFrozenAndValid(t *testing.T) {
 	if err := ValidatePrivacyDefault(policy); err != nil {
 		t.Fatalf("ValidatePrivacyDefault: %v", err)
 	}
+	// On for a fresh install, with the regex detector, so it needs no model.
 	if policy.ID != "policy_privacy_default" || policy.Name != "隐私保护" ||
-		policy.Enabled || policy.Priority != 0 || policy.Detector != PolicyDetectorRegex ||
+		!policy.Enabled || policy.Priority != 0 || policy.Detector != PolicyDetectorRegex ||
 		policy.MinConfidence != DefaultPrivacyMinConfidence ||
 		policy.RequestAction != PolicyActionRedact || policy.ResponseAction != PolicyActionAllow ||
 		!policy.ResponseRestore {
@@ -168,7 +169,7 @@ func TestPolicyRegexRuleAcceptsValueGroups(t *testing.T) {
 	}
 }
 
-func TestDefaultKindRulesCoverEveryKindAndDisableTheNoisyOnes(t *testing.T) {
+func TestDefaultKindRulesCoverEveryKindAndEnableOnlySecrets(t *testing.T) {
 	rules := DefaultPrivacyKindRules()
 	if len(rules) != len(PrivacyKinds()) {
 		t.Fatalf("kind rules = %#v", rules)
@@ -187,9 +188,7 @@ func TestDefaultKindRulesCoverEveryKindAndDisableTheNoisyOnes(t *testing.T) {
 		if rule.Style != wantStyle {
 			t.Fatalf("kind %q default style = %q", rule.Kind, rule.Style)
 		}
-		wantEnabled := rule.Kind != "url" && rule.Kind != "ip_address" &&
-			rule.Kind != "private_date"
-		if rule.Enabled != wantEnabled {
+		if wantEnabled := rule.Kind == "common_secret"; rule.Enabled != wantEnabled {
 			t.Fatalf("kind %q default enabled = %v", rule.Kind, rule.Enabled)
 		}
 		if !rule.Notify {
