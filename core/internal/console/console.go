@@ -246,10 +246,11 @@ func (handler *Handler) setup(writer http.ResponseWriter, request *http.Request)
 		return
 	}
 	defer clear(password)
+	generation := handler.sessions.currentGeneration()
 	_, err = handler.rawPassword.ChangePassword(request.Context(), controlapi.RawPasswordSet, password, controlapi.RawProof{})
 	switch {
 	case err == nil:
-		handler.startSession(writer, request)
+		handler.startSession(writer, request, generation)
 	case errors.Is(err, controlapi.ErrRawPasswordAlreadySet):
 		controlapi.WriteError(writer, http.StatusConflict, "already_configured", "a password is already set; sign in with it")
 	case errors.Is(err, controlapi.ErrRawPasswordRequired), errors.Is(err, controlapi.ErrRawPasswordPolicy):
@@ -271,11 +272,12 @@ func (handler *Handler) login(writer http.ResponseWriter, request *http.Request)
 		return
 	}
 	defer clear(password)
+	generation := handler.sessions.currentGeneration()
 	_, err := handler.rawPassword.Verify(request.Context(), controlapi.RawProof{Password: password})
 	var backoff *controlapi.RawBackoffError
 	switch {
 	case err == nil:
-		handler.startSession(writer, request)
+		handler.startSession(writer, request, generation)
 	case errors.As(err, &backoff):
 		writer.Header().Set("Retry-After", strconv.Itoa(int((backoff.Remaining+time.Second-1)/time.Second)))
 		controlapi.WriteError(writer, http.StatusTooManyRequests, "too_many_attempts", "too many wrong passwords; wait before trying again")
@@ -288,8 +290,12 @@ func (handler *Handler) login(writer http.ResponseWriter, request *http.Request)
 	}
 }
 
-func (handler *Handler) startSession(writer http.ResponseWriter, request *http.Request) {
-	token, err := handler.sessions.create(handler.now())
+func (handler *Handler) startSession(writer http.ResponseWriter, request *http.Request, generation uint64) {
+	token, err := handler.sessions.create(handler.now(), generation)
+	if errors.Is(err, errSessionGenerationChanged) {
+		controlapi.WriteError(writer, http.StatusUnauthorized, "invalid_password", "the password changed during sign-in; sign in again")
+		return
+	}
 	if err != nil {
 		controlapi.WriteError(writer, http.StatusInternalServerError, "session_unavailable", "could not start a session")
 		return
