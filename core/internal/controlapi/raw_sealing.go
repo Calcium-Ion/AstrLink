@@ -18,13 +18,16 @@ const (
 	// RawPasswordPath sets, changes or resets the raw password.
 	RawPasswordPath = "/control/v1/audit/raw-password"
 	// RawUnlockPath and RawLockPath start and end the operator's unlock
-	// session. While it lasts an agent approval needs no password. A lock
-	// also revokes every agent grant unless its body keeps them.
+	// session. A lock also revokes every agent grant. An approval needs its
+	// own proof either way.
 	RawUnlockPath = "/control/v1/audit/raw-unlock"
 	RawLockPath   = "/control/v1/audit/raw-lock"
 	// RawVerifyPath checks a proof without starting or touching the unlock
 	// session, for desktop actions that only need to know it holds.
 	RawVerifyPath = "/control/v1/audit/raw-verify"
+	// RawBiometricPath adds (POST) or takes out (DELETE) the envelope a key
+	// the desktop keeps behind Touch ID opens. Operators only.
+	RawBiometricPath = "/control/v1/audit/raw-biometric"
 )
 
 // RawSealingSummary is the observer view of raw sealing.
@@ -76,6 +79,7 @@ func (handler *Handler) registerRawSealingRoutes() {
 	handler.mux.HandleFunc(RawUnlockPath, handler.authenticated(handler.postRawUnlock, RoleOperator))
 	handler.mux.HandleFunc(RawLockPath, handler.authenticated(handler.postRawLock, RoleOperator))
 	handler.mux.HandleFunc(RawVerifyPath, handler.authenticated(handler.postRawVerify, RoleOperator))
+	handler.mux.HandleFunc(RawBiometricPath, handler.authenticated(handler.rawBiometric, RoleOperator))
 }
 
 func (handler *Handler) rawVaultController() RawVaultController {
@@ -100,7 +104,7 @@ func (handler *Handler) rawSealingStatus(request *http.Request, status RawVaultS
 		KeyVerified:       status.KeyVerified,
 		Unlocked:          status.Unlocked,
 		UnlockExpiresAt:   status.UnlockExpiresAt,
-		UnlockIdleSeconds: int(rawUnlockIdle / time.Second),
+		UnlockIdleSeconds: int(status.UnlockIdle / time.Second),
 		RetryAfterSeconds: retryAfterSeconds(status.RetryAfter),
 		PasswordMinRunes:  rawseal.MinPasswordRunes,
 		PasswordMaxRunes:  rawseal.MaxPasswordRunes,
@@ -108,6 +112,9 @@ func (handler *Handler) rawSealingStatus(request *http.Request, status RawVaultS
 	}
 	if status.PasswordSet {
 		view.Envelopes = append(view.Envelopes, rawseal.KindPassword)
+	}
+	if status.BiometricSet {
+		view.Envelopes = append(view.Envelopes, rawseal.KindBiometric)
 	}
 	if status.PasswordSet {
 		enabled, err := handler.agentRawAccessEnabled(request.Context())
@@ -271,8 +278,15 @@ func (handler *Handler) postRawUnlock(writer http.ResponseWriter, request *http.
 	handler.postRawProof(writer, request, "unlocking", RawVaultController.Unlock)
 }
 
+// postRawVerify takes the password only: it confirms a key replaced outside
+// the desktop, and only that key's own password shows the operator set it.
 func (handler *Handler) postRawVerify(writer http.ResponseWriter, request *http.Request) {
-	handler.postRawProof(writer, request, "verifying", RawVaultController.Verify)
+	handler.postRawProof(writer, request, "verifying", func(controller RawVaultController, ctx context.Context, proof RawProof) (RawVaultStatus, error) {
+		if len(proof.Password) == 0 {
+			return RawVaultStatus{}, ErrRawProofRequired
+		}
+		return controller.Verify(ctx, proof)
+	})
 }
 
 // postRawProof hands the request's proof to use and answers with the raw
@@ -287,7 +301,7 @@ func (handler *Handler) postRawProof(
 	if !ok {
 		return
 	}
-	proofRequired := verb + " requires the raw password"
+	proofRequired := verb + " requires the raw password or Touch ID"
 	if request.ContentLength == 0 {
 		writeError(writer, http.StatusUnprocessableEntity, "raw_proof_required", proofRequired)
 		return
@@ -300,7 +314,7 @@ func (handler *Handler) postRawProof(
 	proof, err := parseRawProof(members["proof"])
 	if err != nil {
 		writeValidationFailed(writer, "proof is invalid", []errorDetail{{
-			Field: "proof", Reason: "must be {password}",
+			Field: "proof", Reason: "must be {password} or {biometric}",
 		}})
 		return
 	}
@@ -320,31 +334,96 @@ func (handler *Handler) postRawProof(
 	handler.writeRawSealingStatus(writer, request, status)
 }
 
-type rawLockBody struct {
-	// KeepAgentGrants is set when the desktop locks on its own, as its main
-	// window hides; the operator's lock takes the grants back too.
-	KeepAgentGrants bool `json:"keep_agent_grants"`
-}
-
+// postRawLock ends the unlock session and every agent grant. The desktop
+// sends it when the screen locks, the computer sleeps, or the operator
+// locks.
 func (handler *Handler) postRawLock(writer http.ResponseWriter, request *http.Request) {
 	controller, ok := handler.requireRawController(writer, request)
 	if !ok {
 		return
 	}
-	var body rawLockBody
 	if request.ContentLength != 0 {
+		var body struct{}
 		if !requireMediaType(writer, request, "application/json") || !decodeControlJSON(writer, request, &body) {
 			return
 		}
 	}
 	controller.Lock()
-	if !body.KeepAgentGrants {
-		handler.rawGrants.revokeAll()
-	}
+	handler.rawGrants.revokeAll()
 	status, err := handler.rawVaultStatus(request.Context())
 	if err != nil {
 		writeError(writer, http.StatusInternalServerError, "raw_vault_unavailable", "raw sealing state is unavailable")
 		return
 	}
 	handler.writeRawSealingStatus(writer, request, status)
+}
+
+// rawBiometric adds or takes out the Touch ID envelope. Adding needs the raw
+// password and the key the desktop generated and keeps in the keychain;
+// taking it out needs nothing, since it only gives access up. The server
+// edition has no keychain to keep a key in.
+func (handler *Handler) rawBiometric(writer http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodPost && request.Method != http.MethodDelete {
+		writer.Header().Set("Allow", "POST, DELETE")
+		writeError(writer, http.StatusMethodNotAllowed, "method_not_allowed", "only POST and DELETE are allowed")
+		return
+	}
+	controller := handler.rawVaultController()
+	if controller == nil {
+		writeError(writer, http.StatusConflict, "raw_sealing_unavailable", "raw content sealing is not available in this Core")
+		return
+	}
+	if handler.consoleSessions != nil {
+		writeError(writer, http.StatusForbidden, "raw_biometric_unavailable", "the server edition unlocks raw content with the raw password only")
+		return
+	}
+	var (
+		status RawVaultStatus
+		err    error
+	)
+	if request.Method == http.MethodDelete {
+		status, err = controller.RemoveBiometric(request.Context())
+	} else {
+		members, release, ok := decodeSecretJSON(writer, request, "proof", "key")
+		if !ok {
+			return
+		}
+		defer release()
+		proof, parseErr := parseRawProof(members["proof"])
+		if parseErr != nil || len(proof.Password) == 0 {
+			proof.clear()
+			writeValidationFailed(writer, "proof is invalid", []errorDetail{{
+				Field: "proof", Reason: "must be {password}",
+			}})
+			return
+		}
+		defer proof.clear()
+		key, keyErr := decodeBase64Secret(members["key"])
+		if keyErr != nil || len(key) != rawseal.BiometricKeyBytes {
+			clear(key)
+			writeValidationFailed(writer, "key is invalid", []errorDetail{{
+				Field: "key", Reason: fmt.Sprintf("must be %d bytes of standard base64", rawseal.BiometricKeyBytes),
+			}})
+			return
+		}
+		defer clear(key)
+		status, err = controller.EnrollBiometric(request.Context(), proof.RawProof, key)
+		if errors.Is(err, ErrRawPasswordInvalid) {
+			handler.observers.noteRawEvent(RawAccessEventPasswordInvalid, RawAccessGrant{})
+		}
+	}
+	if err != nil {
+		if errors.Is(err, storage.ErrConflict) {
+			writeError(writer, http.StatusConflict, "raw_sealing_changed", "raw sealing changed concurrently; reload and retry")
+			return
+		}
+		handler.writeRawProofError(writer, err)
+		return
+	}
+	view, err := handler.rawSealingStatus(request, status)
+	if err != nil {
+		handler.writeAuditSettingsStoreError(writer, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, view)
 }

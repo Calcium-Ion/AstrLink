@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -292,8 +293,12 @@ func TestPolicyDryRunPreviewsRegexRedactAndRespectsOverrides(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if before.Policy.Enabled {
-		t.Fatal("live privacy protection must start disabled")
+	// The live policy replaces credentials only; the dry-run below turns
+	// emails on for itself alone.
+	if !before.Policy.Enabled || slices.ContainsFunc(before.Policy.KindRules, func(rule contract.PolicyKindRule) bool {
+		return rule.Kind == "email" && rule.Enabled
+	}) {
+		t.Fatalf("live privacy protection must start with the shipped default: %#v", before.Policy)
 	}
 	provider, err := privacy.NewStorePolicyProvider(handler.policyStore)
 	if err != nil {
@@ -307,7 +312,7 @@ func TestPolicyDryRunPreviewsRegexRedactAndRespectsOverrides(t *testing.T) {
 
 	response := policyRequest(
 		t, handler, http.MethodPost, PolicyDryRunPath, "application/json",
-		`{"protocol":"openai.chat","sample_text":"email alice@example.com","policy":{"enabled":true,"detector":"regex","local_model_id":null,"request_action":"redact"}}`,
+		`{"protocol":"openai.chat","sample_text":"email alice@acme.io","policy":{"enabled":true,"detector":"regex","local_model_id":null,"request_action":"redact","kind_rules":[{"kind":"email","enabled":true,"style":"natural","notify":true}]}}`,
 		"",
 	)
 	if response.Code != http.StatusOK {
@@ -317,8 +322,8 @@ func TestPolicyDryRunPreviewsRegexRedactAndRespectsOverrides(t *testing.T) {
 	decode(t, response, &result)
 	if result.Decision != "redact" || result.FindingsSummary == "" ||
 		!strings.Contains(result.FindingsSummary, "email=") ||
-		result.RedactedBody == nil || strings.Contains(*result.RedactedBody, "alice@example.com") ||
-		strings.Contains(result.InspectedBody, "alice@example.com") == false {
+		result.RedactedBody == nil || strings.Contains(*result.RedactedBody, "alice@acme.io") ||
+		strings.Contains(result.InspectedBody, "alice@acme.io") == false {
 		t.Fatalf("dry-run result=%#v", result)
 	}
 	if len(result.Findings) == 0 || result.Findings[0].Kind != "email" || result.Findings[0].Path == "" {
@@ -329,14 +334,14 @@ func TestPolicyDryRunPreviewsRegexRedactAndRespectsOverrides(t *testing.T) {
 	}
 	for _, finding := range result.Findings {
 		encoded, _ := json.Marshal(finding)
-		if strings.Contains(string(encoded), "alice@example.com") {
+		if strings.Contains(string(encoded), "alice@acme.io") {
 			t.Fatalf("plaintext leaked in finding: %s", encoded)
 		}
 	}
 	if len(result.Redactions) == 0 ||
 		result.Redactions[0].Placeholder == "" ||
 		result.Redactions[0].Kind != "email" ||
-		result.Redactions[0].Value != "alice@example.com" {
+		result.Redactions[0].Value != "alice@acme.io" {
 		t.Fatalf("redactions=%#v", result.Redactions)
 	}
 	// email ships with the natural style, so the stand-in is a well-formed
@@ -360,7 +365,7 @@ func TestPolicyDryRunPreviewsRegexRedactAndRespectsOverrides(t *testing.T) {
 
 	response = policyRequest(
 		t, handler, http.MethodPost, PolicyDryRunPath, "application/json",
-		`{"protocol":"openai.chat","sample_text":"email alice@example.com",`+
+		`{"protocol":"openai.chat","sample_text":"email alice@acme.io",`+
 			`"policy":{"enabled":true,"request_action":"redact",`+
 			`"kind_rules":[{"kind":"email","enabled":true,"style":"token"}]}}`,
 		"",
@@ -402,7 +407,7 @@ func TestPolicyDryRunPreviewsRegexRedactAndRespectsOverrides(t *testing.T) {
 
 	response = policyRequest(
 		t, handler, http.MethodPost, PolicyDryRunPath, "application/json",
-		`{"protocol":"openai.chat","sample_text":"email alice@example.com","policy":{"enabled":false}}`,
+		`{"protocol":"openai.chat","sample_text":"email alice@acme.io","policy":{"enabled":false}}`,
 		"",
 	)
 	if response.Code != http.StatusOK {
@@ -483,7 +488,7 @@ func TestPolicyDryRunSeparatesAcceptedAndSuppressedModelFindings(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			body := fmt.Sprintf(
-				`{"protocol":"openai.responses","sample_text":"画一张猫的图片","policy":{"enabled":true,"detector":"local_model","local_model_id":"%s","min_confidence":%.2f,"request_action":"block"}}`,
+				`{"protocol":"openai.responses","sample_text":"画一张猫的图片","policy":{"enabled":true,"detector":"local_model","local_model_id":"%s","min_confidence":%.2f,"request_action":"block","kind_rules":[{"kind":"private_person","enabled":true,"style":"token","notify":true}]}}`,
 				contract.LegacyOpenAIPrivacyFilterInstallationID,
 				test.minConfidence,
 			)

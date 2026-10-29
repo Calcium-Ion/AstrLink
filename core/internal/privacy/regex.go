@@ -103,8 +103,12 @@ func builtinRegexDefinitions() []builtinRegexDefinition {
 		{
 			kind: KindCommonSecret,
 			// An HTTP bearer credential (RFC 6750 b64token, which covers
-			// JWTs). Only the token is replaced; "Bearer" stays.
-			pattern: `(?i)\bbearer[ \t]+(?P<value>[A-Za-z0-9._~+/-]{16,}=*)`,
+			// JWTs). Only the token is replaced; "Bearer" stays. Examples
+			// such as Bearer YOUR_ACCESS_TOKEN are left alone, see
+			// plausibleGenericSecret.
+			pattern:  `(?i)\bbearer[ \t]+(?P<value>[A-Za-z0-9._~+/-]{16,}=*)`,
+			validate: plausibleGenericSecret,
+			boundary: genericSecretBoundary,
 		},
 		{
 			kind: KindCommonSecret,
@@ -112,8 +116,12 @@ func builtinRegexDefinitions() []builtinRegexDefinition {
 			// JSON (the key's closing quote comes before the colon), query
 			// strings, and headers such as X-API-Key. Only the value is
 			// replaced, so the key name stays readable. \b keeps compound
-			// keys such as max_tokens= and prompt_tokens out.
-			pattern: `(?i)\b(?:api[_-]?key|(?:(?:access|auth|refresh)[_-]?)?token|secret|password)["']?\s*[:=]\s*["']?(?P<value>[A-Za-z0-9_./+=-]{12,})`,
+			// keys such as max_tokens= and prompt_tokens out. References
+			// and placeholders such as process.env.API_KEY or
+			// your_api_key_here are left alone, see plausibleGenericSecret.
+			pattern:  `(?i)\b(?:api[_-]?key|(?:(?:access|auth|refresh)[_-]?)?token|secret|password)["']?\s*[:=]\s*["']?(?P<value>[A-Za-z0-9_./+=-]{12,})`,
+			validate: plausibleGenericSecret,
+			boundary: genericSecretBoundary,
 		},
 		{
 			kind:     KindPaymentCard,

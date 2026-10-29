@@ -21,11 +21,13 @@ func (source AccessTokenSource) Valid() bool {
 }
 
 // AccessTokenMetadata is safe to return from list operations. It deliberately
-// contains neither the bearer value nor its SHA-256 digest.
+// contains neither the bearer value nor its SHA-256 digest. Source tells the
+// bootstrap token this installation issued apart from the ones a user created.
 type AccessTokenMetadata struct {
 	ID        contract.AccessTokenID `json:"id"`
 	Name      string                 `json:"name"`
 	Hint      string                 `json:"hint"`
+	Source    AccessTokenSource      `json:"source"`
 	CreatedAt time.Time              `json:"created_at"`
 }
 

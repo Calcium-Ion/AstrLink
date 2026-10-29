@@ -25,7 +25,7 @@ import (
 
 const (
 	// RawAccessPath lists agent requests for raw audit content awaiting a
-	// desktop decision and the timed grants still running;
+	// desktop decision and the lasting grants still running;
 	// RawAccessPath/{grant_id}/decision decides one, and DELETE
 	// RawAccessPath/{grant_id} revokes a running grant.
 	RawAccessPath = "/control/v1/audit/raw-access"
@@ -56,6 +56,12 @@ var (
 	ErrRawProofRequired = errors.New("raw access proof is required")
 	// ErrRawPasswordInvalid means the raw password did not open the key.
 	ErrRawPasswordInvalid = errors.New("raw password is invalid")
+	// ErrRawBiometricUnavailable means a Touch ID proof came for a key with
+	// no biometric envelope, as after a password change.
+	ErrRawBiometricUnavailable = errors.New("raw content has no Touch ID unlock")
+	// ErrRawBiometricInvalid means the key a Touch ID proof carried did not
+	// open the biometric envelope.
+	ErrRawBiometricInvalid = errors.New("the Touch ID key did not open raw content")
 	// ErrRawNotConfigured means no raw password protects a raw sealing key
 	// yet, so nothing raw can be opened.
 	ErrRawNotConfigured = errors.New("raw sealing is not configured")
@@ -69,13 +75,15 @@ func (err *RawBackoffError) Error() string {
 }
 
 // RawProof is what a caller offers to open the raw sealing key: the raw
-// password. Password bytes belong to the caller, which clears them.
+// password, or the key the desktop releases from the keychain after Touch
+// ID. The bytes belong to the caller, which clears them.
 type RawProof struct {
-	Password []byte
+	Password  []byte
+	Biometric []byte
 }
 
 // Empty reports whether no proof was offered at all.
-func (proof RawProof) Empty() bool { return len(proof.Password) == 0 }
+func (proof RawProof) Empty() bool { return len(proof.Password) == 0 && len(proof.Biometric) == 0 }
 
 // RawVaultStatus describes raw sealing without exposing key material.
 type RawVaultStatus struct {
@@ -84,13 +92,20 @@ type RawVaultStatus struct {
 	// PasswordSet is true when a password envelope exists. Until then raw
 	// captures are not kept and nothing raw is readable.
 	PasswordSet bool
+	// BiometricSet is true when a biometric envelope exists, so Touch ID
+	// can stand in for the password.
+	BiometricSet bool
 	// KeyVerified is false while the stored public key fails its MAC; raw
 	// captures are then not kept until a proof confirms it.
 	KeyVerified bool
 	// Unlocked is true while the operator's unlock session lasts.
 	Unlocked bool
-	// UnlockExpiresAt is when the idle unlock session ends.
+	// UnlockExpiresAt is when the idle unlock session ends; nil while
+	// locked and for an unlock that lasts until Lock.
 	UnlockExpiresAt *time.Time
+	// UnlockIdle is how long an unlock lasts without a raw read; zero when
+	// it lasts until Lock.
+	UnlockIdle time.Duration
 	// RetryAfter is how long wrong-password backoff still refuses proofs.
 	RetryAfter time.Duration
 	// KeyFingerprint is the hex SHA-256 of the stored public key, or empty
@@ -121,10 +136,8 @@ type RawVault interface {
 	// WithProof opens the private key with a fresh proof for one callback.
 	// It never uses or extends the unlock session.
 	WithProof(context.Context, RawProof, func(RawKeyOpener) error) error
-	// HoldKey opens the private key for a caller that keeps it past this
-	// call: with proof when one is given, otherwise from the unlock session,
-	// which it does not extend. It returns ErrRawProofRequired when no proof
-	// is given and the vault is locked.
+	// HoldKey opens the private key with a fresh proof for a caller that
+	// keeps it past this call. It returns ErrRawProofRequired without one.
 	HoldKey(context.Context, RawProof) (RawKeyHolder, error)
 }
 
@@ -142,27 +155,33 @@ const (
 type rawGrantMode string
 
 const (
-	rawGrantOnce      rawGrantMode = "once"
-	rawGrantWindow5m  rawGrantMode = "window_5m"
+	rawGrantOnce rawGrantMode = "once"
+	// rawGrantUntilLock lasts until the operator's next lock: the screen
+	// locks, the computer sleeps, the operator locks, AstrLink quits, or
+	// Core restarts.
+	rawGrantUntilLock rawGrantMode = "until_lock"
 	rawGrantWindow1h  rawGrantMode = "window_1h"
 	rawGrantDenyMode  rawGrantMode = "deny"
-	rawGrantModeUsage              = "must be once, window_5m, window_1h, or deny"
+	rawGrantModeUsage              = "must be once, until_lock, window_1h, or deny"
 )
 
-// window is how long a timed grant lasts, or zero for once and deny.
+// lasting reports a grant that reads every request until it ends, rather
+// than the one request it was asked for.
+func (mode rawGrantMode) lasting() bool {
+	return mode == rawGrantUntilLock || mode == rawGrantWindow1h
+}
+
+// window is how long a lasting grant runs at most, or zero for one with no
+// time limit and for once and deny.
 func (mode rawGrantMode) window() time.Duration {
-	switch mode {
-	case rawGrantWindow5m:
-		return 5 * time.Minute
-	case rawGrantWindow1h:
+	if mode == rawGrantWindow1h {
 		return time.Hour
-	default:
-		return 0
 	}
+	return 0
 }
 
 // Grant scopes on the wire: a once grant reads the request it was asked
-// for; a timed grant reads every request until it ends.
+// for; a lasting grant reads every request until it ends.
 const (
 	rawGrantScopeRequest = "request"
 	rawGrantScopeAll     = "all_requests"
@@ -179,11 +198,13 @@ type rawGrant struct {
 	reason     string
 	clientName string
 	createdAt  time.Time
-	expiresAt  time.Time
+	// expiresAt is zero for an approved until_lock grant, which only a lock
+	// or revocation ends.
+	expiresAt time.Time
 	// keys holds a once grant's unwrapped per-part keys for its request.
 	// Parts still sealed by the audit key have no entry.
 	keys map[storage.AuditDirection][]byte
-	// holder keeps a timed grant's private key until the grant ends; timer
+	// holder keeps a lasting grant's private key until the grant ends; timer
 	// zeroes it on expiry.
 	holder RawKeyHolder
 	timer  *time.Timer
@@ -192,7 +213,7 @@ type rawGrant struct {
 // end moves a live grant to status and zeroes what it holds.
 func (grant *rawGrant) end(status rawGrantStatus, now time.Time) {
 	grant.status = status
-	if now.Before(grant.expiresAt) {
+	if grant.expiresAt.IsZero() || now.Before(grant.expiresAt) {
 		grant.expiresAt = now
 	}
 	clearRawKeys(grant.keys)
@@ -210,9 +231,10 @@ func (grant *rawGrant) live() bool {
 	return grant.status == rawGrantPending || grant.status == rawGrantApproved
 }
 
-func (grant *rawGrant) timed() bool { return grant.mode.window() > 0 }
+func (grant *rawGrant) lasting() bool { return grant.mode.lasting() }
 
 // RawAccessGrant is the wire shape of one grant, without its token.
+// ExpiresAt is null for an approved until_lock grant.
 type RawAccessGrant struct {
 	GrantID    string             `json:"grant_id"`
 	RequestID  contract.RequestID `json:"request_id"`
@@ -222,20 +244,24 @@ type RawAccessGrant struct {
 	Reason     string             `json:"reason"`
 	ClientName string             `json:"client_name"`
 	CreatedAt  time.Time          `json:"created_at"`
-	ExpiresAt  time.Time          `json:"expires_at"`
+	ExpiresAt  *time.Time         `json:"expires_at"`
 }
 
 func (grant *rawGrant) view() RawAccessGrant {
 	view := RawAccessGrant{
 		GrantID: grant.id, RequestID: grant.requestID, Status: string(grant.status),
 		Reason: grant.reason, ClientName: grant.clientName,
-		CreatedAt: grant.createdAt, ExpiresAt: grant.expiresAt,
+		CreatedAt: grant.createdAt,
+	}
+	if !grant.expiresAt.IsZero() {
+		expiresAt := grant.expiresAt
+		view.ExpiresAt = &expiresAt
 	}
 	if grant.mode != "" {
 		view.Decision = string(grant.mode)
 	}
 	switch {
-	case grant.timed():
+	case grant.lasting():
 		view.Scope = rawGrantScopeAll
 	case grant.mode == rawGrantOnce:
 		view.Scope = rawGrantScopeRequest
@@ -270,7 +296,7 @@ func hashRawGrantToken(token string) [sha256.Size]byte {
 // expireLocked ends grants whose time ran out and forgets finished ones.
 func (manager *rawGrantManager) expireLocked(now time.Time) {
 	for id, grant := range manager.grants {
-		if grant.live() && !now.Before(grant.expiresAt) {
+		if grant.live() && !grant.expiresAt.IsZero() && !now.Before(grant.expiresAt) {
 			grant.end(rawGrantExpired, now)
 		}
 		if !grant.live() && now.Sub(grant.expiresAt) > rawGrantFinishedTTL {
@@ -279,7 +305,7 @@ func (manager *rawGrantManager) expireLocked(now time.Time) {
 	}
 }
 
-// expireTimed zeroes a timed grant's key as soon as its window closes,
+// expireTimed zeroes a lasting grant's key as soon as its window closes,
 // rather than at the next request that looks.
 func (manager *rawGrantManager) expireTimed() {
 	manager.mu.Lock()
@@ -355,13 +381,13 @@ func (manager *rawGrantManager) pending() []RawAccessGrant {
 	return manager.list(func(grant *rawGrant) bool { return grant.status == rawGrantPending })
 }
 
-// active returns the timed grants still running.
+// active returns the lasting grants still running.
 func (manager *rawGrantManager) active() []RawAccessGrant {
 	return manager.list(isActiveRawGrant)
 }
 
 func isActiveRawGrant(grant *rawGrant) bool {
-	return grant.status == rawGrantApproved && grant.timed()
+	return grant.status == rawGrantApproved && grant.lasting()
 }
 
 func (manager *rawGrantManager) count(keep func(*rawGrant) bool) int {
@@ -411,7 +437,7 @@ func (manager *rawGrantManager) pendingGrant(id string) (RawAccessGrant, error) 
 	return grant.view(), nil
 }
 
-// decide settles a pending grant. A once grant takes over keys; a timed
+// decide settles a pending grant. A once grant takes over keys; a lasting
 // grant takes over holder. Whatever is not taken over is zeroed.
 func (manager *rawGrantManager) decide(
 	id string,
@@ -442,12 +468,15 @@ func (manager *rawGrantManager) decide(
 		if holder != nil {
 			holder.Close()
 		}
-	case mode.window() > 0:
+	case mode.lasting():
 		clearRawKeys(keys)
 		grant.status = rawGrantApproved
-		grant.expiresAt = now.Add(mode.window())
 		grant.holder = holder
-		grant.timer = time.AfterFunc(mode.window(), manager.expireTimed)
+		grant.expiresAt = time.Time{}
+		if window := mode.window(); window > 0 {
+			grant.expiresAt = now.Add(window)
+			grant.timer = time.AfterFunc(window, manager.expireTimed)
+		}
 	default:
 		if holder != nil {
 			holder.Close()
@@ -460,8 +489,8 @@ func (manager *rawGrantManager) decide(
 }
 
 // revokeAll ends every grant still pending or approved and zeroes what it
-// holds: on agent access turned off, a manual lock, a password change or
-// reset, and shutdown.
+// holds: on agent access turned off, a lock (the screen locking, sleep, or
+// the operator's), a password change or reset, and shutdown.
 func (manager *rawGrantManager) revokeAll() {
 	if manager == nil {
 		return
@@ -477,7 +506,7 @@ func (manager *rawGrantManager) revokeAll() {
 	manager.expireLocked(now)
 }
 
-// revoke ends one running timed grant by id, for the operator.
+// revoke ends one running lasting grant by id, for the operator.
 func (manager *rawGrantManager) revoke(id string) (RawAccessGrant, error) {
 	manager.mu.Lock()
 	defer manager.mu.Unlock()
@@ -536,7 +565,7 @@ func (manager *rawGrantManager) byTokenLocked(token string) *rawGrant {
 }
 
 // rawGrantLease is one claimed read. A once lease carries copies of its
-// part keys, which the reader clears; a timed lease borrows its grant's
+// part keys, which the reader clears; a lasting lease borrows its grant's
 // opener, which stops opening once the grant ends.
 type rawGrantLease struct {
 	grant  RawAccessGrant
@@ -556,7 +585,7 @@ func (manager *rawGrantManager) lookupLocked(token string, requestID contract.Re
 	if grant == nil {
 		return nil, errRawGrantInvalid
 	}
-	// Only a running timed grant reaches past the request it was asked for.
+	// Only a running lasting grant reaches past the request it was asked for.
 	if grant.requestID != requestID && !isActiveRawGrant(grant) {
 		return nil, errRawGrantInvalid
 	}
@@ -582,7 +611,7 @@ func (manager *rawGrantManager) check(token string, requestID contract.RequestID
 
 // claim takes one read. A once grant is consumed and its keys zeroed here,
 // before any content is opened, so two concurrent reads cannot both win. A
-// timed grant reads any request, as often as asked, until it ends.
+// lasting grant reads any request, as often as asked, until it ends.
 func (manager *rawGrantManager) claim(token string, requestID contract.RequestID) (*rawGrantLease, error) {
 	manager.mu.Lock()
 	defer manager.mu.Unlock()
@@ -592,7 +621,7 @@ func (manager *rawGrantManager) claim(token string, requestID contract.RequestID
 	}
 	lease := &rawGrantLease{grant: grant.view()}
 	lease.grant.RequestID = requestID
-	if grant.timed() {
+	if grant.lasting() {
 		lease.opener = grant.holder
 		return lease, nil
 	}
@@ -623,11 +652,8 @@ func (handler *Handler) registerRawAccessRoutes() {
 type RawAccessList struct {
 	// Items are the requests awaiting a decision, oldest first.
 	Items []RawAccessGrant `json:"items"`
-	// Active are the timed grants still running, oldest first.
+	// Active are the lasting grants still running, oldest first.
 	Active []RawAccessGrant `json:"active"`
-	// Unlocked is true while the operator's unlock session lasts, so an
-	// approval needs no password.
-	Unlocked bool `json:"unlocked"`
 }
 
 func (handler *Handler) listRawAccess(writer http.ResponseWriter, request *http.Request) {
@@ -636,13 +662,8 @@ func (handler *Handler) listRawAccess(writer http.ResponseWriter, request *http.
 		writeError(writer, http.StatusMethodNotAllowed, "method_not_allowed", "only GET is allowed")
 		return
 	}
-	status, err := handler.rawVaultStatus(request.Context())
-	if err != nil {
-		writeError(writer, http.StatusInternalServerError, "raw_vault_unavailable", "raw sealing state is unavailable")
-		return
-	}
 	writeJSON(writer, http.StatusOK, RawAccessList{
-		Items: handler.rawGrants.pending(), Active: handler.rawGrants.active(), Unlocked: status.Unlocked,
+		Items: handler.rawGrants.pending(), Active: handler.rawGrants.active(),
 	})
 }
 
@@ -669,7 +690,7 @@ func (handler *Handler) rawAccessItem(writer http.ResponseWriter, request *http.
 	}
 }
 
-// revokeRawAccess ends a running timed grant from the desktop.
+// revokeRawAccess ends a running lasting grant from the desktop.
 func (handler *Handler) revokeRawAccess(writer http.ResponseWriter, grantID string) {
 	revoked, err := handler.rawGrants.revoke(grantID)
 	switch {
@@ -836,10 +857,16 @@ func (handler *Handler) rawVaultStatus(ctx context.Context) (RawVaultStatus, err
 	return handler.rawVault.Status(ctx)
 }
 
-// rawPasswordRequired is true while a raw vault exists without a raw
-// password. A status error reads as false; the main window still asks.
+// rawPasswordRequired is true while body capture is on and no raw password
+// protects the raw key, so the raw parts it captures are dropped. Without
+// capture nothing raw is kept, and a missing password costs nothing. A read
+// error reads as false; the capture switch still asks.
 func (handler *Handler) rawPasswordRequired(ctx context.Context) bool {
-	if handler.rawVault == nil {
+	if handler.rawVault == nil || handler.auditSettings == nil {
+		return false
+	}
+	settings, err := handler.auditSettings.GetAuditSettings(ctx)
+	if err != nil || !(settings.RequestBodyEnabled || settings.ResponseContentEnabled) {
 		return false
 	}
 	status, err := handler.rawVault.Status(ctx)
@@ -857,9 +884,11 @@ func (handler *Handler) agentRawAccessEnabled(ctx context.Context) (bool, error)
 	return settings.AgentRawAccessEnabled, nil
 }
 
-// decideRawAccess settles a pending request from the desktop. While the
-// operator's unlock session lasts an approval needs no password; otherwise
-// it answers raw_proof_required until the password comes with it.
+// decideRawAccess settles a pending request from the desktop. An approval
+// always carries a fresh proof, even while the operator's own unlock lasts:
+// a lasting grant outlives the moment it was given, so a click that UI
+// automation could make must not be enough. Without one it answers
+// raw_proof_required.
 func (handler *Handler) decideRawAccess(writer http.ResponseWriter, request *http.Request, grantID string) {
 	members, release, ok := decodeSecretJSON(writer, request, "decision", "proof")
 	if !ok {
@@ -876,14 +905,14 @@ func (handler *Handler) decideRawAccess(writer http.ResponseWriter, request *htt
 	proof, err := parseRawProof(members["proof"])
 	if err != nil {
 		writeValidationFailed(writer, "proof is invalid", []errorDetail{{
-			Field: "proof", Reason: "must be {password}",
+			Field: "proof", Reason: "must be {password} or {biometric}",
 		}})
 		return
 	}
 	defer proof.clear()
 	mode := rawGrantMode(decision)
 	switch mode {
-	case rawGrantOnce, rawGrantWindow5m, rawGrantWindow1h, rawGrantDenyMode:
+	case rawGrantOnce, rawGrantUntilLock, rawGrantWindow1h, rawGrantDenyMode:
 	default:
 		writeValidationFailed(writer, "decision is invalid", []errorDetail{{
 			Field: "decision", Reason: rawGrantModeUsage,
@@ -910,9 +939,13 @@ func (handler *Handler) decideRawAccess(writer http.ResponseWriter, request *htt
 		writeRawPasswordNotSet(writer)
 		return
 	}
+	if proof.Empty() {
+		writeError(writer, http.StatusUnprocessableEntity, "raw_proof_required", "approving needs the raw password or Touch ID")
+		return
+	}
 	holder, err := handler.rawVault.HoldKey(request.Context(), proof.RawProof)
 	if errors.Is(err, ErrRawProofRequired) {
-		writeError(writer, http.StatusUnprocessableEntity, "raw_proof_required", "raw content is locked; approving needs the raw password")
+		writeError(writer, http.StatusUnprocessableEntity, "raw_proof_required", "approving needs the raw password or Touch ID")
 		return
 	}
 	if err != nil {
@@ -1000,6 +1033,10 @@ func (handler *Handler) writeRawProofError(writer http.ResponseWriter, err error
 			[]errorDetail{{Reason: "retry_after", RetryAfterSeconds: seconds}})
 	case errors.Is(err, ErrRawPasswordInvalid):
 		writeError(writer, http.StatusForbidden, "raw_password_invalid", "raw password is incorrect")
+	case errors.Is(err, ErrRawBiometricInvalid):
+		writeError(writer, http.StatusForbidden, "raw_biometric_invalid", "the Touch ID key does not open raw content; use the raw password")
+	case errors.Is(err, ErrRawBiometricUnavailable):
+		writeError(writer, http.StatusConflict, "raw_biometric_unavailable", "Touch ID is not set up for raw content; use the raw password")
 	case errors.Is(err, ErrRawProofRequired):
 		writeError(writer, http.StatusUnprocessableEntity, "raw_proof_required", "this proof is not accepted here")
 	case errors.Is(err, ErrRawNotConfigured):
@@ -1067,10 +1104,14 @@ func decodeSecretJSON(
 
 type ownedRawProof struct{ RawProof }
 
-func (proof ownedRawProof) clear() { clear(proof.Password) }
+func (proof ownedRawProof) clear() {
+	clear(proof.Password)
+	clear(proof.Biometric)
+}
 
-// parseRawProof reads {password}. An absent or null proof is empty, which
-// deny accepts and approval rejects.
+// parseRawProof reads {password} or {biometric}, the key the desktop
+// released after Touch ID as standard base64. An absent or null proof is
+// empty, which deny accepts and approval rejects.
 func parseRawProof(raw json.RawMessage) (ownedRawProof, error) {
 	if len(raw) == 0 || isJSONNull(raw) {
 		return ownedRawProof{}, nil
@@ -1100,22 +1141,56 @@ func parseRawProof(raw json.RawMessage) (ownedRawProof, error) {
 				return ownedRawProof{}, err
 			}
 			proof.Password = password
+		case "biometric":
+			key, err := decodeBase64Secret(member)
+			if err != nil {
+				proof.clear()
+				return ownedRawProof{}, err
+			}
+			proof.Biometric = key
 		default:
 			proof.clear()
 			return ownedRawProof{}, errors.New("unknown proof field")
 		}
 	}
+	if len(proof.Password) > 0 && len(proof.Biometric) > 0 {
+		proof.clear()
+		return ownedRawProof{}, errors.New("a proof carries a password or a Touch ID key, not both")
+	}
 	switch kind {
 	case "":
 	case "password":
 		if len(proof.Password) == 0 {
+			proof.clear()
 			return ownedRawProof{}, errors.New("password proof needs a password")
+		}
+	case "biometric":
+		if len(proof.Biometric) == 0 {
+			proof.clear()
+			return ownedRawProof{}, errors.New("biometric proof needs its key")
 		}
 	default:
 		proof.clear()
 		return ownedRawProof{}, errors.New("unknown proof kind")
 	}
 	return proof, nil
+}
+
+// decodeBase64Secret reads a JSON string of standard base64 into a fresh
+// slice and clears the text it decoded from.
+func decodeBase64Secret(member json.RawMessage) ([]byte, error) {
+	text, err := decodeJSONStringBytes(member)
+	if err != nil {
+		return nil, err
+	}
+	defer clear(text)
+	decoded := make([]byte, base64.StdEncoding.DecodedLen(len(text)))
+	written, err := base64.StdEncoding.Decode(decoded, text)
+	if err != nil || written == 0 {
+		clear(decoded)
+		return nil, errors.New("secret must be standard base64")
+	}
+	return decoded[:written], nil
 }
 
 func decodeJSONStringBytes(data []byte) ([]byte, error) {

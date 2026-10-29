@@ -108,18 +108,17 @@ func (vault *fakeRawVault) WithProof(_ context.Context, proof RawProof, use func
 	return use(fakeRawOpener{vault})
 }
 
-// HoldKey checks proof like WithProof, or copies the key while unlocked.
+// HoldKey checks proof like WithProof; an open unlock session is no proof.
 func (vault *fakeRawVault) HoldKey(_ context.Context, proof RawProof) (RawKeyHolder, error) {
 	vault.mu.Lock()
-	unlocked, backoff := vault.unlocked, vault.backoff
+	backoff := vault.backoff
 	if !proof.Empty() {
 		vault.proofs++
 	}
 	vault.mu.Unlock()
 	switch {
-	case proof.Empty() && !unlocked:
-		return nil, ErrRawProofRequired
 	case proof.Empty():
+		return nil, ErrRawProofRequired
 	case backoff > 0:
 		return nil, &RawBackoffError{Remaining: backoff}
 	case string(proof.Password) != rawTestPassword:
@@ -313,6 +312,19 @@ func setAgentRawAccess(t *testing.T, store *sqlite.Store, enabled bool) {
 		t.Fatal(err)
 	}
 	settings.AgentRawAccessEnabled = enabled
+	if err := store.UpdateAuditSettings(context.Background(), settings); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func setBodyCapture(t *testing.T, store *sqlite.Store, enabled bool) {
+	t.Helper()
+	settings, err := store.GetAuditSettings(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings.RequestBodyEnabled = enabled
+	settings.ResponseContentEnabled = enabled
 	if err := store.UpdateAuditSettings(context.Background(), settings); err != nil {
 		t.Fatal(err)
 	}
@@ -572,7 +584,7 @@ func TestRawAccessGrantOnceLifecycle(t *testing.T) {
 
 	// Grants live only in memory: a restarted Core forgets them.
 	second := requestRawGrant(t, handler, rawTestRequestID)
-	wantRawStatus(t, decideRawGrant(t, handler, second.GrantID, `{"decision":"window_5m","proof":{"password":`+rawTestPasswordJS+`}}`),
+	wantRawStatus(t, decideRawGrant(t, handler, second.GrantID, `{"decision":"until_lock","proof":{"password":`+rawTestPasswordJS+`}}`),
 		http.StatusOK, "")
 	restarted := newRawAccessHandler(t, fixture.store, vault)
 	wantRawStatus(t, rawHTTP(t, restarted, rawAsAgent, http.MethodGet, full, "", second.GrantToken),
@@ -627,7 +639,7 @@ func rawAccessPage(t *testing.T, handler *Handler) RawAccessList {
 	return page
 }
 
-func TestRawAccessTimedGrantReadsEveryRequestUntilItEnds(t *testing.T) {
+func TestRawAccessLastingGrantReadsEveryRequestUntilItEnds(t *testing.T) {
 	vault := configuredRawVault()
 	fixture := newRawAccessFixture(t, vault)
 	handler := fixture.handler
@@ -639,18 +651,21 @@ func TestRawAccessTimedGrantReadsEveryRequestUntilItEnds(t *testing.T) {
 	if state := rawGrantState(t, handler, grant.GrantToken); state.Status != "pending" || state.Scope != "" {
 		t.Fatalf("pending state=%#v", state)
 	}
-	approve := decideRawGrant(t, handler, grant.GrantID, `{"decision":"window_5m","proof":{"password":`+rawTestPasswordJS+`}}`)
+	approve := decideRawGrant(t, handler, grant.GrantID, `{"decision":"until_lock","proof":{"password":`+rawTestPasswordJS+`}}`)
 	wantRawStatus(t, approve, http.StatusOK, "")
+	approved := approve.Body.String()
 	var decided RawAccessGrant
 	decode(t, approve, &decided)
-	if decided.Decision != "window_5m" || decided.Scope != rawGrantScopeAll || !decided.ExpiresAt.Equal(now.Add(5*time.Minute)) {
-		t.Fatalf("decided=%#v", decided)
+	// Only a lock ends it, so it names no time.
+	if decided.Decision != "until_lock" || decided.Scope != rawGrantScopeAll || decided.ExpiresAt != nil ||
+		!strings.Contains(approved, `"expires_at":null`) {
+		t.Fatalf("decided=%#v body=%s", decided, approved)
 	}
 	if state := rawGrantState(t, handler, grant.GrantToken); state.Status != "approved" || state.Scope != rawGrantScopeAll {
 		t.Fatalf("approved state=%#v", state)
 	}
 	page := rawAccessPage(t, handler)
-	if len(page.Items) != 0 || len(page.Active) != 1 || page.Active[0].GrantID != grant.GrantID || page.Unlocked {
+	if len(page.Items) != 0 || len(page.Active) != 1 || page.Active[0].GrantID != grant.GrantID {
 		t.Fatalf("page=%#v", page)
 	}
 	if strings.Contains(fmt.Sprint(page), grant.GrantToken) {
@@ -677,27 +692,38 @@ func TestRawAccessTimedGrantReadsEveryRequestUntilItEnds(t *testing.T) {
 		t.Fatalf("last event=%#v", last)
 	}
 
-	// The window closing zeroes the held key.
-	now = now.Add(5 * time.Minute)
+	// Time alone does not end it; a lock does, and zeroes the held key.
+	// TestRawGrantsFollowLocksAndPasswordChanges sends the lock itself.
+	now = now.Add(24 * time.Hour)
+	readRawAudit(t, handler, rawAsAgent, full, grant.GrantToken)
+	handler.rawGrants.revokeAll()
 	wantRawStatus(t, rawHTTP(t, handler, rawAsAgent, http.MethodGet, full, "", grant.GrantToken),
 		http.StatusForbidden, "raw_grant_invalid")
+	if state := rawGrantState(t, handler, grant.GrantToken); state.Status != "revoked" || state.ExpiresAt == nil {
+		t.Fatalf("state after the lock=%#v", state)
+	}
 	if page := rawAccessPage(t, handler); len(page.Active) != 0 {
-		t.Fatalf("active after expiry=%#v", page.Active)
+		t.Fatalf("active after the lock=%#v", page.Active)
 	}
 	handler.rawGrants.mu.Lock()
 	held := handler.rawGrants.grants[grant.GrantID].holder
 	handler.rawGrants.mu.Unlock()
 	if held != nil {
-		t.Fatal("an expired grant kept its key")
+		t.Fatal("a locked grant kept its key")
 	}
 
+	// An hour grant ends with its hour, or earlier at a lock.
 	hour := requestRawGrant(t, handler, rawTestRequestID)
 	approve = decideRawGrant(t, handler, hour.GrantID, `{"decision":"window_1h","proof":{"password":`+rawTestPasswordJS+`}}`)
 	wantRawStatus(t, approve, http.StatusOK, "")
 	decode(t, approve, &decided)
-	if decided.Decision != "window_1h" || !decided.ExpiresAt.Equal(now.Add(time.Hour)) {
+	if decided.Decision != "window_1h" || decided.ExpiresAt == nil || !decided.ExpiresAt.Equal(now.Add(time.Hour)) {
 		t.Fatalf("decided=%#v", decided)
 	}
+	// The five-minute window is gone.
+	short := requestRawGrant(t, handler, rawTestRequestID)
+	wantRawStatus(t, decideRawGrant(t, handler, short.GrantID, `{"decision":"window_5m","proof":{"password":`+rawTestPasswordJS+`}}`),
+		http.StatusBadRequest, "validation_failed")
 	// A once grant still reads only its own request.
 	once := requestRawGrant(t, handler, rawTestRequestID)
 	wantRawStatus(t, decideRawGrant(t, handler, once.GrantID, `{"decision":"once","proof":{"password":`+rawTestPasswordJS+`}}`), http.StatusOK, "")
@@ -709,32 +735,37 @@ func TestRawAccessTimedGrantReadsEveryRequestUntilItEnds(t *testing.T) {
 	if page := rawAccessPage(t, handler); len(page.Active) != 1 || page.Active[0].GrantID != hour.GrantID {
 		t.Fatalf("active=%#v", page.Active)
 	}
+	now = now.Add(time.Hour)
+	if page := rawAccessPage(t, handler); len(page.Active) != 0 {
+		t.Fatalf("active after the hour=%#v", page.Active)
+	}
 }
 
-func TestRawAccessApprovalUsesTheUnlockSession(t *testing.T) {
+func TestRawAccessApprovalNeedsAFreshProofEvenWhileUnlocked(t *testing.T) {
 	vault := configuredRawVault()
 	handler := newRawAccessFixture(t, vault).handler
 	full := rawAuditPath(rawTestRequestID)
 
-	locked := requestRawGrant(t, handler, rawTestRequestID)
-	wantRawStatus(t, decideRawGrant(t, handler, locked.GrantID, `{"decision":"window_1h"}`),
-		http.StatusUnprocessableEntity, "raw_proof_required")
-
+	// The operator's own unlock is no proof: a lasting grant outlives the
+	// click, which UI automation could make.
 	vault.unlocked = true
-	if page := rawAccessPage(t, handler); !page.Unlocked {
-		t.Fatalf("page=%#v", page)
-	}
-	for _, decision := range []string{"once", "window_5m"} {
+	for _, decision := range []string{"once", "until_lock", "window_1h"} {
 		grant := requestRawGrant(t, handler, rawTestRequestID)
-		wantRawStatus(t, decideRawGrant(t, handler, grant.GrantID, `{"decision":"`+decision+`"}`), http.StatusOK, "")
+		wantRawStatus(t, decideRawGrant(t, handler, grant.GrantID, `{"decision":"`+decision+`"}`),
+			http.StatusUnprocessableEntity, "raw_proof_required")
+		wantRawStatus(t, decideRawGrant(t, handler, grant.GrantID,
+			`{"decision":"`+decision+`","proof":{"password":`+rawTestPasswordJS+`}}`), http.StatusOK, "")
 		content := readRawAudit(t, handler, rawAsAgent, full, grant.GrantToken)
 		if content.RequestBody.Withheld || !strings.Contains(content.RequestBody.Content, rawTestSecret) {
 			t.Fatalf("%s read=%#v", decision, content.RequestBody)
 		}
 	}
-	if vault.proofs != 0 {
-		t.Fatalf("an unlocked approval asked for proof %d times", vault.proofs)
+	if vault.proofs != 3 {
+		t.Fatalf("approvals checked %d proofs, want 3", vault.proofs)
 	}
+	// Denying needs none.
+	denied := requestRawGrant(t, handler, rawTestRequestID)
+	wantRawStatus(t, decideRawGrant(t, handler, denied.GrantID, `{"decision":"deny"}`), http.StatusOK, "")
 	// The observer role cannot decide, unlocked or not.
 	grant := requestRawGrant(t, handler, rawTestRequestID)
 	wantRawStatus(t, rawHTTP(t, handler, rawAsAgent, http.MethodPost, RawAccessPath+"/"+grant.GrantID+"/decision", `{"decision":"once"}`, ""),
@@ -912,7 +943,7 @@ func TestRawAccessRequestAvailabilityAndValidation(t *testing.T) {
 func TestRawAccessRequestReplacesTheClientsPendingOne(t *testing.T) {
 	handler := newRawAccessFixture(t, configuredRawVault()).handler
 	full := rawAuditPath(rawTestRequestID)
-	approve := `{"decision":"window_5m","proof":{"password":` + rawTestPasswordJS + `}}`
+	approve := `{"decision":"until_lock","proof":{"password":` + rawTestPasswordJS + `}}`
 
 	first := requestRawGrant(t, handler, rawTestRequestID)
 	other := requestRawGrant(t, handler, rawTestOtherID)
@@ -951,7 +982,7 @@ func TestTurningAgentRawAccessOffRevokesGrants(t *testing.T) {
 	fixture := newRawAccessFixture(t, configuredRawVault())
 	handler := fixture.handler
 	full := rawAuditPath(rawTestRequestID)
-	approve := `{"decision":"window_5m","proof":{"password":` + rawTestPasswordJS + `}}`
+	approve := `{"decision":"until_lock","proof":{"password":` + rawTestPasswordJS + `}}`
 
 	approved := requestRawGrant(t, handler, rawTestRequestID)
 	wantRawStatus(t, decideRawGrant(t, handler, approved.GrantID, approve), http.StatusOK, "")

@@ -312,12 +312,13 @@ func TestDefaultAccessTokenBootstrapsOnceAndSurvivesRestart(t *testing.T) {
 	if len(tokens) != 1 || tokens[0].Name != accesstoken.DefaultTokenName {
 		t.Fatalf("bootstrap tokens = %#v", tokens)
 	}
+	// The desktop tells a fresh install from a configured one by this.
 	var storedSource string
 	if err := store.db.QueryRow(`SELECT source FROM local_access_tokens WHERE id = ?`, tokens[0].ID).Scan(&storedSource); err != nil {
 		t.Fatal(err)
 	}
-	if storedSource != "user" {
-		t.Fatalf("bootstrap source = %q", storedSource)
+	if storedSource != "system_default" || tokens[0].Source != storagecontract.AccessTokenSourceSystemDefault {
+		t.Fatalf("bootstrap source = %q, listed %q", storedSource, tokens[0].Source)
 	}
 	id := tokens[0].ID
 	raw, err := manager.Reveal(ctx, id)
@@ -393,7 +394,7 @@ func TestAccessTokenCreateListRevealAuthenticateAndDelete(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if created.Token.Name != "CI Agent" ||
+	if created.Token.Name != "CI Agent" || created.Token.Source != storagecontract.AccessTokenSourceUser ||
 		!strings.HasPrefix(created.Value, "astr_") || len(created.Value) != 48 {
 		t.Fatalf("created = %#v", created)
 	}

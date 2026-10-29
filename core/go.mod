@@ -5,9 +5,11 @@ go 1.26.10
 require (
 	github.com/QuantumNous/astrlink/convo v0.0.0
 	github.com/QuantumNous/new-api/relaykit v0.3.5
+	github.com/andybalholm/brotli v1.2.6
 	github.com/deepteams/webp v1.2.8
 	github.com/expr-lang/expr v1.17.8
 	github.com/gorilla/websocket v1.5.3
+	github.com/klauspost/compress v1.20.3
 	github.com/tidwall/gjson v1.19.0
 	github.com/tidwall/sjson v1.2.5
 	github.com/zalando/go-keyring v0.2.6

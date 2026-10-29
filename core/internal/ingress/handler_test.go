@@ -513,24 +513,36 @@ func TestProductionInferenceGateDoesNotReauthenticateInFlightRequestAfterDeletio
 	assertInferenceError(t, response, http.StatusUnprocessableEntity, "missing_protocol_capability")
 }
 
-func TestInferencePlaneRejectsEncodedJSONBeforeEndpointResolution(t *testing.T) {
-	called := false
-	handler := NewWithDependencies(Dependencies{
-		Resolver: resolverFunc(func(context.Context, endpoint.ResolveRequest) (endpoint.Resolved, error) {
-			called = true
-			return endpoint.Resolved{}, nil
-		}),
-	})
-	request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader("compressed"))
-	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("Content-Encoding", "gzip")
-	response := httptest.NewRecorder()
+func TestInferencePlaneRejectsUndecodableBodiesBeforeEndpointResolution(t *testing.T) {
+	for _, test := range []struct {
+		name, encoding string
+		status         int
+		code           string
+	}{
+		{"unknown coding", "compress", http.StatusUnsupportedMediaType, "unsupported_content_encoding"},
+		{"corrupt gzip", "gzip", http.StatusBadRequest, "invalid_content_encoding"},
+		{"corrupt zstd", "zstd", http.StatusBadRequest, "invalid_content_encoding"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			called := false
+			handler := NewWithDependencies(Dependencies{
+				Resolver: resolverFunc(func(context.Context, endpoint.ResolveRequest) (endpoint.Resolved, error) {
+					called = true
+					return endpoint.Resolved{}, nil
+				}),
+			})
+			request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader("compressed"))
+			request.Header.Set("Content-Type", "application/json")
+			request.Header.Set("Content-Encoding", test.encoding)
+			response := httptest.NewRecorder()
 
-	handler.ServeHTTP(response, request)
+			handler.ServeHTTP(response, request)
 
-	assertInferenceError(t, response, http.StatusUnsupportedMediaType, "unsupported_content_encoding")
-	if called {
-		t.Fatal("resolver ran for an opaque encoded request")
+			assertInferenceError(t, response, test.status, test.code)
+			if called {
+				t.Fatal("resolver ran for a body it could not read")
+			}
+		})
 	}
 }
 
@@ -1174,19 +1186,58 @@ func (store *memoryRequestRecordStore) FindSessionLink(
 			if !scope.NotBefore.IsZero() && record.StartedAt.Before(scope.NotBefore) {
 				continue
 			}
+			if len(scope.Continues) > 0 && !continuesRecord(scope.Continues, record) {
+				continue
+			}
 			value, ok := matches(record, direction)
 			if !ok {
 				continue
 			}
 			match := storage.SessionLinkMatch{
 				SessionID: *record.SessionID, TurnIndex: record.TurnIndex, TurnUserMessages: record.TurnUserMessages,
-				Status: record.Status, Value: value,
+				Status: record.Status, Value: value, ParentSessionID: record.ParentSessionID,
 			}
 			if record.TurnUserFingerprint != nil {
 				match.TurnUserFingerprint = *record.TurnUserFingerprint
 			}
 			return match, true, nil
 		}
+	}
+	return storage.SessionLinkMatch{}, false, nil
+}
+
+// continuesRecord reports whether record's turn state is one of points.
+func continuesRecord(points []storage.SessionTurnPoint, record contract.RequestRecord) bool {
+	if record.TurnUserMessages == nil {
+		return false
+	}
+	fingerprint := ""
+	if record.TurnUserFingerprint != nil {
+		fingerprint = *record.TurnUserFingerprint
+	}
+	for _, point := range points {
+		if point.UserMessages == *record.TurnUserMessages && point.Fingerprint == fingerprint {
+			return true
+		}
+	}
+	return false
+}
+
+// FindSessionTurn returns the newest root of a session.
+func (store *memoryRequestRecordStore) FindSessionTurn(_ context.Context, session contract.SessionID) (storage.SessionLinkMatch, bool, error) {
+	for index := len(store.records) - 1; index >= 0; index-- {
+		record := store.records[index]
+		if record.ParentRequestID != nil || record.SessionID == nil || *record.SessionID != session {
+			continue
+		}
+		match := storage.SessionLinkMatch{
+			SessionID: session, TurnIndex: record.TurnIndex, TurnUserMessages: record.TurnUserMessages,
+			Status: record.Status, ParentSessionID: record.ParentSessionID,
+		}
+		if record.TurnUserFingerprint != nil {
+			match.TurnUserFingerprint = *record.TurnUserFingerprint
+		}
+		return match, true, nil
 	}
 	return storage.SessionLinkMatch{}, false, nil
 }

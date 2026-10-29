@@ -347,8 +347,11 @@ func TestDefaultMigrationsIsolateCredentialsFromGenericDocuments(t *testing.T) {
 				continue
 			}
 			if strings.Contains(lower, "document_json") {
+				// common_secret names a privacy kind in a policy's per-kind
+				// rules; it holds no credential.
+				fields := strings.ReplaceAll(lower, `"kind":"common_secret"`, "")
 				for _, forbidden := range []string{"api_key", "access_token", "secret", "credential_value"} {
-					if strings.Contains(lower, forbidden) {
+					if strings.Contains(fields, forbidden) {
 						t.Fatalf("generic document migration %d contains credential column %q: %s", migration.Version, forbidden, statement)
 					}
 				}

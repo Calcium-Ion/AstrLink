@@ -251,6 +251,9 @@ func suppressionFor(
 	if list.allows(finding.Kind, value) {
 		return SuppressionAllowlisted
 	}
+	if isExampleValue(finding.Kind, value) {
+		return SuppressionExampleValue
+	}
 	// Whatever kind the detector assigned, a span that covers one of
 	// AstrLink's own identifiers, or part of one, and nothing else holds no
 	// private value.

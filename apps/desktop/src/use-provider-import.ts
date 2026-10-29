@@ -69,8 +69,8 @@ function refuse(
 }
 
 /**
- * Follows `astrlink://` provider links. A link waits for `enabled` (Core ready
- * and the local password set) before its confirmation opens.
+ * Follows `astrlink://` provider links. A link waits for `enabled` (Core
+ * ready) before its confirmation opens.
  */
 export function useProviderImport({
   enabled,

@@ -56,7 +56,7 @@ function grant(overrides: Partial<RawAccessGrant> = {}): RawAccessGrant {
 }
 
 function list(overrides: Partial<RawAccessList> = {}): RawAccessList {
-  return { pending: [], active: [], unlocked: true, ...overrides };
+  return { pending: [], active: [], ...overrides };
 }
 
 function sealing(overrides: Partial<RawSealingState> = {}): RawSealingState {
@@ -74,11 +74,19 @@ function sealing(overrides: Partial<RawSealingState> = {}): RawSealingState {
     password_min_length: 8,
     password_max_length: 128,
     key_replaced: false,
+    biometric_available: false,
     ...overrides,
   };
 }
 
+/** Touch ID offered on this Mac and set up for raw content. */
+const touchID = sealing({
+  envelopes: ["password", "biometric"],
+  biometric_available: true,
+});
+
 const passwordProof = { kind: "password", password: "correct horse" };
+const biometricProof = { kind: "biometric" };
 
 const laterGrant = grant({
   grant_id: "rawgrant_fedcba9876543210",
@@ -154,7 +162,7 @@ async function typePassword(value: string) {
 }
 
 describe("RawAccessApprovalWindow", () => {
-  it("shows the oldest request and says what timed approvals reach", async () => {
+  it("shows the oldest request and says what lasting approvals reach", async () => {
     mocks.listRawAccess.mockResolvedValue(
       list({ pending: [laterGrant, grant()] }),
     );
@@ -171,41 +179,96 @@ describe("RawAccessApprovalWindow", () => {
       document.querySelector('[data-slot="raw-access-timed-warning"]')
         ?.textContent,
     ).toBe(
-      "「批准 5 分钟」和「批准 1 小时」会允许它在时间到之前读取所有请求的原文，包括这段时间里新产生的请求，次数不限。",
+      "「批准到锁屏」和「批准 1 小时」会允许它读取所有请求的原文，包括之后新产生的请求，次数不限。「批准到锁屏」在锁屏、电脑睡眠、退出 AstrLink 或点击「锁定」时结束。",
     );
     expect(text).toContain("关闭窗口不会批准或拒绝");
     // Nothing takes focus and no form submits on Enter.
     expect(document.activeElement).toBe(document.body);
     expect(document.querySelector("form")).toBeNull();
     expect(
-      [...document.querySelectorAll("button")].map((node) => node.textContent),
-    ).toEqual(["批准一次", "批准 5 分钟", "批准 1 小时", "拒绝"]);
+      [...document.querySelectorAll("button[data-decision]")].map(
+        (node) => node.textContent,
+      ),
+    ).toEqual(["批准一次", "批准到锁屏", "批准 1 小时", "拒绝"]);
     for (const node of document.querySelectorAll("button")) {
       expect(node.type).toBe("button");
     }
   });
 
-  it("approves with one click while Core is unlocked", async () => {
+  it("approves until the screen locks with Touch ID", async () => {
     mocks.listRawAccess.mockResolvedValueOnce(list({ pending: [grant()] }));
+    mocks.getRawSealingStatus.mockResolvedValue(touchID);
     mocks.decideRawAccess.mockResolvedValue({
       outcome: "decided",
-      grant: grant({ status: "approved", decision: "window_5m" }),
+      grant: grant({ status: "approved", decision: "until_lock" }),
     });
     await render();
 
+    // The host prompts for Touch ID; no password field is needed.
     expect(passwordInput()).toBeNull();
-    await act(async () => button("批准 5 分钟").click());
+    expect(container.textContent).toContain("点击批准后，验证 Touch ID 即可。");
+    await act(async () => button("批准到锁屏").click());
     await settle();
 
     expect(mocks.decideRawAccess).toHaveBeenCalledExactlyOnceWith(
       "rawgrant_0123456789abcdef",
-      "window_5m",
-      undefined,
+      "until_lock",
+      biometricProof,
     );
     expect(mocks.toastSuccess).toHaveBeenCalledWith(
-      "已允许「Claude Code」在 5 分钟内读取所有请求的原文",
+      "已允许「Claude Code」在锁屏前读取所有请求的原文",
     );
     expect(container.textContent).toContain("没有待批准的申请");
+  });
+
+  it("falls back to the raw password when Touch ID cannot answer", async () => {
+    mocks.listRawAccess.mockResolvedValue(list({ pending: [grant()] }));
+    mocks.getRawSealingStatus.mockResolvedValue(touchID);
+    mocks.decideRawAccess.mockResolvedValueOnce({
+      outcome: "biometric_cancelled",
+    });
+    await render();
+
+    await act(async () => button("批准一次").click());
+    await settle();
+    expect(container.textContent).toContain("Touch ID 已取消。");
+    expect(passwordInput()).toBeNull();
+
+    mocks.decideRawAccess.mockResolvedValueOnce({
+      outcome: "biometric_unavailable",
+    });
+    await act(async () => button("批准一次").click());
+    await settle();
+    expect(container.textContent).toContain(
+      "Touch ID 现在不可用，请输入原文口令。",
+    );
+    expect(button("批准一次").disabled).toBe(true);
+
+    mocks.decideRawAccess.mockResolvedValueOnce({
+      outcome: "decided",
+      grant: grant({ status: "approved", decision: "once" }),
+    });
+    await typePassword("correct horse");
+    await act(async () => button("批准一次").click());
+    await settle();
+    expect(mocks.decideRawAccess).toHaveBeenLastCalledWith(
+      "rawgrant_0123456789abcdef",
+      "once",
+      passwordProof,
+    );
+  });
+
+  it("lets the operator choose the raw password over Touch ID", async () => {
+    mocks.listRawAccess.mockResolvedValue(list({ pending: [grant()] }));
+    mocks.getRawSealingStatus.mockResolvedValue(touchID);
+    await render();
+
+    await act(async () => button("改用原文口令").click());
+    expect(passwordInput()).not.toBeNull();
+    expect(button("批准一次").disabled).toBe(true);
+    await act(async () => button("改用 Touch ID").click());
+    expect(passwordInput()).toBeNull();
+    expect(button("批准一次").disabled).toBe(false);
   });
 
   it("does not approve on Enter", async () => {
@@ -224,22 +287,20 @@ describe("RawAccessApprovalWindow", () => {
     expect(mocks.decideRawAccess).not.toHaveBeenCalled();
   });
 
-  it("asks for the password while Core is locked", async () => {
+  it("asks for the password even while raw content is unlocked", async () => {
     mocks.listRawAccess.mockResolvedValueOnce(
-      list({ pending: [grant(), laterGrant], unlocked: false }),
+      list({ pending: [grant(), laterGrant] }),
     );
-    mocks.listRawAccess.mockResolvedValue(
-      list({ pending: [laterGrant], unlocked: false }),
-    );
+    mocks.listRawAccess.mockResolvedValue(list({ pending: [laterGrant] }));
+    // An open unlock is no proof: UI automation could click through it.
+    mocks.getRawSealingStatus.mockResolvedValue(sealing({ unlocked: true }));
     mocks.decideRawAccess.mockResolvedValue({
       outcome: "decided",
       grant: grant({ status: "approved", decision: "once" }),
     });
     await render();
 
-    expect(container.textContent).toContain(
-      "AstrLink 已锁定，批准需要输入原文口令。",
-    );
+    expect(container.textContent).toContain("批准需要输入原文口令。");
     expect(button("批准一次").disabled).toBe(true);
     expect(button("拒绝").disabled).toBe(false);
     await typePassword("correct horse");
@@ -258,8 +319,9 @@ describe("RawAccessApprovalWindow", () => {
     expect(passwordInput()?.value).toBe("");
   });
 
-  it("falls back to the password when Core locked meanwhile", async () => {
+  it("asks for the password when Core takes no Touch ID", async () => {
     mocks.listRawAccess.mockResolvedValue(list({ pending: [grant()] }));
+    mocks.getRawSealingStatus.mockResolvedValue(touchID);
     mocks.decideRawAccess.mockResolvedValueOnce({
       outcome: "proof_required",
     });
@@ -268,9 +330,7 @@ describe("RawAccessApprovalWindow", () => {
     await act(async () => button("批准 1 小时").click());
     await settle();
 
-    expect(container.textContent).toContain(
-      "AstrLink 刚刚已锁定，请输入原文口令后再批准。",
-    );
+    expect(container.textContent).toContain("批准需要输入原文口令。");
     mocks.decideRawAccess.mockResolvedValueOnce({
       outcome: "decided",
       grant: grant({ status: "approved", decision: "window_1h" }),
@@ -292,9 +352,7 @@ describe("RawAccessApprovalWindow", () => {
   it("keeps the request after a wrong password or a backoff", async () => {
     // A frozen clock keeps a slow runner from counting the backoff down.
     vi.useFakeTimers({ toFake: ["Date"] });
-    mocks.listRawAccess.mockResolvedValue(
-      list({ pending: [grant()], unlocked: false }),
-    );
+    mocks.listRawAccess.mockResolvedValue(list({ pending: [grant()] }));
     mocks.decideRawAccess.mockResolvedValueOnce({
       outcome: "password_invalid",
     });
@@ -322,9 +380,7 @@ describe("RawAccessApprovalWindow", () => {
   });
 
   it("denies without a proof", async () => {
-    mocks.listRawAccess.mockResolvedValueOnce(
-      list({ pending: [grant()], unlocked: false }),
-    );
+    mocks.listRawAccess.mockResolvedValueOnce(list({ pending: [grant()] }));
     mocks.decideRawAccess.mockResolvedValue({
       outcome: "decided",
       grant: grant({ status: "denied", decision: "deny" }),
@@ -342,9 +398,7 @@ describe("RawAccessApprovalWindow", () => {
   });
 
   it("leaves only denying when no raw password is set", async () => {
-    mocks.listRawAccess.mockResolvedValue(
-      list({ pending: [grant()], unlocked: false }),
-    );
+    mocks.listRawAccess.mockResolvedValue(list({ pending: [grant()] }));
     mocks.getRawSealingStatus.mockResolvedValue(
       sealing({ password_set: false }),
     );
@@ -388,5 +442,18 @@ describe("RawAccessApprovalWindow", () => {
     expect(
       document.querySelector('[data-slot="active-raw-grants"]'),
     ).toBeNull();
+  });
+
+  it("shows a grant that runs until the screen locks", async () => {
+    mocks.listRawAccess.mockResolvedValue(
+      list({
+        active: [{ ...runningGrant, decision: "until_lock", expires_at: null }],
+      }),
+    );
+    await render();
+
+    expect(
+      document.querySelector('[data-slot="active-raw-grants"]')?.textContent,
+    ).toContain("所有请求 · 到锁屏为止");
   });
 });

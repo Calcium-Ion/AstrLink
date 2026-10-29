@@ -278,32 +278,6 @@ function proofDialog(): HTMLElement | null {
   return document.querySelector('[data-slot="proof-confirm-dialog"]');
 }
 
-function queryButton(label: string, scope: ParentNode): HTMLElement | null {
-  return (
-    [...scope.querySelectorAll("button")].find(
-      (candidate) => candidate.textContent?.trim() === label,
-    ) ?? null
-  );
-}
-
-async function typeNewPassword(password: string): Promise<void> {
-  const inputs = document.querySelectorAll<HTMLInputElement>(
-    'input[autocomplete="new-password"]',
-  );
-  if (inputs.length !== 2) throw new Error("Missing new password fields");
-  const valueSetter = Object.getOwnPropertyDescriptor(
-    HTMLInputElement.prototype,
-    "value",
-  )?.set;
-  if (!valueSetter) throw new Error("Missing HTMLInputElement value setter");
-  for (const input of inputs) {
-    await act(async () => {
-      valueSetter.call(input, password);
-      input.dispatchEvent(new Event("input", { bubbles: true }));
-    });
-  }
-}
-
 async function pressEscape(): Promise<void> {
   await act(async () => {
     document.activeElement?.dispatchEvent(
@@ -826,8 +800,7 @@ describe("App workspace navigation", () => {
     });
     await renderApp();
     expect(workspaceHeading().textContent).toBe("开始使用 AstrLink");
-    // The raw password is set, so the guide opens on the provider step.
-    expect(container.textContent).toContain("已完成 1 / 4 步");
+    expect(container.textContent).toContain("已完成 0 / 3 步");
     expect(container.querySelector("#usage-heading")).toBeNull();
     expect(localStorage.getItem(ONBOARDING_STORAGE_KEY)).toBe("active");
     await act(async () => button("添加 API 提供商").click());
@@ -859,90 +832,75 @@ describe("App workspace navigation", () => {
     expect(button("上手引导")).toBeTruthy();
   });
 
-  it("asks a first launch for the raw password before anything else", async () => {
+  it("opens the guide on a fresh install, whose only token Core issued itself", async () => {
+    bridgeMocks.listServices.mockResolvedValue({
+      items: [],
+      next_cursor: null,
+    });
+    // What a real first start lists: the bootstrap token, nothing else.
+    bridgeMocks.listAccessTokens.mockResolvedValue({
+      items: [
+        {
+          id: "access_token_bootstrap",
+          name: "默认令牌",
+          hint: "astr_…B00T",
+          source: "system_default",
+          created_at: "2026-10-24T08:00:00Z",
+        },
+      ],
+      next_cursor: null,
+    });
+    // Nothing raw is kept without a password, so the first run asks for none.
+    bridgeMocks.getRawSealingStatus.mockResolvedValue(noRawPassword);
+    await renderApp();
+
+    expect(workspaceHeading().textContent).toBe("开始使用 AstrLink");
+    expect(localStorage.getItem(ONBOARDING_STORAGE_KEY)).toBe("active");
+    expect(container.textContent).toContain("已完成 1 / 3 步");
+    expect(
+      container.querySelector('[aria-current="step"]')?.textContent,
+    ).toContain("接入 API 提供商");
+    expect(container.textContent).not.toContain("保护请求原文");
+    expect(proofDialog()).toBeNull();
+
+    await act(async () => button("添加 API 提供商").click());
+    expect(document.querySelector('[role="dialog"]')?.textContent).toContain(
+      "选择 API 提供商类型",
+    );
+    expect(bridgeMocks.setRawPassword).not.toHaveBeenCalled();
+  });
+
+  it("keeps the guide closed once someone created a token", async () => {
     bridgeMocks.listServices.mockResolvedValue({
       items: [],
       next_cursor: null,
     });
     bridgeMocks.listAccessTokens.mockResolvedValue({
-      items: [],
+      items: [
+        {
+          id: "token_laptop",
+          name: "laptop",
+          hint: "astr_…L4PT",
+          source: "user",
+          created_at: "2026-10-24T08:00:00Z",
+        },
+      ],
       next_cursor: null,
     });
-    bridgeMocks.getRawSealingStatus.mockResolvedValue(noRawPassword);
-    bridgeMocks.setRawPassword.mockResolvedValue({
-      outcome: "sealing",
-      status: rawSealing(),
-      reset: null,
-    });
     await renderApp();
-
-    expect(workspaceHeading().textContent).toBe("开始使用 AstrLink");
-    expect(container.textContent).toContain("已完成 0 / 4 步");
-    expect(
-      container.querySelector('[aria-current="step"]')?.textContent,
-    ).toContain("保护请求原文");
-    // The guide asks in its own step, so the required dialog waits.
-    expect(proofDialog()).toBeNull();
-
-    await act(async () => button("开始设置").click());
-    expect(proofDialog()?.textContent).toContain("保护请求原文");
-    await act(async () => button("取消").click());
-    expect(proofDialog()).toBeNull();
-
-    // Skipping the guide does not skip the password.
-    await act(async () => button("稍后设置").click());
     expect(workspaceHeading().textContent).toBe("运行概览");
-    expect(proofDialog()?.textContent).toContain("设置口令并继续");
-    expect(queryButton("取消", proofDialog()!)).toBeNull();
-
-    await typeNewPassword("correct horse");
-    await act(async () => button("设置口令并继续").click());
-    expect(bridgeMocks.setRawPassword).toHaveBeenCalledExactlyOnceWith(
-      "set",
-      "correct horse",
-      undefined,
-    );
-    expect(proofDialog()).toBeNull();
-    await act(async () => button("上手引导").click());
-    expect(container.textContent).toContain("已完成 1 / 4 步");
-    expect(
-      container.querySelector('[aria-current="step"]')?.textContent,
-    ).toContain("接入 API 提供商");
+    expect(localStorage.getItem(ONBOARDING_STORAGE_KEY)).toBeNull();
   });
 
-  it("keeps an upgraded workspace behind the raw password until one is set", async () => {
+  it("leaves an upgraded workspace without a raw password as it was", async () => {
     localStorage.setItem(ONBOARDING_STORAGE_KEY, "complete");
     bridgeMocks.getRawSealingStatus.mockResolvedValue(noRawPassword);
-    bridgeMocks.setRawPassword.mockResolvedValue({
-      outcome: "sealing",
-      status: rawSealing(),
-      reset: null,
-    });
     await renderApp();
 
-    // The workspace is there behind it; the gateway keeps serving.
+    // No dialog stands in front; the password waits for capture or Settings.
     expect(workspaceHeading().textContent).toBe("运行概览");
-    const dialog = proofDialog();
-    expect(dialog?.textContent).toContain("设置口令并继续");
-    expect(dialog?.textContent).toContain("新请求的原文不会保存");
-    expect(dialog?.textContent).toContain("忘记后只能重置");
-    expect(queryButton("取消", dialog!)).toBeNull();
-    await pressEscape();
-    await act(async () => {
-      document
-        .querySelector('[data-slot="alert-dialog-overlay"]')
-        ?.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
-    });
-    expect(proofDialog()).not.toBeNull();
-
-    await typeNewPassword("correct horse");
-    await act(async () => button("设置口令并继续").click());
-    expect(bridgeMocks.setRawPassword).toHaveBeenCalledExactlyOnceWith(
-      "set",
-      "correct horse",
-      undefined,
-    );
     expect(proofDialog()).toBeNull();
+    expect(bridgeMocks.setRawPassword).not.toHaveBeenCalled();
   });
 
   it("resumes at token creation and continues to client setup after saving", async () => {

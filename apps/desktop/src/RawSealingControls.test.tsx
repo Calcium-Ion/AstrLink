@@ -9,6 +9,8 @@ import type { RawSealingState } from "./raw-sealing-model";
 
 const mocks = vi.hoisted(() => ({
   acknowledgeRawKey: vi.fn(),
+  enrollRawBiometric: vi.fn(),
+  removeRawBiometric: vi.fn(),
   setRawPassword: vi.fn(),
   unlockRaw: vi.fn(),
   toastError: vi.fn(),
@@ -19,6 +21,8 @@ const mocks = vi.hoisted(() => ({
 // Also stands in for `@/bridge`, which the proof dialog imports.
 vi.mock("./bridge", () => ({
   acknowledgeRawKey: mocks.acknowledgeRawKey,
+  enrollRawBiometric: mocks.enrollRawBiometric,
+  removeRawBiometric: mocks.removeRawBiometric,
   setRawPassword: mocks.setRawPassword,
   unlockRaw: mocks.unlockRaw,
 }));
@@ -31,7 +35,7 @@ vi.mock("sonner", () => ({
 }));
 
 import {
-  RawPasswordGate,
+  RawKeyReplacedGate,
   RawPasswordPanel,
   RawSealingDialogs,
   rawPasswordMissing,
@@ -58,6 +62,7 @@ function sealing(overrides: Partial<RawSealingState> = {}): RawSealingState {
     password_min_length: 8,
     password_max_length: 128,
     key_replaced: false,
+    biometric_available: false,
     ...overrides,
   };
 }
@@ -247,6 +252,32 @@ describe("RawPasswordPanel", () => {
     expect(agentSwitch().disabled).toBe(true);
     expect(agentSwitch().getAttribute("aria-checked")).toBe("false");
     expect(panel().textContent).toContain("请先设置原文保护");
+  });
+
+  it("offers Touch ID where the host can prompt and names it once set up", async () => {
+    const { onAction } = await renderPanel({
+      status: sealing({ biometric_available: true }),
+    });
+    await click(button("启用 Touch ID", panel()));
+    expect(onAction).toHaveBeenLastCalledWith("biometric");
+
+    await renderPanel({
+      onAction,
+      status: sealing({
+        biometric_available: true,
+        envelopes: ["password", "biometric"],
+      }),
+    });
+    expect(
+      panel().querySelector('[data-slot="raw-password-state"]')?.textContent,
+    ).toBe("口令和 Touch ID");
+    expect(panel().textContent).toContain("验证 Touch ID，也可以输入口令");
+    await click(button("停用 Touch ID", panel()));
+    expect(onAction).toHaveBeenLastCalledWith("biometric_off");
+
+    // Builds that cannot prompt offer nothing.
+    await renderPanel({ status: sealing() });
+    expect(queryButton("启用 Touch ID", panel())).toBeNull();
   });
 
   it("leaves the agent toggle to pages that pass it", async () => {
@@ -522,78 +553,102 @@ describe("RawSealingDialogs", () => {
     expect(mocks.setRawPassword).not.toHaveBeenCalled();
     expect(onClose).toHaveBeenCalledExactlyOnceWith(false);
   });
-});
 
-describe("RawPasswordGate", () => {
-  function Gate({
-    initialStatus,
-    suspended = false,
-  }: {
-    initialStatus: RawSealingState | null;
-    suspended?: boolean;
-  }) {
-    const [status, setStatus] = useState(initialStatus);
-    return (
-      <RawPasswordGate
-        onStatus={setStatus}
-        status={status}
-        suspended={suspended}
-      />
-    );
-  }
+  const touchID = sealing({
+    biometric_available: true,
+    envelopes: ["password", "biometric"],
+  });
 
-  async function renderGate(
-    initialStatus: RawSealingState | null,
-    suspended = false,
-  ) {
-    await act(async () =>
-      root.render(<Gate initialStatus={initialStatus} suspended={suspended} />),
-    );
-    await act(async () => {});
-  }
+  it("unlocks with Touch ID and keeps the password as the fallback", async () => {
+    mocks.unlockRaw
+      .mockResolvedValueOnce({ outcome: "biometric_cancelled" })
+      .mockResolvedValueOnce(sealed({ unlocked: true }));
+    await renderDialogs({ kind: "unlock" }, touchID);
 
-  it("keeps asking for protection until one is set", async () => {
-    mocks.setRawPassword.mockResolvedValue(sealed());
-    await renderGate(unconfigured);
+    expect(proofPasswordInput()).not.toBeNull();
+    await click(button("使用 Touch ID", dialog()!));
+    expect(mocks.unlockRaw).toHaveBeenLastCalledWith({ kind: "biometric" });
+    expect(dialog()?.textContent).toContain("Touch ID 已取消。");
 
-    expect(dialog()?.textContent).toContain("保护请求原文");
-    expect(dialog()?.textContent).toContain("新请求的原文不会保存");
-    expect(dialog()?.querySelector('[role="radio"]')).toBeNull();
-    expect(queryButton("取消", dialog()!)).toBeNull();
-    await act(async () => {
-      document.activeElement?.dispatchEvent(
-        new KeyboardEvent("keydown", { bubbles: true, key: "Escape" }),
-      );
+    await type(proofPasswordInput()!, "correct horse");
+    await click(button("解锁", dialog()!));
+    expect(mocks.unlockRaw).toHaveBeenLastCalledWith({
+      kind: "password",
+      password: "correct horse",
     });
-    await act(async () => {
-      document
-        .querySelector('[data-slot="alert-dialog-overlay"]')
-        ?.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
-    });
-    expect(dialog()).not.toBeNull();
-
-    expect(dialog()?.textContent).toContain("忘记后只能重置");
-    await typeNewPassword("correct horse");
-    await click(button("设置口令并继续", dialog()!));
-
-    expect(mocks.setRawPassword).toHaveBeenCalledExactlyOnceWith(
-      "set",
-      "correct horse",
-      undefined,
-    );
-    expect(mocks.toastSuccess).toHaveBeenCalledWith("已设置口令");
     expect(dialog()).toBeNull();
   });
 
-  it("stays up after a failed attempt", async () => {
-    mocks.setRawPassword.mockRejectedValue(new Error("Core is offline"));
+  it("offers no Touch ID where it is not set up", async () => {
+    await renderDialogs(
+      { kind: "unlock" },
+      sealing({ biometric_available: true }),
+    );
+    expect(queryButton("使用 Touch ID", dialog()!)).toBeNull();
+  });
+
+  it("says an unlock lasts until the screen locks where Core follows it", async () => {
+    await renderDialogs(
+      { kind: "unlock" },
+      sealing({ unlock_idle_seconds: 0 }),
+    );
+    expect(dialog()?.textContent).toContain(
+      "锁屏、电脑睡眠或退出 AstrLink 时会自动锁定",
+    );
+  });
+
+  it("turns Touch ID on with the raw password", async () => {
+    mocks.enrollRawBiometric
+      .mockResolvedValueOnce({ outcome: "password_invalid" })
+      .mockResolvedValueOnce(sealed({ envelopes: ["password", "biometric"] }));
+    await renderDialogs(
+      { kind: "biometric" },
+      sealing({ biometric_available: true }),
+    );
+
+    expect(dialog()?.textContent).toContain("用 Touch ID 查看原文");
+    await type(proofPasswordInput()!, "wrong horse");
+    await click(button("启用 Touch ID", dialog()!));
+    expect(dialog()?.textContent).toContain("原文口令不正确。");
+    await type(proofPasswordInput()!, "correct horse");
+    await click(button("启用 Touch ID", dialog()!));
+    expect(mocks.enrollRawBiometric).toHaveBeenLastCalledWith("correct horse");
+    expect(mocks.toastSuccess).toHaveBeenCalledWith("已启用 Touch ID");
+    expect(onStatus).toHaveBeenLastCalledWith(
+      expect.objectContaining({ envelopes: ["password", "biometric"] }),
+    );
+  });
+
+  it("turns Touch ID off after confirming", async () => {
+    mocks.removeRawBiometric.mockResolvedValue(
+      sealing({ biometric_available: true }),
+    );
+    await renderDialogs({ kind: "biometric_off" }, touchID);
+
+    expect(confirmDialog()?.textContent).toContain("停用 Touch ID？");
+    await click(button("停用 Touch ID", confirmDialog()!));
+    expect(mocks.removeRawBiometric).toHaveBeenCalledOnce();
+    expect(mocks.toastSuccess).toHaveBeenCalledWith("已停用 Touch ID");
+    expect(onClose).toHaveBeenCalledExactlyOnceWith(true);
+  });
+});
+
+describe("RawKeyReplacedGate", () => {
+  function Gate({ initialStatus }: { initialStatus: RawSealingState | null }) {
+    const [status, setStatus] = useState(initialStatus);
+    return <RawKeyReplacedGate onStatus={setStatus} status={status} />;
+  }
+
+  async function renderGate(initialStatus: RawSealingState | null) {
+    await act(async () => root.render(<Gate initialStatus={initialStatus} />));
+    await act(async () => {});
+  }
+
+  it("asks nothing of a device without a raw password", async () => {
+    // Nothing raw is kept without one, so it waits for capture or Settings.
     await renderGate(unconfigured);
-
-    await typeNewPassword("correct horse");
-    await click(button("设置口令并继续", dialog()!));
-
-    expect(dialog()?.textContent).toContain("Core is offline");
-    expect(queryButton("取消", dialog()!)).toBeNull();
+    expect(dialog()).toBeNull();
+    expect(mocks.setRawPassword).not.toHaveBeenCalled();
   });
 
   /** A key an offline `astrlink-core raw-password` reset while the app was closed. */
@@ -670,21 +725,11 @@ describe("RawPasswordGate", () => {
     expect(confirmDialog()).toBeNull();
   });
 
-  it("stays away once a password is set, while suspended, or unknown", async () => {
+  it("stays away once a password is set, or while unknown", async () => {
     await renderGate(sealing());
     expect(dialog()).toBeNull();
 
     await renderGate(null);
-    expect(dialog()).toBeNull();
-
-    await act(async () => root.unmount());
-    root = createRoot(container);
-    await renderGate(unconfigured, true);
-    expect(dialog()).toBeNull();
-
-    await act(async () => root.unmount());
-    root = createRoot(container);
-    await renderGate(replacedKey, true);
     expect(dialog()).toBeNull();
   });
 });
