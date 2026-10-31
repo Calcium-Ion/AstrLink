@@ -249,8 +249,11 @@ type SubscriptionAccount struct {
 	DisplayName       string                `json:"display_name"`
 	AccountHint       string                `json:"account_hint,omitempty"`
 	ProviderAccountID string                `json:"provider_account_id,omitempty"`
-	CredentialRef     string                `json:"credential_ref,omitempty"`
-	Capabilities      []Capability          `json:"capabilities"`
+	// PlanType is the plan the last usage read reported for this provider
+	// account. Signing out or into another account clears it.
+	PlanType      string       `json:"plan_type,omitempty"`
+	CredentialRef string       `json:"credential_ref,omitempty"`
+	Capabilities  []Capability `json:"capabilities"`
 	// AuthorizationBoundary explains provider-controlled limits that affect
 	// whether interactive login can proceed. It never contains secrets.
 	AuthorizationBoundary string             `json:"authorization_boundary,omitempty"`
@@ -288,6 +291,9 @@ func (account SubscriptionAccount) Validate() error {
 	}
 	if containsCredentialLeak(account.ProviderAccountID) {
 		return fmt.Errorf("provider_account_id must not contain credential material")
+	}
+	if err := ValidatePlanType(account.PlanType); err != nil {
+		return err
 	}
 	switch account.Status {
 	case SubscriptionStatusConnected, SubscriptionStatusNeedsReauth, SubscriptionStatusAuthorizing:
@@ -565,6 +571,18 @@ type SubscriptionUsage struct {
 	Quota                 *UsageQuota            `json:"quota,omitempty"`
 }
 
+// ValidatePlanType checks a plan as a provider reports it. An empty plan is
+// valid: it is not known.
+func ValidatePlanType(planType string) error {
+	if utf8.RuneCountInString(planType) > maxUsagePlanTypeLength {
+		return fmt.Errorf("plan_type must be at most %d characters", maxUsagePlanTypeLength)
+	}
+	if containsCredentialLeak(planType) || strings.Contains(planType, "@") {
+		return fmt.Errorf("plan_type must not contain credential material")
+	}
+	return nil
+}
+
 func (usage SubscriptionUsage) Validate() error {
 	if err := usage.ServiceID.Validate(); err != nil {
 		return fmt.Errorf("service_id: %w", err)
@@ -572,13 +590,8 @@ func (usage SubscriptionUsage) Validate() error {
 	if usage.FetchedAt.IsZero() {
 		return fmt.Errorf("fetched_at is required")
 	}
-	if usage.PlanType != "" {
-		if utf8.RuneCountInString(usage.PlanType) > maxUsagePlanTypeLength {
-			return fmt.Errorf("plan_type must be at most %d characters", maxUsagePlanTypeLength)
-		}
-		if containsCredentialLeak(usage.PlanType) || strings.Contains(usage.PlanType, "@") {
-			return fmt.Errorf("plan_type must not contain credential material")
-		}
+	if err := ValidatePlanType(usage.PlanType); err != nil {
+		return err
 	}
 	if err := usage.Primary.validate("primary"); err != nil {
 		return err

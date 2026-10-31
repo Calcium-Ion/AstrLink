@@ -61,11 +61,16 @@ type servicePageResponse struct {
 }
 
 func (handler *Handler) publicService(service contract.Service) contract.Service {
-	if handler.subscriptions == nil || !service.Kind.IsSubscription() || service.Subscription == nil {
+	if !service.Kind.IsSubscription() || service.Subscription == nil {
 		return service
 	}
 	connection := *service.Subscription
-	connection.AuthorizationBoundary = handler.subscriptions.AuthorizationBoundary()
+	// The stored plan only places the account in a package, and packages are
+	// read from their own route.
+	connection.PlanType = ""
+	if handler.subscriptions != nil {
+		connection.AuthorizationBoundary = handler.subscriptions.AuthorizationBoundary()
+	}
 	service.Subscription = &connection
 	return service
 }

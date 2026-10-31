@@ -84,6 +84,8 @@ x-astrlink-implementation:
     - POST /control/v1/services/{service_id}/usage/reset
     - POST /control/v1/services/{service_id}/risk/clear
     - GET /control/v1/services/{service_id}/risk-events
+    - GET /control/v1/service-packages
+    - PATCH /control/v1/service-packages/{package_id}
     - GET /control/v1/access-tokens
     - GET /control/v1/access-token-usage
     - GET /control/v1/usage-summary
@@ -2422,6 +2424,68 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "422":
           $ref: "#/components/responses/UnprocessableEntity"
+  /control/v1/service-packages:
+    x-astrlink-implementation-status: implemented
+    get:
+      x-astrlink-role: observer
+      tags: [Routes]
+      operationId: listServicePackages
+      summary: List service packages in routing order.
+      description: Every configured service, disabled ones included, grouped the way routing groups them. Subscription accounts with the same provider and the same plan form one package. The plan is the one the account's last usage read reported; it is kept across restarts and cleared when the account signs out or into another provider account. An account whose plan is not known yet joins its provider's unknown package. Every other service is a package of its own. Membership is derived on every read and never stored. A package sits where its earliest member is in the service order.
+      responses:
+        "200":
+          description: Packages in routing order; service_ids keep the service order.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ServicePackageList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          description: Service packages are unavailable.
+  /control/v1/service-packages/{package_id}:
+    x-astrlink-implementation-status: implemented
+    parameters:
+      - name: package_id
+        in: path
+        required: true
+        description: Package ID, URL-escaped, for example subscription%3Aclaude%3Amax_20x.
+        schema:
+          $ref: "#/components/schemas/ServicePackageId"
+    patch:
+      x-astrlink-role: operator
+      tags: [Routes]
+      operationId: updateServicePackage
+      summary: Choose how routing orders the accounts of one package.
+      description: The strategy is saved in the routing settings and applies to new requests. Choosing auto removes the saved entry. Only packages the current services form can be changed, and saving drops the saved strategies of packages they no longer form.
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema:
+              $ref: "#/components/schemas/ServicePackagePatch"
+      responses:
+        "200":
+          description: The package with its new strategy.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ServicePackage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "415":
+          description: Content-Type must be application/merge-patch+json.
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "503":
+          description: Service packages are unavailable.
   /control/v1/client-identities:
     x-astrlink-implementation-status: implemented
     get:
@@ -4873,6 +4937,81 @@ components:
           minimum: 1
           maximum: 20
       additionalProperties: false
+    ServicePackageId:
+      type: string
+      maxLength: 104
+      pattern: "^(?:service:[a-z][a-z0-9_-]{2,95}|subscription:(?:codex|claude|grok|antigravity|copilot|droid):\\S(?:.*\\S)?)$"
+      description: service:<service_id> for a single service, or subscription:<provider>:<plan> for subscription accounts, where provider is codex, claude, grok, antigravity, copilot or droid and plan is the lowercase plan key, up to 64 characters, or unknown.
+      examples:
+        [
+          "subscription:claude:max_20x",
+          "subscription:codex:unknown",
+          "service:svc_openai",
+        ]
+    ServicePackageList:
+      type: object
+      additionalProperties: false
+      required: [packages]
+      properties:
+        packages:
+          type: array
+          description: Every package in routing order.
+          items:
+            $ref: "#/components/schemas/ServicePackage"
+    ServicePackage:
+      type: object
+      additionalProperties: false
+      required: [id, kind, service_ids, strategy]
+      properties:
+        id:
+          $ref: "#/components/schemas/ServicePackageId"
+        kind:
+          type: string
+          enum: [subscription, service]
+          description: subscription groups the accounts of one provider and plan; service is one other service.
+        provider:
+          type: string
+          enum:
+            [
+              openai_codex,
+              claude_code,
+              xai_grok,
+              antigravity,
+              github_copilot,
+              factory_droid,
+            ]
+          description: Subscription provider. Present only for subscription packages.
+        plan_type:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: Plan the accounts' last usage read reported, lowercase and trimmed. Omitted for service packages and while the plan is not known.
+        service_ids:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          description: Member services in the service order, disabled ones included.
+          items:
+            $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+        strategy:
+          $ref: "#/components/schemas/ServicePackageStrategy"
+    ServicePackageStrategy:
+      type: string
+      enum: [auto, soonest_reset, most_remaining]
+      default: auto
+      description: |
+        How routing orders the accounts of a package. It reads only each account's last cached usage and never contacts a provider. An account's binding window is its 5-hour or weekly window with less left; a window whose reset time has passed counts as unused.
+        - soonest_reset: the account whose binding window resets first goes first.
+        - most_remaining: the account with the most left goes first.
+        - auto: accounts with more than 10% left go first by soonest reset, then accounts with 10% or less by most remaining.
+        In every strategy, accounts at their limit follow the accounts with quota left, earliest reset first, and accounts without cached usage come last in the service order. Ties keep the service order. Exclusions and rate-limit cooldowns still apply, and a conversation bound to an account stays on it.
+    ServicePackagePatch:
+      type: object
+      additionalProperties: false
+      required: [strategy]
+      properties:
+        strategy:
+          $ref: "#/components/schemas/ServicePackageStrategy"
     RequestRecovery:
       type: object
       required: [delay_ms]

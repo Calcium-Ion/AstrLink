@@ -61,6 +61,7 @@ type StoreResolver struct {
 	clock               func() time.Time
 	runtime             contract.RuntimeProfile
 	subscriptionBaseURL string
+	usage               UsageCache
 }
 
 // WithRuntimeProfile enables candidates backed by optional local runtimes.
@@ -128,19 +129,25 @@ func (resolver *StoreResolver) ResolveRankedCandidates(ctx context.Context, requ
 	if request.Protocol.IsModelDiscovery() {
 		model = ""
 	}
-	endpoints, ranking, err := resolver.readServices(ctx, model, request.Service)
+	settings := contract.DefaultRoutingSettings()
+	if resolver.routingSettings != nil && !request.Protocol.IsModelDiscovery() {
+		var err error
+		settings, err = resolver.routingSettings.GetRoutingSettings(ctx)
+		if err != nil {
+			return nil, nil, fmt.Errorf("read routing settings: %w", err)
+		}
+	}
+	// Model discovery merges every candidate, so it keeps the stored order.
+	packages := &settings
+	if request.Protocol.IsModelDiscovery() {
+		packages = nil
+	}
+	endpoints, ranking, err := resolver.readServices(ctx, model, request.Service, packages)
 	if err != nil {
 		return nil, nil, err
 	}
 	if request.Service != "" {
 		endpoints, ranking = onlyService(endpoints, ranking, request.Service)
-	}
-	settings := contract.DefaultRoutingSettings()
-	if resolver.routingSettings != nil && !request.Protocol.IsModelDiscovery() {
-		settings, err = resolver.routingSettings.GetRoutingSettings(ctx)
-		if err != nil {
-			return nil, nil, fmt.Errorf("read routing settings: %w", err)
-		}
 	}
 	applyDefaults := func(candidates []Resolved) []Resolved {
 		for index := range candidates {
@@ -188,7 +195,7 @@ func (resolver *StoreResolver) ResolveService(ctx context.Context, id contract.S
 	if resolver == nil || resolver.reader == nil {
 		return Resolved{}, ErrUnavailable
 	}
-	services, _, err := resolver.readServices(ctx, "", id)
+	services, _, err := resolver.readServices(ctx, "", id, nil)
 	if err != nil {
 		return Resolved{}, err
 	}
@@ -227,14 +234,18 @@ func (resolver *StoreResolver) availableCandidates(candidates []Resolved, rankin
 // readServices returns the schedulable services in priority order and the
 // ranking of every service, with the reason unschedulable ones are left out.
 // An unschedulable service that does not list model is ranked as such: it
-// could not have served the request in any state.
-func (resolver *StoreResolver) readServices(ctx context.Context, model string, pinned contract.ServiceID) ([]contract.Service, []RankedService, error) {
+// could not have served the request in any state. With packages, services are
+// grouped into service packages ordered by those settings' strategies;
+// without, and for a pinned service, they keep the stored order.
+func (resolver *StoreResolver) readServices(ctx context.Context, model string, pinned contract.ServiceID, packages *contract.RoutingSettings) ([]contract.Service, []RankedService, error) {
+	all := make(map[contract.ServiceID]contract.Service)
 	byID := make(map[contract.ServiceID]contract.Service)
 	excluded := make(map[contract.ServiceID]contract.RoutingSkipReason)
 	err := resolver.eachServiceFor(ctx, pinned, func(candidate contract.Service) error {
 		if err := candidate.Validate(); err != nil {
 			return fmt.Errorf("persisted endpoint failed validation: %w", err)
 		}
+		all[candidate.ID] = candidate
 		if reason := resolver.unschedulableReason(candidate); reason != "" {
 			if _, served := candidate.UpstreamModelFor(model); model != "" && !served {
 				reason = contract.RoutingSkipModelNotListed
@@ -256,28 +267,12 @@ func (resolver *StoreResolver) readServices(ctx context.Context, model string, p
 	for _, candidate := range byID {
 		endpoints = append(endpoints, candidate)
 	}
-	positions := map[contract.ServiceID]int{}
-	if ordered, ok := resolver.reader.(storage.ServiceOrderStore); ok && pinned == "" {
-		record, err := ordered.GetServiceOrder(ctx)
-		if err != nil {
-			return nil, nil, fmt.Errorf("read service order: %w", err)
-		}
-		for index, id := range record.Order.ServiceIDs {
-			positions[id] = index + 1
-		}
+	before, err := resolver.storedOrder(ctx, pinned)
+	if err != nil {
+		return nil, nil, err
 	}
-	before := func(a, b contract.ServiceID) bool {
-		left, right := positions[a], positions[b]
-		if left == 0 {
-			left = len(positions) + 1
-		}
-		if right == 0 {
-			right = len(positions) + 1
-		}
-		if left != right {
-			return left < right
-		}
-		return a < b
+	if packages != nil && pinned == "" {
+		before = resolver.packageOrder(all, before, *packages)
 	}
 	sort.Slice(endpoints, func(left, right int) bool {
 		return before(endpoints[left].ID, endpoints[right].ID)
@@ -293,6 +288,35 @@ func (resolver *StoreResolver) readServices(ctx context.Context, model string, p
 		return before(ranking[left].ServiceID, ranking[right].ServiceID)
 	})
 	return endpoints, ranking, nil
+}
+
+// storedOrder compares services by their stored priority, then by ID.
+// Services missing from the stored order, and every service of a pinned read,
+// sort after the stored ones.
+func (resolver *StoreResolver) storedOrder(ctx context.Context, pinned contract.ServiceID) (func(a, b contract.ServiceID) bool, error) {
+	positions := map[contract.ServiceID]int{}
+	if ordered, ok := resolver.reader.(storage.ServiceOrderStore); ok && pinned == "" {
+		record, err := ordered.GetServiceOrder(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("read service order: %w", err)
+		}
+		for index, id := range record.Order.ServiceIDs {
+			positions[id] = index + 1
+		}
+	}
+	return func(a, b contract.ServiceID) bool {
+		left, right := positions[a], positions[b]
+		if left == 0 {
+			left = len(positions) + 1
+		}
+		if right == 0 {
+			right = len(positions) + 1
+		}
+		if left != right {
+			return left < right
+		}
+		return a < b
+	}, nil
 }
 
 // Named routes do not need to decode and validate unrelated providers. Older

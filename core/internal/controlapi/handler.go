@@ -73,6 +73,9 @@ type Dependencies struct {
 	// RateLimits releases gateway cooldowns when subscription risk is cleared.
 	// Supply the same resolver used by ingress. Optional.
 	RateLimits RateLimitReleaser
+	// ServicePackages lists service packages. Supply the same resolver used
+	// by ingress. Optional; without it the route reports 503.
+	ServicePackages ServicePackageLister
 	// CodingPlans reads first-party plan quotas for API-key coding plan
 	// services (Kimi, GLM, MiniMax, OpenCode Go). Optional.
 	CodingPlans      CodingPlanUsage
@@ -151,6 +154,7 @@ type Handler struct {
 	clientIdentities  ClientIdentityReporter
 	subscriptions     *subscription.Manager
 	rateLimits        RateLimitReleaser
+	servicePackages   ServicePackageLister
 	codingPlans       CodingPlanUsage
 	serviceModels     ServiceModelProber
 	serviceTester     ServiceTester
@@ -223,6 +227,7 @@ func newHandler(version contract.VersionResponse, dependencies Dependencies) (*H
 		localData:       dependencies.LocalData,
 		subscriptions:   dependencies.Subscriptions,
 		rateLimits:      dependencies.RateLimits,
+		servicePackages: dependencies.ServicePackages,
 		codingPlans:     dependencies.CodingPlans,
 		serviceModels:   dependencies.ServiceModels,
 		serviceTester:   dependencies.ServiceTester,
@@ -281,6 +286,8 @@ func newHandler(version contract.VersionResponse, dependencies Dependencies) (*H
 		handler.registerServiceRoutes()
 	}
 	handler.mux.HandleFunc(ServiceOrderPath, handler.authenticated(handler.serviceOrderResource, RoleObserver))
+	handler.mux.HandleFunc(ServicePackagesPath, handler.authenticated(handler.servicePackagesResource, RoleObserver))
+	handler.mux.HandleFunc(ServicePackagesPath+"/", handler.authenticated(handler.servicePackagesResource, RoleObserver))
 	for _, path := range []string{RoutesPath, RoutesPath + "/", RecoveryPathsPath, RecoveryPathsPath + "/", AutoClassifierPath, AutoClassifierPath + "/"} {
 		handler.mux.HandleFunc(path, handler.authenticated(handler.retiredRouting, RoleObserver))
 	}

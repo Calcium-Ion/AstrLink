@@ -23,7 +23,7 @@ func (handler *Handler) routingSettingsResource(writer http.ResponseWriter, requ
 			handler.writeStoreError(writer, err)
 			return
 		}
-		writeJSON(writer, http.StatusOK, normalizeRoutingSettings(settings))
+		writeJSON(writer, http.StatusOK, routingSettingsView(settings))
 	case http.MethodPatch:
 		if !requireMediaType(writer, request, "application/merge-patch+json") {
 			return
@@ -130,7 +130,7 @@ func (handler *Handler) routingSettingsResource(writer http.ResponseWriter, requ
 			handler.writeStoreError(writer, err)
 			return
 		}
-		writeJSON(writer, http.StatusOK, settings)
+		writeJSON(writer, http.StatusOK, routingSettingsView(settings))
 	default:
 		writer.Header().Set("Allow", "GET, PATCH")
 		writeError(writer, http.StatusMethodNotAllowed, "method_not_allowed", "only GET and PATCH are allowed")
@@ -182,5 +182,14 @@ func normalizeRoutingSettings(settings contract.RoutingSettings) contract.Routin
 	if settings.ModelRedirects == nil {
 		settings.ModelRedirects = []contract.ModelRedirect{}
 	}
+	return settings
+}
+
+// routingSettingsView is the routing settings document as this route returns
+// it. Package strategies stay stored but belong to the service-packages
+// route, which reads and changes them.
+func routingSettingsView(settings contract.RoutingSettings) contract.RoutingSettings {
+	settings = normalizeRoutingSettings(settings)
+	settings.PackageStrategies = nil
 	return settings
 }

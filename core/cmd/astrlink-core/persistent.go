@@ -221,7 +221,11 @@ func openPersistentCore(ctx context.Context, options persistentOptions) (*persis
 			if current.Service.Subscription == nil || current.Service.Subscription.ProviderAccountID != account.ProviderAccountID {
 				return nil
 			}
-			return store.ObserveSubscriptionUsage(ctx, current.Service, usage)
+			if err := store.ObserveSubscriptionUsage(ctx, current.Service, usage); err != nil {
+				return err
+			}
+			_, err = store.ObserveSubscriptionPlan(ctx, account.ID, account.ProviderAccountID, usage.PlanType)
+			return err
 		},
 		func(ctx context.Context, account contract.SubscriptionAccount) error {
 			current, err := store.GetService(ctx, account.ID)
@@ -240,6 +244,7 @@ func openPersistentCore(ctx context.Context, options persistentOptions) (*persis
 	}
 	resolver.WithRuntimeProfile(contract.RuntimeProfile{RelayKitAvailable: true, Edges: conversionEngine.Edges()})
 	resolver.WithSubscriptionBaseURL(subscriptionManager.APIBaseURL())
+	resolver.WithUsageCache(subscriptionManager)
 	vertexTokens := vertexauth.New(nil)
 	gatewayDependencies := ingress.Dependencies{
 		ProxyCredentials: store,
@@ -293,6 +298,7 @@ func openPersistentCore(ctx context.Context, options persistentOptions) (*persis
 		ClientIdentities:   identities,
 		Subscriptions:      subscriptionManager,
 		RateLimits:         resolver,
+		ServicePackages:    resolver,
 		CodingPlans:        codingplan.New(store, nil),
 		ServiceModels:      servicemodel.New(store, subscriptionManager, nil).WithVertexTokens(vertexTokens),
 		ServiceTester:      servicetest.NewWithDependencies(gatewayDependencies, subscriptionManager.APIBaseURLFor),

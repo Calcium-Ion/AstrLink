@@ -25,7 +25,13 @@ func (store *Store) SyncEntities(ctx context.Context, kind string) ([]storage.Sy
 	}
 	switch kind {
 	case syncKindService:
-		return store.syncDocuments(ctx, kind, times, `SELECT id, document_json FROM services`)
+		// The plan of a subscription account is what this device's usage
+		// reads reported; another device observes its own.
+		return store.syncDocuments(ctx, kind, times, `SELECT id, CASE
+    WHEN NOT json_valid(document_json) THEN document_json
+    WHEN json_type(document_json, '$.subscription.plan_type') IS NULL THEN document_json
+    ELSE json_remove(document_json, '$.subscription.plan_type') END
+FROM services`)
 	case syncKindPolicy:
 		return store.syncDocuments(ctx, kind, times, `SELECT id, document_json FROM policies`)
 	case syncKindPricingConfig:

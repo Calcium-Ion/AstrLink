@@ -288,6 +288,7 @@ func rebindServiceRefs(id contract.ServiceID, document []byte, presence credenti
 			// here the account is signed out, and the user signs in again.
 			connection.Status = contract.SubscriptionStatusDisconnected
 			connection.CredentialRef = ""
+			connection.PlanType = ""
 			connection.TokenExpiresAt = nil
 			connection.LastRefreshAt = nil
 			connection.LastError = nil
@@ -327,9 +328,19 @@ func (store *Store) syncWriteService(ctx context.Context, localID string, docume
 		return nil
 	}
 	now := store.now().UTC().Format(time.RFC3339Nano)
+	// A merged document never carries a plan: the plan is what this device's
+	// usage reads reported, so it is kept while the account stays the same.
 	_, err = store.db.ExecContext(ctx, `INSERT INTO services (id, document_json, created_at, updated_at, sort_position)
 VALUES (?, ?, ?, ?, (SELECT COALESCE(MAX(sort_position), -1) + 1 FROM services))
-ON CONFLICT(id) DO UPDATE SET document_json = excluded.document_json, updated_at = excluded.updated_at`,
+ON CONFLICT(id) DO UPDATE SET document_json = CASE
+    WHEN NOT json_valid(services.document_json) THEN excluded.document_json
+    WHEN json_type(services.document_json, '$.subscription.plan_type') = 'text'
+     AND json_type(excluded.document_json, '$.subscription') = 'object'
+     AND COALESCE(json_extract(excluded.document_json, '$.subscription.provider_account_id'), '') =
+         COALESCE(json_extract(services.document_json, '$.subscription.provider_account_id'), '')
+    THEN json_set(excluded.document_json, '$.subscription.plan_type', json_extract(services.document_json, '$.subscription.plan_type'))
+    ELSE excluded.document_json END,
+ updated_at = excluded.updated_at`,
 		service.ID, string(encoded), service.CreatedAt.UTC().Format(time.RFC3339Nano), now)
 	if err != nil {
 		return fmt.Errorf("write synced service: %w", err)
@@ -409,6 +420,7 @@ func decodeSyncedService(id contract.ServiceID, document []byte) (contract.Servi
 		service.Subscription = &connection
 		connection.Status = contract.SubscriptionStatusDisconnected
 		connection.CredentialRef = ""
+		connection.PlanType = ""
 		connection.TokenExpiresAt = nil
 		connection.LastRefreshAt = nil
 		connection.LastError = nil

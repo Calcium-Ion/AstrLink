@@ -92,6 +92,38 @@ ON CONFLICT(id) DO UPDATE SET document_json = json_set(services.document_json,
 	return nil
 }
 
+// ObserveSubscriptionPlan keeps the plan a usage read reported, so the account
+// stays in its plan's package after a restart. It writes only while the
+// service is signed in to providerAccountID and only when the plan changed, and
+// it leaves updated_at alone: a plan is observed, not configured. A blank plan
+// is not known and changes nothing. It reports whether it wrote.
+func (store *Store) ObserveSubscriptionPlan(ctx context.Context, id contract.ServiceID, providerAccountID, planType string) (bool, error) {
+	if err := id.Validate(); err != nil {
+		return false, fmt.Errorf("%w: %v", storagecontract.ErrInvalidArgument, err)
+	}
+	if strings.TrimSpace(planType) == "" {
+		return false, nil
+	}
+	if err := contract.ValidatePlanType(planType); err != nil {
+		return false, fmt.Errorf("%w: %v", storagecontract.ErrInvalidArgument, err)
+	}
+	key := contract.NormalizePlanType(planType)
+	result, err := store.db.ExecContext(ctx, `UPDATE services SET document_json = json_set(document_json, '$.subscription.plan_type', ?)
+WHERE id = ? AND json_type(document_json, '$.subscription') = 'object'
+ AND COALESCE(json_extract(document_json, '$.subscription.status'), '') <> 'disconnected'
+ AND COALESCE(json_extract(document_json, '$.subscription.provider_account_id'), '') = ?
+ AND COALESCE(json_extract(document_json, '$.subscription.plan_type'), '') <> ?`,
+		key, id, providerAccountID, key)
+	if err != nil {
+		return false, fmt.Errorf("store subscription plan: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("subscription plan rows affected: %w", err)
+	}
+	return affected > 0, nil
+}
+
 func (store *Store) DeleteSubscriptionAccount(ctx context.Context, id contract.SubscriptionAccountID) error {
 	if err := id.Validate(); err != nil {
 		return fmt.Errorf("%w: %v", storagecontract.ErrInvalidArgument, err)

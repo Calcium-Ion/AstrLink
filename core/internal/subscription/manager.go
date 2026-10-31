@@ -388,6 +388,7 @@ func (manager *Manager) Logout(ctx context.Context, id contract.SubscriptionAcco
 		account.CredentialRef = ""
 		account.AccountHint = ""
 		account.ProviderAccountID = ""
+		account.PlanType = ""
 		account.TokenExpiresAt = nil
 		account.LastRefreshAt = nil
 		account.LastError = nil
@@ -449,12 +450,33 @@ func (manager *Manager) AccessToken(ctx context.Context, id contract.Subscriptio
 	return manager.tokensFor(account.Provider).AccessToken(ctx, id)
 }
 
-// ForgetUsage drops the cached quota snapshot so the next Usage call goes to
+// ForgetUsage expires the cached quota snapshot so the next Usage call goes to
 // the provider. Used for operator-initiated refreshes.
 func (manager *Manager) ForgetUsage(id contract.ServiceID) {
 	manager.mu.Lock()
-	delete(manager.usageCache, id)
+	manager.expireUsage(id)
 	manager.mu.Unlock()
+}
+
+// expireUsage makes Usage read the provider again while CachedUsage keeps the
+// snapshot, so routing keeps the account in its plan's package until a new
+// one arrives. The caller holds manager.mu.
+func (manager *Manager) expireUsage(id contract.ServiceID) {
+	if entry, ok := manager.usageCache[id]; ok {
+		entry.until = time.Time{}
+		manager.usageCache[id] = entry
+	}
+}
+
+// CachedUsage returns the last quota snapshot read from the provider, however
+// old, for routing to order accounts by. It never contacts the provider.
+// Signing out, signing into another provider account or deleting the account
+// drops it.
+func (manager *Manager) CachedUsage(id contract.ServiceID) (contract.SubscriptionUsage, bool) {
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
+	entry, ok := manager.usageCache[id]
+	return entry.usage, ok
 }
 
 func (manager *Manager) Usage(ctx context.Context, id contract.ServiceID) (contract.SubscriptionUsage, error) {
@@ -508,8 +530,14 @@ func (manager *Manager) Usage(ctx context.Context, id contract.ServiceID) (contr
 		}
 	}
 	manager.mu.Lock()
-	manager.usageCache[id] = usageCacheEntry{usage: usage, until: now.Add(usageCacheTTL)}
-	manager.mu.Unlock()
+	defer manager.mu.Unlock()
+	// A sign-out or a login to another account during the read leaves its
+	// snapshot, and the plan routing groups by, out of the cache.
+	if current, err := manager.accounts.GetAccount(ctx, id); err == nil &&
+		current.Status != contract.SubscriptionStatusDisconnected &&
+		current.ProviderAccountID == account.ProviderAccountID {
+		manager.usageCache[id] = usageCacheEntry{usage: usage, until: now.Add(usageCacheTTL)}
+	}
 	return usage, nil
 }
 
@@ -536,7 +564,7 @@ func (manager *Manager) ConsumeReset(ctx context.Context, id contract.ServiceID)
 	result, err := manager.provider.ConsumeReset(ctx, tokens, redeemID)
 	if result.Outcome == contract.UsageResetOutcomeReset ||
 		result.Outcome == contract.UsageResetOutcomeAlreadyRedeemed {
-		manager.clearUsageCache(id)
+		manager.ForgetUsage(id)
 		if manager.resetObserver != nil && result.Outcome == contract.UsageResetOutcomeReset {
 			if e := manager.resetObserver(ctx, account); e != nil {
 				log.Printf("subscription reset persistence: %v", e)
@@ -658,6 +686,12 @@ func (manager *Manager) persistAuthorizedTokens(ctx context.Context, session con
 		}
 		now := manager.now().UTC()
 		expires := tokens.ExpiresAt.UTC()
+		// A plan belongs to the provider account that reported it. A login
+		// that cannot be matched to the previous account starts without one.
+		if account.ProviderAccountID == "" || account.ProviderAccountID != tokens.AccountID {
+			account.PlanType = ""
+			delete(manager.usageCache, session.ServiceID)
+		}
 		account.Status = contract.SubscriptionStatusConnected
 		account.CredentialRef = accountauth.CredentialRefFor(account.ID)
 		account.AccountHint = maskAccountHint(tokens.AccountID)
@@ -711,7 +745,7 @@ func (manager *Manager) onInvalidGrant(ctx context.Context, id contract.Subscrip
 			return nil
 		}
 		account.Status = contract.SubscriptionStatusNeedsReauth
-		delete(manager.usageCache, id)
+		manager.expireUsage(id)
 		account.LastError = &contract.SubscriptionError{
 			Code:    accountauth.ErrCodeInvalidGrant,
 			Message: "subscription refresh failed; sign in again",
