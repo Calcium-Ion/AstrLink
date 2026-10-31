@@ -62,7 +62,7 @@ it("waits for the catalog, remembers the first visit and survives StrictMode", a
   expect(dialog()).toBeNull();
   expect(localStorage.getItem(SERVICE_ORDER_GUIDE_KEY)).toBeNull();
   await render();
-  expect(dialog()?.textContent).toContain("拖拽调整提供商优先级");
+  expect(dialog()?.textContent).toContain("拖动卡片调整提供商先后");
   expect(localStorage.getItem(SERVICE_ORDER_GUIDE_KEY)).toBe("seen");
   await act(async () => button("知道了").click());
   expect(dialog()).toBeNull();

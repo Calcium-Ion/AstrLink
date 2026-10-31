@@ -65,7 +65,8 @@ function OrderAnimation() {
   const items = [
     {
       id: "codex",
-      name: t("services.codexName"),
+      // A package card: its accounts move together.
+      name: t("services.orderGuide.packageExample"),
       icon: <ServiceKindIcon kind="codex_subscription" />,
     },
     { id: "openai", name: "OpenAI", icon: <ServiceKindIcon kind="openai" /> },

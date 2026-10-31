@@ -395,6 +395,89 @@ export async function updateServiceOrder(
   );
 }
 
+export const PACKAGE_STRATEGIES = [
+  "auto",
+  "soonest_reset",
+  "most_remaining",
+] as const;
+export type PackageStrategy = (typeof PACKAGE_STRATEGIES)[number];
+/**
+ * Accounts of one provider and plan, or a single service. The core derives
+ * membership; `service_ids` keep their routing order.
+ */
+export interface ServicePackage {
+  id: string;
+  kind: "subscription" | "service";
+  provider?: string;
+  plan_type?: string;
+  service_ids: string[];
+  strategy: PackageStrategy;
+}
+// Plan keys are whatever the provider reports, lowercased, so only the prefix
+// and the absence of control characters are checked here.
+const packageIDPattern = /^(service|subscription):\P{Cc}{1,400}$/u;
+export function isPackageStrategy(value: unknown): value is PackageStrategy {
+  return PACKAGE_STRATEGIES.includes(value as PackageStrategy);
+}
+export function parseServicePackage(value: unknown): ServicePackage {
+  if (!value || typeof value !== "object")
+    throw new Error("Invalid service package");
+  const { id, kind, provider, plan_type, service_ids, strategy } =
+    value as ServicePackage;
+  if (
+    typeof id !== "string" ||
+    !packageIDPattern.test(id) ||
+    (kind !== "subscription" && kind !== "service") ||
+    (provider !== undefined && typeof provider !== "string") ||
+    (plan_type !== undefined && typeof plan_type !== "string") ||
+    !Array.isArray(service_ids) ||
+    service_ids.length === 0 ||
+    service_ids.some(
+      (serviceID) =>
+        typeof serviceID !== "string" ||
+        !/^[a-z][a-z0-9_-]{2,95}$/.test(serviceID),
+    ) ||
+    new Set(service_ids).size !== service_ids.length ||
+    !isPackageStrategy(strategy)
+  )
+    throw new Error("Invalid service package");
+  return {
+    id,
+    kind,
+    ...(provider ? { provider } : {}),
+    ...(plan_type ? { plan_type } : {}),
+    service_ids,
+    strategy,
+  };
+}
+export function parseServicePackages(value: unknown): ServicePackage[] {
+  const packages = (value as { packages?: unknown } | null)?.packages;
+  if (!Array.isArray(packages)) throw new Error("Invalid service packages");
+  const parsed = packages.map(parseServicePackage);
+  const members = parsed.flatMap((item) => item.service_ids);
+  if (
+    new Set(parsed.map((item) => item.id)).size !== parsed.length ||
+    new Set(members).size !== members.length
+  )
+    throw new Error("Invalid service packages");
+  return parsed;
+}
+export async function getServicePackages(): Promise<ServicePackage[]> {
+  requireNativeBridge();
+  return parseServicePackages(await invoke("get_service_packages"));
+}
+export async function updateServicePackageStrategy(
+  packageId: string,
+  strategy: PackageStrategy,
+): Promise<ServicePackage> {
+  requireNativeBridge();
+  if (!packageIDPattern.test(packageId) || !isPackageStrategy(strategy))
+    throw new Error("Invalid service package");
+  return parseServicePackage(
+    await invoke("update_service_package", { packageId, strategy }),
+  );
+}
+
 export async function getService(serviceId: string): Promise<ServiceRecord> {
   requireNativeBridge();
   return parseServiceRecord(

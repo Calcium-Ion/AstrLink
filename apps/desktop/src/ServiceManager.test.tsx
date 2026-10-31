@@ -17,6 +17,9 @@ const bridgeMocks = vi.hoisted(() => ({
     .fn()
     .mockResolvedValue({ service_ids: [], etag: '"order"' }),
   updateServiceOrder: vi.fn(),
+  getServicePackages: vi.fn(),
+  updateServicePackageStrategy: vi.fn(),
+  PACKAGE_STRATEGIES: ["auto", "soonest_reset", "most_remaining"],
   getRoutingSettings: vi.fn(),
   getServiceAuthorization: vi.fn(),
   getServiceUsage: vi.fn(),
@@ -42,6 +45,14 @@ const bridgeMocks = vi.hoisted(() => ({
 
 vi.mock("./bridge", () => bridgeMocks);
 
+const pricingMocks = vi.hoisted(() => ({
+  getBillingSummary: vi.fn(),
+}));
+vi.mock("./pricing-bridge", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./pricing-bridge")>()),
+  ...pricingMocks,
+}));
+
 const notifyMocks = vi.hoisted(() => ({
   success: vi.fn(),
   error: vi.fn(),
@@ -55,11 +66,10 @@ import {
   installDialogAnimations,
 } from "./lib/test-dialog-animations";
 import { settleClosedLayer } from "./lib/test-layer-settle";
-import { ServiceManager } from "./ServiceManager";
+import { ServiceManager, type ServiceManagerProps } from "./ServiceManager";
 import { PROTOCOL_MODE_GUIDE_KEY } from "./ProtocolModeHelp";
 import { SERVICE_EDITOR_TOUR_KEY } from "./ServiceEditorTour";
 import { SERVICE_ORDER_GUIDE_KEY } from "./ServiceOrderHelp";
-import { SERVICE_LIST_COLUMNS_STORAGE_KEY } from "./service-list-columns";
 import { parseService, type Service } from "./service-model";
 import { httpServicePreset } from "./service-presets";
 import { WorkspaceSnapshotProvider } from "./workspace-snapshots";
@@ -111,6 +121,34 @@ const gatewayService: Service = {
   created_at: timestamp,
   updated_at: timestamp,
 };
+
+const backupGatewayService: Service = {
+  ...gatewayService,
+  id: "service_backup",
+  name: "backup",
+  http: {
+    ...gatewayService.http!,
+    base_url: "https://backup.example/v1",
+    credential_ref: "local://service/service_backup",
+  },
+};
+
+/** An ISO time `hours` from now; quota reset times in the past roll over. */
+function hoursFromNow(hours: number): string {
+  return new Date(Date.now() + hours * 3_600_000 + 60_000).toISOString();
+}
+
+/** A primary-button pointer event of the one pointer the tests drag with. */
+function pointer(type: string, clientX: number, clientY: number) {
+  return new PointerEvent(type, {
+    bubbles: true,
+    button: 0,
+    clientX,
+    clientY,
+    pointerId: 1,
+    pointerType: "mouse",
+  });
+}
 
 async function chooseServiceKind(option: string): Promise<void> {
   const trigger = document.querySelector<HTMLButtonElement>(
@@ -182,13 +220,6 @@ async function openServiceOverflow(name: string): Promise<void> {
     );
     await Promise.resolve();
   });
-}
-
-function showAllServiceColumns(): void {
-  localStorage.setItem(
-    SERVICE_LIST_COLUMNS_STORAGE_KEY,
-    JSON.stringify({ hidden: [] }),
-  );
 }
 
 async function chooseMenuItem(label: string): Promise<void> {
@@ -272,6 +303,30 @@ function applySelectedButton(): HTMLButtonElement {
   return apply;
 }
 
+function billingSummary(
+  byService: { service_id: string; amount_usd: string; requests: number }[],
+) {
+  const amounts = (amount_usd: string, requests: number) => ({
+    amount_usd,
+    priced: requests,
+    unpriced: 0,
+    pending: 0,
+    revalued: 0,
+    requests,
+  });
+  return {
+    ...amounts("0", 0),
+    from: "2026-07-21T12:00:00Z",
+    to: timestamp,
+    by_model: [],
+    by_token: [],
+    by_service: byService.map((group) => ({
+      ...amounts(group.amount_usd, group.requests),
+      service_id: group.service_id,
+    })),
+  };
+}
+
 describe("ServiceManager", () => {
   let root: Root;
   let container: HTMLDivElement;
@@ -281,7 +336,6 @@ describe("ServiceManager", () => {
     localStorage.setItem(SERVICE_ORDER_GUIDE_KEY, "seen");
     localStorage.setItem(PROTOCOL_MODE_GUIDE_KEY, "seen");
     localStorage.setItem(SERVICE_EDITOR_TOUR_KEY, "seen");
-    localStorage.removeItem(SERVICE_LIST_COLUMNS_STORAGE_KEY);
     bridgeMocks.getRoutingSettings.mockResolvedValue({
       default_failure_policy: defaultFailurePolicy(),
       allow_unmatched_failover: false,
@@ -299,6 +353,10 @@ describe("ServiceManager", () => {
       credits: [{}],
     });
     bridgeMocks.getUsageSummary.mockResolvedValue({ by_service: [] });
+    // Without a package list every service is its own card; tests that need
+    // stacked cards return packages of their own.
+    bridgeMocks.getServicePackages.mockResolvedValue([]);
+    pricingMocks.getBillingSummary.mockResolvedValue(billingSummary([]));
     container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
@@ -308,6 +366,43 @@ describe("ServiceManager", () => {
     await act(async () => root.unmount());
     container.remove();
   });
+
+  /** A card or tray account by the name it is announced with. */
+  function packageCard(name: string): HTMLElement {
+    const card = container.querySelector<HTMLElement>(
+      `[data-slot="package-card"][aria-label="${name}"]`,
+    );
+    if (!card) throw new Error(`Missing card: ${name}`);
+    return card;
+  }
+
+  /** The grid's top-level card names in display order. */
+  function cardNames(): (string | null)[] {
+    return [...container.querySelectorAll('[data-testid="package-card"]')].map(
+      (card) => card.getAttribute("aria-label"),
+    );
+  }
+
+  /** The status line, bar and caption of a card's quota area. */
+  function quotaOf(card: HTMLElement) {
+    const summary = card.querySelector<HTMLElement>(
+      '[data-slot="quota-summary"]',
+    );
+    if (!summary) throw new Error("Missing quota summary");
+    const bar = summary.querySelector<HTMLElement>('[data-slot="quota-bar"]');
+    return {
+      status: summary.querySelector('[data-slot="quota-status"]')!.textContent,
+      tone: summary
+        .querySelector('[data-slot="quota-status"]')!
+        .getAttribute("data-tone"),
+      bar: bar?.dataset.bar,
+      barLabel: bar?.getAttribute("aria-label") ?? null,
+      caption: [
+        ...summary.querySelectorAll('[data-slot="quota-caption"] > span'),
+      ].map((part) => part.textContent),
+      busy: summary.getAttribute("aria-busy") === "true",
+    };
+  }
 
   it("opens a terminal for one provider from its menu once the gateway runs", async () => {
     bridgeMocks.listTerminalApps.mockResolvedValue([
@@ -396,24 +491,19 @@ describe("ServiceManager", () => {
         />,
       );
     await act(async () => render());
+    // Cards keep cache and TPS behind one icon whose name carries the values.
     const meters = () =>
-      ["new-api", "No usage"].map(
-        (name) =>
-          container.querySelector(
+      ["new-api", "No usage"].map((name) =>
+        container
+          .querySelector(
             `[aria-label="${name}"] [data-testid="service-performance"]`,
-          )!,
+          )!
+          .getAttribute("aria-label"),
       );
-    expect(meters()).toHaveLength(2);
-    expect(meters()[0].textContent).toContain("缓存命中率26.0%");
-    expect(meters()[0].textContent).toContain("49.0 tok/s");
-    expect(meters()[1].textContent).toContain("—");
-    // Missing values keep their units only as invisible spacers.
-    expect(
-      [...meters()[1].querySelectorAll('[aria-hidden="true"]')].map(
-        (unit) => unit.textContent,
-      ),
-    ).toEqual(["%", "tok/s"]);
-    expect(meters()[1].textContent).not.toContain("0.0%");
+    expect(meters()).toEqual([
+      "new-api：缓存命中率 26.0%，TPS 49.0 tok/s",
+      "No usage：缓存命中率 —，TPS —",
+    ]);
     expect(bridgeMocks.getUsageSummary).toHaveBeenCalledTimes(1);
     expect(bridgeMocks.getUsageSummary).toHaveBeenLastCalledWith(
       expect.objectContaining({ preset: "7d" }),
@@ -436,9 +526,7 @@ describe("ServiceManager", () => {
     expect(bridgeMocks.getUsageSummary).toHaveBeenLastCalledWith(
       expect.objectContaining({ preset: "30d" }),
     );
-    expect(meters()[0].textContent).toContain("0.0%");
-    expect(meters()[0].textContent).toContain("TPS—");
-    expect(meters()[0].textContent).not.toContain("49.0");
+    expect(meters()[0]).toBe("new-api：缓存命中率 0.0%，TPS —");
 
     bridgeMocks.getUsageSummary.mockRejectedValueOnce(new Error("Unavailable"));
     await act(async () =>
@@ -446,8 +534,7 @@ describe("ServiceManager", () => {
         .querySelector<HTMLButtonElement>('button[aria-label="刷新列表"]')!
         .click(),
     );
-    expect(meters()[0].textContent).toContain("统计加载失败");
-    expect(meters()[0].textContent).not.toContain("0.0%");
+    expect(meters()[0]).toBe("new-api：统计加载失败");
   });
 
   it("tests the selected saved provider without changing its configuration", async () => {
@@ -594,8 +681,7 @@ describe("ServiceManager", () => {
     expect(bridgeMocks.testService).not.toHaveBeenCalled();
   });
 
-  it("shows channel WebSocket state and saves an explicit Codex opt-out", async () => {
-    showAllServiceColumns();
+  it("keeps WebSocket off the cards and saves an explicit Codex opt-out", async () => {
     const saved = { ...codexService, responses_websocket_enabled: false };
     bridgeMocks.getService.mockResolvedValue({ service: codexService, etag });
     bridgeMocks.updateService.mockResolvedValue({ service: saved, etag });
@@ -616,15 +702,11 @@ describe("ServiceManager", () => {
       root.render(<ServiceManager {...props} view={{ kind: "list" }} />),
     );
     expect(
-      container.querySelectorAll('[role="img"][aria-label="WebSocket 已开启"]'),
-    ).toHaveLength(1);
-    expect(
       container.querySelector('[role="switch"][aria-label*="WebSocket"]'),
     ).toBeNull();
     expect(
-      container.querySelector(
-        '[data-testid="service-card"][aria-label="new-api"]',
-      )?.textContent,
+      container.querySelector('[data-testid="service-list-scroller"]')
+        ?.textContent,
     ).not.toContain("WebSocket");
     expect(bridgeMocks.updateService).not.toHaveBeenCalled();
     await act(async () =>
@@ -718,13 +800,16 @@ describe("ServiceManager", () => {
     expect(badges).toHaveLength(1);
     expect(
       badges[0]
-        ?.closest('[data-testid="service-card"]')
+        ?.closest('[data-testid="package-card"]')
         ?.getAttribute("aria-label"),
     ).toBe(trusted.name);
-    expect(badges[0]?.textContent).toBe("信任");
+    expect(badges[0]?.getAttribute("title")).toBe(
+      "发往此提供商的请求不经过隐私保护",
+    );
+    expect(badges[0]?.textContent).toBe("发往此提供商的请求不经过隐私保护");
   });
 
-  it("waits for saved priority before showing rows on every page entry", async () => {
+  it("waits for saved priority before showing cards on every page entry", async () => {
     for (let entry = 0; entry < 2; entry++) {
       let resolveOrder!: (value: unknown) => void;
       bridgeMocks.getServiceOrder.mockReturnValueOnce(
@@ -738,7 +823,7 @@ describe("ServiceManager", () => {
             catalogError={null}
             catalogStatus="ready"
             isReady
-            services={[codexService, gatewayService]}
+            services={[backupGatewayService, gatewayService]}
             protocols={[]}
             view={{ kind: "list" }}
             onDirtyChange={() => {}}
@@ -750,26 +835,25 @@ describe("ServiceManager", () => {
         ),
       );
       expect(
-        container.querySelectorAll('[data-testid="service-card"]'),
+        container.querySelectorAll('[data-testid="package-card"]'),
       ).toHaveLength(0);
       await act(async () =>
         resolveOrder({
-          service_ids: [gatewayService.id, codexService.id],
+          service_ids: [gatewayService.id, backupGatewayService.id],
           etag: '"saved-order"',
         }),
       );
-      expect(
-        [...container.querySelectorAll('[data-testid="service-card"]')].map(
-          (row) => row.getAttribute("aria-label"),
-        ),
-      ).toEqual([gatewayService.name, codexService.name]);
+      expect(cardNames()).toEqual([
+        gatewayService.name,
+        backupGatewayService.name,
+      ]);
       await act(async () => root.render(null));
     }
   });
 
-  it("uses compact supplier rows during dragging and restores details when cancelled", async () => {
+  it("drags a card from its body and cancels with Escape without saving", async () => {
     bridgeMocks.getServiceOrder.mockResolvedValueOnce({
-      service_ids: [gatewayService.id, codexService.id],
+      service_ids: [gatewayService.id, backupGatewayService.id],
       etag: '"order"',
     });
     await act(async () =>
@@ -778,7 +862,7 @@ describe("ServiceManager", () => {
           catalogError={null}
           catalogStatus="ready"
           isReady
-          services={[gatewayService, codexService]}
+          services={[gatewayService, backupGatewayService]}
           protocols={[]}
           view={{ kind: "list" }}
           onDirtyChange={() => {}}
@@ -789,48 +873,634 @@ describe("ServiceManager", () => {
         />,
       ),
     );
-    const list = container.querySelector("ol")!;
-    list.setPointerCapture = vi.fn();
-    list.hasPointerCapture = () => false;
-    const handle = list.querySelector("button")!;
+    const card = packageCard("new-api");
+    // A press on a control inside the card is that control's click.
     await act(async () =>
-      handle.dispatchEvent(
-        new PointerEvent("pointerdown", {
-          bubbles: true,
-          button: 0,
-          pointerId: 1,
-          clientY: 20,
-        }),
-      ),
+      card
+        .querySelector('[role="switch"]')!
+        .dispatchEvent(pointer("pointerdown", 10, 10)),
     );
+    await act(async () => window.dispatchEvent(pointer("pointermove", 40, 10)));
+    expect(container.querySelector('[data-sorting="true"]')).toBeNull();
+    await act(async () => window.dispatchEvent(pointer("pointerup", 40, 10)));
+
     await act(async () =>
-      list.dispatchEvent(
-        new PointerEvent("pointermove", {
-          bubbles: true,
-          pointerId: 1,
-          clientY: 30,
-        }),
-      ),
+      card
+        .querySelector('[data-slot="quota-summary"]')!
+        .dispatchEvent(pointer("pointerdown", 10, 10)),
     );
+    await act(async () => window.dispatchEvent(pointer("pointermove", 12, 11)));
+    // Below the threshold a press is still a click.
+    expect(container.querySelector('[data-sorting="true"]')).toBeNull();
+    await act(async () => window.dispatchEvent(pointer("pointermove", 40, 10)));
     expect(
-      container.querySelectorAll(
-        '[data-testid="service-card"][data-sorting="true"]',
-      ),
-    ).toHaveLength(2);
-    expect(container.textContent).toContain("new-api");
-    expect(container.textContent).toContain("Codex personal");
-    expect(container.textContent).not.toContain(gatewayService.http!.base_url);
-    expect(list.querySelector('[role="switch"]')).toBeNull();
+      container
+        .querySelector('[data-sorting="true"]')
+        ?.getAttribute("aria-label"),
+    ).toBe("中转站 / API 密钥的顺序");
+    expect(packageCard("new-api").dataset.dragging).toBe("true");
+    expect(packageCard("backup").dataset.dragging).toBeUndefined();
     await act(async () =>
       window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })),
     );
-    expect(
-      container.querySelector(
-        '[data-testid="service-card"][data-sorting="true"]',
-      ),
-    ).toBeNull();
-    expect(container.textContent).toContain(gatewayService.http!.base_url);
+    expect(container.querySelector('[data-sorting="true"]')).toBeNull();
+    expect(packageCard("new-api").dataset.dragging).toBeUndefined();
+    await act(async () => window.dispatchEvent(pointer("pointerup", 40, 10)));
+    expect(cardNames()).toEqual(["new-api", "backup"]);
     expect(bridgeMocks.updateServiceOrder).not.toHaveBeenCalled();
+  });
+
+  describe("packages", () => {
+    const plusA: Service = {
+      ...codexService,
+      id: "service_codex_a",
+      name: "Codex A",
+      models: ["gpt-5"],
+      subscription: {
+        ...codexService.subscription!,
+        status: "connected",
+        account_hint: "7a1c***22",
+      },
+    };
+    const plusB: Service = {
+      ...plusA,
+      id: "service_codex_b",
+      name: "Codex B",
+      models: ["gpt-5", "gpt-5-codex"],
+      subscription: { ...plusA.subscription!, account_hint: "e9d0***5b" },
+    };
+    const claude: Service = {
+      ...codexService,
+      id: "service_claude",
+      name: "Claude personal",
+      kind: "claude_subscription",
+      subscription: { provider: "claude_code", status: "connected" },
+    };
+    const plusPackage = {
+      id: "subscription:codex:plus",
+      kind: "subscription",
+      provider: "openai_codex",
+      plan_type: "plus",
+      service_ids: [plusA.id, plusB.id],
+      strategy: "auto",
+    };
+    const claudePackage = {
+      id: "subscription:claude:pro",
+      kind: "subscription",
+      provider: "claude_code",
+      plan_type: "pro",
+      service_ids: [claude.id],
+      strategy: "auto",
+    };
+    const gatewayPackage = {
+      id: `service:${gatewayService.id}`,
+      kind: "service",
+      service_ids: [gatewayService.id],
+      strategy: "auto",
+    };
+
+    /** Codex A has 70% of its 5 hours left; Codex B used them up for 2 hours. */
+    function usageOf(id: string): SubscriptionUsage {
+      const fetched_at = new Date().toISOString();
+      const windows = (primary: number, secondary: number, hours: number) => ({
+        primary: {
+          used_percent: primary,
+          limit_window_seconds: 18_000,
+          reset_at: hoursFromNow(hours),
+        },
+        secondary: {
+          used_percent: secondary,
+          limit_window_seconds: 604_800,
+          reset_at: hoursFromNow(100),
+        },
+      });
+      if (id === plusA.id)
+        return {
+          service_id: id,
+          fetched_at,
+          plan_type: "plus",
+          limit_reached: false,
+          ...windows(30, 10, 3),
+        };
+      if (id === plusB.id)
+        return {
+          service_id: id,
+          fetched_at,
+          plan_type: "plus",
+          limit_reached: true,
+          ...windows(100, 40, 2),
+        };
+      if (id === claude.id)
+        return {
+          service_id: id,
+          fetched_at,
+          plan_type: "pro",
+          limit_reached: false,
+          ...windows(20, 50, 4),
+        };
+      return {
+        service_id: id,
+        fetched_at,
+        limit_reached: false,
+        quota: {
+          unlimited: false,
+          used_usd: "7.5",
+          remaining_usd: "2.5",
+          total_usd: "10",
+        },
+      };
+    }
+
+    async function flush() {
+      for (let step = 0; step < 4; step++)
+        await act(async () => {
+          await Promise.resolve();
+        });
+    }
+
+    /** Renders the list with every service in Core's saved order. */
+    async function renderPackages(
+      services: Service[],
+      props: Partial<ServiceManagerProps> = {},
+    ) {
+      bridgeMocks.getServiceOrder.mockResolvedValueOnce({
+        service_ids: services.map((service) => service.id),
+        etag: '"order"',
+      });
+      await act(async () =>
+        root.render(
+          <ServiceManager
+            catalogError={null}
+            catalogStatus="ready"
+            isReady
+            onDirtyChange={() => {}}
+            onRefresh={() => {}}
+            onServiceRemoved={() => {}}
+            onServiceSaved={() => {}}
+            onViewChange={() => {}}
+            protocols={[]}
+            services={services}
+            view={{ kind: "list" }}
+            {...props}
+          />,
+        ),
+      );
+      await flush();
+    }
+
+    function tray() {
+      return container.querySelector<HTMLElement>(
+        '[data-testid="package-tray"]',
+      );
+    }
+
+    function expandButton(name: string) {
+      const button = packageCard(name).querySelector<HTMLButtonElement>(
+        '[data-testid="package-expand"]',
+      );
+      if (!button) throw new Error(`Missing expand button: ${name}`);
+      return button;
+    }
+
+    function strategyOption(label: string) {
+      const option = [
+        ...(tray()?.querySelectorAll<HTMLButtonElement>('[role="radio"]') ??
+          []),
+      ].find((button) => button.textContent === label);
+      if (!option) throw new Error(`Missing strategy: ${label}`);
+      return option;
+    }
+
+    function strategyHint() {
+      return tray()?.querySelector('[data-testid="package-strategy-hint"]')
+        ?.textContent;
+    }
+
+    it("stacks a plan's accounts into one card that opens a tray below its row", async () => {
+      bridgeMocks.getServicePackages.mockResolvedValue([
+        plusPackage,
+        gatewayPackage,
+      ]);
+      bridgeMocks.getServiceUsage.mockImplementation(async (id: string) =>
+        usageOf(id),
+      );
+      const onViewChange = vi.fn();
+      await renderPackages([plusA, plusB, gatewayService], { onViewChange });
+
+      expect(cardNames()).toEqual(["Codex Plus", "new-api"]);
+      const stack = packageCard("Codex Plus");
+      expect(stack.dataset.stacked).toBe("true");
+      expect(stack.textContent).toContain("2 个账户");
+      const badge = stack.querySelector('[data-slot="package-count"]');
+      expect(badge?.textContent).toBe("2");
+      expect(badge?.getAttribute("aria-label")).toBe("2 个账户");
+      // Codex B is used up, so only Codex A counts as live; the average
+      // still includes B's empty window.
+      expect(quotaOf(stack)).toEqual({
+        status: "可用 · 1 个号有额度，平均剩 35%",
+        tone: "positive",
+        bar: "flat",
+        barLabel: "剩余 35%",
+        caption: ["1 个号用完 · 最早 2 小时后恢复"],
+        busy: false,
+      });
+      expect(stack.textContent).toContain("2 个模型");
+      expect(stack.querySelector('[role="switch"]')).toBeNull();
+      expect(tray()).toBeNull();
+
+      await act(async () => expandButton("Codex Plus").click());
+      const opened = tray();
+      if (!opened) throw new Error("Missing package tray");
+      expect(opened.getAttribute("aria-label")).toBe("Codex Plus 的账户");
+      expect(
+        opened.closest('[data-testid="package-section-subscription"]'),
+      ).not.toBeNull();
+      expect(expandButton("Codex Plus").getAttribute("aria-expanded")).toBe(
+        "true",
+      );
+      expect(expandButton("Codex Plus").textContent).toBe("收起");
+      const accounts = [
+        ...opened.querySelectorAll('[data-testid="package-account"]'),
+      ];
+      expect(
+        accounts.map((account) => account.getAttribute("aria-label")),
+      ).toEqual(["Codex A", "Codex B"]);
+      expect(
+        accounts.map(
+          (account) =>
+            account.querySelector('[data-testid="subscription-plan"]')
+              ?.textContent,
+        ),
+      ).toEqual(["Plus", "Plus"]);
+      expect(quotaOf(packageCard("Codex A")).status).toBe(
+        "可用 · 5 小时额度先到",
+      );
+      expect(quotaOf(packageCard("Codex B"))).toMatchObject({
+        status: "已用完 · 2 小时后恢复",
+        tone: "critical",
+        bar: "nested",
+      });
+      expect(
+        packageCard("Codex B")
+          .querySelector('[role="switch"]')
+          ?.getAttribute("aria-label"),
+      ).toBe("启用 Codex B");
+
+      expect(strategyOption("自动").getAttribute("aria-checked")).toBe("true");
+      expect(strategyHint()).toBe(
+        "先用快要重置的号，剩 10% 或更少的号排到后面。",
+      );
+      const add = opened.querySelector<HTMLButtonElement>(
+        '[data-slot="package-add-slot"]',
+      );
+      expect(add?.textContent).toBe("再登录一个 Codex 账户");
+      await act(async () => add?.click());
+      expect(onViewChange).toHaveBeenCalledWith({
+        kind: "create",
+        serviceKind: "codex_subscription",
+      });
+
+      await act(async () => expandButton("Codex Plus").click());
+      expect(tray()).toBeNull();
+      expect(expandButton("Codex Plus").getAttribute("aria-expanded")).toBe(
+        "false",
+      );
+      expect(expandButton("Codex Plus").textContent).toBe("展开");
+    });
+
+    it("saves the tray's strategy and rolls back a failed save", async () => {
+      let saved = "auto";
+      bridgeMocks.getServicePackages.mockImplementation(async () => [
+        { ...plusPackage, strategy: saved },
+      ]);
+      bridgeMocks.updateServicePackageStrategy.mockImplementation(
+        async (id: string, strategy: string) => {
+          saved = strategy;
+          return { ...plusPackage, id, strategy };
+        },
+      );
+      bridgeMocks.getServiceUsage.mockImplementation(async (id: string) =>
+        usageOf(id),
+      );
+      await renderPackages([plusA, plusB]);
+      await act(async () => expandButton("Codex Plus").click());
+      expect(
+        tray()
+          ?.querySelector('[data-slot="segmented-control"]')
+          ?.getAttribute("aria-label"),
+      ).toBe("Codex Plus 先用哪个号");
+
+      await act(async () => strategyOption("额度剩余最多优先").click());
+      await flush();
+      expect(bridgeMocks.updateServicePackageStrategy).toHaveBeenCalledWith(
+        "subscription:codex:plus",
+        "most_remaining",
+      );
+      expect(
+        strategyOption("额度剩余最多优先").getAttribute("aria-checked"),
+      ).toBe("true");
+      expect(strategyHint()).toBe("先用剩得最多的号，各个号用得更平均。");
+      expect(tray()?.querySelector('[role="alert"]')).toBeNull();
+
+      // Tauri rejects with the error text itself.
+      bridgeMocks.updateServicePackageStrategy.mockRejectedValueOnce(
+        "Core is not running",
+      );
+      const reads = bridgeMocks.getServicePackages.mock.calls.length;
+      await act(async () => strategyOption("最近快重置优先").click());
+      await flush();
+      expect(bridgeMocks.updateServicePackageStrategy).toHaveBeenLastCalledWith(
+        "subscription:codex:plus",
+        "soonest_reset",
+      );
+      expect(
+        strategyOption("额度剩余最多优先").getAttribute("aria-checked"),
+      ).toBe("true");
+      expect(strategyHint()).toBe("先用剩得最多的号，各个号用得更平均。");
+      expect(tray()?.querySelector('[role="alert"]')?.textContent).toBe(
+        "没保存成功，仍按原来的方式选号。Core is not running",
+      );
+      // The package may have changed meanwhile, so the list is read again.
+      expect(bridgeMocks.getServicePackages).toHaveBeenCalledTimes(reads + 1);
+      expect(tray()).not.toBeNull();
+    });
+
+    it("drags a package as one card and keeps its accounts together", async () => {
+      bridgeMocks.getServicePackages.mockResolvedValue([
+        plusPackage,
+        claudePackage,
+        gatewayPackage,
+      ]);
+      bridgeMocks.getServiceUsage.mockImplementation(async (id: string) =>
+        usageOf(id),
+      );
+      bridgeMocks.updateServiceOrder.mockImplementationOnce(
+        async (service_ids: string[]) => ({ service_ids, etag: '"order2"' }),
+      );
+      // Core's order splits the plan: Claude sits between the Codex accounts.
+      await renderPackages([plusA, claude, plusB, gatewayService]);
+      expect(cardNames()).toEqual(["Codex Plus", "Claude personal", "new-api"]);
+
+      const place = (id: string, left: number) => {
+        const item = container.querySelector<HTMLElement>(
+          `[data-grid-item="${id}"]`,
+        );
+        if (!item) throw new Error(`Missing grid item: ${id}`);
+        item.getBoundingClientRect = () =>
+          ({
+            left,
+            right: left + 200,
+            top: 0,
+            bottom: 150,
+            x: left,
+            y: 0,
+            width: 200,
+            height: 150,
+            toJSON: () => ({}),
+          }) as DOMRect;
+      };
+      place(plusPackage.id, 0);
+      place(claudePackage.id, 212);
+
+      await act(async () =>
+        packageCard("Claude personal")
+          .querySelector('[data-slot="quota-summary"]')!
+          .dispatchEvent(pointer("pointerdown", 300, 50)),
+      );
+      await act(async () =>
+        window.dispatchEvent(pointer("pointermove", 310, 50)),
+      );
+      expect(packageCard("Claude personal").dataset.dragging).toBe("true");
+      await act(async () =>
+        window.dispatchEvent(pointer("pointermove", 100, 50)),
+      );
+      expect(cardNames()).toEqual(["Claude personal", "Codex Plus", "new-api"]);
+      expect(bridgeMocks.updateServiceOrder).not.toHaveBeenCalled();
+      await act(async () =>
+        window.dispatchEvent(pointer("pointerup", 100, 50)),
+      );
+      await flush();
+
+      expect(bridgeMocks.updateServiceOrder).toHaveBeenCalledTimes(1);
+      expect(bridgeMocks.updateServiceOrder).toHaveBeenCalledWith(
+        [claude.id, plusA.id, plusB.id, gatewayService.id],
+        '"order"',
+      );
+      expect(cardNames()).toEqual(["Claude personal", "Codex Plus", "new-api"]);
+      expect(container.querySelector('[data-sorting="true"]')).toBeNull();
+    });
+
+    it("moves a package with arrow keys on its grip", async () => {
+      bridgeMocks.getServicePackages.mockResolvedValue([
+        plusPackage,
+        claudePackage,
+        gatewayPackage,
+      ]);
+      bridgeMocks.getServiceUsage.mockImplementation(async (id: string) =>
+        usageOf(id),
+      );
+      bridgeMocks.updateServiceOrder.mockImplementationOnce(
+        async (service_ids: string[]) => ({ service_ids, etag: '"order2"' }),
+      );
+      await renderPackages([plusA, claude, plusB, gatewayService]);
+      const grip = container.querySelector<HTMLButtonElement>(
+        `[data-grid-item="${plusPackage.id}"] [data-grid-grip]`,
+      );
+      if (!grip) throw new Error("Missing package grip");
+      expect(grip.getAttribute("aria-label")).toBe(
+        "移动 Codex Plus，当前第 1 位",
+      );
+      grip.focus();
+      await act(async () =>
+        grip.dispatchEvent(
+          new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }),
+        ),
+      );
+      await flush();
+      expect(bridgeMocks.updateServiceOrder).toHaveBeenCalledExactlyOnceWith(
+        [claude.id, plusA.id, plusB.id, gatewayService.id],
+        '"order"',
+      );
+      expect(cardNames()).toEqual(["Claude personal", "Codex Plus", "new-api"]);
+      expect(document.activeElement?.closest("[data-grid-item]")).toBe(
+        container.querySelector(`[data-grid-item="${plusPackage.id}"]`),
+      );
+      expect(document.activeElement?.getAttribute("aria-label")).toBe(
+        "移动 Codex Plus，当前第 2 位",
+      );
+    });
+
+    it("finds a package by an account hint or a model only one account has", async () => {
+      bridgeMocks.getServicePackages.mockResolvedValue([
+        plusPackage,
+        gatewayPackage,
+      ]);
+      bridgeMocks.getServiceUsage.mockImplementation(async (id: string) =>
+        usageOf(id),
+      );
+      await renderPackages([plusA, plusB, gatewayService]);
+      const search = container.querySelector<HTMLInputElement>(
+        'input[aria-label="搜索 API 提供商"]',
+      );
+      const setter = Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value",
+      )?.set;
+      if (!search || !setter) throw new Error("Missing service search");
+      const type = (value: string) =>
+        act(async () => {
+          setter.call(search, value);
+          search.dispatchEvent(new Event("input", { bubbles: true }));
+        });
+
+      await type("e9d0");
+      expect(cardNames()).toEqual(["Codex Plus"]);
+      await type("gpt-5-codex");
+      expect(cardNames()).toEqual(["Codex Plus"]);
+      await type("gpt-5");
+      expect(cardNames()).toEqual(["Codex Plus", "new-api"]);
+      await type("Codex B");
+      expect(cardNames()).toEqual(["Codex Plus"]);
+    });
+
+    it("closes the tray when the package is re-derived once its plan is read", async () => {
+      let planRead = false;
+      let release = () => {};
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const unknownPackage = {
+        id: "subscription:codex:unknown",
+        kind: "subscription",
+        provider: "openai_codex",
+        service_ids: [plusA.id, plusB.id],
+        strategy: "auto",
+      };
+      bridgeMocks.getServicePackages.mockImplementation(async () =>
+        planRead ? [plusPackage] : [unknownPackage],
+      );
+      bridgeMocks.getServiceUsage.mockImplementation(async (id: string) => {
+        await gate;
+        return usageOf(id);
+      });
+      await renderPackages([plusA, plusB]);
+      expect(cardNames()).toEqual(["Codex · 套餐未读到"]);
+      expect(quotaOf(packageCard("Codex · 套餐未读到"))).toMatchObject({
+        status: "正在读取额度…",
+        busy: true,
+      });
+      await act(async () => expandButton("Codex · 套餐未读到").click());
+      expect(tray()?.getAttribute("aria-label")).toBe(
+        "Codex · 套餐未读到 的账户",
+      );
+
+      // Core files the accounts under their plan after the first usage read.
+      planRead = true;
+      release();
+      await flush();
+      await flush();
+      expect(cardNames()).toEqual(["Codex Plus"]);
+      expect(tray()).toBeNull();
+      expect(expandButton("Codex Plus").getAttribute("aria-expanded")).toBe(
+        "false",
+      );
+      expect(quotaOf(packageCard("Codex Plus")).status).toBe(
+        "可用 · 1 个号有额度，平均剩 35%",
+      );
+    });
+
+    it("shows single cards and a retry when the package list fails", async () => {
+      // Every read fails until the retry; a usage read also asks again.
+      let failing = true;
+      bridgeMocks.getServicePackages.mockImplementation(async () => {
+        if (failing) throw "GET /control/v1/service-packages returned 503";
+        return [plusPackage];
+      });
+      bridgeMocks.getServiceUsage.mockImplementation(async (id: string) =>
+        usageOf(id),
+      );
+      await renderPackages([plusA, plusB]);
+      const warning = container.querySelector<HTMLElement>(
+        '[data-testid="service-packages-error"]',
+      );
+      expect(warning?.textContent).toContain(
+        "套餐分组没读到，账户先按单张卡显示。GET /control/v1/service-packages returned 503",
+      );
+      expect(cardNames()).toEqual(["Codex A", "Codex B"]);
+
+      failing = false;
+      await clickButton("重试");
+      await flush();
+      expect(
+        container.querySelector('[data-testid="service-packages-error"]'),
+      ).toBeNull();
+      expect(cardNames()).toEqual(["Codex Plus"]);
+    });
+
+    it("draws unlimited keys and balance-only accounts with a striped bar", async () => {
+      const unlimited: Service = {
+        ...gatewayService,
+        id: "service_unlimited",
+        name: "Unlimited key",
+        http: {
+          ...gatewayService.http!,
+          credential_ref: "local://service/service_unlimited",
+        },
+      };
+      const grok: Service = {
+        ...codexService,
+        id: "service_grok",
+        name: "Grok personal",
+        kind: "grok_subscription",
+        subscription: { provider: "xai_grok", status: "connected" },
+      };
+      pricingMocks.getBillingSummary.mockResolvedValue(
+        billingSummary([
+          { service_id: unlimited.id, amount_usd: "6.29", requests: 4 },
+        ]),
+      );
+      bridgeMocks.getServiceUsage.mockImplementation(
+        async (id: string): Promise<SubscriptionUsage> => ({
+          service_id: id,
+          fetched_at: new Date().toISOString(),
+          ...(id === unlimited.id
+            ? { quota: { unlimited: true, used_usd: "6.29" } }
+            : {
+                credits: {
+                  has_credits: true,
+                  unlimited: false,
+                  balance: "$43.20",
+                },
+              }),
+        }),
+      );
+      await renderPackages([grok, unlimited]);
+
+      expect(quotaOf(packageCard("Unlimited key"))).toEqual({
+        status: "可用 · 不限额度",
+        tone: "positive",
+        bar: "empty",
+        barLabel: null,
+        caption: ["已用 $6.29", "没有总额"],
+        busy: false,
+      });
+      expect(quotaOf(packageCard("Grok personal"))).toEqual({
+        status: "可用 · 余额 $43.20",
+        tone: "positive",
+        bar: "empty",
+        barLabel: null,
+        caption: ["只报余额", "没有总额"],
+        busy: false,
+      });
+      const cost = (name: string) =>
+        packageCard(name).querySelector('[data-testid="package-cost"]');
+      expect(cost("Unlimited key")?.textContent).toBe("$6.29");
+      expect(cost("Unlimited key")?.getAttribute("aria-label")).toBe(
+        "Unlimited key 近 7 天费用 $6.29，查看明细",
+      );
+      // No billed request in the period costs nothing.
+      expect(cost("Grok personal")?.textContent).toBe("$0.00");
+    });
   });
 
   async function openEditorTab(
@@ -1886,7 +2556,7 @@ describe("ServiceManager", () => {
     expect(document.body.textContent).not.toContain("code-secret");
   });
 
-  it("renders multiple Codex subscriptions and a gateway in one service list", async () => {
+  it("renders multiple Codex subscriptions and a gateway as cards in two sections", async () => {
     await act(async () => {
       root.render(
         <ServiceManager
@@ -1905,22 +2575,27 @@ describe("ServiceManager", () => {
       );
     });
 
+    const section = (name: string) =>
+      [
+        ...container.querySelectorAll(
+          `[data-testid="package-section-${name}"] [data-testid="package-card"]`,
+        ),
+      ].map((card) => card.getAttribute("aria-label"));
+    expect(section("subscription")).toEqual(["Codex personal", "Codex work"]);
+    expect(section("relay")).toEqual(["new-api"]);
     expect(
-      container.querySelectorAll('[data-testid="service-card"]'),
-    ).toHaveLength(3);
-    expect(container.textContent).toContain("Codex personal");
-    expect(container.textContent).toContain("Codex work");
-    expect(container.textContent).toContain("new-api");
-    expect(
-      container.querySelector(
-        '[data-testid="service-card"] [aria-label="New API"]',
-      ),
+      packageCard("new-api").querySelector('[aria-label="New API"]'),
     ).not.toBeNull();
     expect(
       container.querySelectorAll(
-        '[data-testid="service-card"] [aria-label="Codex 订阅"]',
+        '[data-testid="package-card"] [aria-label="Codex 订阅"]',
       ),
     ).toHaveLength(2);
+    // The relay's line under its name is the host; the full address is its title.
+    const host = [...packageCard("new-api").querySelectorAll("div")].find(
+      (node) => node.textContent === "gateway.example",
+    );
+    expect(host?.getAttribute("title")).toBe("https://gateway.example/v1");
     expect(container.textContent).not.toContain("Logout is local-only");
     // Only the New API key has a quota to read; both Codex rows are disconnected.
     expect(bridgeMocks.getServiceUsage).toHaveBeenCalledTimes(1);
@@ -1954,12 +2629,7 @@ describe("ServiceManager", () => {
     if (!disabledFilter) throw new Error("Missing disabled filter");
     await act(async () => disabledFilter.click());
     expect(disabledFilter.getAttribute("aria-checked")).toBe("true");
-    expect(
-      container.querySelectorAll('[data-testid="service-card"]'),
-    ).toHaveLength(1);
-    expect(
-      container.querySelector('[data-testid="service-card"]')?.textContent,
-    ).toContain("Codex personal");
+    expect(cardNames()).toEqual(["Codex personal"]);
 
     const search = container.querySelector<HTMLInputElement>(
       'input[aria-label="搜索 API 提供商"]',
@@ -1973,29 +2643,20 @@ describe("ServiceManager", () => {
       setter.call(search, "gateway.example");
       search.dispatchEvent(new Event("input", { bubbles: true }));
     });
-    expect(
-      container.querySelectorAll('[data-testid="service-card"]'),
-    ).toHaveLength(0);
+    expect(cardNames()).toEqual([]);
     const clear = [
       ...container.querySelectorAll<HTMLButtonElement>("button"),
     ].find((button) => button.textContent === "清除筛选");
     if (!clear) throw new Error("Missing clear filters");
     await act(async () => clear.click());
     expect(search.value).toBe("");
-    expect(
-      container.querySelectorAll('[data-testid="service-card"]'),
-    ).toHaveLength(2);
+    expect(cardNames()).toEqual(["Codex personal", "new-api"]);
 
     await act(async () => {
       setter.call(search, "gateway.example");
       search.dispatchEvent(new Event("input", { bubbles: true }));
     });
-    expect(
-      container.querySelectorAll('[data-testid="service-card"]'),
-    ).toHaveLength(1);
-    expect(
-      container.querySelector('[data-testid="service-card"]')?.textContent,
-    ).toContain("new-api");
+    expect(cardNames()).toEqual(["new-api"]);
   });
 
   it.each([true, false])(
@@ -2043,9 +2704,12 @@ describe("ServiceManager", () => {
       )!;
       await act(async () => statusFilter.click());
       const handle = container.querySelector<HTMLButtonElement>(
-        '[data-ordered-item="service_3"] button',
+        '[data-grid-item="service:service_3"] [data-grid-grip]',
       )!;
       expect(handle.disabled).toBe(false);
+      expect(handle.getAttribute("aria-label")).toBe(
+        "移动 Gateway 3，当前第 2 位",
+      );
       await act(async () =>
         handle.dispatchEvent(
           new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true }),
@@ -2055,22 +2719,18 @@ describe("ServiceManager", () => {
         ["service_0", "service_3", "service_2", "service_1", "service_4"],
         etag,
       );
-      expect(
-        [...container.querySelectorAll('[data-testid="service-card"]')].map(
-          (row) => row.getAttribute("aria-label"),
-        ),
-      ).toEqual(["Gateway 3", "Gateway 1"]);
+      expect(cardNames()).toEqual(["Gateway 3", "Gateway 1"]);
+      // Focus stays on the moved card's grip for the next key.
+      expect(document.activeElement?.closest("[data-grid-item]")).toBe(
+        container.querySelector('[data-grid-item="service:service_3"]'),
+      );
       const all = [
         ...container.querySelectorAll<HTMLButtonElement>(
           'button[role="radio"]',
         ),
       ].find((button) => button.textContent?.startsWith("全部"))!;
       await act(async () => all.click());
-      expect(
-        [...container.querySelectorAll('[data-testid="service-card"]')].map(
-          (row) => row.getAttribute("aria-label"),
-        ),
-      ).toEqual([
+      expect(cardNames()).toEqual([
         "Gateway 0",
         "Gateway 3",
         "Gateway 2",
@@ -2080,7 +2740,7 @@ describe("ServiceManager", () => {
     },
   );
 
-  it("combines model, status and service search filters, saves their order and clears all filters", async () => {
+  it("searches model names with the status filter, saves the visible order and clears both", async () => {
     const services: Service[] = [
       {
         ...gatewayService,
@@ -2089,7 +2749,12 @@ describe("ServiceManager", () => {
         models: ["claude-sonnet-4-5"],
       },
       { ...gatewayService, id: "service_first", name: "First gateway" },
-      { ...gatewayService, id: "service_disabled", enabled: false },
+      {
+        ...gatewayService,
+        id: "service_disabled",
+        enabled: false,
+        models: ["claude-sonnet-4-5"],
+      },
       {
         ...gatewayService,
         id: "service_second",
@@ -2122,38 +2787,30 @@ describe("ServiceManager", () => {
         />,
       ),
     );
-    const modelSearch = container.querySelector<HTMLInputElement>(
-      'input[aria-label="按模型名筛选 API 提供商"]',
-    )!;
-    const serviceSearch = container.querySelector<HTMLInputElement>(
+    const search = container.querySelector<HTMLInputElement>(
       'input[aria-label="搜索 API 提供商"]',
     )!;
+    expect(search.placeholder).toBe("搜索名称、地址或账户");
     const setter = Object.getOwnPropertyDescriptor(
       HTMLInputElement.prototype,
       "value",
     )!.set!;
     await act(async () => {
-      setter.call(modelSearch, "  GPT-5  ");
-      modelSearch.dispatchEvent(new Event("input", { bubbles: true }));
+      setter.call(search, "  Claude-Sonnet  ");
+      search.dispatchEvent(new Event("input", { bubbles: true }));
     });
-    expect(
-      [...container.querySelectorAll("[data-ordered-item]")].map((row) =>
-        row.getAttribute("data-ordered-item"),
-      ),
-    ).toEqual(["service_first", "service_disabled", "service_second"]);
+    expect(cardNames()).toEqual([
+      "GPT-5 name only",
+      "new-api",
+      "Second gateway",
+    ]);
     const enabled = [
       ...container.querySelectorAll<HTMLButtonElement>('button[role="radio"]'),
     ].find((button) => button.textContent?.startsWith("已启用"))!;
     await act(async () => enabled.click());
-    await act(async () => {
-      setter.call(serviceSearch, "gateway.example");
-      serviceSearch.dispatchEvent(new Event("input", { bubbles: true }));
-    });
-    expect(
-      container.querySelectorAll('[data-testid="service-card"]'),
-    ).toHaveLength(2);
+    expect(cardNames()).toEqual(["GPT-5 name only", "Second gateway"]);
     const handle = container.querySelector<HTMLButtonElement>(
-      '[data-ordered-item="service_second"] button',
+      '[data-grid-item="service:service_second"] [data-grid-grip]',
     )!;
     expect(handle.disabled).toBe(false);
     await act(async () =>
@@ -2161,115 +2818,37 @@ describe("ServiceManager", () => {
         new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true }),
       ),
     );
+    // The hidden cards keep their slots; the two visible ones swap.
     expect(bridgeMocks.updateServiceOrder).toHaveBeenCalledExactlyOnceWith(
       [
-        "service_other_model",
         "service_second",
-        "service_disabled",
         "service_first",
+        "service_disabled",
+        "service_other_model",
         codexService.id,
       ],
       etag,
     );
+    expect(cardNames()).toEqual(["Second gateway", "GPT-5 name only"]);
     await act(async () => {
-      setter.call(modelSearch, "no-such-model");
-      modelSearch.dispatchEvent(new Event("input", { bubbles: true }));
+      setter.call(search, "no-such-model");
+      search.dispatchEvent(new Event("input", { bubbles: true }));
     });
+    expect(cardNames()).toEqual([]);
+    await clickButton("清除筛选");
+    expect(search.value).toBe("");
     expect(
-      container.querySelectorAll('[data-testid="service-card"]'),
-    ).toHaveLength(0);
-    const clear = [
-      ...container.querySelectorAll<HTMLButtonElement>("button"),
-    ].find((button) => button.textContent === "清除筛选")!;
-    await act(async () => clear.click());
-    expect(modelSearch.value).toBe("");
-    expect(serviceSearch.value).toBe("");
-    expect(
-      container.querySelectorAll('[data-testid="service-card"]'),
-    ).toHaveLength(5);
-    expect(
-      [...container.querySelectorAll("[data-ordered-item]")].map((row) =>
-        row.getAttribute("data-ordered-item"),
-      ),
-    ).toEqual([
-      "service_other_model",
-      "service_second",
-      "service_disabled",
-      "service_first",
-      codexService.id,
+      [...container.querySelectorAll<HTMLButtonElement>('button[role="radio"]')]
+        .find((button) => button.textContent?.startsWith("全部"))
+        ?.getAttribute("aria-checked"),
+    ).toBe("true");
+    expect(cardNames()).toEqual([
+      "GPT-5 unconfigured",
+      "Second gateway",
+      "First gateway",
+      "new-api",
+      "GPT-5 name only",
     ]);
-  });
-
-  it("suggests configured model names for the model filter", async () => {
-    const services: Service[] = [
-      { ...gatewayService, id: "service_first", name: "First gateway" },
-      {
-        ...gatewayService,
-        id: "service_second",
-        name: "Second gateway",
-        models: ["gpt-5.4", "claude-sonnet-4-5"],
-      },
-      codexService,
-    ];
-    bridgeMocks.getServiceOrder.mockResolvedValueOnce({
-      service_ids: services.map((service) => service.id),
-      etag,
-    });
-    await act(async () =>
-      root.render(
-        <ServiceManager
-          catalogError={null}
-          catalogStatus="ready"
-          isReady
-          services={services}
-          protocols={[]}
-          view={{ kind: "list" }}
-          onDirtyChange={() => {}}
-          onRefresh={() => {}}
-          onServiceRemoved={() => {}}
-          onServiceSaved={() => {}}
-          onViewChange={() => {}}
-        />,
-      ),
-    );
-    const modelSearch = container.querySelector<HTMLInputElement>(
-      'input[aria-label="按模型名筛选 API 提供商"]',
-    )!;
-    const suggestions = () =>
-      [...document.querySelectorAll<HTMLElement>('[role="option"]')].map(
-        (option) => option.getAttribute("aria-label"),
-      );
-    await act(async () => modelSearch.click());
-    expect(suggestions()).toEqual(["claude-sonnet-4-5", "gpt-5", "gpt-5.4"]);
-
-    const setter = Object.getOwnPropertyDescriptor(
-      HTMLInputElement.prototype,
-      "value",
-    )!.set!;
-    await act(async () => {
-      setter.call(modelSearch, " GPT-5.");
-      modelSearch.dispatchEvent(new Event("input", { bubbles: true }));
-    });
-    expect(suggestions()).toEqual(["gpt-5.4"]);
-    await act(async () =>
-      document.querySelector<HTMLElement>('[role="option"]')!.click(),
-    );
-    expect(modelSearch.value).toBe("gpt-5.4");
-    expect(
-      [...container.querySelectorAll('[data-testid="service-card"]')].map(
-        (row) => row.getAttribute("aria-label"),
-      ),
-    ).toEqual(["Second gateway"]);
-
-    // The service search is empty, so the only clear-search button belongs to the model filter.
-    const clear = container.querySelector<HTMLButtonElement>(
-      'button[aria-label="清除搜索"]',
-    )!;
-    await act(async () => clear.click());
-    expect(modelSearch.value).toBe("");
-    expect(
-      container.querySelectorAll('[data-testid="service-card"]'),
-    ).toHaveLength(3);
   });
 
   it.each(["ready", "error"] as const)(
@@ -2318,51 +2897,41 @@ describe("ServiceManager", () => {
             </WorkspaceSnapshotProvider>,
           ),
         );
+      const busy = () =>
+        container.querySelectorAll('[data-slot="quota-summary"][aria-busy]');
+      const bars = () =>
+        container.querySelectorAll(
+          '[data-slot="quota-bar"]:not([data-bar="empty"])',
+        );
       await renderList(true);
-      expect(
-        container.querySelectorAll('[data-testid="service-card"]'),
-      ).toHaveLength(2);
-      expect(container.querySelector('[aria-busy="true"]')).not.toBeNull();
+      expect(cardNames()).toEqual(["Codex personal", "Codex work"]);
+      expect(busy()).toHaveLength(2);
       const usage = (index: number): SubscriptionUsage => ({
         service_id: connected[index].id,
         fetched_at: timestamp,
         secondary: { used_percent: 86, limit_window_seconds: 604_800 },
       });
-      const initialRows = [
-        ...container.querySelectorAll('[data-testid="service-card"]'),
+      const initialCards = [
+        ...container.querySelectorAll('[data-testid="package-card"]'),
       ];
       await act(async () => requests[0].resolve(usage(0)));
       expect([
-        ...container.querySelectorAll('[data-testid="service-card"]'),
-      ]).toEqual(initialRows);
-      expect(
-        container.querySelectorAll(
-          '[data-testid="subscription-usage"][aria-busy]',
-        ),
-      ).toHaveLength(1);
-      // A slow quota request must not hold back either provider row.
-      expect(
-        container.querySelectorAll('[data-testid="service-card"]'),
-      ).toHaveLength(2);
+        ...container.querySelectorAll('[data-testid="package-card"]'),
+      ]).toEqual(initialCards);
+      expect(busy()).toHaveLength(1);
+      // A slow quota request must not hold back either provider card.
+      expect(cardNames()).toEqual(["Codex personal", "Codex work"]);
       const log = vi.spyOn(console, "error").mockImplementation(() => {});
       try {
         await act(async () => {
           if (outcome === "ready") requests[1].resolve(usage(1));
           else requests[1].reject(new Error("Quota temporarily unavailable"));
         });
-        expect(
-          container.querySelectorAll('[data-testid="service-card"]'),
-        ).toHaveLength(2);
-        expect(
-          container.querySelector(
-            '[data-testid="subscription-usage"][aria-busy]',
-          ),
-        ).toBeNull();
-        expect(container.querySelectorAll('[role="progressbar"]')).toHaveLength(
-          outcome === "ready" ? 2 : 1,
-        );
+        expect(cardNames()).toEqual(["Codex personal", "Codex work"]);
+        expect(busy()).toHaveLength(0);
+        expect(bars()).toHaveLength(outcome === "ready" ? 2 : 1);
         if (outcome === "error")
-          expect(container.textContent).toContain("无法读取额度");
+          expect(quotaOf(packageCard("Codex work")).status).toBe("额度读不到");
 
         // Re-entry and manual refresh both keep the settled snapshot visible.
         await renderList(false);
@@ -2372,28 +2941,22 @@ describe("ServiceManager", () => {
           );
         }
         await renderList(true);
-        const row = container.querySelector('[data-testid="service-card"]');
-        expect(row).not.toBeNull();
-        expect(
-          container.querySelector(
-            '[data-testid="subscription-usage"][aria-busy]',
-          ),
-        ).toBeNull();
+        const card = container.querySelector('[data-testid="package-card"]');
+        expect(card).not.toBeNull();
+        expect(busy()).toHaveLength(0);
+        expect(bars()).toHaveLength(outcome === "ready" ? 2 : 1);
         await act(async () =>
           container
             .querySelector<HTMLButtonElement>('button[aria-label="刷新列表"]')!
             .click(),
         );
-        expect(container.querySelector('[data-testid="service-card"]')).toBe(
-          row,
+        expect(container.querySelector('[data-testid="package-card"]')).toBe(
+          card,
         );
-        expect(
-          container.querySelector(
-            '[data-testid="subscription-usage"][aria-busy]',
-          ),
-        ).toBeNull();
+        expect(busy()).toHaveLength(0);
+        expect(bars()).toHaveLength(outcome === "ready" ? 2 : 1);
         if (outcome === "error")
-          expect(container.textContent).toContain("无法读取额度");
+          expect(quotaOf(packageCard("Codex work")).status).toBe("额度读不到");
       } finally {
         log.mockRestore();
       }
@@ -2448,13 +3011,26 @@ describe("ServiceManager", () => {
             />,
           );
         });
-        const failedRow = container.querySelector(
-          '[data-testid="service-card"][aria-label="Codex personal"]',
-        )!;
-        const refresh = failedRow.querySelector<HTMLButtonElement>(
-          'button[aria-label="刷新"]',
-        )!;
-        expect(refresh).not.toBeNull();
+        const failedCard = packageCard("Codex personal");
+        expect(quotaOf(failedCard)).toMatchObject({
+          status: "额度读不到",
+          tone: "neutral",
+          bar: "empty",
+          caption: ["上次读取失败Quota temporarily unavailable", "重试"],
+        });
+        expect(
+          failedCard
+            .querySelector('[data-slot="quota-caption"] [title]')
+            ?.getAttribute("title"),
+        ).toBe("Quota temporarily unavailable");
+        const retry = () =>
+          [
+            ...failedCard.querySelectorAll<HTMLButtonElement>(
+              '[data-slot="quota-caption"] button',
+            ),
+          ][0];
+        const refresh = retry()!;
+        expect(refresh.textContent).toBe("重试");
         await act(async () => {
           refresh.click();
           refresh.click();
@@ -2466,12 +3042,10 @@ describe("ServiceManager", () => {
         );
         expect(onRefresh).not.toHaveBeenCalled();
         expect(refresh.disabled).toBe(true);
-        expect(refresh.getAttribute("aria-label")).toBe("刷新中…");
-        expect(refresh.querySelector(".animate-spin")).not.toBeNull();
-        expect(failedRow.textContent).toContain("无法读取额度");
-        expect(failedRow.querySelector("details")?.open).toBe(false);
+        expect(refresh.textContent).toBe("刷新中…");
+        expect(quotaOf(failedCard).status).toBe("额度读不到");
 
-        // Retrying one row must not invalidate another row's in-flight request.
+        // Retrying one card must not invalidate another card's in-flight request.
         await act(async () => {
           resolveOther({
             service_id: connected[1].id,
@@ -2488,21 +3062,20 @@ describe("ServiceManager", () => {
             rejectRetry(new Error("Provider is still unavailable"));
           }
         });
-        expect(container.querySelectorAll('[role="progressbar"]')).toHaveLength(
-          outcome === "ready" ? 2 : 1,
-        );
+        expect(
+          container.querySelectorAll(
+            '[data-slot="quota-bar"]:not([data-bar="empty"])',
+          ),
+        ).toHaveLength(outcome === "ready" ? 2 : 1);
         if (outcome === "ready") {
-          expect(failedRow.textContent).not.toContain("无法读取额度");
-          expect(
-            failedRow.querySelector('button[aria-label="刷新"]'),
-          ).toBeNull();
+          expect(quotaOf(failedCard).status).not.toContain("额度读不到");
+          expect(retry()).toBeUndefined();
         } else {
-          expect(failedRow.textContent).toContain(
+          expect(failedCard.textContent).toContain(
             "Provider is still unavailable",
           );
-          expect(refresh.disabled).toBe(false);
-          expect(refresh.getAttribute("aria-label")).toBe("刷新");
-          expect(refresh.querySelector(".animate-spin")).toBeNull();
+          expect(retry()?.disabled).toBe(false);
+          expect(retry()?.textContent).toBe("重试");
         }
       } finally {
         logged.mockRestore();
@@ -2510,7 +3083,7 @@ describe("ServiceManager", () => {
     },
   );
 
-  it("shows the provider plan quota on Kimi and New API key rows", async () => {
+  it("shows the provider plan quota on Kimi and New API key cards", async () => {
     const kimi: Service = {
       id: "service_kimi_plan",
       name: "Kimi Coding",
@@ -2532,22 +3105,22 @@ describe("ServiceManager", () => {
       id === kimi.id
         ? {
             service_id: kimi.id,
-            fetched_at: "2026-09-22T11:00:00Z",
+            fetched_at: new Date().toISOString(),
             limit_reached: false,
             primary: {
               used_percent: 25,
               limit_window_seconds: 18_000,
-              reset_at: "2026-09-22T15:00:00Z",
+              reset_at: hoursFromNow(4),
             },
             secondary: {
               used_percent: 10,
               limit_window_seconds: 604_800,
-              reset_at: "2026-09-25T00:00:00Z",
+              reset_at: hoursFromNow(60),
             },
           }
         : {
             service_id: gatewayService.id,
-            fetched_at: "2026-09-22T11:00:00Z",
+            fetched_at: new Date().toISOString(),
             limit_reached: false,
             quota: {
               unlimited: false,
@@ -2590,32 +3163,34 @@ describe("ServiceManager", () => {
       gatewayService.id,
       { fresh: false },
     );
+    // A coding plan sits with the subscriptions; its two windows nest in one bar.
     expect(
-      container.querySelectorAll('[data-testid="subscription-usage"]'),
-    ).toHaveLength(2);
-    const keyQuota = container.querySelector(
-      '[data-testid="subscription-usage-quota"]',
-    );
-    expect(keyQuota?.getAttribute("data-tone")).toBe("ok");
-    expect(
-      keyQuota
-        ?.querySelector('[role="progressbar"][aria-label="密钥额度"]')
-        ?.getAttribute("aria-valuetext"),
-    ).toBe("剩余 25%");
-    expect(keyQuota?.textContent).toContain("剩余 $2.50 / $10.00");
-    const rollingQuota = container.querySelector(
-      '[role="progressbar"][aria-label="5 小时"]',
-    );
-    expect(rollingQuota?.getAttribute("aria-valuenow")).toBe("75");
-    const weeklyQuota = container.querySelector(
-      '[role="progressbar"][aria-label="7 天"]',
-    );
-    expect(weeklyQuota?.getAttribute("aria-valuenow")).toBe("90");
+      packageCard("Kimi Coding").closest(
+        '[data-testid="package-section-subscription"]',
+      ),
+    ).not.toBeNull();
+    expect(quotaOf(packageCard("Kimi Coding"))).toEqual({
+      status: "可用 · 5 小时额度先到",
+      tone: "positive",
+      bar: "nested",
+      barLabel: "5 小时 剩 75% · 7 天 剩 90%",
+      caption: ["5 小时 剩 75% · 4 小时后", "7 天 剩 90%"],
+      busy: false,
+    });
+    expect(quotaOf(packageCard("new-api"))).toEqual({
+      status: "可用 · 还剩 $2.50",
+      tone: "positive",
+      bar: "flat",
+      barLabel: "剩余 25%",
+      caption: ["共 $10.00", "25%"],
+      busy: false,
+    });
     expect(
       container.querySelector('[data-testid="subscription-plan"]'),
     ).toBeNull();
+    await openServiceOverflow("Kimi Coding");
     expect(
-      container.querySelector('[data-testid="subscription-usage-reset"]'),
+      document.querySelector('[data-testid="subscription-usage-reset"]'),
     ).toBeNull();
   });
 
@@ -2648,8 +3223,8 @@ describe("ServiceManager", () => {
         />,
       );
     });
-    const usage = container.querySelector('[data-testid="subscription-usage"]');
-    expect(usage?.textContent).toContain("剩余 $300.00 / $300.00");
+    const card = packageCard("new-api");
+    expect(quotaOf(card).status).toBe("可用 · 还剩 $300.00");
     const toolbarRefresh = container.querySelector<HTMLButtonElement>(
       'button[aria-label="刷新列表"]',
     )!;
@@ -2667,9 +3242,9 @@ describe("ServiceManager", () => {
       gatewayService.id,
       { fresh: true },
     );
-    // The row keeps its numbers while the lookup runs; the toolbar shows it.
+    // The card keeps its numbers while the lookup runs; the toolbar shows it.
     expect(toolbarRefresh.querySelector(".animate-spin")).not.toBeNull();
-    expect(usage?.textContent).not.toContain("额度刷新失败");
+    expect(quotaOf(card).status).toBe("可用 · 还剩 $300.00");
 
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
@@ -2684,31 +3259,28 @@ describe("ServiceManager", () => {
       log.mockRestore();
     }
     expect(toolbarRefresh.querySelector(".animate-spin")).toBeNull();
-    const quota = container.querySelector(
-      '[data-testid="subscription-usage-quota"]',
-    );
-    expect(quota?.closest(".opacity-60")).not.toBeNull();
-    expect(usage?.textContent).toContain("额度刷新失败");
-    expect(usage?.textContent).toContain(
+    // The old balance is not shown as if it were current.
+    expect(quotaOf(card)).toMatchObject({
+      status: "额度读不到",
+      tone: "neutral",
+      bar: "empty",
+    });
+    expect(card.textContent).not.toContain("$300.00");
+    const caption = card.querySelector('[data-slot="quota-caption"]')!;
+    expect(caption.textContent).toContain("上次读取失败");
+    expect(caption.querySelector("[title]")?.getAttribute("title")).toBe(
       "subscription_usage_failed: new-api usage unavailable: status 401",
     );
-    expect(usage?.textContent).toContain("仍显示");
-    expect(usage?.querySelector('button[aria-label="刷新"]')).not.toBeNull();
+    expect(caption.querySelector("button")?.textContent).toBe("重试");
   });
 
   it.each([
-    ["codex_subscription", "openai_codex", "pro", "Pro", false],
-    ["claude_subscription", "claude_code", "pro", "Pro", false],
-    [
-      "grok_subscription",
-      "xai_grok",
-      "supergrok_heavy",
-      "SuperGrok Heavy",
-      true,
-    ],
+    ["codex_subscription", "openai_codex", "pro", "Pro"],
+    ["claude_subscription", "claude_code", "pro", "Pro"],
+    ["grok_subscription", "xai_grok", "supergrok_heavy", "SuperGrok Heavy"],
   ] as const)(
     "shows the %s plan badge",
-    async (kind, provider, planType, label, tagged) => {
+    async (kind, provider, planType, label) => {
       const connected: Service = {
         ...codexService,
         kind,
@@ -2744,18 +3316,14 @@ describe("ServiceManager", () => {
         container.querySelector('[data-testid="subscription-plan"]')
           ?.textContent,
       ).toBe(label);
-      // Only a logo shared with a pay-as-you-go kind needs the tag.
+      await openServiceOverflow("Codex personal");
       expect(
-        container.querySelector('[data-testid="subscription-kind-tag"]') !==
-          null,
-      ).toBe(tagged);
-      expect(
-        container.querySelector('[data-testid="subscription-usage-reset"]'),
+        document.querySelector('[data-testid="subscription-usage-reset"]'),
       ).toBeNull();
     },
   );
 
-  it("shows rolling quota and reset on a connected Codex row", async () => {
+  it("shows rolling quota on a connected Codex card and reset in its menu", async () => {
     const connected: Service = {
       ...codexService,
       enabled: false,
@@ -2767,18 +3335,18 @@ describe("ServiceManager", () => {
     };
     bridgeMocks.getServiceUsage.mockResolvedValue({
       service_id: connected.id,
-      fetched_at: "2026-08-30T11:00:00Z",
+      fetched_at: new Date().toISOString(),
       plan_type: "plus",
       limit_reached: false,
       primary: {
         used_percent: 34,
         limit_window_seconds: 18_000,
-        reset_at: "2026-08-30T13:00:00Z",
+        reset_at: hoursFromNow(2),
       },
       secondary: {
         used_percent: 12,
         limit_window_seconds: 604_800,
-        reset_at: "2026-09-05T12:00:00Z",
+        reset_at: hoursFromNow(144),
       },
       additional_rate_limits: [
         {
@@ -2832,37 +3400,34 @@ describe("ServiceManager", () => {
     expect(bridgeMocks.getServiceUsage).toHaveBeenCalledWith(connected.id, {
       fresh: false,
     });
+    const card = packageCard("Codex personal");
     expect(
-      container.querySelector('[data-testid="subscription-plan"]')?.textContent,
+      card.querySelector('[data-testid="subscription-plan"]')?.textContent,
     ).toBe("Plus");
-    expect(container.textContent).toContain("5 小时");
-    const rollingQuota = container.querySelector(
-      '[role="progressbar"][aria-label="5 小时"]',
-    );
-    expect(rollingQuota?.getAttribute("aria-valuenow")).toBe("66");
-    expect(rollingQuota?.getAttribute("aria-valuetext")).toBe("剩余 66%");
-    expect(container.textContent).toContain("7 天");
-    const weeklyQuota = container.querySelector(
-      '[role="progressbar"][aria-label="7 天"]',
-    );
-    expect(weeklyQuota?.getAttribute("aria-valuenow")).toBe("88");
-    expect(weeklyQuota?.getAttribute("aria-valuetext")).toBe("剩余 88%");
-    expect(container.textContent).toMatch(/重置/);
-    expect(container.textContent).toContain("重置 ×2");
-    expect(container.textContent).not.toContain("GPT-5.3-Codex-Spark");
-    expect(container.textContent).not.toContain("gpt-reserve");
-    expect(container.textContent).not.toContain("查看全部");
+    // The account is turned off, so its dot is grey while the numbers stay.
+    expect(quotaOf(card)).toEqual({
+      status: "已停用 · 5 小时额度先到",
+      tone: "neutral",
+      bar: "nested",
+      barLabel: "5 小时 剩 66% · 7 天 剩 88%",
+      caption: ["5 小时 剩 66% · 2 小时后", "7 天 剩 88%"],
+      busy: false,
+    });
     expect(
-      container.querySelector('button[aria-label="查看全部（5）"]'),
-    ).not.toBeNull();
+      card.querySelectorAll('[data-slot="quota-bar"] [data-part]'),
+    ).toHaveLength(2);
+    // Extra per-model limits stay in the editor, not on the card.
+    expect(card.textContent).not.toContain("GPT-5.3-Codex-Spark");
+    expect(card.textContent).not.toContain("gpt-reserve");
+    expect(container.textContent).not.toContain("重置额度");
+    await openServiceOverflow("Codex personal");
     expect(
-      container.querySelectorAll('[data-testid="subscription-usage"]'),
-    ).toHaveLength(1);
-    expect(container.querySelector('[data-tone="ok"]')).not.toBeNull();
-    expect(container.querySelectorAll('[role="progressbar"]')).toHaveLength(2);
+      document.querySelector('[data-testid="subscription-usage-reset"]')
+        ?.textContent,
+    ).toBe("重置额度（剩 2 次）");
   });
 
-  it("shows extra limits inline and confirms a manual reset", async () => {
+  it("confirms a manual reset from the card menu", async () => {
     const connected: Service = {
       ...codexService,
       subscription: {
@@ -2873,12 +3438,12 @@ describe("ServiceManager", () => {
     };
     bridgeMocks.getServiceUsage.mockResolvedValue({
       service_id: connected.id,
-      fetched_at: "2026-08-30T11:00:00Z",
+      fetched_at: new Date().toISOString(),
       plan_type: "pro",
       primary: {
         used_percent: 34,
         limit_window_seconds: 18_000,
-        reset_at: "2026-08-30T13:00:00Z",
+        reset_at: hoursFromNow(2),
       },
       additional_rate_limits: [
         {
@@ -2916,23 +3481,9 @@ describe("ServiceManager", () => {
       await Promise.resolve();
     });
 
-    const extras = container.querySelector<HTMLElement>(
-      '[data-testid="subscription-usage"]',
-    );
-    if (!extras) throw new Error("missing extra limits");
-    expect(extras.textContent).toContain("GPT-5.3-Codex-Spark");
-    expect(extras.textContent).toContain("5 小时");
-    expect(
-      container.querySelector('[data-testid="subscription-usage"] button'),
-    ).toBeNull();
-
-    const reset = container.querySelector<HTMLButtonElement>(
-      '[data-testid="subscription-usage-reset"]',
-    );
-    if (!reset) throw new Error("missing reset button");
-    await act(async () => {
-      reset.click();
-    });
+    await openServiceOverflow("Codex personal");
+    await chooseMenuItem("重置额度（剩 1 次）");
+    await settleClosedLayer();
     expect(bridgeMocks.resetServiceUsage).not.toHaveBeenCalled();
     expect(document.body.textContent).toContain("重置这个账户的额度？");
     expect(document.body.textContent).toContain("将消耗 1 次官方额度重置");
@@ -2990,8 +3541,9 @@ describe("ServiceManager", () => {
       expect(String(logged.mock.calls[0]?.[0])).toContain(
         "AstrLink failed to load subscription usage",
       );
-      expect(container.textContent).toContain("无法读取额度");
-      expect(container.textContent).toContain(
+      const card = packageCard("Codex personal");
+      expect(quotaOf(card).status).toBe("额度读不到");
+      expect(card.textContent).toContain(
         "subscription_usage_failed: codex usage unavailable: status 403",
       );
     } finally {
@@ -3254,7 +3806,7 @@ describe("ServiceManager", () => {
     }
   });
 
-  it("lists only a custom coding plan address", async () => {
+  it("shows each provider's host under its name and the full address on hover", async () => {
     const plan = (id: string, baseURL: string): Service => ({
       ...gatewayService,
       id,
@@ -3288,10 +3840,18 @@ describe("ServiceManager", () => {
       );
     });
 
-    const text = container.textContent;
-    expect(text).not.toContain("https://api.minimax.io/v1");
-    expect(text).toContain("https://proxy.example/minimax");
-    expect(text).toContain("https://gateway.example/v1");
+    expect(
+      ["service_minimax_site", "service_minimax_proxy", "new-api"].map(
+        (name) => {
+          const line = packageCard(name).querySelector('[title^="https://"]');
+          return [line?.textContent, line?.getAttribute("title")];
+        },
+      ),
+    ).toEqual([
+      ["api.minimax.io", "https://api.minimax.io/v1"],
+      ["proxy.example", "https://proxy.example/minimax"],
+      ["gateway.example", "https://gateway.example/v1"],
+    ]);
   });
 
   it("creates a Codex service through the unified add form and targets its OAuth", async () => {
@@ -5628,7 +6188,6 @@ describe("ServiceManager", () => {
   });
 
   it("opens the provider's model list straight from the model count", async () => {
-    showAllServiceColumns();
     bridgeMocks.getService.mockResolvedValue({ service: gatewayService, etag });
     const changed = vi.fn();
     const props = {
@@ -5681,7 +6240,8 @@ describe("ServiceManager", () => {
     ).toBe("inactive");
   });
 
-  it("hides the model column by default and lets users choose visible columns", async () => {
+  it("opens a card's model list from its footer count", async () => {
+    const changed = vi.fn();
     await act(async () => {
       root.render(
         <ServiceManager
@@ -5692,71 +6252,29 @@ describe("ServiceManager", () => {
           onRefresh={() => {}}
           onServiceRemoved={() => {}}
           onServiceSaved={() => {}}
-          onViewChange={() => {}}
+          onViewChange={changed}
           protocols={[]}
           services={[gatewayService]}
           view={{ kind: "list" }}
         />,
       );
     });
-    const modelCount = () =>
-      container.querySelector(
-        `button[aria-label="打开 ${gatewayService.name} 的模型列表"]`,
-      );
-    const statusSwitch = () =>
-      container.querySelector(
-        `[role="switch"][aria-label="启用 ${gatewayService.name}"]`,
-      );
-    const columnItem = (label: string) => {
-      const item = [
-        ...document.querySelectorAll<HTMLElement>('[role="menuitemcheckbox"]'),
-      ].find((candidate) => candidate.textContent?.trim() === label);
-      if (!item) throw new Error(`Missing column option: ${label}`);
-      return item;
-    };
-    const storedHidden = () =>
-      JSON.parse(localStorage.getItem(SERVICE_LIST_COLUMNS_STORAGE_KEY)!)
-        .hidden;
-    expect(modelCount()).toBeNull();
-    expect(container.textContent).not.toContain("模型 / API");
-    expect(statusSwitch()).not.toBeNull();
-
-    const trigger = container.querySelector<HTMLButtonElement>(
-      'button[aria-label="自定义显示列"]',
-    )!;
-    await act(async () => {
-      trigger.dispatchEvent(
-        new PointerEvent("pointerdown", {
-          bubbles: true,
-          button: 0,
-          pointerType: "mouse",
-        }),
-      );
-      await Promise.resolve();
-    });
-    expect(columnItem("模型 / API").getAttribute("aria-checked")).toBe("false");
-    await act(async () => {
-      columnItem("模型 / API").click();
-      await Promise.resolve();
-    });
-    expect(modelCount()?.textContent).toBe(
-      `${gatewayService.models.length} 个模型`,
+    const card = packageCard(gatewayService.name);
+    const models = card.querySelector<HTMLButtonElement>(
+      `button[aria-label="打开 ${gatewayService.name} 的模型列表"]`,
     );
-    expect(container.textContent).toContain("模型 / API");
-    expect(storedHidden()).toEqual([]);
-
-    // The menu stays open so several columns can be toggled in a row.
-    await act(async () => {
-      columnItem("状态").click();
-      await Promise.resolve();
+    expect(models?.textContent).toBe(`${gatewayService.models.length} 个模型`);
+    expect(
+      card.querySelector(
+        `[role="switch"][aria-label="启用 ${gatewayService.name}"]`,
+      ),
+    ).not.toBeNull();
+    await act(async () => models!.click());
+    expect(changed).toHaveBeenCalledWith({
+      kind: "edit",
+      serviceId: gatewayService.id,
+      tab: "models",
     });
-    expect(statusSwitch()).toBeNull();
-    expect(storedHidden()).toEqual(["status"]);
-
-    await chooseMenuItem("恢复默认列");
-    expect(modelCount()).toBeNull();
-    expect(statusSwitch()).not.toBeNull();
-    expect(storedHidden()).toEqual(["models"]);
   });
 
   it("toggles a service from the list without opening the editor", async () => {
@@ -6786,19 +7304,17 @@ describe("ServiceManager", () => {
       expect(
         container.querySelectorAll('[data-testid="service-risk-badge"]'),
       ).toHaveLength(3);
-      const elapsedRow = [
-        ...container.querySelectorAll<HTMLElement>(
-          '[data-testid="service-card"]',
-        ),
-      ].find((row) => row.textContent?.includes("Codex elapsed"));
       expect(
-        elapsedRow?.querySelector('[data-testid="service-risk-badge"]'),
+        packageCard("Codex elapsed").querySelector(
+          '[data-testid="service-risk-badge"]',
+        ),
       ).toBeNull();
 
-      const status = container.querySelector<HTMLElement>(
-        'span[role="img"][aria-label="待登录 · 组织已被上游停用"]',
+      const status = packageCard(suspendedClaude.name).querySelector(
+        '[data-slot="quota-status"]',
       );
-      expect(status?.querySelector('[data-tone="negative"]')).not.toBeNull();
+      expect(status?.textContent).toBe("待登录 · 组织已被上游停用");
+      expect(status?.getAttribute("data-tone")).toBe("critical");
 
       const summary = container.querySelector<HTMLElement>(
         '[data-testid="service-risk-summary"]',
@@ -6832,10 +7348,10 @@ describe("ServiceManager", () => {
         },
       ]);
       expect(
-        container.querySelector(
-          'span[role="img"][aria-label="需要重新登录：Refresh token was revoked."]',
-        ),
-      ).not.toBeNull();
+        packageCard(codexService.name).querySelector(
+          '[data-slot="quota-status"]',
+        )?.textContent,
+      ).toBe("需要重新登录：Refresh token was revoked.");
     });
 
     it("loads risk events lazily and restores scheduling after confirmation", async () => {

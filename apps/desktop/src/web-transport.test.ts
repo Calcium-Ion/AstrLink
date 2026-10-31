@@ -84,6 +84,45 @@ describe("web command transport", () => {
       }),
     );
   });
+  it("escapes a package ID as one path segment and merge-patches its strategy", async () => {
+    respond({
+      id: "subscription:claude:max_20x",
+      kind: "subscription",
+      provider: "claude_code",
+      plan_type: "max_20x",
+      service_ids: ["svc_one"],
+      strategy: "auto",
+    });
+    await webInvoke("update_service_package", {
+      packageId: "subscription:claude:max_20x",
+      strategy: "auto",
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/control/v1/service-packages/subscription%3Aclaude%3Amax_20x",
+      expect.objectContaining({
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/merge-patch+json",
+          "X-AstrLink-Console": "1",
+        },
+        body: '{"strategy":"auto"}',
+      }),
+    );
+    respond({ packages: [] });
+    await webInvoke("get_service_packages");
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      "/control/v1/service-packages",
+      expect.objectContaining({ method: "GET" }),
+    );
+    fetchMock.mockClear();
+    await expect(
+      webInvoke("update_service_package", {
+        packageId: "../services/svc_one",
+        strategy: "auto",
+      }),
+    ).rejects.toThrow("Invalid package ID");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
   it("keeps repeated token and model query parameters and encodes cursors", async () => {
     respond({ items: [] });
     await webInvoke("list_request_sessions", {

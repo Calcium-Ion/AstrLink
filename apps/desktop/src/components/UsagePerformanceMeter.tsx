@@ -11,6 +11,7 @@ import {
 } from "./UsagePerformanceDetails";
 import { Activity } from "./icons";
 import { DataField } from "./DataRow";
+import { IconButton } from "./IconButton";
 import { Button } from "./ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
 import { cn } from "@/lib/utils";
@@ -32,7 +33,7 @@ export function UsagePerformanceMeter({
   target: PerformanceTarget;
   ready: boolean;
   testId?: string;
-  layout?: "stacked" | "fields" | "service";
+  layout?: "stacked" | "fields" | "icon";
 }) {
   const t = useT();
   const [open, setOpen] = useState(false);
@@ -116,6 +117,30 @@ export function UsagePerformanceMeter({
       </div>
     );
   }
+  if (layout === "icon") {
+    // A card has no room for the values; the button names them and opens the
+    // same details.
+    const summary =
+      status === "error"
+        ? t("services.performanceErrorNamed", { name: target.name })
+        : t("services.performanceSummary", {
+            name: target.name,
+            cache: cache == null ? placeholder : `${formatCacheRate(cache)}%`,
+            speed: speed == null ? placeholder : `${speed.toFixed(1)} tok/s`,
+          });
+    return details(
+      <IconButton
+        className="text-muted-foreground"
+        data-testid={testId}
+        disabled={!ready}
+        label={summary}
+        size="icon-xs"
+        type="button"
+      >
+        <Activity aria-hidden="true" />
+      </IconButton>,
+    );
+  }
   // Units share the last column, so "%" and "tok/s" start at the same edge and
   // the numbers end at the same edge. Each label stays with its own number,
   // so a long TPS can use the space under the longer cache label. A missing
@@ -126,12 +151,7 @@ export function UsagePerformanceMeter({
     unit: string,
     spaced = false,
   ) => (
-    <span
-      className={cn(
-        "col-span-full grid grid-cols-subgrid items-baseline gap-x-0.5",
-        layout === "service" && "flex @[640px]/service-list:grid",
-      )}
-    >
+    <span className="col-span-full grid grid-cols-subgrid items-baseline gap-x-0.5">
       <span className="flex items-baseline justify-between gap-1.5">
         <span className="text-muted-foreground">{label}</span>
         <span>{amount ?? placeholder}</span>
@@ -153,10 +173,7 @@ export function UsagePerformanceMeter({
     <Button
       aria-describedby={valuesId}
       aria-label={detailsLabel}
-      className={cn(
-        "h-auto w-full justify-start px-0 text-left text-xs font-normal tabular-nums",
-        layout === "service" && "w-fit @[640px]/service-list:w-full",
-      )}
+      className="h-auto w-full justify-start px-0 text-left text-xs font-normal tabular-nums"
       data-testid={testId}
       disabled={!ready}
       size="xs"
@@ -164,11 +181,7 @@ export function UsagePerformanceMeter({
       type="button"
     >
       <span
-        className={cn(
-          "grid w-full grid-cols-[1fr_auto] gap-x-0.5 gap-y-1",
-          layout === "service" &&
-            "flex flex-wrap items-center gap-x-3 @[640px]/service-list:grid @[640px]/service-list:gap-x-0.5",
-        )}
+        className="grid w-full grid-cols-[1fr_auto] gap-x-0.5 gap-y-1"
         id={valuesId}
       >
         <span className="sr-only">{periodLabel}</span>

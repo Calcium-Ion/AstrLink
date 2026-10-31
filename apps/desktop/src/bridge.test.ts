@@ -41,6 +41,8 @@ import {
   getService,
   getServiceOrder,
   updateServiceOrder,
+  getServicePackages,
+  updateServicePackageStrategy,
   getServiceAuthorization,
   getServiceUsage,
   resetServiceUsage,
@@ -474,6 +476,66 @@ describe("desktop bridge contract", () => {
     await expect(updateServiceOrder(["bad/path"], record.etag)).rejects.toThrow(
       "Invalid service order",
     );
+  });
+  it("reads packages in routing order and saves one package's strategy", async () => {
+    const plus = {
+      id: "subscription:codex:plus",
+      kind: "subscription",
+      provider: "openai_codex",
+      plan_type: "plus",
+      service_ids: ["service_b", "service_a"],
+      strategy: "most_remaining",
+    };
+    // Core leaves plan_type out for a plan it has not read and for services.
+    const unread = {
+      id: "subscription:claude:unknown",
+      kind: "subscription",
+      provider: "claude_code",
+      service_ids: ["service_c"],
+      strategy: "auto",
+    };
+    const relay = {
+      id: "service:service_relay",
+      kind: "service",
+      service_ids: ["service_relay"],
+      strategy: "auto",
+    };
+    invokeMock.mockResolvedValueOnce({ packages: [plus, unread, relay] });
+    await expect(getServicePackages()).resolves.toEqual([plus, unread, relay]);
+    expect(invokeMock).toHaveBeenLastCalledWith("get_service_packages");
+
+    invokeMock.mockResolvedValueOnce({ ...plus, strategy: "soonest_reset" });
+    await expect(
+      updateServicePackageStrategy(plus.id, "soonest_reset"),
+    ).resolves.toEqual({ ...plus, strategy: "soonest_reset" });
+    expect(invokeMock).toHaveBeenLastCalledWith("update_service_package", {
+      packageId: plus.id,
+      strategy: "soonest_reset",
+    });
+
+    for (const packages of [
+      [plus, { ...relay, service_ids: ["service_a"] }],
+      [plus, { ...plus, service_ids: ["service_z"] }],
+      [{ ...plus, strategy: "fastest" }],
+      [{ ...plus, id: "plan:codex:plus" }],
+      [{ ...plus, service_ids: [] }],
+    ]) {
+      invokeMock.mockResolvedValueOnce({ packages });
+      await expect(getServicePackages()).rejects.toThrow(
+        /Invalid service package/,
+      );
+    }
+    invokeMock.mockClear();
+    await expect(
+      updateServicePackageStrategy(
+        plus.id,
+        "fastest" as Parameters<typeof updateServicePackageStrategy>[1],
+      ),
+    ).rejects.toThrow("Invalid service package");
+    await expect(
+      updateServicePackageStrategy("subscription:\ncodex", "auto"),
+    ).rejects.toThrow("Invalid service package");
+    expect(invokeMock).not.toHaveBeenCalled();
   });
   beforeEach(() => {
     invokeMock.mockReset();

@@ -1365,6 +1365,22 @@ async fn update_service_order(
 }
 
 #[tauri::command]
+async fn get_service_packages(
+    manager: State<'_, Arc<CoreManager>>,
+) -> Result<serde_json::Value, String> {
+    manager.get_service_packages().await
+}
+
+#[tauri::command]
+async fn update_service_package(
+    package_id: String,
+    strategy: String,
+    manager: State<'_, Arc<CoreManager>>,
+) -> Result<serde_json::Value, String> {
+    manager.update_service_package(&package_id, &strategy).await
+}
+
+#[tauri::command]
 async fn get_service(
     service_id: String,
     manager: State<'_, Arc<CoreManager>>,
@@ -2694,6 +2710,8 @@ pub fn run() {
             list_services,
             get_service_order,
             update_service_order,
+            get_service_packages,
+            update_service_package,
             get_service,
             create_service,
             update_service,

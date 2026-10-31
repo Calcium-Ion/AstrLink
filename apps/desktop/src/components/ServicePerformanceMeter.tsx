@@ -29,7 +29,7 @@ export function ServicePerformanceMeter({
       periodLabel={t(`overview.range.${preset}`)}
       scopeDescription={t("services.performanceScope")}
       testId="service-performance"
-      layout="service"
+      layout="icon"
       target={{ kind: "service", id: serviceId, name: serviceName }}
       ready={ready}
     />

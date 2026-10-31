@@ -96,6 +96,17 @@ function id(args: Args, key: string): string {
   return value;
 }
 const service = (a: Args) => `/services/${id(a, "serviceId")}`;
+// Package IDs carry `:` and provider-reported plan keys, so they are escaped
+// as one path segment instead of matched against the resource ID shape.
+function packageID(args: Args): string {
+  const value = args.packageId;
+  if (
+    typeof value !== "string" ||
+    !/^(service|subscription):\P{Cc}{1,400}$/u.test(value)
+  )
+    throw new Error("Invalid package ID");
+  return encodeURIComponent(value);
+}
 const request = (a: Args) => `/requests/${id(a, "requestId")}`;
 const session = (a: Args) => `/request-sessions/${id(a, "sessionId")}`;
 const model = (a: Args) => `/privacy-models/${id(a, "installationId")}`;
@@ -227,6 +238,12 @@ const commands: Record<string, Command> = {
     "PUT",
     (a) => ({ service_ids: a.serviceIds }),
     "order",
+  ),
+  get_service_packages: route("/service-packages"),
+  update_service_package: route(
+    (a) => `/service-packages/${packageID(a)}`,
+    "PATCH",
+    (a) => ({ strategy: a.strategy }),
   ),
   get_service: route(service, "GET", undefined, "service"),
   create_service: route("/services", "POST", input, "service"),

@@ -1737,6 +1737,39 @@ impl CoreManager {
         service_order_record(etag, &body)
     }
 
+    pub async fn get_service_packages(&self) -> Result<serde_json::Value, String> {
+        let (_, body) = self
+            .authenticated_control(Method::GET, "/control/v1/service-packages", None, None)
+            .await?;
+        let value: serde_json::Value = serde_json::from_slice(&body)
+            .map_err(|error| format!("invalid service packages: {error}"))?;
+        if !value["packages"].is_array() {
+            return Err("service packages omitted packages".into());
+        }
+        Ok(value)
+    }
+
+    pub async fn update_service_package(
+        &self,
+        package_id: &str,
+        strategy: &str,
+    ) -> Result<serde_json::Value, String> {
+        validate_package_id(package_id)?;
+        validate_package_strategy(strategy)?;
+        let (_, body) = self
+            .authenticated_control(
+                Method::PATCH,
+                &format!(
+                    "/control/v1/service-packages/{}",
+                    percent_encode_query(package_id)
+                ),
+                Some(serde_json::json!({"strategy": strategy})),
+                None,
+            )
+            .await?;
+        serde_json::from_slice(&body).map_err(|error| format!("invalid service package: {error}"))
+    }
+
     /// Polls the agent-side observer state and folds it into the view. The
     /// lock release republishes the view, which is also how an observation
     /// expires: the poll after the window closes recomputes it as inactive.
@@ -4937,6 +4970,37 @@ fn validate_resource_id(value: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Package IDs are `service:<service id>` or `subscription:<provider>:<plan>`;
+/// the plan is whatever the provider reported, lowercased, so it is only
+/// checked for control characters and length.
+fn validate_package_id(value: &str) -> Result<(), String> {
+    let valid = if let Some(service_id) = value.strip_prefix("service:") {
+        validate_resource_id(service_id).is_ok()
+    } else if let Some(rest) = value.strip_prefix("subscription:") {
+        rest.split_once(':').is_some_and(|(provider, plan)| {
+            !provider.is_empty()
+                && provider.bytes().all(|byte| byte.is_ascii_lowercase())
+                && !plan.is_empty()
+                && plan.chars().count() <= 128
+                && !plan.chars().any(char::is_control)
+        })
+    } else {
+        false
+    };
+    if valid {
+        Ok(())
+    } else {
+        Err("package id is invalid".to_string())
+    }
+}
+
+fn validate_package_strategy(value: &str) -> Result<(), String> {
+    match value {
+        "auto" | "soonest_reset" | "most_remaining" => Ok(()),
+        _ => Err("package strategy is invalid".to_string()),
+    }
+}
+
 const SUBSCRIPTION_PROVIDERS: &[&str] = &[
     "openai_codex",
     "claude_code",
@@ -5997,6 +6061,25 @@ mod tests {
         );
         assert!(super::service_risk_events_path("service_claude", Some(0)).is_err());
         assert!(super::service_risk_events_path("service_claude", Some(51)).is_err());
+    }
+
+    #[test]
+    fn package_ids_and_strategies_are_checked_before_patching() {
+        assert!(super::validate_package_id("service:service_a").is_ok());
+        assert!(super::validate_package_id("subscription:claude:max_20x").is_ok());
+        assert!(super::validate_package_id("subscription:codex:unknown").is_ok());
+        assert!(super::validate_package_id("service:bad/path").is_err());
+        assert!(super::validate_package_id("subscription:claude").is_err());
+        assert!(super::validate_package_id("subscription::pro").is_err());
+        assert!(super::validate_package_id("subscription:claude:\npro").is_err());
+        assert!(super::validate_package_id("other:claude:pro").is_err());
+        assert_eq!(
+            super::percent_encode_query("subscription:claude:max 20x"),
+            "subscription%3Aclaude%3Amax%2020x"
+        );
+        assert!(super::validate_package_strategy("most_remaining").is_ok());
+        assert!(super::validate_package_strategy("").is_err());
+        assert!(super::validate_package_strategy("fastest").is_err());
     }
 
     #[test]
