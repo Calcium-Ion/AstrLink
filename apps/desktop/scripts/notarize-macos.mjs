@@ -21,6 +21,12 @@ const config = JSON.parse(
     "utf8",
   ),
 );
+const macOSConfig = JSON.parse(
+  readFileSync(
+    path.join(desktopDirectory, "src-tauri/tauri.macos.conf.json"),
+    "utf8",
+  ),
+);
 
 function run(command, args) {
   const result = spawnSync(command, args, {
@@ -93,15 +99,27 @@ export function notarizeMacOS({
         : []),
     ]),
   ].map((name) => path.join(frameworksDirectory, name));
+  // The desktop widget (build-macos-widget.mjs), plus any other extension
+  // the bundle holds.
+  const plugInsDirectory = path.join(app, "Contents/PlugIns");
+  const plugIns = [
+    ...new Set([
+      ...Object.keys(macOSConfig.bundle?.macOS?.files ?? {})
+        .filter((destination) => destination.startsWith("PlugIns/"))
+        .map((destination) => path.basename(destination)),
+      ...(existsSync(plugInsDirectory) ? readdirSync(plugInsDirectory) : []),
+    ]),
+  ].map((name) => path.join(plugInsDirectory, name));
+  const executables = [app, ...binaries, ...plugIns];
   console.log(
     "Checking Developer ID signatures, Team ID, timestamps and Hardened Runtime.",
   );
-  for (const file of [app, ...binaries, ...frameworks, dmg]) {
+  for (const file of [app, ...binaries, ...plugIns, ...frameworks, dmg]) {
     runCommand("codesign", ["--verify", "--deep", "--strict", file]);
     checkSignature(
       runCommand("codesign", ["--display", "--verbose=4", file]),
       teamID,
-      file === app || binaries.includes(file),
+      executables.includes(file),
     );
   }
   runCommand("hdiutil", ["verify", dmg]);

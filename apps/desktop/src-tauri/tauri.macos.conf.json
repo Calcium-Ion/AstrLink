@@ -1,8 +1,15 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
+  "build": {
+    "beforeBundleCommand": "bun scripts/build-macos-widget.mjs"
+  },
   "bundle": {
     "macOS": {
       "hardenedRuntime": true,
+      "entitlements": "Entitlements.plist",
+      "files": {
+        "PlugIns/AstrLinkWidgets.appex": "target/macos-widget/AstrLinkWidgets.appex"
+      },
       "dmg": {
         "background": "installer/macos-dmg-background.tiff",
         "windowPosition": { "x": 400, "y": 200 },

@@ -201,6 +201,9 @@ pub struct WindowDigest {
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct SubscriptionDigest {
+    /// The service id; the desktop widget remembers a chosen plan by it.
+    #[serde(skip_serializing)]
+    pub id: String,
     pub name: String,
     /// Service kind, one of `SUBSCRIPTION_KINDS`; the panel draws its logo.
     pub kind: String,
@@ -248,6 +251,11 @@ pub struct UsageDigest {
     pub last_request: Option<LastRequest>,
     pub month_tokens: Option<i64>,
     pub subscriptions: Vec<SubscriptionDigest>,
+    /// Plan-backed services Core listed when plans were read just now; None
+    /// for a cached or skipped read. Zero tells "no plans" apart from
+    /// lookups that failed.
+    #[serde(skip_serializing)]
+    pub subscription_services: Option<usize>,
 }
 
 /// What the popover (and the settings preview) renders from.
@@ -738,6 +746,7 @@ fn subscription_from(
     }
     windows.truncate(MAX_WINDOWS_PER_SUBSCRIPTION);
     (!windows.is_empty()).then(|| SubscriptionDigest {
+        id: String::new(),
         name: name.to_string(),
         kind: kind.to_string(),
         windows,
@@ -772,17 +781,24 @@ fn subscription_services(services: &serde_json::Value) -> Vec<(String, String, S
 }
 
 /// `fresh` bypasses Core's 30s quota snapshot: an operator pressing refresh
-/// wants the provider's current numbers, not a cache.
-async fn collect_subscriptions(manager: &Arc<CoreManager>, fresh: bool) -> Vec<SubscriptionDigest> {
+/// wants the provider's current numbers, not a cache. Also returns how many
+/// plan-backed services Core listed, None when the list itself failed.
+async fn collect_subscriptions(
+    manager: &Arc<CoreManager>,
+    fresh: bool,
+) -> (Vec<SubscriptionDigest>, Option<usize>) {
     let Ok(services) = manager.list_services().await else {
-        return Vec::new();
+        return (Vec::new(), None);
     };
+    let services = subscription_services(&services);
+    let listed = services.len();
     let mut handles = Vec::new();
-    for (id, name, kind) in subscription_services(&services) {
+    for (id, name, kind) in services {
         let manager = Arc::clone(manager);
         handles.push(tauri::async_runtime::spawn(async move {
             match manager.get_service_usage_with(&id, fresh).await {
-                Ok(usage) => subscription_from(&name, &kind, &usage),
+                Ok(usage) => subscription_from(&name, &kind, &usage)
+                    .map(|digest| SubscriptionDigest { id, ..digest }),
                 Err(error) => {
                     // Visible in the dev log; the panel just omits the plan
                     // until the next refresh succeeds.
@@ -798,7 +814,7 @@ async fn collect_subscriptions(manager: &Arc<CoreManager>, fresh: bool) -> Vec<S
             digests.push(digest);
         }
     }
-    digests
+    (digests, Some(listed))
 }
 
 /// How a refresh treats the upstream plan quota lookups.
@@ -813,10 +829,13 @@ pub enum PlanRefresh {
 }
 
 /// The usage lines to collect: the enabled cards plus whatever the menu-bar
-/// text reads, so the menu bar does not go blank when its card is turned off.
-/// The popover gates each card on the preference, not on the data.
-fn collected_usage(tray: &TrayPreferences) -> TrayUsagePreferences {
+/// text or a desktop widget reads, so neither goes blank when its card is
+/// turned off. The popover gates each card on the preference, not the data.
+fn collected_usage(tray: &TrayPreferences, widget_placed: bool) -> TrayUsagePreferences {
     let mut usage = tray.usage.clone();
+    if widget_placed {
+        usage.subscription_windows = true;
+    }
     match tray.menubar_text {
         TrayMenubarText::Requests | TrayMenubarText::Tokens => usage.today = true,
         TrayMenubarText::Cost => usage.cost = true,
@@ -956,7 +975,7 @@ async fn collect_digest(
             }
             None if plans == PlanRefresh::Reuse => {}
             None => {
-                digest.subscriptions =
+                (digest.subscriptions, digest.subscription_services) =
                     collect_subscriptions(manager, plans == PlanRefresh::Force).await;
                 subscriptions_at = (!digest.subscriptions.is_empty()).then(Instant::now);
             }
@@ -1072,6 +1091,10 @@ struct TrayRuntime {
     digest: Option<UsageDigest>,
     digest_at: Option<Instant>,
     subscriptions_at: Option<Instant>,
+    /// The last plan read the desktop widget can show, and when it was read.
+    /// Outlives the digest: a stopped gateway leaves the widget its last
+    /// numbers, which it marks as old.
+    widget_plans: Option<(Vec<SubscriptionDigest>, DateTime<Utc>)>,
     last_click_refresh: Option<Instant>,
     refresh_in_flight: bool,
     anchor: Option<PopoverAnchor>,
@@ -1161,7 +1184,18 @@ pub fn refresh(app: &AppHandle) {
     };
     let preferences = preferences_of(app);
     let view = core_view(app);
-    let digest = state.lock().digest.clone();
+    let (digest, widget_plans) = {
+        let runtime = state.lock();
+        (runtime.digest.clone(), runtime.widget_plans.clone())
+    };
+    if let Some((plans, read_at)) = widget_plans {
+        crate::macos_widget::publish(&crate::macos_widget::WidgetSnapshot::new(
+            &plans,
+            read_at,
+            preferences.locale,
+            preferences.quota_display_mode,
+        ));
+    }
     let model = tray_model(
         &view,
         &preferences.tray,
@@ -1831,7 +1865,7 @@ pub async fn refresh_usage(app: AppHandle, plans: PlanRefresh) {
     if manager.view().phase != CorePhase::Ready {
         return;
     }
-    let prefs = collected_usage(&preferences_of(&app).tray);
+    let prefs = collected_usage(&preferences_of(&app).tray, crate::macos_widget::placed());
     let previous = {
         let mut runtime = state.lock();
         if runtime.refresh_in_flight {
@@ -1888,11 +1922,32 @@ pub async fn refresh_usage(app: AppHandle, plans: PlanRefresh) {
     );
     {
         let mut runtime = state.lock();
+        if let Some(plans) = digest
+            .as_ref()
+            .and_then(|digest| widget_read(digest, runtime.subscriptions_at, subscriptions_at))
+        {
+            runtime.widget_plans = Some((plans, Utc::now()));
+        }
         runtime.digest = digest;
         runtime.digest_at = Some(Instant::now());
         runtime.subscriptions_at = subscriptions_at;
     }
     refresh(&app);
+}
+
+/// The plans a refresh just read for the desktop widget: a new non-empty
+/// read, or a fresh service list with no plans in it. A cached read changes
+/// nothing, and an empty read with plans listed is a failed lookup, after
+/// which the widget keeps its last numbers.
+fn widget_read(
+    digest: &UsageDigest,
+    previous_at: Option<Instant>,
+    subscriptions_at: Option<Instant>,
+) -> Option<Vec<SubscriptionDigest>> {
+    if subscriptions_at.is_some() && subscriptions_at != previous_at {
+        return Some(digest.subscriptions.clone());
+    }
+    (digest.subscription_services == Some(0)).then(Vec::new)
 }
 
 /// Clears `refresh_in_flight` when the refresh ends, however it ends.
@@ -1922,9 +1977,11 @@ fn tick_plan(app: &AppHandle) -> Option<PlanRefresh> {
     if !local_due {
         return None;
     }
-    let plans = if preferences_of(app).tray.menubar_text == TrayMenubarText::Subscription
-        && subscriptions_at.is_none_or_older(PLAN_REFRESH_BACKGROUND)
-    {
+    // A placed desktop widget shows plan figures just as the menu-bar title
+    // does, so it gets the same background cadence and nothing faster.
+    let shows_plans = preferences_of(app).tray.menubar_text == TrayMenubarText::Subscription
+        || crate::macos_widget::placed();
+    let plans = if shows_plans && subscriptions_at.is_none_or_older(PLAN_REFRESH_BACKGROUND) {
         PlanRefresh::IfOlderThan(PLAN_REFRESH_BACKGROUND)
     } else {
         PlanRefresh::Reuse
@@ -2130,6 +2187,7 @@ mod tests {
             last_request: None,
             month_tokens: None,
             subscriptions: vec![SubscriptionDigest {
+                id: "svc_codex".to_string(),
                 name: "Codex".to_string(),
                 kind: "codex_subscription".to_string(),
                 windows: vec![WindowDigest {
@@ -2140,6 +2198,7 @@ mod tests {
                     reset_at: None,
                 }],
             }],
+            subscription_services: None,
         }
     }
 
@@ -2461,11 +2520,14 @@ mod tests {
             ..TrayUsagePreferences::default()
         };
         let collect = |menubar_text| {
-            collected_usage(&TrayPreferences {
-                menubar_text,
-                usage: off.clone(),
-                ..TrayPreferences::default()
-            })
+            collected_usage(
+                &TrayPreferences {
+                    menubar_text,
+                    usage: off.clone(),
+                    ..TrayPreferences::default()
+                },
+                false,
+            )
         };
         assert!(collect(TrayMenubarText::Requests).today);
         assert!(collect(TrayMenubarText::Tokens).today);
@@ -2473,6 +2535,43 @@ mod tests {
         assert!(collect(TrayMenubarText::Subscription).subscription_windows);
         assert_eq!(collect(TrayMenubarText::None), off);
         assert_eq!(collect(TrayMenubarText::AlertOnly), off);
+        // A desktop widget reads plan windows like the menu-bar figure does.
+        let widget = collected_usage(
+            &TrayPreferences {
+                usage: off.clone(),
+                ..TrayPreferences::default()
+            },
+            true,
+        );
+        assert!(widget.subscription_windows);
+        assert!(!widget.today);
+    }
+
+    #[test]
+    fn widget_keeps_its_plans_through_cached_and_failed_reads() {
+        let earlier = Instant::now();
+        let now = earlier + Duration::from_secs(120);
+        let read = digest();
+        assert_eq!(
+            widget_read(&read, Some(earlier), Some(now)),
+            Some(read.subscriptions.clone())
+        );
+        // A cached read keeps the instant it was read at.
+        assert_eq!(widget_read(&read, Some(earlier), Some(earlier)), None);
+        // Lookups failed: plans were listed, none came back.
+        let failed = UsageDigest {
+            subscriptions: Vec::new(),
+            subscription_services: Some(2),
+            ..digest()
+        };
+        assert_eq!(widget_read(&failed, Some(earlier), None), None);
+        // Core lists no plan-backed service at all.
+        let none = UsageDigest {
+            subscriptions: Vec::new(),
+            subscription_services: Some(0),
+            ..digest()
+        };
+        assert_eq!(widget_read(&none, Some(earlier), None), Some(Vec::new()));
     }
 
     #[test]

@@ -15,6 +15,7 @@ mod kek_store;
 mod local_import;
 #[cfg(target_os = "macos")]
 mod macos_app;
+mod macos_widget;
 mod model_updates;
 mod os_lock;
 mod preferences;

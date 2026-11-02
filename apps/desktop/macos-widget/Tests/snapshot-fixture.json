@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "generated_at": "2026-11-01T07:20:00Z",
+  "locale": "zh-CN",
+  "quota_display": "remaining",
+  "plans": [
+    {
+      "id": "svc_codex",
+      "name": "Codex",
+      "kind": "codex_subscription",
+      "windows": [
+        {
+          "label": null,
+          "limit_window_seconds": 18000,
+          "secondary": false,
+          "used_percent": 36.0,
+          "reset_at": "2026-11-01T09:18:00Z"
+        },
+        {
+          "label": null,
+          "limit_window_seconds": 604800,
+          "secondary": true,
+          "used_percent": 59.0,
+          "reset_at": "2026-11-04T01:00:00Z"
+        }
+      ]
+    },
+    {
+      "id": "svc_kimi",
+      "name": "Kimi Coding",
+      "kind": "kimi_coding",
+      "windows": [
+        {
+          "label": "Monthly",
+          "limit_window_seconds": null,
+          "secondary": false,
+          "used_percent": 21.0,
+          "reset_at": null
+        }
+      ]
+    }
+  ]
+}
