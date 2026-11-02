@@ -115,7 +115,7 @@ import { copyButtonLabel, useCopyFeedback } from "./copy-feedback";
 import { compactTitle } from "./file-path-spans";
 import { formatCompactNumber } from "./format-compact-number";
 import { currentLocale, i18n, useT } from "./i18n";
-import { LIVE_CLOCK_INTERVAL_MS, useLiveClock } from "./live-clock";
+import { useLiveClock } from "./live-clock";
 import { notify } from "./notify";
 import { PageHeader } from "./PageHeader";
 import {
@@ -139,7 +139,6 @@ import {
 } from "./request-service-model";
 import {
   formatDuration,
-  liveDurationMs,
   sessionRuntimeMs,
   type RecordFilters,
   type RecordsTarget,
@@ -2069,18 +2068,10 @@ export function RequestRecords({
                     }
                   />
                 ) : null}
-                <div className="py-3 [@media(max-height:680px)]:py-2">
-                  <RequestActivityBoard
-                    coreSessionKey={coreSessionKey}
-                    isReady={isReady}
-                    onShowFailures={() =>
-                      setFilters((current) => ({
-                        ...current,
-                        status: "failed",
-                      }))
-                    }
-                  />
-                </div>
+                <RequestActivityBoard
+                  coreSessionKey={coreSessionKey}
+                  isReady={isReady}
+                />
                 {/* The list's own actions share the tab line, so the filters
                     below keep a full row of equal columns. */}
                 <div className="flex min-w-0 shrink-0 items-center gap-2 border-b">
@@ -2669,13 +2660,6 @@ function SessionDuration({ session }: { session: RequestSession }) {
   return <>{formatDuration(sessionRuntimeMs(session, nowMs))}</>;
 }
 
-function RecordLatency({ record }: { record: RequestRecord }) {
-  const nowMs = useLiveClock(
-    record.latency_ms === null && !record.completed_at,
-  );
-  return <>{formatDuration(liveDurationMs(record, nowMs))}</>;
-}
-
 // The shortest row, a model discovery, is about 40px tall.
 const FIRST_FRAME_ROW_PX = 40;
 const ROWS_PER_FRAME = 10;
@@ -3135,7 +3119,7 @@ const SessionRow = memo(function SessionRow({
 
 /**
  * A conversation in progress, drawn like a worker on a job board: the model
- * serving it on the left and the conversation in its slot. The slot sweeps
+ * serving it on the left and the conversation in its slot. The slot is tinted
  * while a call runs; between calls it shows how long the conversation has
  * waited and how its last call ended.
  */
@@ -3168,8 +3152,8 @@ const SessionLane = memo(function SessionLane({
     [recentCalls, session],
   );
   const calling = sessionRunning(session);
-  // A running call shows tenths of a second; a wait counts whole seconds.
-  const nowMs = useLiveClock(true, calling ? LIVE_CLOCK_INTERVAL_MS : 1000);
+  // Lanes count whole seconds, so their clock ticks once a second.
+  const nowMs = useLiveClock(true, 1000);
   const since = conversationActivity(session, nowMs)?.since ?? nowMs;
   const calls = Math.max(1, session.active_request_starts.length);
   const service = requestServiceIdentity(session, services);
@@ -3267,7 +3251,7 @@ const SessionLane = memo(function SessionLane({
                   {statusLabel(outcome)}
                 </StatusBadge>
                 {t("records.laneIdle", {
-                  duration: formatWait(nowMs - since),
+                  duration: formatLaneDuration(nowMs - since),
                 })}
               </span>
             )}
@@ -3282,7 +3266,9 @@ const SessionLane = memo(function SessionLane({
                     count: session.turn_count,
                     turns: session.turn_count,
                     calls: session.call_count,
-                    duration: formatDuration(sessionRuntimeMs(session, nowMs)),
+                    duration: formatLaneDuration(
+                      sessionRuntimeMs(session, nowMs),
+                    ),
                   },
                 )}
                 {subagents > 0 ? (
@@ -3346,7 +3332,7 @@ const SubagentLane = memo(function SubagentLane({
     [recentCalls, session],
   );
   const calling = sessionRunning(session);
-  const nowMs = useLiveClock(true, calling ? LIVE_CLOCK_INTERVAL_MS : 1000);
+  const nowMs = useLiveClock(true, 1000);
   const since = conversationActivity(session, nowMs)?.since ?? nowMs;
   const calls = Math.max(1, session.active_request_starts.length);
   const behavior = rowBehavior(session, checked, selected, onOpen, t);
@@ -3360,7 +3346,7 @@ const SubagentLane = memo(function SubagentLane({
       count: session.turn_count,
       turns: session.turn_count,
       calls: session.call_count,
-      duration: formatDuration(sessionRuntimeMs(session, nowMs)),
+      duration: formatLaneDuration(sessionRuntimeMs(session, nowMs)),
     },
   );
   const outcome =
@@ -3535,17 +3521,21 @@ function LaneTrail({
   );
 }
 
-/** A wait between calls in whole seconds, as minutes once tools run longer. */
-function formatWait(elapsedMs: number): string {
-  const waited = Math.max(0, elapsedMs);
-  return waited < 60_000
-    ? `${Math.floor(waited / 1000)} s`
-    : formatDuration(waited);
+/**
+ * A lane's time in whole seconds, as minutes past one. Lanes tick once a
+ * second, so tenths would only flicker.
+ */
+function formatLaneDuration(elapsedMs: number): string {
+  const elapsed = Math.max(0, elapsedMs);
+  return elapsed < 60_000
+    ? `${Math.floor(elapsed / 1000)} s`
+    : formatDuration(elapsed);
 }
 
 /**
- * What a lane says its conversation is doing and for how long: a running
- * call counts tenths of a second, a wait between calls whole seconds.
+ * What a lane says its conversation is doing and for how long, in whole
+ * seconds. While a call runs, the label shimmers and a wait spins; the slot
+ * around it holds still, so several lanes do not flicker as a whole.
  */
 function LaneActionLabel({
   action,
@@ -3562,9 +3552,7 @@ function LaneActionLabel({
     action.kind === "thinking" ||
     action.kind === "writing" ||
     action.kind === "calling";
-  const duration = running
-    ? formatDuration(Math.max(0, elapsedMs))
-    : formatWait(elapsedMs);
+  const duration = formatLaneDuration(elapsedMs);
   const iconClass = "size-3.5 shrink-0";
   let icon: ReactNode = null;
   let label: string;

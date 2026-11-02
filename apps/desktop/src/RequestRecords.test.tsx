@@ -916,11 +916,11 @@ describe("RequestRecords", () => {
     const runtime = () =>
       container.querySelector('[data-testid="request-session-row"]')
         ?.textContent;
-    expect(runtime()).toContain("22.0 s");
+    expect(runtime()).toContain("22 s");
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1000);
     });
-    expect(runtime()).toContain("23.0 s");
+    expect(runtime()).toContain("23 s");
     bridgeMocks.listRequestSessions.mockResolvedValue({
       items: [
         {
@@ -937,10 +937,87 @@ describe("RequestRecords", () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(5000);
     });
-    expect(runtime()).toContain("23.0 s");
+    expect(runtime()).toContain("23 s");
   });
 
-  it("counts conversations in progress across every model call, whatever the list shows", async () => {
+  it("leaves the board out until a call comes and after five quiet minutes", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-28T12:00:00Z"));
+    let calls: RequestActivityCall[] = [];
+    // Each read waits until the test answers it with the calls of the moment.
+    const pending: (() => void)[] = [];
+    bridgeMocks.getRequestActivity.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          pending.push(() => resolve({ now: new Date().toISOString(), calls }));
+        }),
+    );
+    const answer = async () => {
+      await act(async () => pending.shift()?.());
+      await flush();
+    };
+    await renderRecords();
+    const board = () =>
+      container.querySelector('[data-testid="request-activity"]');
+    // The tab row follows the board, or the page header when it is away.
+    const aboveTabs = () =>
+      container.querySelector('[role="tablist"]')?.parentElement
+        ?.previousElementSibling;
+    const reads = () => bridgeMocks.getRequestActivity.mock.calls.length;
+    // Nothing is drawn before the first read comes back.
+    expect(reads()).toBe(1);
+    expect(board()).toBeNull();
+
+    // A quiet window draws nothing either, and the poll goes on.
+    await answer();
+    expect(board()).toBeNull();
+    expect(
+      aboveTabs()?.querySelector("#request-records-heading"),
+    ).not.toBeNull();
+
+    calls = [
+      {
+        session_id: "fresh",
+        client_type: "codex",
+        started_at: "2026-07-28T12:00:00Z",
+        completed_at: null,
+        status: "pending",
+      },
+    ];
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+    });
+    expect(reads()).toBe(2);
+    await answer();
+    expect(aboveTabs()?.querySelector('[data-testid="request-activity"]')).toBe(
+      board(),
+    );
+    expect(board()).not.toBeNull();
+
+    // The call ends; the board stays while it is in the window.
+    calls = [
+      {
+        ...calls[0],
+        completed_at: "2026-07-28T12:00:02Z",
+        status: "succeeded",
+      },
+    ];
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+    });
+    await answer();
+    expect(board()).not.toBeNull();
+
+    // Past the window and the grace after the call, it goes away again.
+    vi.setSystemTime(new Date("2026-07-28T12:06:03Z"));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+    });
+    await answer();
+    expect(board()).toBeNull();
+  });
+
+  it("charts conversations in progress across every model call, whatever the list shows", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-28T12:00:10Z"));
     bridgeMocks.getRequestActivity.mockResolvedValue({
@@ -979,10 +1056,12 @@ describe("RequestRecords", () => {
     await renderRecords();
     await flush();
     const board = container.querySelector('[data-testid="request-activity"]')!;
-    const text = (testId: string) =>
-      board.querySelector(`[data-testid="${testId}"]`)?.textContent;
-    expect(text("activity-conversations")).toBe("2个对话");
-    expect(text("activity-throughput")).toBe("5tok/s");
+    // Throughput is the one number; the list counts conversations and
+    // failures itself.
+    expect(board.querySelectorAll("dt")).toHaveLength(1);
+    expect(
+      board.querySelector('[data-testid="activity-throughput"]')?.textContent,
+    ).toBe("5tok/s");
     expect(
       board
         .querySelector('[data-slot="live-trend-plot"]')
@@ -1258,8 +1337,27 @@ describe("RequestRecords", () => {
     expect(lanes()).toEqual([
       ["waiting", "idle", "空闲 5 s"],
       ["tools", "idle", "运行 Bash 6 s"],
-      ["calling", "calling", "等待模型 10.0 s"],
+      ["calling", "calling", "等待模型 10 s"],
     ]);
+    // Only a running lane's state moves: the slot holds still, and the time
+    // goes a whole second at a time.
+    const calling = container.querySelector<HTMLElement>(
+      '[data-testid="active-sessions"] [data-session-id="calling"]',
+    )!;
+    expect(
+      calling
+        .querySelector('[data-slot="activity-slot"]')
+        ?.getAttribute("data-state"),
+    ).toBe("running");
+    const state = calling.querySelector('[data-testid="lane-state"]')!;
+    expect(state.innerHTML).toMatch(/shimmer/);
+    expect(state.innerHTML).toMatch(/animate-spin/);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+    });
+    expect(
+      calling.querySelector('[data-testid="lane-state"]')?.textContent,
+    ).toBe("等待模型 11 s");
     expect(
       container
         .querySelector('[data-testid="active-sessions"]')
@@ -1267,7 +1365,7 @@ describe("RequestRecords", () => {
     ).toBe("3 条");
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(60_000);
+      await vi.advanceTimersByTimeAsync(59_000);
     });
     // A long command keeps its conversation in progress past the grace.
     expect(lanes()).toEqual([
@@ -1326,9 +1424,9 @@ describe("RequestRecords", () => {
       );
       return [label?.dataset.action, label?.textContent, label?.title];
     };
-    expect(state("thinking")).toEqual(["thinking", "思考中 10.0 s", ""]);
-    expect(state("writing")).toEqual(["writing", "写回答 10.0 s", ""]);
-    expect(state("calling")).toEqual(["calling", "调用 Bash 10.0 s", ""]);
+    expect(state("thinking")).toEqual(["thinking", "思考中 10 s", ""]);
+    expect(state("writing")).toEqual(["writing", "写回答 10 s", ""]);
+    expect(state("calling")).toEqual(["calling", "调用 Bash 10 s", ""]);
     expect(state("tools")).toEqual([
       "running",
       "运行 Read · Bash +1 8 s",

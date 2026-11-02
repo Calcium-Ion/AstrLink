@@ -318,9 +318,10 @@ describe("RequestRecords subagents", () => {
     expect(subagent.querySelector('[title="子代理"]')).not.toBeNull();
     // The board counts the conversation once, with its subagent.
     expect(
-      container.querySelector('[data-testid="activity-conversations"]')
-        ?.textContent,
-    ).toBe("1个对话");
+      container
+        .querySelector('[data-slot="live-trend-plot"]')
+        ?.getAttribute("aria-label"),
+    ).toBe("近 5 分钟同时进行的对话，最多 1 个，现在 1 个");
     // A finished subagent folds into its conversation instead of a row.
     expect(
       container.querySelector('[data-session-id="session_child_finished"]'),
