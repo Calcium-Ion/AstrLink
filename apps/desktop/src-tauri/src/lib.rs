@@ -4,6 +4,7 @@ mod cc_switch;
 mod client_config;
 mod client_updates;
 mod control_session;
+mod currency;
 mod data_hygiene;
 #[cfg(debug_assertions)]
 mod dev_reload;
@@ -102,6 +103,7 @@ struct PreferencesInput {
     locale: Locale,
     theme: ThemePreference,
     quota_display_mode: preferences::QuotaDisplayMode,
+    display_currency: String,
     #[serde(default)]
     tray: TrayPreferences,
     #[serde(default)]
@@ -125,6 +127,7 @@ impl From<PreferencesInput> for Preferences {
             locale: input.locale,
             theme: input.theme,
             quota_display_mode: input.quota_display_mode,
+            display_currency: input.display_currency,
             tray: input.tray,
             updates: input.updates,
         }
@@ -483,7 +486,8 @@ fn update_preferences(
     let values = Preferences::from(input);
     values.validate()?;
     let locale = values.locale;
-    let previous_tray = store.snapshot().values.tray;
+    let previous = store.snapshot().values;
+    let previous_tray = previous.tray;
     let autostart = app.autolaunch();
     let actual = autostart.is_enabled().map_err(|error| {
         i18n::t(
@@ -563,6 +567,12 @@ fn update_preferences(
     tray::refresh(&app);
     if let Err(error) = app.emit("quota-display-mode-changed", values.quota_display_mode) {
         eprintln!("unable to broadcast quota display mode: {error}");
+    }
+    if values.display_currency != previous.display_currency {
+        if let Some(rates) = app.try_state::<Arc<currency::ExchangeRates>>() {
+            rates.wake();
+        }
+        currency::broadcast(&app);
     }
     apply_native_theme(&app, values.theme);
     if let Err(error) = app.emit("theme-preference-changed", values.theme) {
@@ -2727,6 +2737,7 @@ pub fn run() {
             client_updates::update_local_clients,
             updates::app_update_status,
             model_updates::privacy_model_update_status,
+            currency::display_currency,
             updates::check_app_update,
             updates::download_app_update,
             updates::install_app_update,
@@ -2897,6 +2908,7 @@ pub fn run() {
             }
             start_client_config_sync(Arc::clone(&setup_manager), Arc::clone(&preferences));
             app.manage(preferences);
+            app.manage(Arc::new(currency::ExchangeRates::load(&config_directory)));
             let updates =
                 Arc::new(updates::UpdateManager::new(app.handle()).map_err(std::io::Error::other)?);
             app.manage(Arc::clone(&updates));
@@ -2914,6 +2926,7 @@ pub fn run() {
                 }
             }
             tray::start(app.handle());
+            currency::start(app.handle());
             model_updates::start(app.handle());
             // The raw unlock and agent grants end with the session lock.
             os_lock::watch(app.handle());

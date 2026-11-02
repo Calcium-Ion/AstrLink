@@ -1,3 +1,4 @@
+import { useDisplayCurrency } from "./currency-display";
 import type { ConversionEngineCapability } from "./core-model";
 import { useWorkspaceSnapshot } from "./workspace-snapshots";
 import { ActionGroup } from "@/components/ActionGroup";
@@ -167,6 +168,7 @@ export function AccessTokenManager({
   onTokenDeleted: (tokenId: string) => void;
 }) {
   const t = i18n.t.bind(i18n);
+  const currency = useDisplayCurrency();
   const [query, setQuery] = useState("");
   const [period, setPeriod] = useState<"today" | "lifetime">("today");
   const [createOpen, setCreateOpen] = useState(false);
@@ -669,6 +671,7 @@ export function AccessTokenManager({
                           period === "today"
                             ? "tokens.todayAmount"
                             : "tokens.lifetimeAmount",
+                          { currency: currency.code },
                         )}
                         value={
                           <span className="inline-flex items-center gap-1.5 font-semibold tabular-nums">

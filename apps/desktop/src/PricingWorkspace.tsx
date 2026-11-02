@@ -17,6 +17,7 @@ import { Panel } from "@/components/Panel";
 import { DataRow } from "@/components/DataRow";
 import { EmptyState } from "@/components/EmptyState";
 import { ValueTransition } from "@/components/ValueTransition";
+import { useDisplayCurrency } from "./currency-display";
 import { useT } from "./i18n";
 import { useWorkspaceSnapshot } from "./workspace-snapshots";
 import type { Service } from "./service-model";
@@ -147,6 +148,7 @@ export function ServiceBillingMeter({
   onOpen: () => void;
 }) {
   const t = useT();
+  useDisplayCurrency();
   const { report } = useBillingReport(
     serviceId,
     ready,
@@ -194,6 +196,7 @@ export function PricingWorkspace({
   onClose: () => void;
 }) {
   const t = useT();
+  useDisplayCurrency();
   const service =
     services.find((s) => s.id === initialServiceId) ?? services[0];
   const serviceId = service?.id;

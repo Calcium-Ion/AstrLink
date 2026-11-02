@@ -25,6 +25,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RadioGroup } from "@/components/ui/radio-group";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Menu, RefreshCw, Server, SlidersHorizontal } from "@/components/icons";
@@ -74,6 +81,15 @@ import {
 import { notify } from "./notify";
 import { PageHeader } from "./PageHeader";
 import { applyQuotaDisplayMode, QUOTA_DISPLAY_MODES } from "./quota-display";
+import {
+  currencyName,
+  DISPLAY_CURRENCIES,
+  formatCurrency,
+  formatRateDate,
+  isDisplayCurrencyChoice,
+  useDisplayCurrency,
+  type DisplayCurrency,
+} from "./currency-display";
 import { applyTheme } from "./theme";
 import { THEME_PREFERENCES } from "./theme-model";
 import type { TrayState } from "./tray-model";
@@ -162,6 +178,28 @@ function formatBackupSize(bytes: number): string {
     unit += 1;
   }
   return unit === 0 ? `${value} B` : `${value.toFixed(1)} ${units[unit]}`;
+}
+
+/** What the currency setting does, then the rate in use or why there is none. */
+function currencyHint(
+  t: ReturnType<typeof useT>,
+  currency: DisplayCurrency,
+): ReactNode {
+  const hint = t("settings.currencyHint");
+  if (currency.wanted === "USD") return hint;
+  const status =
+    currency.code === currency.wanted && currency.rate_date
+      ? t("settings.currencyRate", {
+          date: formatRateDate(currency.rate_date, currentLocale()),
+          amount: formatCurrency(currency.per_usd, currency.digits, currency),
+        })
+      : t("settings.currencyPending");
+  return (
+    <>
+      {hint}
+      <span className="block">{status}</span>
+    </>
+  );
 }
 
 // Hand-made database copies are not encrypted with the live data; point them
@@ -282,6 +320,7 @@ export function SettingsCenter({
 
   const entryDirtyRef = useRef(false);
   const fieldId = useId();
+  const currency = useDisplayCurrency();
 
   // The preview is the real panel over real data; refresh it on a slow tick.
   useEffect(() => {
@@ -779,6 +818,41 @@ export function SettingsCenter({
                     }))}
                     value={prefs.quota_display_mode}
                   />
+                </SettingRow>
+                <SettingRow
+                  hint={currencyHint(t, currency)}
+                  hintId={`${fieldId}-currency-hint`}
+                  label={t("settings.currency")}
+                >
+                  <Select
+                    disabled={prefsBusy}
+                    onValueChange={(display_currency) => {
+                      // Radix reports "" while it remounts; not a choice.
+                      if (isDisplayCurrencyChoice(display_currency))
+                        void applyInstant({ display_currency });
+                    }}
+                    value={prefs.display_currency}
+                  >
+                    <SelectTrigger
+                      aria-describedby={`${fieldId}-currency-hint`}
+                      aria-label={t("settings.currency")}
+                      className="w-56"
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="auto">
+                        {t("settings.currencyAuto", {
+                          name: currencyName(currency.system, currentLocale()),
+                        })}
+                      </SelectItem>
+                      {DISPLAY_CURRENCIES.map((code) => (
+                        <SelectItem key={code} value={code}>
+                          {currencyName(code, currentLocale())} {code}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </SettingRow>
               </Panel>
 

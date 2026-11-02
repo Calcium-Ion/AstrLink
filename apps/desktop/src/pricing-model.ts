@@ -1,3 +1,9 @@
+import {
+  convertUSD,
+  displayCurrency,
+  formatCurrency,
+} from "./currency-display";
+
 export interface PriceBinding {
   provider: string;
   model: string;
@@ -85,20 +91,17 @@ export const OFFICIAL_PROVIDERS: Record<string, string> = {
 };
 // Monetary fields stay decimal strings at the bridge boundary. Number is only
 // used for display and progress bars; Core owns all accounting arithmetic.
-// `short` drops the cents from $1,000 up, for tight spots.
+// A dollar amount shows in the display currency; `short` drops the decimals
+// from 1,000 up, for tight spots.
 export function formatUSD(
   value: string | undefined,
   { short = false }: { short?: boolean } = {},
 ): string {
   if (value == null) return "—";
-  const amount = Number(value);
-  const digits = short && Math.abs(amount) >= 1000 ? 0 : 2;
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: digits,
-    maximumFractionDigits: digits,
-  }).format(amount);
+  const currency = displayCurrency();
+  const amount = convertUSD(Number(value), currency);
+  const digits = short && Math.abs(amount) >= 1000 ? 0 : currency.digits;
+  return formatCurrency(amount, digits, currency);
 }
 export function billingAmount(
   amounts:

@@ -294,9 +294,9 @@ describe("tray state IPC contract", () => {
     expect(formatCompactTokens(1_230_000)).toBe("1.2M");
     expect(formatCompactTokens(48_000_000)).toBe("48M");
     expect(formatCompactTokens(2_000_000_000)).toBe("2B");
-    expect(formatUsd(0)).toBe("0.00");
-    expect(formatUsd(0.004)).toBe("<0.01");
-    expect(formatUsd(0.834)).toBe("0.83");
+    expect(formatUsd(0)).toBe("$0.00");
+    expect(formatUsd(0.004)).toBe("<$0.01");
+    expect(formatUsd(0.834)).toBe("$0.83");
     expect(percentChange(1_230_000, 1_000_000)).toBe(23);
     expect(percentChange(800_000, 1_000_000)).toBe(-20);
     expect(percentChange(5, 0)).toBeNull();

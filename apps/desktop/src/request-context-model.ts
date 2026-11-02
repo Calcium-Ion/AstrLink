@@ -1,5 +1,11 @@
 import { formatCompactNumber } from "./format-compact-number";
 import { i18n } from "./i18n";
+import {
+  convertUSD,
+  displayCurrency,
+  formatCurrency,
+  smallestUnit,
+} from "./currency-display";
 import { formatUSD } from "./pricing-model";
 import { formatDuration } from "./request-live-model";
 import { breakdownShare } from "@/components/BreakdownRow";
@@ -320,8 +326,11 @@ export function sumUSD(amounts: readonly string[]): string | null {
 
 /** A cache miss's extra cost; a few tenths of a cent still read as present. */
 export function formatExtraUSD(amount: string): string {
-  const value = Number(amount);
-  if (value > 0 && value < 0.005) return `< ${formatUSD("0.01")}`;
+  const currency = displayCurrency();
+  const value = convertUSD(Number(amount), currency);
+  const unit = smallestUnit(currency);
+  if (value > 0 && value < unit / 2)
+    return `< ${formatCurrency(unit, currency.digits, currency)}`;
   return formatUSD(amount);
 }
 

@@ -25,6 +25,7 @@ use tauri::{
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
 use crate::{
+    currency::DisplayCurrency,
     i18n::{self, Locale},
     preferences::{
         PreferencesStore, QuotaDisplayMode, TrayMenubarText, TrayPreferences, TrayUsagePreferences,
@@ -305,6 +306,7 @@ pub fn tray_model(
     digest: Option<&UsageDigest>,
     locale: Locale,
     quota_display_mode: QuotaDisplayMode,
+    currency: &DisplayCurrency,
 ) -> TrayModel {
     let (mut status_text, icon) = status_line(view, locale);
     if let Some(fallback) = &view.inference_port_fallback {
@@ -330,7 +332,14 @@ pub fn tray_model(
         }
     }
 
-    let title = menubar_title(view, prefs.menubar_text, digest, locale, quota_display_mode);
+    let title = menubar_title(
+        view,
+        prefs.menubar_text,
+        digest,
+        locale,
+        quota_display_mode,
+        currency,
+    );
     let tooltip_body = match &title {
         Some(title) if !cfg!(target_os = "macos") => format!("{status_text} · {title}"),
         _ => status_text,
@@ -415,6 +424,7 @@ fn menubar_title(
     digest: Option<&UsageDigest>,
     locale: Locale,
     quota_display_mode: QuotaDisplayMode,
+    currency: &DisplayCurrency,
 ) -> Option<String> {
     if choice == TrayMenubarText::None {
         return None;
@@ -438,7 +448,7 @@ fn menubar_title(
         TrayMenubarText::Cost => digest
             .cost_today
             .as_ref()
-            .map(|cost| format!("${}", format_usd(cost.amount_usd))),
+            .map(|cost| currency.format(cost.amount_usd)),
         TrayMenubarText::Subscription => digest
             .subscriptions
             .iter()
@@ -493,16 +503,6 @@ fn trim_decimal(value: f64, unit: &str) -> String {
         let text = format!("{value:.1}");
         format!("{}{unit}", text.trim_end_matches(".0"))
     }
-}
-
-pub fn format_usd(amount: f64) -> String {
-    if amount <= 0.0 {
-        return "0.00".to_string();
-    }
-    if amount < 0.01 {
-        return "<0.01".to_string();
-    }
-    format!("{amount:.2}")
 }
 
 fn percent_of(part: i64, whole: i64) -> u8 {
@@ -1202,6 +1202,7 @@ pub fn refresh(app: &AppHandle) {
         digest.as_ref(),
         preferences.locale,
         preferences.quota_display_mode,
+        &crate::currency::display(app),
     );
     let changed = {
         let mut runtime = state.lock();
@@ -1374,6 +1375,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
         None,
         preferences.locale,
         preferences.quota_display_mode,
+        &crate::currency::display(app),
     );
     // macOS gets the monochrome glyph set; the colour mark with its red badge
     // is for Windows and Linux trays.
@@ -2210,6 +2212,7 @@ mod tests {
             Some(&digest()),
             Locale::ZhCN,
             QuotaDisplayMode::Remaining,
+            &DisplayCurrency::usd(),
         );
         assert_eq!(model.icon, TrayIconState::Ready);
         assert_eq!(model.title, None);
@@ -2224,6 +2227,7 @@ mod tests {
             None,
             Locale::En,
             QuotaDisplayMode::Remaining,
+            &DisplayCurrency::usd(),
         );
         assert_eq!(model.tooltip, "AstrLink · Gateway stopped");
         assert_eq!(model.icon, TrayIconState::Idle);
@@ -2236,6 +2240,7 @@ mod tests {
             None,
             Locale::En,
             QuotaDisplayMode::Remaining,
+            &DisplayCurrency::usd(),
         );
         assert_eq!(model.tooltip, "AstrLink · Gateway starting…");
         assert_eq!(model.icon, TrayIconState::Idle);
@@ -2251,6 +2256,7 @@ mod tests {
             None,
             Locale::ZhCN,
             QuotaDisplayMode::Remaining,
+            &DisplayCurrency::usd(),
         );
         assert_eq!(model.icon, TrayIconState::Watched);
         assert_eq!(
@@ -2265,6 +2271,7 @@ mod tests {
             None,
             Locale::ZhCN,
             QuotaDisplayMode::Remaining,
+            &DisplayCurrency::usd(),
         );
         assert_eq!(
             model.tooltip,
@@ -2278,6 +2285,7 @@ mod tests {
             None,
             Locale::En,
             QuotaDisplayMode::Remaining,
+            &DisplayCurrency::usd(),
         );
         assert_eq!(model.icon, TrayIconState::Watched);
         assert_eq!(
@@ -2293,6 +2301,7 @@ mod tests {
             None,
             Locale::En,
             QuotaDisplayMode::Remaining,
+            &DisplayCurrency::usd(),
         );
         assert_eq!(model.icon, TrayIconState::Watched);
         assert_eq!(
@@ -2309,6 +2318,7 @@ mod tests {
             None,
             Locale::ZhCN,
             QuotaDisplayMode::Remaining,
+            &DisplayCurrency::usd(),
         );
         assert_eq!(model.icon, TrayIconState::Ready);
         assert_eq!(
@@ -2322,6 +2332,7 @@ mod tests {
             None,
             Locale::En,
             QuotaDisplayMode::Remaining,
+            &DisplayCurrency::usd(),
         );
         assert_eq!(model.icon, TrayIconState::Watched);
         assert_eq!(
@@ -2338,6 +2349,7 @@ mod tests {
             None,
             Locale::ZhCN,
             QuotaDisplayMode::Remaining,
+            &DisplayCurrency::usd(),
         );
         assert_eq!(model.icon, TrayIconState::Ready);
         assert_eq!(
@@ -2352,6 +2364,7 @@ mod tests {
             None,
             Locale::ZhCN,
             QuotaDisplayMode::Remaining,
+            &DisplayCurrency::usd(),
         );
         assert_eq!(model.icon, TrayIconState::Idle);
     }
@@ -2384,6 +2397,7 @@ mod tests {
             None,
             Locale::ZhCN,
             QuotaDisplayMode::Remaining,
+            &DisplayCurrency::usd(),
         );
         assert!(model
             .tooltip
@@ -2414,6 +2428,7 @@ mod tests {
             None,
             Locale::ZhCN,
             QuotaDisplayMode::Remaining,
+            &DisplayCurrency::usd(),
         );
         assert_eq!(
             model.tooltip,
@@ -2442,6 +2457,7 @@ mod tests {
                 Some(&digest()),
                 Locale::En,
                 QuotaDisplayMode::Remaining,
+                &DisplayCurrency::usd(),
             );
             assert_eq!(model.title.as_deref(), expected, "{choice:?}");
         }
@@ -2456,7 +2472,8 @@ mod tests {
                 &prefs,
                 None,
                 Locale::En,
-                QuotaDisplayMode::Remaining
+                QuotaDisplayMode::Remaining,
+                &DisplayCurrency::usd()
             )
             .title,
             None
@@ -2478,9 +2495,16 @@ mod tests {
             (QuotaDisplayMode::Used, "87%"),
         ] {
             assert_eq!(
-                tray_model(&ready_view(), &prefs, Some(&usage), Locale::En, mode)
-                    .title
-                    .as_deref(),
+                tray_model(
+                    &ready_view(),
+                    &prefs,
+                    Some(&usage),
+                    Locale::En,
+                    mode,
+                    &DisplayCurrency::usd()
+                )
+                .title
+                .as_deref(),
                 Some(expected)
             );
         }
@@ -2491,7 +2515,8 @@ mod tests {
                 &prefs,
                 Some(&usage),
                 Locale::En,
-                QuotaDisplayMode::Remaining
+                QuotaDisplayMode::Remaining,
+                &DisplayCurrency::usd()
             )
             .title
             .as_deref(),
@@ -2503,7 +2528,8 @@ mod tests {
                 &prefs,
                 None,
                 Locale::En,
-                QuotaDisplayMode::Remaining
+                QuotaDisplayMode::Remaining,
+                &DisplayCurrency::usd()
             )
             .title,
             None
@@ -2582,9 +2608,6 @@ mod tests {
         assert_eq!(format_tokens(1_200_000), "1.2M");
         assert_eq!(format_tokens(48_000_000), "48M");
         assert_eq!(format_tokens(2_000_000_000), "2B");
-        assert_eq!(format_usd(0.0), "0.00");
-        assert_eq!(format_usd(0.004), "<0.01");
-        assert_eq!(format_usd(0.834), "0.83");
         assert_eq!(display_address("http://127.0.0.1:8317"), "127.0.0.1:8317");
         assert_eq!(percent_of(41, 100), 41);
         assert_eq!(percent_of(1, 0), 0);

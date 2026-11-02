@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 
+import { useDisplayCurrency } from "./currency-display";
 import { formatCompactNumber, formatShare } from "./format-compact-number";
 import { useT } from "./i18n";
 import { billingAmount } from "./pricing-model";
@@ -636,6 +637,7 @@ function ContextCostLine({
   onOpenCall: (requestId: string) => void;
 }) {
   const t = useT();
+  useDisplayCurrency();
   const [open, setOpen] = useState(false);
   const misses = context.cache_misses;
   const extra = sumUSD(

@@ -18,7 +18,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import App from "./App";
 import { getAppBranding } from "./app-branding";
 import { AppErrorBoundary } from "./AppErrorBoundary";
-import { getPreferences } from "./bridge";
+import { getDisplayCurrency, getPreferences } from "./bridge";
 import { applyLocale, i18n, isLocale, useT } from "./i18n";
 import { RawAccessApprovalWindow } from "./RawAccessApprovalWindow";
 import { isRawAccessApprovalWindow } from "./raw-access-approval-window";
@@ -35,6 +35,11 @@ import {
   QUOTA_DISPLAY_EVENT,
 } from "./quota-display";
 import { isThemePreference } from "./theme-model";
+import {
+  applyDisplayCurrency,
+  DISPLAY_CURRENCY_EVENT,
+  parseDisplayCurrency,
+} from "./currency-display";
 import { initializeScrollbarAutoHide } from "./lib/scrollbar-auto-hide";
 import { initializeScrollbarGutter } from "./lib/scrollbar-gutter";
 import "./styles/globals.css";
@@ -72,6 +77,26 @@ async function loadPreferences(): Promise<void> {
     }).catch((error) =>
       console.error("Unable to observe quota display mode", error),
     );
+    // The rate can land at any time; listen before the first read so a
+    // window opened mid-fetch does not keep showing dollars.
+    let currencyUpdated = false;
+    await listen(DISPLAY_CURRENCY_EVENT, ({ payload }) => {
+      try {
+        applyDisplayCurrency(parseDisplayCurrency(payload));
+        currencyUpdated = true;
+      } catch (error) {
+        console.error("Ignoring an unreadable display currency", error);
+      }
+    }).catch((error) =>
+      console.error("Unable to observe the display currency", error),
+    );
+    void getDisplayCurrency()
+      .then((currency) => {
+        if (!currencyUpdated) applyDisplayCurrency(currency);
+      })
+      .catch((error) =>
+        console.error("Unable to read the display currency", error),
+      );
     // Register before reading preferences so an inspector cannot miss a change.
     await listen("theme-preference-changed", ({ payload }) => {
       if (isThemePreference(payload)) {

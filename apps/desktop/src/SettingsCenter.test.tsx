@@ -35,6 +35,7 @@ import { settleClosedLayer } from "./lib/test-layer-settle";
 import { defaultTrayPreferences } from "./preferences-model";
 import { SettingsCenter } from "./SettingsCenter";
 import { applyQuotaDisplayMode } from "./quota-display";
+import { applyDisplayCurrency, USD_DISPLAY } from "./currency-display";
 import { SubscriptionQuotaMeter } from "./components/SubscriptionQuotaMeter";
 import { applyTheme } from "./theme";
 
@@ -67,6 +68,7 @@ const settings = {
     max_request_body_mib: 0,
     theme: "system" as const,
     quota_display_mode: "remaining" as const,
+    display_currency: "auto" as const,
     locale: "zh-CN" as const,
     tray: defaultTrayPreferences(),
     updates: defaultUpdatePreferences(),
@@ -740,6 +742,60 @@ describe("SettingsCenter", () => {
     expect(container.textContent).toContain("无法保存额度显示设置");
     await act(async () => option("剩余百分比").click());
     expect(meter().getAttribute("aria-valuetext")).toBe("剩余 15%");
+  });
+
+  it("saves the display currency and shows the rate in use", async () => {
+    bridge.updatePreferences.mockImplementation(async (values) => ({
+      ...settings,
+      values,
+    }));
+    applyDisplayCurrency({
+      code: "CNY",
+      symbol: "¥",
+      digits: 2,
+      per_usd: 6.6564,
+      rate_date: "2026-11-01",
+      wanted: "CNY",
+      system: "CNY",
+    });
+    try {
+      await render();
+      const trigger = container.querySelector<HTMLButtonElement>(
+        'button[role="combobox"][aria-label="货币"]',
+      )!;
+      expect(trigger.textContent).toBe("跟随系统（人民币）");
+      expect(container.textContent).toContain(
+        "按 11月1日 汇率，1 美元 ≈ ¥6.66",
+      );
+      await act(async () => {
+        trigger.dispatchEvent(
+          new PointerEvent("pointerdown", {
+            bubbles: true,
+            button: 0,
+            pointerType: "mouse",
+          }),
+        );
+        await Promise.resolve();
+      });
+      const item = [
+        ...document.querySelectorAll<HTMLElement>('[role="option"]'),
+      ].find((candidate) => candidate.textContent?.trim() === "日元 JPY")!;
+      await act(async () => {
+        item.click();
+        await Promise.resolve();
+      });
+      await settleClosedLayer();
+      expect(bridge.updatePreferences).toHaveBeenLastCalledWith(
+        expect.objectContaining({ display_currency: "JPY" }),
+      );
+      // Host pushes the new currency once it has a rate; until then dollars.
+      await act(async () =>
+        applyDisplayCurrency({ ...USD_DISPLAY, wanted: "JPY", system: "CNY" }),
+      );
+      expect(container.textContent).toContain("还没取到汇率，暂按美元显示。");
+    } finally {
+      applyDisplayCurrency(USD_DISPLAY);
+    }
   });
 
   it("retains the active theme and selection if saving fails", async () => {

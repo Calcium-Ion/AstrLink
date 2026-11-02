@@ -1,3 +1,4 @@
+import { useDisplayCurrency } from "./currency-display";
 import { isWebEdition } from "./edition";
 import { useBillingSummary, type BillingStatus } from "./BillingOverview";
 import {
@@ -1123,6 +1124,7 @@ function TokenUsagePanel({
   usage: UsageSummary | null;
 }) {
   const t = i18n.t.bind(i18n);
+  useDisplayCurrency();
   const { configs: clientConfigs } = useClientConfigs(inferenceURL);
   const rows = useMemo(
     () => mergeTokenUsageRows(tokenCatalog, usage, billingSummary),
@@ -2545,6 +2547,7 @@ function UsageBreakdownRow({
   tokens: number;
 }) {
   const t = i18n.t.bind(i18n);
+  useDisplayCurrency();
   const requestMetric = compactMetric(requests, status);
   // An unpriced row has no amount to show; its title says why.
   const amount = cost && cost.priced > 0 ? billingAmount(cost) : null;
@@ -2616,6 +2619,7 @@ const UsageMetrics = memo(function UsageMetrics({
   totals: UsageTotals | undefined;
 }) {
   const t = useT();
+  useDisplayCurrency();
   const size = inline ? "inline" : undefined;
   // The panel's columns are narrow: fewer decimals as numbers grow.
   const short = inline;

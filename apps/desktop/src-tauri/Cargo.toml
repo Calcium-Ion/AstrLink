@@ -63,6 +63,7 @@ objc2-foundation = { version = "=0.3.2", default-features = false, features = [
   "block2",
   "NSDistributedNotificationCenter",
   "NSError",
+  "NSLocale",
   "NSNotification",
   "NSOperation",
   "NSString",
@@ -87,6 +88,7 @@ libc = "=0.2.189"
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "=0.61.2", features = [
   "Win32_Foundation",
+  "Win32_Globalization",
   "Win32_Graphics_Gdi",
   "Win32_Security",
   "Win32_Storage_FileSystem",

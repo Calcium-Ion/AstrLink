@@ -1,4 +1,9 @@
 import type { ServicePackage } from "./bridge";
+import {
+  convertUSD,
+  displayCurrency,
+  formatCurrency,
+} from "./currency-display";
 import type { ServiceQuotaEstimate } from "./pricing-model";
 import { codingPlanPresetIDs } from "./service-presets";
 import {
@@ -532,15 +537,14 @@ export function packageMoney(
   return accounts ? { left, total, accounts } : null;
 }
 
-/** An estimate in whole dollars from $10 up, since it is not exact. */
+/**
+ * A dollar estimate in the display currency, in whole units from 10 up since
+ * it is not exact.
+ */
 export function formatEstimateUSD(value: number): string {
-  const digits = value < 10 ? 2 : 0;
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: digits,
-    maximumFractionDigits: digits,
-  }).format(value);
+  const currency = displayCurrency();
+  const amount = convertUSD(value, currency);
+  return formatCurrency(amount, amount < 10 ? currency.digits : 0, currency);
 }
 
 export type ServiceFilter = "all" | "enabled" | "disabled";

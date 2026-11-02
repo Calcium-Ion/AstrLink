@@ -37,6 +37,7 @@ import {
   type LocalImportRead,
 } from "./local-import-model";
 import { parseUsageSummary } from "./usage-summary-model";
+import { parseDisplayCurrency, type DisplayCurrency } from "./currency-display";
 import {
   parsePrivacySummary,
   type PrivacySummary,
@@ -309,6 +310,12 @@ export async function stopCore(): Promise<AppSnapshot> {
 export async function getPreferences(): Promise<SettingsSnapshot> {
   requireNativeBridge();
   return parseSettingsSnapshot(await invokeDesktopRead("get_preferences"));
+}
+
+/** The currency amounts show in, with today's rate; see `currency.rs`. */
+export async function getDisplayCurrency(): Promise<DisplayCurrency> {
+  requireNativeBridge();
+  return parseDisplayCurrency(await invoke<unknown>("display_currency"));
 }
 
 export async function updatePreferences(

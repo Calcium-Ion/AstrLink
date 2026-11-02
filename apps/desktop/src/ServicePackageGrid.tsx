@@ -42,6 +42,7 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 
+import { useDisplayCurrency } from "./currency-display";
 import {
   PACKAGE_STRATEGIES,
   type PackageStrategy,
@@ -1282,6 +1283,7 @@ export function ServicePackageGrid({
 }) {
   const t = useT();
   const mode = useQuotaDisplayMode();
+  useDisplayCurrency();
   const trayID = useId();
   const [columns, setColumns] = useState(4);
   const [expandedID, setExpandedID] = useState<string | null>(null);

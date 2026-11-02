@@ -22,6 +22,7 @@ const valid = {
     max_request_body_mib: 0,
     theme: "system" as const,
     quota_display_mode: "remaining" as const,
+    display_currency: "auto" as const,
     locale: "zh-CN",
     tray: defaultTrayPreferences(),
     updates: defaultUpdatePreferences(),
@@ -125,6 +126,25 @@ describe("preferences IPC contract", () => {
           values: { ...valid.values, quota_display_mode },
         }),
       ).toThrow("$.values.quota_display_mode");
+    }
+  });
+
+  it("accepts auto or an offered display currency", () => {
+    for (const display_currency of ["auto", "USD", "CNY", "JPY"]) {
+      expect(
+        parseSettingsSnapshot({
+          ...valid,
+          values: { ...valid.values, display_currency },
+        }).values.display_currency,
+      ).toBe(display_currency);
+    }
+    for (const display_currency of [undefined, null, "cny", "THB", 1]) {
+      expect(() =>
+        parseSettingsSnapshot({
+          ...valid,
+          values: { ...valid.values, display_currency },
+        }),
+      ).toThrow("$.values.display_currency");
     }
   });
 
