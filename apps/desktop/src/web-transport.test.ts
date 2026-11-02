@@ -187,6 +187,20 @@ describe("web command transport", () => {
     expect(listener).toHaveBeenCalledOnce();
     window.removeEventListener(CONSOLE_SIGNED_OUT, listener);
   });
+  it("keeps the reason a quota read failed", async () => {
+    respond(
+      {
+        error: {
+          code: "subscription_usage_failed",
+          details: [{ reason: "key_rejected" }],
+        },
+      },
+      502,
+    );
+    await expect(
+      webInvoke("get_service_usage", { serviceId: "svc_kimi" }),
+    ).rejects.toMatchObject({ reason: "key_rejected" });
+  });
   it("adapts raw proofs and refusals without retrying or signing out", async () => {
     respond({ error: { code: "raw_password_invalid" } }, 403);
     expect(

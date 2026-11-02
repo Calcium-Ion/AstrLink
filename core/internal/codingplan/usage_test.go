@@ -629,3 +629,51 @@ func TestFetcherForgetsTheSnapshotOfARejectedKey(t *testing.T) {
 		t.Fatalf("provider calls = %d, want 3", calls)
 	}
 }
+
+func TestFetcherNamesTheReasonOfAFailedRead(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.Header.Get("Authorization") {
+		case "Bearer rejected":
+			http.Error(writer, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+		case "Bearer down":
+			http.Error(writer, "bad gateway", http.StatusBadGateway)
+		case "Bearer html":
+			_, _ = writer.Write([]byte("<html>login</html>"))
+		case "Bearer empty":
+			_, _ = writer.Write([]byte(`{"user":{}}`))
+		case "Bearer minimax":
+			_, _ = writer.Write([]byte(`{"base_resp":{"status_code":2049,"status_msg":"invalid api key"}}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	t.Cleanup(upstream.Close)
+	closed := httptest.NewServer(http.NotFoundHandler())
+	closedURL := closed.URL
+	closed.Close()
+
+	cases := []struct {
+		key, base string
+		kind      contract.ServiceKind
+		want      codingplan.FailureReason
+	}{
+		{"rejected", upstream.URL + "/coding", contract.ServiceKindKimiCoding, codingplan.ReasonKeyRejected},
+		{"down", upstream.URL + "/coding", contract.ServiceKindKimiCoding, codingplan.ReasonProviderDown},
+		{"missing", upstream.URL + "/coding", contract.ServiceKindKimiCoding, codingplan.ReasonWrongAddress},
+		{"html", upstream.URL + "/coding", contract.ServiceKindKimiCoding, codingplan.ReasonUnexpectedReply},
+		{"empty", upstream.URL + "/coding", contract.ServiceKindKimiCoding, codingplan.ReasonNoQuota},
+		{"minimax", upstream.URL + "/v1", contract.ServiceKindMiniMaxCoding, codingplan.ReasonKeyRejected},
+		{"closed", closedURL + "/coding", contract.ServiceKindKimiCoding, codingplan.ReasonUnreachable},
+	}
+	for index, test := range cases {
+		id := contract.ServiceID(fmt.Sprintf("service_reason_%d", index))
+		secrets := &memorySecrets{items: map[secretstore.Ref][]byte{
+			secretstore.Ref("local://service/" + string(id)): []byte(test.key),
+		}}
+		fetcher := codingplan.New(secrets, upstream.Client())
+		_, err := fetcher.Usage(context.Background(), codingPlanService(id, test.kind, test.base))
+		if got := codingplan.ReasonOf(err); got != test.want || !errors.Is(err, codingplan.ErrUsageUnavailable) {
+			t.Errorf("%s: reason = %q (err %v), want %q", test.key, got, err, test.want)
+		}
+	}
+}

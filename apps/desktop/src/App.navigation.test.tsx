@@ -57,6 +57,7 @@ const bridgeMocks = vi.hoisted(() => ({
   listRawAccess: vi.fn().mockResolvedValue([]),
   listAccessTokenUsage: vi.fn().mockResolvedValue({ items: [] }),
   listServices: vi.fn(),
+  getServicePackages: vi.fn().mockResolvedValue([]),
   listPrivacyModelInstallations: vi.fn(),
   listPrivacyPolicies: vi.fn(),
   listRequestRecords: vi.fn(),
@@ -1299,7 +1300,7 @@ describe("App workspace navigation", () => {
     expect(
       document.querySelector('[aria-current="page"]')?.textContent,
     ).toContain("提供商");
-    expect(workspaceHeading().textContent).toBe("API 提供商");
+    expect(workspaceHeading().textContent).toBe("提供商");
     expect(container.textContent).toContain("Primary gateway");
     expect(container.textContent).toContain("Codex 订阅");
     expect(
@@ -1310,7 +1311,7 @@ describe("App workspace navigation", () => {
     await act(async () => {
       button("添加 API 提供商").click();
     });
-    expect(workspaceHeading().textContent).toBe("API 提供商");
+    expect(workspaceHeading().textContent).toBe("提供商");
     await chooseKindCard("New API");
     expect(workspaceHeading().textContent).toBe("添加 API 提供商");
     expect(
@@ -1331,7 +1332,7 @@ describe("App workspace navigation", () => {
     await act(async () => {
       back?.click();
     });
-    expect(workspaceHeading().textContent).toBe("API 提供商");
+    expect(workspaceHeading().textContent).toBe("提供商");
   });
 
   it("opens a provider's requests from its usage row and its settings from the gear", async () => {
@@ -1435,7 +1436,7 @@ describe("App workspace navigation", () => {
     expect(
       document.querySelector('[aria-current="page"]')?.textContent,
     ).toContain("提供商");
-    expect(workspaceHeading().textContent).toBe("API 提供商");
+    expect(workspaceHeading().textContent).toBe("提供商");
     expect(container.textContent).toContain("Codex 订阅");
     expect(
       container.querySelector('[aria-label="更多 Codex 订阅 操作"]'),
@@ -1536,7 +1537,7 @@ describe("App workspace navigation", () => {
       button("前往提供商").click();
       await Promise.resolve();
     });
-    expect(workspaceHeading().textContent).toBe("API 提供商");
+    expect(workspaceHeading().textContent).toBe("提供商");
 
     await openSettings();
     await act(async () => {
@@ -1895,7 +1896,7 @@ describe("App workspace navigation", () => {
     });
 
     expect(bridgeMocks.createService).toHaveBeenCalledOnce();
-    expect(workspaceHeading().textContent).toBe("API 提供商");
+    expect(workspaceHeading().textContent).toBe("提供商");
     expect(container.textContent).not.toContain("放弃未保存的修改？");
     expect(document.querySelector('[role="alertdialog"]')).toBeNull();
   });

@@ -14,6 +14,8 @@ export class ConsoleError extends Error {
     public status: number,
     public code: string,
     public retryAfter: number,
+    /** The first detail's reason, such as why a quota read failed. */
+    public reason?: string,
   ) {
     super(
       code === "oauth_loopback_callback_unavailable"
@@ -67,6 +69,7 @@ export async function consoleRequest(
       response.status,
       error?.code ?? `HTTP ${response.status}`,
       Number(retry),
+      error?.details?.find((v: Args) => typeof v.reason === "string")?.reason,
     );
   }
   return { value, etag: response.headers.get("ETag") };

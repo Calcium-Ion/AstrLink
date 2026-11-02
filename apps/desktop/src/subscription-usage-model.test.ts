@@ -15,6 +15,7 @@ import {
   usageBarFillClass,
   usageBarPercent,
   usageBarTrackClass,
+  usageFailureReason,
   usageWindowTone,
   windowLabel,
 } from "./subscription-usage-model";
@@ -309,5 +310,19 @@ describe("subscription usage contract", () => {
         outcome: "full_reset",
       }),
     ).toThrow(/outcome/);
+  });
+});
+
+describe("usageFailureReason", () => {
+  it("reads the reason from a web error or a desktop error's text", () => {
+    expect(usageFailureReason({ reason: "no_plan" })).toBe("no_plan");
+    expect(
+      usageFailureReason(
+        new Error(
+          `GET /control/v1/services/svc/usage returned 502 Bad Gateway: {"error":{"code":"subscription_usage_failed","details":[{"reason":"timeout"}]}}`,
+        ),
+      ),
+    ).toBe("timeout");
+    expect(usageFailureReason(new Error("status 401"))).toBeUndefined();
   });
 });

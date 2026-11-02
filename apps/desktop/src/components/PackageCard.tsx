@@ -103,7 +103,11 @@ export function QuotaBar({
   );
 }
 
-/** The three-line quota area every card shares: status, bar, caption. */
+/**
+ * The three-line quota area every card shares: status, bar, caption. Without
+ * a bar the caption takes the bar's room as a second line, so a long message
+ * shows in full and the card keeps its height.
+ */
 export function QuotaSummary({
   tone,
   status,
@@ -145,10 +149,25 @@ export function QuotaSummary({
       <div className="grid gap-1">
         {bar}
         <div
-          className="flex min-w-0 items-center justify-between gap-2 text-micro leading-4 text-muted-foreground"
+          className={cn(
+            "flex min-w-0 justify-between gap-2 text-micro text-muted-foreground",
+            // The caption keeps its line when empty. Without a bar it keeps
+            // the bar's room too: two 15px lines match the bar, its gap and
+            // one 16px line, so footers stay in line across the row.
+            bar
+              ? "min-h-4 items-center leading-4"
+              : "min-h-7.5 items-start leading-3.75",
+          )}
           data-slot="quota-caption"
         >
-          <span className="min-w-0 truncate">{captionStart}</span>
+          <span
+            className={cn(
+              "min-w-0",
+              bar ? "truncate" : "line-clamp-2 break-words",
+            )}
+          >
+            {captionStart}
+          </span>
           {captionEnd ? (
             <span className="shrink-0 whitespace-nowrap">{captionEnd}</span>
           ) : null}
@@ -223,7 +242,9 @@ export function PackageCardShell({
         stacked &&
           "mb-2 shadow-[0_4px_0_-1px_var(--card),0_4px_0_0_var(--border),0_8px_0_-2px_var(--card),0_8px_0_-1px_var(--border)]",
         disabled && "bg-muted/30",
-        dragging && "opacity-60 ring-2 ring-ring",
+        // The slot a dragged card left: its copy follows the pointer.
+        dragging &&
+          "border-dashed border-primary/50 bg-primary/5 shadow-none *:invisible",
         className,
       )}
       data-disabled={disabled || undefined}

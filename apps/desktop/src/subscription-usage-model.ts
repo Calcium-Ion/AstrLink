@@ -624,6 +624,32 @@ function rawErrorText(error: unknown): string {
   return "";
 }
 
+/**
+ * The reason a failed usage read names in its error details, such as
+ * `key_rejected`; undefined when the error carries none.
+ */
+export function usageFailureReason(error: unknown): string | undefined {
+  const own = (error as { reason?: unknown } | null)?.reason;
+  if (typeof own === "string" && own) return own;
+  const raw = rawErrorText(error);
+  const jsonStart = raw.indexOf("{");
+  if (jsonStart < 0) return undefined;
+  try {
+    const parsed = JSON.parse(raw.slice(jsonStart)) as {
+      error?: { details?: unknown };
+    };
+    const details = Array.isArray(parsed.error?.details)
+      ? (parsed.error.details as { reason?: unknown }[])
+      : [];
+    const reason = details.find(
+      (detail) => typeof detail?.reason === "string",
+    )?.reason;
+    return typeof reason === "string" && reason ? reason : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function resetOutcomeMessage(outcome: UsageResetOutcome): string {
   switch (outcome) {
     case "reset":

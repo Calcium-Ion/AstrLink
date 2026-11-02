@@ -15,6 +15,8 @@ export interface UsageEntry {
   status: "loading" | "ready" | "error";
   usage?: SubscriptionUsage;
   error?: string;
+  /** Why the last read failed, when Core names it (`key_rejected`, …). */
+  reason?: string;
 }
 
 /**
@@ -192,8 +194,8 @@ export function remainingTone(remaining: number, exhausted = false): QuotaTone {
  */
 export type CardQuota =
   | { kind: "loading" }
-  /** The last read failed; `message` is why, when known. */
-  | { kind: "error"; message?: string }
+  /** The last read failed; `message` and `reason` say why, when known. */
+  | { kind: "error"; message?: string; reason?: string }
   | { kind: "none" }
   | {
       kind: "windows";
@@ -249,6 +251,59 @@ function windowRemaining(
   };
 }
 
+/** Core's reasons for a failed quota read, as `packages.readFailure` keys. */
+const failureKeys: Record<string, string> = {
+  key_rejected: "keyRejected",
+  no_plan: "noPlan",
+  wrong_address: "wrongAddress",
+  unreachable: "unreachable",
+  timeout: "timeout",
+  provider_down: "providerDown",
+  unexpected_reply: "unexpectedReply",
+  no_quota: "noQuota",
+  provider_error: "providerSaid",
+};
+
+/**
+ * Why a quota read failed, as one short caption: the i18n key under
+ * `packages.readFailure`, worded with the provider's name. Core's `reason`
+ * decides when it names one; otherwise the message is read for the same
+ * causes. `detail` is the provider's own words for an error only it can
+ * explain. The full message stays available as the caption's tooltip.
+ */
+export function readFailureReason(
+  message?: string,
+  reason?: string,
+): { key: string; detail?: string } {
+  const raw = (message ?? "").trim();
+  // The provider's words after Core's "<label> usage unavailable: " prefix.
+  const detail = raw.replace(/^.*\busage unavailable: /i, "").trim();
+  const known = reason ? failureKeys[reason] : undefined;
+  if (known)
+    return known === "providerSaid" && detail
+      ? { key: known, detail }
+      : { key: known === "providerSaid" ? "other" : known };
+  const text = raw.toLowerCase();
+  if (text.includes("service_credential_unavailable")) return { key: "noKey" };
+  if (text.includes("subscription_usage_timeout") || text.includes("timeout"))
+    return { key: "timeout" };
+  const status = /status (\d{3})/.exec(text)?.[1];
+  if (status === "401" || status === "403") return { key: "keyRejected" };
+  if (status === "404") return { key: "wrongAddress" };
+  if (status?.startsWith("5")) return { key: "providerDown" };
+  if (
+    text.includes("connection refused") ||
+    text.includes("no such host") ||
+    text.includes("dial tcp")
+  )
+    return { key: "unreachable" };
+  if (text.includes("invalid payload")) return { key: "unexpectedReply" };
+  if (text.includes("no usage windows")) return { key: "noQuota" };
+  // Anything else is the provider's own error, or a message the app already
+  // worded, such as a rate limit.
+  return detail ? { key: "providerSaid", detail } : { key: "other" };
+}
+
 /** The quota area of a single service from its last read. */
 export function serviceQuota(
   entry: UsageEntry | undefined,
@@ -256,7 +311,7 @@ export function serviceQuota(
 ): CardQuota {
   if (!entry || entry.status === "loading") return { kind: "loading" };
   if (entry.status === "error" || !entry.usage)
-    return { kind: "error", message: entry.error };
+    return { kind: "error", message: entry.error, reason: entry.reason };
   const usage = entry.usage;
   const binding = bindingQuota(usage, now);
   if (binding)
@@ -306,6 +361,7 @@ export function packageQuota(
   let signedOut = 0;
   let total = 0;
   let message: string | undefined;
+  let reason: string | undefined;
   const known: { service: Service; quota: BindingQuota }[] = [];
   for (const service of services) {
     if (!service.enabled) {
@@ -325,7 +381,10 @@ export function packageQuota(
       entry.status === "error" ? null : bindingQuota(entry.usage, now);
     if (!quota) {
       failed++;
-      message ??= entry.error;
+      if (message === undefined) {
+        message = entry.error;
+        reason = entry.reason;
+      }
       continue;
     }
     known.push({ service, quota });
@@ -334,7 +393,7 @@ export function packageQuota(
   if (known.length === 0) {
     if (disabled === services.length)
       return { kind: "disabled", count: disabled };
-    if (failed > 0) return { kind: "error", message };
+    if (failed > 0) return { kind: "error", message, reason };
     if (pending > 0) return { kind: "loading" };
     return { kind: "signedOut", count: signedOut, disabled };
   }

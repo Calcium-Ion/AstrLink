@@ -55,6 +55,7 @@ import {
   cardMatchesFilter,
   packageCards,
   packageQuota,
+  readFailureReason,
   remainingTone,
   reorderedServices,
   serviceQuota,
@@ -311,14 +312,18 @@ function quotaView(
       const retrying = services.some((service) =>
         env.refreshing.has(service.id),
       );
+      const reason = readFailureReason(quota.message, quota.reason);
       return {
         tone: "neutral",
         status: t("packages.unreadable"),
         bar: empty,
         captionStart: (
           <span title={quota.message}>
-            {t("packages.lastReadFailed")}
-            {quota.message ? (
+            {t(`packages.readFailure.${reason.key}`, {
+              provider: serviceKindLabel(services[0]!.kind),
+              detail: reason.detail,
+            })}
+            {quota.message && !reason.detail ? (
               <span className="sr-only">{quota.message}</span>
             ) : null}
           </span>

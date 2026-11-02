@@ -1131,6 +1131,11 @@ paths:
         stops asking that host, for every service on it, until the provider's
         `Retry-After` (5 minutes when it sends none), answering 429
         `subscription_usage_rate_limited` meanwhile.
+
+        A failed API-key plan lookup answers 502 `subscription_usage_failed`
+        with one detail whose `reason` names the cause: `key_rejected`,
+        `no_plan`, `wrong_address`, `unreachable`, `timeout`,
+        `provider_down`, `unexpected_reply`, `no_quota` or `provider_error`.
       parameters:
         - name: refresh
           in: query

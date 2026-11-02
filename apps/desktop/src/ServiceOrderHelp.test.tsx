@@ -85,15 +85,31 @@ it("opens the demo from the first click on every visit without a help popover", 
   }
 });
 
-it("demonstrates two provider moves, replays from the beginning and cancels on close", async () => {
+const firstAccount = () =>
+  document.querySelector<HTMLElement>("[data-demo-account][data-first]")
+    ?.dataset.demoAccount;
+
+it("moves a card to the front, then shows which account each strategy uses, loops, replays and cancels on close", async () => {
   vi.useFakeTimers();
   await render();
   expect(order()).toEqual(["codex", "openai", "newapi"]);
-  await act(async () => vi.advanceTimersByTime(1700));
+  expect(firstAccount()).toBeUndefined();
+  await act(async () => vi.advanceTimersByTime(1000));
+  expect(
+    document.querySelector("[data-lifted]")?.getAttribute("data-preview-item"),
+  ).toBe("newapi");
+  await act(async () => vi.advanceTimersByTime(900));
   expect(order()).toEqual(["newapi", "codex", "openai"]);
-  await act(async () => vi.advanceTimersByTime(4000));
-  expect(order()).toEqual(["newapi", "openai", "codex"]);
-  expect(dialog()?.textContent).toContain("开启故障切换后");
+  await act(async () => vi.advanceTimersByTime(2100));
+  expect(firstAccount()).toBe("b");
+  expect(dialog()?.textContent).toContain("最近快重置优先：先用 B");
+  await act(async () => vi.advanceTimersByTime(2800));
+  expect(firstAccount()).toBe("a");
+  expect(dialog()?.textContent).toContain("额度剩余最多优先：先用 A");
+  // After the hold it starts over.
+  await act(async () => vi.advanceTimersByTime(3200));
+  expect(order()).toEqual(["codex", "openai", "newapi"]);
+  await act(async () => vi.advanceTimersByTime(2000));
   await act(async () =>
     document
       .querySelector<HTMLButtonElement>('button[aria-label="重播拖拽演示"]')!
@@ -101,7 +117,7 @@ it("demonstrates two provider moves, replays from the beginning and cancels on c
   );
   expect(order()).toEqual(["codex", "openai", "newapi"]);
   await act(async () => button("知道了").click());
-  await act(async () => vi.advanceTimersByTime(6000));
+  await act(async () => vi.advanceTimersByTime(12000));
   expect(dialog()).toBeNull();
 });
 
@@ -118,9 +134,10 @@ it("still opens and dismisses when browser storage is unavailable", async () => 
 it("shows the result without animated dragging for reduced motion", async () => {
   motionPreference.reduced = true;
   await render();
-  expect(order()).toEqual(["newapi", "openai", "codex"]);
+  expect(order()).toEqual(["newapi", "codex", "openai"]);
   expect(document.querySelector("[data-lifted]")).toBeNull();
-  expect(dialog()?.textContent).toContain("开启故障切换后");
+  expect(firstAccount()).toBe("a");
+  expect(dialog()?.textContent).toContain("额度剩余最多优先");
 });
 
 it("closes with Escape and returns focus to the help trigger", async () => {

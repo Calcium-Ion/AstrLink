@@ -3414,7 +3414,7 @@ describe("ServiceManager", () => {
     });
     expect(card.textContent).not.toContain("$300.00");
     const caption = card.querySelector('[data-slot="quota-caption"]')!;
-    expect(caption.textContent).toContain("上次读取失败");
+    expect(caption.textContent).toContain("New API 拒绝了这把密钥");
     expect(caption.querySelector("[title]")?.getAttribute("title")).toBe(
       "subscription_usage_failed: new-api usage unavailable: status 401",
     );

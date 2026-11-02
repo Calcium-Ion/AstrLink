@@ -16,10 +16,13 @@ export function UsageRangeSelect({
   label,
   preset,
   onChange,
+  size = "sm",
 }: {
   label: string;
   preset: UsageRangePreset;
   onChange: (preset: UsageRangePreset) => void;
+  /** Match the height of the controls beside it. */
+  size?: "sm" | "default";
 }) {
   const t = useT();
   return (
@@ -31,7 +34,7 @@ export function UsageRangeSelect({
     >
       <SelectTrigger
         aria-label={label}
-        size="sm"
+        size={size}
         className="w-auto shrink-0 text-xs"
       >
         <SelectValue />

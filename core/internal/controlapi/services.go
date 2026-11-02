@@ -1101,6 +1101,13 @@ func writeServiceUsageError(writer http.ResponseWriter, err error) {
 	case errors.Is(err, context.DeadlineExceeded) || isTimeoutError(err):
 		writeError(writer, http.StatusGatewayTimeout, "subscription_usage_timeout", "subscription usage lookup timed out")
 	default:
+		// A coding plan read names its reason so the app can explain the
+		// failure for that provider.
+		if reason := codingplan.ReasonOf(err); reason != "" {
+			writeErrorDetails(writer, http.StatusBadGateway, "subscription_usage_failed", sanitizeUsageError(err),
+				[]errorDetail{{Reason: string(reason)}})
+			return
+		}
 		writeError(writer, http.StatusBadGateway, "subscription_usage_failed", sanitizeUsageError(err))
 	}
 }

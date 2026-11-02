@@ -8,6 +8,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from "react";
+import { createPortal } from "react-dom";
 
 import { GripVertical } from "@/components/icons";
 import { Button } from "@/components/ui/button";
@@ -25,8 +26,10 @@ export interface SortableGridHandle {
 
 /**
  * A grid of equal slots reordered by dragging an item or by arrow keys on its
- * grip. While dragging, the items reorder live in their slots and nothing is
- * transformed, so scrollers around the grid keep their position in WebKit.
+ * grip. While dragging, a copy of the card follows the pointer in a layer on
+ * the body and its slot shows as a placeholder; the items reorder live in
+ * their slots and nothing inside the scroller is transformed, so scrollers
+ * around the grid keep their position in WebKit.
  * `after` renders a full-width row (an expanded tray) below an item's row;
  * during a drag it keeps that row, so the cards under the pointer stay put.
  */
@@ -61,6 +64,13 @@ export function SortableGrid<T extends { id: string }>({
   const grid = useRef<HTMLDivElement>(null);
   const [preview, setPreview] = useState<string[] | null>(null);
   const [active, setActive] = useState<string | null>(null);
+  // Where the pointer-following copy sits, in viewport pixels.
+  const [ghost, setGhost] = useState<{
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+  } | null>(null);
   const drag = useRef<{
     id: string;
     pointer: number;
@@ -69,6 +79,10 @@ export function SortableGrid<T extends { id: string }>({
     moved: boolean;
     order: string[];
     membership: string;
+    offsetX: number;
+    offsetY: number;
+    width: number;
+    height: number;
   } | null>(null);
   const focusAfterMove = useRef<string | null>(null);
   const byID = new Map(items.map((item) => [item.id, item]));
@@ -87,6 +101,7 @@ export function SortableGrid<T extends { id: string }>({
     drag.current = null;
     setPreview(null);
     setActive(null);
+    setGhost(null);
   };
   useEffect(() => {
     if (!active) return;
@@ -160,6 +175,7 @@ export function SortableGrid<T extends { id: string }>({
       )
     )
       return;
+    const box = event.currentTarget.getBoundingClientRect();
     drag.current = {
       id,
       pointer: event.pointerId,
@@ -168,6 +184,10 @@ export function SortableGrid<T extends { id: string }>({
       moved: false,
       order: ids,
       membership,
+      offsetX: event.clientX - box.left,
+      offsetY: event.clientY - box.top,
+      width: box.width,
+      height: box.height,
     };
     const move = (next: PointerEvent) => {
       const state = drag.current;
@@ -183,6 +203,12 @@ export function SortableGrid<T extends { id: string }>({
         onDragStart?.();
         setActive(state.id);
       }
+      setGhost({
+        left: next.clientX - state.offsetX,
+        top: next.clientY - state.offsetY,
+        width: state.width,
+        height: state.height,
+      });
       scrollNear(next.clientY);
       const to = slotAt(next.clientX, next.clientY, state.order);
       const from = state.order.indexOf(state.id);
@@ -319,6 +345,20 @@ export function SortableGrid<T extends { id: string }>({
       }}
     >
       {cells}
+      {active && ghost && byID.get(active)
+        ? createPortal(
+            <div
+              aria-hidden="true"
+              className="pointer-events-none fixed z-50 cursor-grabbing rounded-xl shadow-xl ring-1 ring-primary/40"
+              data-grid-ghost=""
+              inert
+              style={ghost}
+            >
+              {renderItem(byID.get(active)!, { grip: null, dragging: false })}
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   );
 }

@@ -208,6 +208,7 @@ import {
 } from "./subscription-model";
 import {
   formatSubscriptionUsageError,
+  usageFailureReason,
   resetOutcomeMessage,
   type SubscriptionUsage,
 } from "./subscription-usage-model";
@@ -1244,6 +1245,7 @@ export function ServiceManager({
         }));
       } catch (cause) {
         const message = formatSubscriptionUsageError(cause);
+        const reason = usageFailureReason(cause);
         console.error("AstrLink failed to load subscription usage", id, cause);
         if (usageGeneration.current !== generation) return;
         setUsageByService((current) => ({
@@ -1252,6 +1254,7 @@ export function ServiceManager({
             status: "error",
             usage: current[id]?.usage,
             error: message,
+            reason,
           },
         }));
       } finally {
@@ -2396,6 +2399,7 @@ export function ServiceManager({
                 label={t("services.performanceRange")}
                 preset={performancePreset}
                 onChange={setPerformancePreset}
+                size="default"
               />
               <ServiceOrderHelp ready={isReady && catalogStatus === "ready"} />
               <IconButton
