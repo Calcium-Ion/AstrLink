@@ -2697,7 +2697,7 @@ describe("ServiceManager", () => {
   });
 
   it.each([
-    ["codex_subscription", "openai_codex", "pro", "Pro 20×", false],
+    ["codex_subscription", "openai_codex", "pro", "Pro", false],
     ["claude_subscription", "claude_code", "pro", "Pro", false],
     [
       "grok_subscription",
