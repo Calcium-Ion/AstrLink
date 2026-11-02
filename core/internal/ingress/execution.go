@@ -492,6 +492,7 @@ func (handler *Handler) executeCandidatesWithTest(
 			}
 		}
 		records.noteCodexOfficial(clientClass == accountauth.ClientClassOfficial)
+		identity := protection.sendsClientIdentity(candidate.Service.Kind, clientClass)
 		var headers http.Header
 		authorizationEndpoint, authorizeErr := candidate.AuthorizationEndpoint()
 		// The recognized class rides the proxy context so the authorizer, which
@@ -676,6 +677,9 @@ func (handler *Handler) executeCandidatesWithTest(
 					handler.requestRecords,
 					handler.recordLogger,
 				)
+				// Rewrites go first so a long conversion report cannot crowd
+				// them out of the diagnostics limit.
+				recordSession.noteGatewayRewrites(reasoning, identity)
 				recordSession.noteConversionDiagnostics(contract.ConversionDiagnosticPhaseRequest, conversion.Diagnostics)
 				recordSession.noteConversionDiagnostics(contract.ConversionDiagnosticPhaseRequest, officialDiagnostics)
 				recordSession.noteGatewayReasoning(reasoning)

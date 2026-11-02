@@ -56,8 +56,10 @@ function readSource(relativePath: string): string {
  * sweeps a fading band through text, and the scroll edge fade is an alpha
  * mask. Each stays inside its own utility.
  */
+// Effects that may paint a gradient: the shimmer text, the scroll fades and
+// the request sky's night backdrop, an illustration rather than UI chrome.
 const gradientEffects =
-  /^@utility (?:shimmer|scroll-fade-[xy]) \{$[\s\S]*?^\}$/gm;
+  /^@utility (?:shimmer|scroll-fade-[xy]) \{$[\s\S]*?^\}$|^ {2}--sky-bg: radial-gradient\([\s\S]*?^ {2}\);$/gm;
 
 function productionSources(): Array<[string, string]> {
   return readdirSync(srcDirectory)

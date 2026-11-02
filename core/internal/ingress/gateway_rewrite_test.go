@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -286,6 +287,46 @@ func TestGlobalPromptIsAddedOncePerAttempt(t *testing.T) {
 	}
 	if strings.Contains(bodies[1], `"signature"`) || !strings.Contains(bodies[1], `"thinking":{"type":"enabled","budget_tokens":31999}`) {
 		t.Fatalf("repaired retry = %s", bodies[1])
+	}
+}
+
+func TestGatewayRewritesAreRecorded(t *testing.T) {
+	notes := func(record contract.RequestRecord) []string {
+		var paths []string
+		for _, diagnostic := range record.ConversionDiagnostics {
+			if diagnostic.Code == contract.GatewayRewriteDiagnostic {
+				paths = append(paths, diagnostic.Path)
+			}
+		}
+		return paths
+	}
+	_, _, chatResponse := nativeProviderExchange(contract.ProtocolOpenAIChat, false)
+	upstream := newSequenceUpstream(t, "application/json", chatResponse)
+	candidate := apiCandidate("service_api", contract.ServiceKindMagpie, upstream.url, contract.ProtocolOpenAIChat)
+	response, store := serveRewrite(t, promptSettings(), []endpoint.Resolved{candidate}, "/v1/chat/completions",
+		`{"model":"model-test","messages":[{"role":"user","content":"hello"}]}`, nil)
+	if got := notes(store.root(t)); response.Code != http.StatusOK || !slices.Equal(got, []string{"global_prompt"}) {
+		t.Fatalf("API key provider: response = %d, rewrites = %q", response.Code, got)
+	}
+
+	// Droid always presents its own client, so every call there carries the
+	// subscription identity.
+	droid := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(writer, identityClaudeResponse)
+	}))
+	defer droid.Close()
+	kind := contract.ServiceKindDroidSubscription
+	service := contract.Service{
+		ID: "service_droid", Name: "Droid", Kind: kind, Enabled: true, Models: []string{"claude-opus-4-6"},
+		Capabilities: kind.SubscriptionProvider().Capabilities(),
+		Subscription: &contract.SubscriptionConnection{Provider: kind.SubscriptionProvider(), Status: contract.SubscriptionStatusConnected, CredentialRef: "keyring://subscription/service_droid"},
+	}
+	response, store = serveRewrite(t, reasoningSettings(contract.ReasoningModePassthrough, contract.ReasoningLevelMedium),
+		[]endpoint.Resolved{{Service: service, BaseURL: droid.URL, UpstreamProtocol: contract.ProtocolAnthropicMessages}}, "/v1/messages",
+		`{"model":"claude-opus-4-6","max_tokens":64,"messages":[{"role":"user","content":"hello"}]}`, nil)
+	if got := notes(store.root(t)); response.Code != http.StatusOK || !slices.Equal(got, []string{"client_identity"}) {
+		t.Fatalf("Droid: response = %d, rewrites = %q", response.Code, got)
 	}
 }
 
@@ -1098,11 +1139,18 @@ func TestReasoningRecordsArePersisted(t *testing.T) {
 	}
 	for model, expected := range want {
 		record := byModel[model]
-		diagnostic := contract.ConversionDiagnostic{
+		diagnostics := []contract.ConversionDiagnostic{{
 			Phase: contract.ConversionDiagnosticPhaseRequest, Severity: contract.ConversionDiagnosticWarning,
 			Code: gatewayReasoningDiagnostic, Path: "reasoning", Message: expected.message,
+		}}
+		// A changed level is also noted as a rewrite, ahead of the explanation.
+		if expected.effort != "" {
+			diagnostics = append([]contract.ConversionDiagnostic{{
+				Phase: contract.ConversionDiagnosticPhaseRequest, Severity: contract.ConversionDiagnosticWarning,
+				Code: contract.GatewayRewriteDiagnostic, Path: string(contract.GatewayRewriteReasoning), Message: "sent reasoning " + expected.effort,
+			}}, diagnostics...)
 		}
-		if recordedEffort(record) != expected.effort || len(record.ConversionDiagnostics) != 1 || record.ConversionDiagnostics[0] != diagnostic {
+		if recordedEffort(record) != expected.effort || !slices.Equal(record.ConversionDiagnostics, diagnostics) {
 			t.Fatalf("%s record: effort %q, diagnostics %+v", model, recordedEffort(record), record.ConversionDiagnostics)
 		}
 	}

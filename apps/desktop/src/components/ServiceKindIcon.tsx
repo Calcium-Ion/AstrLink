@@ -42,6 +42,11 @@ const kindMarks: Record<ServiceKind, Mark> = {
   custom: "custom",
 };
 
+/** The logo a kind draws; vendor-backed kinds name their vendor. */
+export function serviceKindMark(kind: ServiceKind): Mark {
+  return kindMarks[kind];
+}
+
 function renderMark(mark: Mark, size: number): ReactNode {
   switch (mark) {
     case "newapi":

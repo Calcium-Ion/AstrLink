@@ -825,6 +825,33 @@ func (session *recordSession) noteGatewayReasoning(reasoning gatewayReasoning) {
 	}
 }
 
+// noteGatewayRewrites records the rewrites of the current attempt that no
+// record field shows, one request diagnostic each with the rewrite as its
+// path, so statistics can count them. Like every diagnostic it must follow
+// beginNetworkAttempt, which starts the attempt's list afresh.
+func (session *recordSession) noteGatewayRewrites(reasoning gatewayReasoning, identity bool) {
+	if session == nil {
+		return
+	}
+	var notes []relaykitbridge.ConversionDiagnostic
+	note := func(rewrite contract.GatewayRewrite, message string) {
+		notes = append(notes, relaykitbridge.ConversionDiagnostic{
+			Code: contract.GatewayRewriteDiagnostic, Path: string(rewrite), Message: message,
+			Severity: string(contract.ConversionDiagnosticWarning),
+		})
+	}
+	if reasoning.systemPrompt {
+		note(contract.GatewayRewriteSystemPrompt, "added the global system prompt")
+	}
+	if reasoning.effort != "" {
+		note(contract.GatewayRewriteReasoning, "sent reasoning "+reasoning.effort)
+	}
+	if identity {
+		note(contract.GatewayRewriteClientIdentity, "sent with the subscription's client identity")
+	}
+	session.noteConversionDiagnostics(contract.ConversionDiagnosticPhaseRequest, notes)
+}
+
 // addImageCompressionEvent records what image compression did to the
 // attempt beginNetworkAttempt opens. Compression ran while the attempt was
 // prepared, so the phase keeps its own times and lands ahead of the route

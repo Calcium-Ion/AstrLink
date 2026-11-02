@@ -2,6 +2,8 @@ import { currentLocale, i18n } from "./i18n";
 import {
   displayRequestStatus,
   isModelDiscoveryProtocol,
+  type ClientType,
+  type GatewayRewrite,
   type RequestRecord,
   type RequestStatus,
 } from "./request-record-model";
@@ -23,7 +25,7 @@ export const USAGE_RANGE_PRESETS = ["1d", "7d", "30d", "90d", "1y"] as const;
 
 export type UsageRangePreset = (typeof USAGE_RANGE_PRESETS)[number];
 
-export const DEFAULT_USAGE_RANGE_PRESET: UsageRangePreset = "1y";
+export const DEFAULT_USAGE_RANGE_PRESET: UsageRangePreset = "1d";
 
 export function isUsageRangePreset(value: unknown): value is UsageRangePreset {
   return USAGE_RANGE_PRESETS.includes(value as UsageRangePreset);
@@ -42,6 +44,9 @@ export type UsageRange = UsageRangePreset | CustomUsageRange;
 
 /** Core sums at most 366 days; a year of local days stays under it across DST. */
 export const MAX_CUSTOM_RANGE_DAYS = 365;
+
+/** Core's limit for hour-by-model buckets: 32 days, room for a DST shift. */
+export const HOUR_MODEL_MAX_SPAN_MS = 32 * 24 * 3_600_000;
 
 export function isCustomUsageRange(
   range: UsageRange,
@@ -181,6 +186,32 @@ export interface UsageHourBucket extends UsageTotals {
   hour: number;
 }
 
+/** One model's successful calls in one local hour. */
+export interface UsageHourModelBucket {
+  /** Local calendar day as `YYYY-MM-DD`. */
+  date: string;
+  /** Local hour of day, 0–23. */
+  hour: number;
+  /** Null when no model was recorded. */
+  model: string | null;
+  requests: number;
+  total_tokens: number;
+}
+
+/** Calls that took one way through the gateway, failed ones included. */
+export interface UsageRoute {
+  /** Null for unknown and historical clients. */
+  client_type: ClientType | null;
+  /** The provider of the last attempt; null when none was reached. */
+  service_id: string | null;
+  /** The provider the call failed over from. */
+  failed_service_id: string | null;
+  failed: boolean;
+  /** In the order the gateway applies them. */
+  rewrites: GatewayRewrite[];
+  requests: number;
+}
+
 export interface UsageSummary {
   window: UsageWindow;
   totals: UsageTotals;
@@ -192,9 +223,21 @@ export interface UsageSummary {
    * Multi-day ranges leave this empty so the chart stays on `by_day`.
    */
   by_hour: UsageHourBucket[];
+  /**
+   * Sparse local hours with successful calls, split by model. Core fills it
+   * for windows of about a month or less and leaves longer ones empty.
+   */
+  by_hour_model: UsageHourModelBucket[];
   by_service: UsageGroup[];
   by_model: UsageGroup[];
   by_token: UsageGroup[];
+  /** By detected client; unknown and historical calls share the null id. */
+  by_client: UsageGroup[];
+  /**
+   * Routes with their rewrites and failovers, busiest first. Core fills it
+   * for windows of about a month or less and leaves longer ones empty.
+   */
+  by_route: UsageRoute[];
   scanned_records: number;
   capped: boolean;
 }
@@ -481,9 +524,12 @@ export function emptyUsageSummary(
       ...emptyUsageTotals(),
     })),
     by_hour: emptyHourSeries(window),
+    by_hour_model: [],
     by_service: [],
     by_model: [],
     by_token: [],
+    by_client: [],
+    by_route: [],
     scanned_records: 0,
     capped,
   };
@@ -601,9 +647,13 @@ export function aggregateUsage(
       (date) => observed.get(date) ?? { date, ...emptyUsageTotals() },
     ),
     by_hour: padHourBuckets(records, window),
+    by_hour_model: hourModelBuckets(records, window),
     by_service: aggregate.by_service,
     by_model: aggregate.by_model,
     by_token: aggregate.by_token,
+    by_client: clientGroups(records),
+    // Only Core tells which rewrites a call got.
+    by_route: [],
     scanned_records: aggregate.scanned_records,
     capped,
   };
@@ -623,6 +673,61 @@ function usageRecordStatus(
   const status = rootCallStatus(record);
   if (status !== "failed" && status !== "succeeded") return null;
   return status;
+}
+
+/** Core's hour-by-model buckets, from records, for windows Core fills them. */
+function hourModelBuckets(
+  records: RequestRecord[],
+  window: UsageWindow,
+): UsageHourModelBucket[] {
+  const from = new Date(window.from).getTime();
+  const to = new Date(window.to).getTime();
+  if (to - from > HOUR_MODEL_MAX_SPAN_MS) return [];
+  const zone = window.time_zone || undefined;
+  const buckets = new Map<string, UsageHourModelBucket>();
+  for (const record of records) {
+    if (usageRecordStatus(record) !== "succeeded") continue;
+    const started = new Date(record.started_at);
+    const at = started.getTime();
+    if (Number.isNaN(at) || at < from || at >= to) continue;
+    const model = normalizeGroupId(
+      record.recovery?.upstream_model ||
+        record.model_redirect?.to ||
+        record.requested_model,
+    );
+    const date = zonedDayKey(started, zone);
+    const hour = zonedDateTime(started, zone).hour;
+    const key = `${date}T${hour}\u0000${model ?? ""}`;
+    let bucket = buckets.get(key);
+    if (!bucket) {
+      bucket = { date, hour, model, requests: 0, total_tokens: 0 };
+      buckets.set(key, bucket);
+    }
+    bucket.requests += 1;
+    bucket.total_tokens += record.usage?.total_tokens ?? 0;
+  }
+  return [...buckets.values()].sort(
+    (left, right) =>
+      left.date.localeCompare(right.date) ||
+      left.hour - right.hour ||
+      right.total_tokens - left.total_tokens ||
+      right.requests - left.requests ||
+      (left.model ?? "").localeCompare(right.model ?? ""),
+  );
+}
+
+function clientGroups(records: RequestRecord[]): UsageGroup[] {
+  const groups = new Map<string, UsageGroup>();
+  for (const record of records) {
+    const status = usageRecordStatus(record);
+    if (status == null) continue;
+    const client =
+      record.client_type && record.client_type !== "unknown"
+        ? record.client_type
+        : null;
+    addUsageGroup(groups, client, record.usage, status === "failed");
+  }
+  return sortUsageGroups([...groups.values()]);
 }
 
 function padHourBuckets(

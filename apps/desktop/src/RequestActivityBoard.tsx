@@ -39,17 +39,21 @@ export function useRequestActivityFeed(
 }
 
 /**
- * Reads the calls of the last few minutes once a second. The gateway keeps
- * them, so the chart is whole however long the page was away; the last read
- * stays in the workspace snapshot so coming back paints it at once.
+ * Reads the calls of the last few minutes once a second while `enabled`. The
+ * gateway keeps them, so the chart is whole however long the page was away;
+ * the last read stays in the workspace snapshot so coming back paints it at
+ * once.
  */
-function useLiveActivity(coreSessionKey: string | null, isReady: boolean) {
+export function useRequestActivityPoll(
+  coreSessionKey: string | null,
+  enabled: boolean,
+): RequestActivity | null {
   const [activity, setActivity] = useWorkspaceSnapshot<RequestActivity | null>(
     activityKey(coreSessionKey),
     null,
   );
   useEffect(() => {
-    if (!isReady) return;
+    if (!enabled) return;
     let cancelled = false;
     let inFlight = false;
     const poll = async () => {
@@ -70,7 +74,12 @@ function useLiveActivity(coreSessionKey: string | null, isReady: boolean) {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [isReady, setActivity]);
+  }, [enabled, setActivity]);
+  return activity;
+}
+
+function useLiveActivity(coreSessionKey: string | null, isReady: boolean) {
+  const activity = useRequestActivityPoll(coreSessionKey, isReady);
   return useMemo(
     () => (activity ? summarizeActivity(activity) : null),
     [activity],

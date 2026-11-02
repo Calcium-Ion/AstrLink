@@ -85,14 +85,20 @@ export const OFFICIAL_PROVIDERS: Record<string, string> = {
 };
 // Monetary fields stay decimal strings at the bridge boundary. Number is only
 // used for display and progress bars; Core owns all accounting arithmetic.
-export function formatUSD(value: string | undefined): string {
+// `short` drops the cents from $1,000 up, for tight spots.
+export function formatUSD(
+  value: string | undefined,
+  { short = false }: { short?: boolean } = {},
+): string {
   if (value == null) return "—";
+  const amount = Number(value);
+  const digits = short && Math.abs(amount) >= 1000 ? 0 : 2;
   return new Intl.NumberFormat("en-US", {
     style: "currency",
     currency: "USD",
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(Number(value));
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  }).format(amount);
 }
 export function billingAmount(
   amounts:
@@ -105,7 +111,7 @@ export function billingAmount(
     (amounts.priced === 0 && amounts.unpriced + amounts.pending > 0)
   )
     return "—";
-  return formatUSD(amounts.amount_usd);
+  return formatUSD(amounts.amount_usd, options);
 }
 export function currentBillingPeriod(
   periods: BillingPeriod[],

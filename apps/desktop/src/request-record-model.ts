@@ -30,6 +30,23 @@ export const CLIENT_TYPES = [
 
 export type ClientType = (typeof CLIENT_TYPES)[number];
 
+/**
+ * Changes the gateway makes before a request leaves for the provider, in the
+ * order it applies them: the first five before routing, the last two for the
+ * chosen provider.
+ */
+export const GATEWAY_REWRITES = [
+  "model_redirect",
+  "privacy",
+  "image_compression",
+  "global_prompt",
+  "reasoning_effort",
+  "conversion",
+  "client_identity",
+] as const;
+
+export type GatewayRewrite = (typeof GATEWAY_REWRITES)[number];
+
 export type RequestStatus =
   | "pending"
   | "succeeded"
@@ -743,6 +760,12 @@ export interface RequestActivityCall {
    * absent while it runs and when no final usage came back.
    */
   output_tokens?: number;
+  /** The provider of the last attempt; set once the call ended. */
+  service_id?: string;
+  /** The provider the call failed over from. */
+  failed_service_id?: string;
+  /** What the gateway changed, in the order it applies them. */
+  rewrites?: GatewayRewrite[];
 }
 
 /** Model calls that overlap a recent window, with the gateway's clock. */
@@ -2197,9 +2220,31 @@ export function parseRequestActivity(value: unknown): RequestActivity {
                 `${path}.output_tokens`,
               ),
             }),
+        ...(call.service_id == null
+          ? {}
+          : { service_id: stringAt(call.service_id, `${path}.service_id`) }),
+        ...(call.failed_service_id == null
+          ? {}
+          : {
+              failed_service_id: stringAt(
+                call.failed_service_id,
+                `${path}.failed_service_id`,
+              ),
+            }),
+        ...(call.rewrites == null
+          ? {}
+          : { rewrites: gatewayRewritesAt(call.rewrites, `${path}.rewrites`) }),
       };
     }),
   };
+}
+
+/** Known rewrites in the gateway's order; a newer Core's others are left out. */
+function gatewayRewritesAt(value: unknown, path: string): GatewayRewrite[] {
+  const named = arrayAt(value, path).map((item, index) =>
+    stringAt(item, `${path}[${index}]`),
+  );
+  return GATEWAY_REWRITES.filter((rewrite) => named.includes(rewrite));
 }
 
 /** A required client label; one this build does not know reads as unknown. */

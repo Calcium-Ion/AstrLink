@@ -78,3 +78,55 @@ describe("formatCompactNumber guards", () => {
     expect(formatExactNumber(Number.NaN)).toBe("—");
   });
 });
+
+describe("formatCompactNumber, short", () => {
+  const short = (value: number) => formatCompactNumber(value, { short: true });
+
+  it("drops a decimal for each digit the mantissa grows", async () => {
+    await applyLocale("zh-CN");
+
+    expect(short(9_999)).toBe("9,999");
+    expect(short(12_345)).toBe("1.23万");
+    expect(short(10_000)).toBe("1万");
+    expect(short(248_000)).toBe("24.8万");
+    expect(short(250_000)).toBe("25万");
+    expect(short(9_980_000)).toBe("998万");
+    expect(short(10_227_200)).toBe("1023万");
+    expect(short(1_234_567)).toBe("123万");
+    expect(short(102_272_000)).toBe("1.02亿");
+    expect(short(987_000_000)).toBe("9.87亿");
+    expect(short(1_230_000_000)).toBe("12.3亿");
+    expect(short(123_400_000_000)).toBe("1234亿");
+    expect(short(-10_227_200)).toBe("-1023万");
+    // The default keeps two decimals for pages that have the room.
+    expect(formatCompactNumber(10_227_200)).toBe("1022.72万");
+  });
+
+  it("takes the next unit when rounding reaches it", async () => {
+    await applyLocale("zh-CN");
+    expect(short(99_995_000)).toBe("1亿");
+
+    await applyLocale("en");
+    expect(short(999_950)).toBe("1M");
+    expect(short(999_999_999)).toBe("1B");
+  });
+
+  it("uses thousands, millions and billions in English", async () => {
+    await applyLocale("en");
+
+    expect(short(1_234)).toBe("1.23K");
+    expect(short(24_800)).toBe("24.8K");
+    expect(short(998_000)).toBe("998K");
+    expect(short(1_020_000)).toBe("1.02M");
+    expect(short(1_234_567)).toBe("1.23M");
+    expect(short(1_230_000_000)).toBe("1.23B");
+    expect(short(98_700_000_000)).toBe("98.7B");
+  });
+
+  it("uses 億 in Japanese", async () => {
+    await applyLocale("ja");
+
+    expect(short(987_000_000)).toBe("9.87億");
+    expect(short(10_227_200)).toBe("1023万");
+  });
+});

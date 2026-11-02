@@ -1,9 +1,16 @@
 import {
+  CLIENT_TYPES,
+  GATEWAY_REWRITES,
+  type ClientType,
+} from "./request-record-model";
+import {
   emptyUsageStatusCounts,
   emptyUsageSummary,
   emptyUsageTotals,
   type ServicePerformance,
   type UsageGroup,
+  type UsageHourModelBucket,
+  type UsageRoute,
   type UsageSummary,
   type UsageTotals,
   type UsageWindow,
@@ -76,6 +83,105 @@ function groupsAt(value: unknown): UsageGroup[] {
   });
 }
 
+/** Sparse hour-by-model buckets, each on a day of the window. */
+function hourModelsAt(
+  value: unknown,
+  days: ReadonlySet<string>,
+): UsageHourModelBucket[] {
+  const seen = new Set<string>();
+  return arrayAt(value).map((value) => {
+    const object = objectAt(value, [
+      "date",
+      "hour",
+      "model",
+      "requests",
+      "total_tokens",
+    ]);
+    const { date, hour, model } = object;
+    if (
+      typeof date !== "string" ||
+      !days.has(date) ||
+      !Number.isInteger(hour) ||
+      (hour as number) < 0 ||
+      (hour as number) > 23 ||
+      (model !== null &&
+        (typeof model !== "string" || !model.trim() || model.length > 1024))
+    ) {
+      throw new Error("Invalid usage summary hour model");
+    }
+    const key = `${date}T${hour}\u0000${model ?? ""}`;
+    if (seen.has(key)) throw new Error("Duplicate usage summary hour model");
+    seen.add(key);
+    return {
+      date,
+      hour: hour as number,
+      model: model as string | null,
+      requests: count(object.requests),
+      total_tokens: count(object.total_tokens),
+    };
+  });
+}
+
+function idAt(value: unknown): string | null {
+  if (
+    value !== null &&
+    (typeof value !== "string" || !value.trim() || value.length > 1024)
+  ) {
+    throw new Error("Invalid usage summary route");
+  }
+  return value as string | null;
+}
+
+/**
+ * Routes, each once. A client or rewrite this build does not know reads as
+ * an unknown client or is left out, so a newer Core still draws.
+ */
+function routesAt(value: unknown): UsageRoute[] {
+  const seen = new Set<string>();
+  return arrayAt(value).map((value) => {
+    const object = objectAt(value, [
+      "client_type",
+      "service_id",
+      "failed_service_id",
+      "failed",
+      "rewrites",
+      "requests",
+    ]);
+    const client = idAt(object.client_type);
+    if (typeof object.failed !== "boolean")
+      throw new Error("Invalid usage summary route");
+    const named = arrayAt(object.rewrites).map((rewrite) => {
+      if (typeof rewrite !== "string")
+        throw new Error("Invalid usage summary route");
+      return rewrite;
+    });
+    if (new Set(named).size !== named.length)
+      throw new Error("Invalid usage summary route");
+    const route: UsageRoute = {
+      client_type:
+        client !== null && CLIENT_TYPES.includes(client as ClientType)
+          ? (client as ClientType)
+          : null,
+      service_id: idAt(object.service_id),
+      failed_service_id: idAt(object.failed_service_id),
+      failed: object.failed,
+      rewrites: GATEWAY_REWRITES.filter((rewrite) => named.includes(rewrite)),
+      requests: count(object.requests),
+    };
+    if (route.requests === 0) throw new Error("Invalid usage summary route");
+    const key = JSON.stringify([
+      client,
+      route.service_id,
+      route.failed_service_id,
+      route.failed,
+      named,
+    ]);
+    if (seen.has(key)) throw new Error("Duplicate usage summary route");
+    seen.add(key);
+    return route;
+  });
+}
+
 export function parseUsagePerformance(value: unknown): ServicePerformance {
   const object = objectAt(value, [
     "cache_hit_rate",
@@ -122,9 +228,12 @@ export function parseUsageSummary(
     "status_counts",
     "by_day",
     "by_hour",
+    "by_hour_model",
     "by_service",
     "by_model",
     "by_token",
+    "by_client",
+    "by_route",
     "scanned_records",
   ]);
   const summary = emptyUsageSummary(window);
@@ -147,6 +256,12 @@ export function parseUsageSummary(
   summary.by_service = groupsAt(object.by_service);
   summary.by_model = groupsAt(object.by_model);
   summary.by_token = groupsAt(object.by_token);
+  summary.by_client = groupsAt(object.by_client);
+  summary.by_route = routesAt(object.by_route);
+  summary.by_hour_model = hourModelsAt(
+    object.by_hour_model,
+    new Set(summary.by_day.map((bucket) => bucket.date)),
+  );
   const fill = (raw: unknown, hourly: boolean) => {
     const buckets = hourly ? summary.by_hour : summary.by_day;
     const keyOf = (date: unknown, hour: unknown) =>

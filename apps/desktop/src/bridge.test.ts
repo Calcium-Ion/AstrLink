@@ -385,9 +385,12 @@ describe("desktop bridge contract", () => {
       status_counts: emptyUsageStatusCounts(),
       by_day: [],
       by_hour: [],
+      by_hour_model: [],
       by_service: [],
       by_model: [],
       by_token: [],
+      by_client: [],
+      by_route: [],
       scanned_records: 0,
     });
     const result = await getUsageSummary(window);
@@ -408,9 +411,12 @@ describe("desktop bridge contract", () => {
       status_counts: emptyUsageStatusCounts(),
       by_day: [],
       by_hour: [],
+      by_hour_model: [],
       by_service: [],
       by_model: [],
       by_token: [],
+      by_client: [],
+      by_route: [],
       scanned_records: 0,
     };
     invokeMock.mockResolvedValue(empty);

@@ -17,6 +17,37 @@ vi.mock("./pricing-bridge", async (importOriginal) => ({
   getBillingSummary: billingMocks.getBillingSummary,
 }));
 
+// Memo wrappers with the same prop checks count how often the star trail's
+// panel and its disc actually render.
+const trailRenders = vi.hoisted(() => ({ panel: 0, disc: 0 }));
+vi.mock("./UsageStarTrail", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./UsageStarTrail")>();
+  const { createElement, memo } = await import("react");
+  return {
+    ...actual,
+    UsageStarTrail: memo(
+      (props: Parameters<typeof actual.UsageStarTrail>[0]) => {
+        trailRenders.panel += 1;
+        return createElement(actual.UsageStarTrail, props);
+      },
+    ),
+  };
+});
+vi.mock("@/components/StarTrailChart", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/components/StarTrailChart")>();
+  const { createElement, memo } = await import("react");
+  return {
+    ...actual,
+    StarTrailChart: memo(
+      (props: Parameters<typeof actual.StarTrailChart>[0]) => {
+        trailRenders.disc += 1;
+        return createElement(actual.StarTrailChart, props);
+      },
+    ),
+  };
+});
+
 vi.mock("recharts", async (importOriginal) => {
   const actual = await importOriginal<typeof import("recharts")>();
   return {
@@ -39,13 +70,16 @@ import { applyLocale } from "./i18n";
 import type { AccessTokenCatalog } from "./AccessTokenManager";
 import { browserSnapshot, type AppSnapshot } from "./core-model";
 import { Overview, type ServiceCatalog } from "./Overview";
+import { WorkspaceSnapshotProvider } from "./workspace-snapshots";
 import {
+  DEFAULT_HIDDEN_MODULES,
   DEFAULT_OVERVIEW_LAYOUT,
   OVERVIEW_LAYOUT_STORAGE_KEY,
 } from "./overview-layout";
 import type { Service } from "./service-model";
 import {
   aggregateUsage,
+  DEFAULT_USAGE_RANGE_PRESET,
   emptyUsageSummary,
   emptyUsageTotals,
   localDayKey,
@@ -54,6 +88,7 @@ import {
   type UsageSummary,
 } from "./usage-range";
 import { customRangeLabel } from "@/components/UsageRangePicker";
+import { settleClosedLayer } from "@/lib/test-layer-settle";
 
 const readySnapshot: AppSnapshot = {
   app_version: "0.1.0",
@@ -145,6 +180,13 @@ const readyTokens: AccessTokenCatalog = {
 };
 
 const orderedModules = DEFAULT_OVERVIEW_LAYOUT.filter((id) => id !== "system");
+const shownModules = orderedModules.filter(
+  (id) => !DEFAULT_HIDDEN_MODULES.includes(id),
+);
+const defaultLayout = {
+  order: DEFAULT_OVERVIEW_LAYOUT,
+  hidden: DEFAULT_HIDDEN_MODULES,
+};
 
 const now = new Date(2026, 8, 4, 21, 0, 0);
 const sevenDayWindow = resolveUsageWindow("7d", now);
@@ -251,37 +293,39 @@ describe("Overview", () => {
     const onRestart = vi.fn();
     await act(async () => {
       root.render(
-        <Overview
-          catalog={overrides.catalog ?? readyCatalog}
-          copyState="idle"
-          isNativeApp={overrides.isNativeApp ?? true}
-          isReady={overrides.isReady ?? true}
-          isRestarting={overrides.isRestarting ?? false}
-          onAddService={onAddService}
-          onCopy={() => undefined}
-          onManageServices={onManageServices}
-          onManageTokens={onManageTokens}
-          onOpenRecords={onOpenRecords}
-          onOpenService={onOpenService}
-          onRefreshServices={() => undefined}
-          onRefresh={() => undefined}
-          onRestart={onRestart}
-          onUsageRangeChange={onUsageRangeChange}
-          snapshot={
-            overrides.snapshot === undefined
-              ? readySnapshot
-              : overrides.snapshot
-          }
-          tokenCatalog={overrides.tokenCatalog ?? readyTokens}
-          usage={
-            overrides.usage ?? {
-              status: "ready",
-              summary: emptyUsageSummary(resolveUsageWindow("1y", now)),
-              error: null,
+        <WorkspaceSnapshotProvider sessionKey="session">
+          <Overview
+            catalog={overrides.catalog ?? readyCatalog}
+            copyState="idle"
+            isNativeApp={overrides.isNativeApp ?? true}
+            isReady={overrides.isReady ?? true}
+            isRestarting={overrides.isRestarting ?? false}
+            onAddService={onAddService}
+            onCopy={() => undefined}
+            onManageServices={onManageServices}
+            onManageTokens={onManageTokens}
+            onOpenRecords={onOpenRecords}
+            onOpenService={onOpenService}
+            onRefreshServices={() => undefined}
+            onRefresh={() => undefined}
+            onRestart={onRestart}
+            onUsageRangeChange={onUsageRangeChange}
+            snapshot={
+              overrides.snapshot === undefined
+                ? readySnapshot
+                : overrides.snapshot
             }
-          }
-          usageRange={overrides.usageRange ?? "1y"}
-        />,
+            tokenCatalog={overrides.tokenCatalog ?? readyTokens}
+            usage={
+              overrides.usage ?? {
+                status: "ready",
+                summary: emptyUsageSummary(resolveUsageWindow("1y", now)),
+                error: null,
+              }
+            }
+            usageRange={overrides.usageRange ?? "1y"}
+          />
+        </WorkspaceSnapshotProvider>,
       );
     });
     return {
@@ -319,7 +363,11 @@ describe("Overview", () => {
 
   it("keeps the default layout free of reorder controls and moves providers and models together", async () => {
     await renderOverview();
-    expect(moduleOrder()).toEqual(orderedModules);
+    // Usage leads with the live crew under it; the request sky waits in the
+    // editor.
+    expect(moduleOrder()).toEqual(shownModules);
+    expect(moduleOrder().slice(0, 2)).toEqual(["usage", "live-crew"]);
+    expect(container.querySelector('[data-slot="request-sky"]')).toBeNull();
     expect(layoutButton("API 提供商与模型")).toBeNull();
     const providerPanel = container.querySelector(
       "[aria-labelledby='usage-by-service-heading']",
@@ -338,6 +386,8 @@ describe("Overview", () => {
     );
     expect(moduleOrder()).toEqual([
       "usage",
+      "live-crew",
+      "request-sky",
       "tokens",
       "providers-models",
       "access",
@@ -351,19 +401,22 @@ describe("Overview", () => {
     expect(document.activeElement).not.toBe(document.body);
     expect(
       JSON.parse(localStorage.getItem(OVERVIEW_LAYOUT_STORAGE_KEY)!),
-    ).toEqual({ order: [...moduleOrder(), "system"], hidden: [] });
+    ).toEqual({
+      order: [...moduleOrder(), "system"],
+      hidden: ["request-sky"],
+    });
     await act(async () => layoutButton("完成布局").click());
     expect(layoutButton("API 提供商与模型")).toBeNull();
     await act(async () => root.unmount());
     root = createRoot(container);
     await renderOverview();
-    expect(moduleOrder()[1]).toBe("tokens");
+    expect(moduleOrder()[2]).toBe("tokens");
     await act(async () => layoutButton("自定义布局").click());
     await act(async () => layoutButton("恢复默认布局").click());
     expect(moduleOrder()).toEqual(orderedModules);
     expect(
       JSON.parse(localStorage.getItem(OVERVIEW_LAYOUT_STORAGE_KEY)!),
-    ).toEqual({ order: DEFAULT_OVERVIEW_LAYOUT, hidden: [] });
+    ).toEqual(defaultLayout);
   });
 
   it("persists module visibility and preserves hidden modules in the editable order", async () => {
@@ -389,17 +442,25 @@ describe("Overview", () => {
     expect(
       JSON.parse(localStorage.getItem(OVERVIEW_LAYOUT_STORAGE_KEY)!),
     ).toEqual({
-      order: ["usage", "tokens", "providers-models", "access", "system"],
-      hidden: ["providers-models"],
+      order: [
+        "usage",
+        "live-crew",
+        "request-sky",
+        "tokens",
+        "providers-models",
+        "access",
+        "system",
+      ],
+      hidden: ["request-sky", "providers-models"],
     });
     await act(async () => layoutButton("完成布局").click());
-    expect(moduleOrder()).toEqual(["usage", "tokens", "access"]);
+    expect(moduleOrder()).toEqual(["usage", "live-crew", "tokens", "access"]);
     await act(async () => root.unmount());
     root = createRoot(container);
     await renderOverview();
-    expect(moduleOrder()).toEqual(["usage", "tokens", "access"]);
+    expect(moduleOrder()).toEqual(["usage", "live-crew", "tokens", "access"]);
     await act(async () => layoutButton("自定义布局").click());
-    expect(moduleOrder()[2]).toBe("providers-models");
+    expect(moduleOrder()[4]).toBe("providers-models");
     await act(async () => layoutButton("显示API 提供商与模型").click());
     expect(
       container.querySelector("[aria-labelledby='usage-by-service-heading']"),
@@ -407,14 +468,14 @@ describe("Overview", () => {
     expect(
       container.querySelector("[aria-labelledby='usage-by-model-heading']"),
     ).not.toBeNull();
-    expect(moduleOrder()[2]).toBe("providers-models");
+    expect(moduleOrder()[4]).toBe("providers-models");
   });
 
   it("keeps customization reachable when every module is hidden and resets visibility with order", async () => {
     await renderOverview();
     await act(async () => layoutButton("自定义布局").click());
     for (const toggle of container.querySelectorAll<HTMLButtonElement>(
-      '[role="switch"]',
+      '[role="switch"][aria-checked="true"]',
     )) {
       await act(async () => toggle.click());
     }
@@ -432,31 +493,39 @@ describe("Overview", () => {
     expect(layoutButton("恢复默认布局").disabled).toBe(false);
     await act(async () => layoutButton("恢复默认布局").click());
     expect(
-      [...container.querySelectorAll('[role="switch"]')].every(
-        (toggle) => toggle.getAttribute("aria-checked") === "true",
-      ),
-    ).toBe(true);
+      [
+        ...container.querySelectorAll('[role="switch"][aria-checked="false"]'),
+      ].map((toggle) => toggle.getAttribute("aria-label")),
+    ).toEqual(["显示今天的请求"]);
     expect(
       JSON.parse(localStorage.getItem(OVERVIEW_LAYOUT_STORAGE_KEY)!),
-    ).toEqual({ order: DEFAULT_OVERVIEW_LAYOUT, hidden: [] });
+    ).toEqual(defaultLayout);
     await act(async () => layoutButton("完成布局").click());
-    expect(moduleOrder()).toEqual(orderedModules);
+    expect(moduleOrder()).toEqual(shownModules);
   });
 
-  it("loads legacy orders with every module visible", async () => {
-    const order = [...DEFAULT_OVERVIEW_LAYOUT].reverse();
+  it("loads legacy orders with every module visible but the optional ones", async () => {
+    // Saved before the live crew and the request sky.
+    const order = ["system", "access", "tokens", "providers-models", "usage"];
     localStorage.setItem(OVERVIEW_LAYOUT_STORAGE_KEY, JSON.stringify(order));
     await renderOverview();
-    expect(moduleOrder()).toEqual(order.filter((id) => id !== "system"));
+    // The live crew joins after usage, shown.
+    expect(moduleOrder()).toEqual([
+      "access",
+      "tokens",
+      "providers-models",
+      "usage",
+      "live-crew",
+    ]);
     await act(async () => layoutButton("自定义布局").click());
     expect(
-      [...container.querySelectorAll('[role="switch"]')].every(
-        (toggle) => toggle.getAttribute("aria-checked") === "true",
-      ),
-    ).toBe(true);
+      [
+        ...container.querySelectorAll('[role="switch"][aria-checked="false"]'),
+      ].map((toggle) => toggle.getAttribute("aria-label")),
+    ).toEqual(["显示今天的请求"]);
   });
 
-  it("ignores unknown hidden modules and shows newly added modules", async () => {
+  it("ignores unknown hidden modules and adds new ones, hiding the optional ones", async () => {
     localStorage.setItem(
       OVERVIEW_LAYOUT_STORAGE_KEY,
       JSON.stringify({
@@ -465,17 +534,68 @@ describe("Overview", () => {
       }),
     );
     await renderOverview();
-    expect(moduleOrder()).toEqual(["usage", "providers-models", "access"]);
+    expect(moduleOrder()).toEqual([
+      "usage",
+      "live-crew",
+      "providers-models",
+      "access",
+    ]);
     await act(async () => layoutButton("自定义布局").click());
     expect(moduleOrder()).toEqual([
-      "tokens",
       "usage",
+      "live-crew",
+      "request-sky",
       "providers-models",
+      "tokens",
       "access",
     ]);
     expect(
       container.querySelectorAll('[role="switch"][aria-checked="false"]'),
-    ).toHaveLength(1);
+    ).toHaveLength(2);
+  });
+
+  it("starts the request sky hidden in a layout that showed it before", async () => {
+    localStorage.setItem(
+      OVERVIEW_LAYOUT_STORAGE_KEY,
+      JSON.stringify({
+        order: ["sky", "tokens", "usage", "access", "providers-models"],
+        hidden: ["access"],
+      }),
+    );
+    await renderOverview();
+    expect(moduleOrder()).toEqual([
+      "tokens",
+      "usage",
+      "live-crew",
+      "providers-models",
+    ]);
+    expect(container.querySelector('[data-slot="request-sky"]')).toBeNull();
+
+    // The editor still offers it, after the module it follows by default.
+    await act(async () => layoutButton("自定义布局").click());
+    expect(moduleOrder()).toEqual([
+      "tokens",
+      "usage",
+      "live-crew",
+      "request-sky",
+      "access",
+      "providers-models",
+    ]);
+    await act(async () => layoutButton("显示今天的请求").click());
+    await act(async () => layoutButton("完成布局").click());
+    expect(moduleOrder()).toEqual([
+      "tokens",
+      "usage",
+      "live-crew",
+      "request-sky",
+      "providers-models",
+    ]);
+    expect(
+      container.querySelector('[data-slot="request-sky"] h2')?.textContent,
+    ).toBe("今天的请求");
+    expect(
+      JSON.parse(localStorage.getItem(OVERVIEW_LAYOUT_STORAGE_KEY)!).hidden,
+    ).toEqual(["access"]);
   });
 
   it("collapses system details by default and expands them from the heading", async () => {
@@ -508,11 +628,9 @@ describe("Overview", () => {
     async (saved) => {
       localStorage.setItem(OVERVIEW_LAYOUT_STORAGE_KEY, saved);
       await renderOverview();
-      expect(new Set(moduleOrder())).toEqual(new Set(orderedModules));
-      expect(moduleOrder()).toHaveLength(orderedModules.length);
-      expect(moduleOrder()[0]).toBe(
-        saved.includes("tokens") ? "tokens" : "usage",
-      );
+      expect(new Set(moduleOrder())).toEqual(new Set(shownModules));
+      expect(moduleOrder()).toHaveLength(shownModules.length);
+      expect(moduleOrder()[0]).toBe("usage");
     },
   );
 
@@ -526,14 +644,14 @@ describe("Overview", () => {
       },
     });
     await renderOverview();
-    expect(moduleOrder()).toEqual(orderedModules);
+    expect(moduleOrder()).toEqual(shownModules);
     await act(async () => layoutButton("自定义布局").click());
     await act(async () =>
       layoutButton("API 提供商与模型").dispatchEvent(
         new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }),
       ),
     );
-    expect(moduleOrder()[1]).toBe("tokens");
+    expect(moduleOrder()[3]).toBe("tokens");
     expect(container.querySelector("[role='alert']")?.textContent).toContain(
       "无法保存到本机",
     );
@@ -552,6 +670,21 @@ describe("Overview", () => {
   it.each(["drop", "drop-down", "Escape", "pointercancel"])(
     "handles dragging modules of different heights: %s",
     async (finish) => {
+      // The crew and the sky go last so the tall usage panels stay above the
+      // dragged row.
+      const saved = [
+        "usage",
+        "providers-models",
+        "tokens",
+        "access",
+        "live-crew",
+        "request-sky",
+      ];
+      const savedLayout = JSON.stringify({
+        order: [...saved, "system"],
+        hidden: [],
+      });
+      localStorage.setItem(OVERVIEW_LAYOUT_STORAGE_KEY, savedLayout);
       await renderOverview();
       await act(async () => layoutButton("自定义布局").click());
       const list = container.querySelector<HTMLOListElement>(
@@ -561,6 +694,8 @@ describe("Overview", () => {
         ...list.querySelectorAll<HTMLElement>("[data-ordered-item]"),
       ];
       const heights: Record<string, number> = {
+        "live-crew": 280,
+        "request-sky": 316,
         usage: 380,
         "providers-models": 440,
         tokens: 240,
@@ -642,7 +777,7 @@ describe("Overview", () => {
           }),
         ),
       );
-      expect(moduleOrder()).toEqual(orderedModules);
+      expect(moduleOrder()).toEqual(saved);
       expect(list.style.paddingTop).toBe("0px");
       expect(scroller.scrollTop).toBe(0);
       expect(
@@ -671,7 +806,9 @@ describe("Overview", () => {
       expect(
         finish === "drop-down" ? moduleOrder().at(-1) : moduleOrder()[0],
       ).toBe("tokens");
-      expect(localStorage.getItem(OVERVIEW_LAYOUT_STORAGE_KEY)).toBeNull();
+      expect(localStorage.getItem(OVERVIEW_LAYOUT_STORAGE_KEY)).toBe(
+        savedLayout,
+      );
       await act(async () => {
         if (finish === "Escape") {
           handle.dispatchEvent(
@@ -700,9 +837,9 @@ describe("Overview", () => {
       expect(container.querySelector("[data-testid='token-usage-panel']")).toBe(
         originalContent,
       );
-      expect(localStorage.getItem(OVERVIEW_LAYOUT_STORAGE_KEY) !== null).toBe(
-        finish.startsWith("drop"),
-      );
+      expect(
+        localStorage.getItem(OVERVIEW_LAYOUT_STORAGE_KEY) !== savedLayout,
+      ).toBe(finish.startsWith("drop"));
     },
   );
 
@@ -711,7 +848,7 @@ describe("Overview", () => {
       catalog: emptyCatalog,
       tokenCatalog: emptyTokens,
     });
-    expect(moduleOrder()).toEqual(orderedModules);
+    expect(moduleOrder()).toEqual(shownModules);
     expect(container.querySelector("#usage-heading")).not.toBeNull();
     expect(container.textContent).not.toContain("欢迎使用 AstrLink");
     await act(async () => button("添加 API 提供商").click());
@@ -727,7 +864,7 @@ describe("Overview", () => {
       isNativeApp: false,
       usage: { status: "blocked", summary: null, error: null },
     });
-    expect(moduleOrder()).toEqual(orderedModules);
+    expect(moduleOrder()).toEqual(shownModules);
     expect(container.textContent).toContain("浏览器预览");
     expect(container.textContent).not.toContain("欢迎使用 AstrLink");
     expect(container.textContent).not.toContain("重启网关");
@@ -738,7 +875,7 @@ describe("Overview", () => {
       catalog: { ...emptyCatalog, status: "loading" },
       tokenCatalog: { ...emptyTokens, status: "loading" },
     });
-    expect(moduleOrder()).toEqual(orderedModules);
+    expect(moduleOrder()).toEqual(shownModules);
     expect(container.querySelector("[data-slot='loading-state']")).toBeTruthy();
     expect(container.textContent).not.toContain("欢迎使用 AstrLink");
   });
@@ -1016,7 +1153,43 @@ describe("Overview", () => {
     expect(panel.textContent).not.toContain("2 次请求");
   });
 
-  it("defaults to a yearly heatmap and reports range switches", async () => {
+  it("opens on the star trail for the default range and keeps a picked view", async () => {
+    expect(DEFAULT_USAGE_RANGE_PRESET).toBe("1d");
+    const day = emptyUsageSummary(
+      resolveUsageWindow(DEFAULT_USAGE_RANGE_PRESET, now),
+    );
+    const usage = { status: "ready" as const, summary: day, error: null };
+    const { onUsageRangeChange } = await renderOverview({
+      usage,
+      usageRange: DEFAULT_USAGE_RANGE_PRESET,
+    });
+    expect(button("星轨").getAttribute("data-state")).toBe("on");
+    expect(
+      container.querySelector("[data-slot='usage-star-trail']"),
+    ).not.toBeNull();
+    expect(
+      container.querySelector("[data-slot='activity-heatmap']"),
+    ).toBeNull();
+    expect(onUsageRangeChange).not.toHaveBeenCalled();
+    expect(
+      container.querySelector('[aria-label="用量区间"]')?.textContent,
+    ).toBe("近 24 小时");
+
+    // A view picked by hand outlives leaving the overview.
+    await act(async () => button("图表").click());
+    await act(async () =>
+      root.render(
+        <WorkspaceSnapshotProvider sessionKey="session">
+          <div />
+        </WorkspaceSnapshotProvider>,
+      ),
+    );
+    await renderOverview({ usage, usageRange: DEFAULT_USAGE_RANGE_PRESET });
+    expect(button("图表").getAttribute("data-state")).toBe("on");
+    expect(button("星轨").getAttribute("data-state")).toBe("off");
+  });
+
+  it("opens a yearly range on the heatmap and reports range switches", async () => {
     const { onUsageRangeChange } = await renderOverview();
     expect(button("热力图").getAttribute("data-state")).toBe("on");
     expect(
@@ -1279,6 +1452,405 @@ describe("Overview", () => {
     expect(onUsageRangeChange).not.toHaveBeenCalled();
   });
 
+  it("switches to the star trail on a day and offers a day, a week or a month", async () => {
+    const { onUsageRangeChange } = await renderOverview();
+    await act(async () => button("星轨").click());
+    expect(onUsageRangeChange).toHaveBeenLastCalledWith("1d");
+    expect(button("星轨").getAttribute("data-state")).toBe("on");
+    const month = emptyUsageSummary(resolveUsageWindow("30d", now));
+    const { onUsageRangeChange: onMonthChange } = await renderOverview({
+      usageRange: "30d",
+      usage: { status: "ready", summary: month, error: null },
+    });
+    expect(
+      container.querySelectorAll("[data-slot='star-trail-arc']"),
+    ).toHaveLength(0);
+    expect(
+      container.querySelector("[data-slot='usage-star-trail']")?.textContent,
+    ).toContain("所选区间暂无请求");
+    expect(
+      container.querySelector("[data-slot='star-trail-models']"),
+    ).toBeNull();
+
+    await act(async () =>
+      container
+        .querySelector<HTMLButtonElement>('button[aria-label="用量区间"]')!
+        .click(),
+    );
+    const picker = document.querySelector<HTMLElement>(
+      '[data-slot="usage-range-picker"]',
+    )!;
+    expect(
+      [
+        ...picker.querySelectorAll<HTMLButtonElement>("button[aria-pressed]"),
+      ].map((option) => option.textContent),
+    ).toEqual(["近 24 小时", "近 7 天", "近 30 天"]);
+    expect(picker.querySelector('input[type="date"]')).toBeNull();
+    await act(async () => {
+      [...picker.querySelectorAll<HTMLButtonElement>("button[aria-pressed]")]
+        .find((option) => option.textContent === "近 7 天")!
+        .click();
+    });
+    expect(onMonthChange).toHaveBeenLastCalledWith("7d");
+    await settleClosedLayer();
+
+    await act(async () =>
+      container
+        .querySelector<HTMLButtonElement>('button[aria-label="统计说明"]')!
+        .click(),
+    );
+    expect(document.body.textContent).toContain("星轨的每一圈是一天");
+    expect(document.body.textContent).not.toContain("热力图颜色越深");
+
+    // A week stays a week; leaving and coming back keeps the range.
+    const week = emptyUsageSummary(resolveUsageWindow("7d", now));
+    const { onUsageRangeChange: onWeekChange } = await renderOverview({
+      usageRange: "7d",
+      usage: { status: "ready", summary: week, error: null },
+    });
+    await act(async () => button("图表").click());
+    await act(async () => button("星轨").click());
+    expect(onWeekChange).not.toHaveBeenCalled();
+  });
+
+  it("holds the star trail's numbers in its panel and the tiles elsewhere", async () => {
+    const summary = emptyUsageSummary(resolveUsageWindow("30d", new Date()));
+    const last = summary.by_day.length - 1;
+    summary.totals = {
+      ...emptyUsageTotals(),
+      requests: 1101,
+      input_tokens: 600,
+      output_tokens: 200,
+      total_tokens: 800,
+    };
+    summary.by_day[last] = { ...summary.by_day[last], requests: 24 };
+    summary.by_model = [
+      group("gpt-5.5", { requests: 1101, total_tokens: 800 }),
+    ];
+    summary.by_hour_model = [
+      {
+        date: summary.by_day[last].date,
+        hour: 9,
+        model: "gpt-5.5",
+        requests: 24,
+        total_tokens: 800,
+      },
+    ];
+    await renderOverview({
+      usageRange: "30d",
+      usage: { status: "ready", summary, error: null },
+    });
+    const groups = () =>
+      container.querySelectorAll("[data-slot='metric-group']");
+    const trail = container.querySelector("[data-slot='usage-star-trail']")!;
+    expect(groups()).toHaveLength(1);
+    expect(trail.contains(groups()[0])).toBe(true);
+    expect(
+      [...groups()[0].querySelectorAll("dt")].map((label) => label.textContent),
+    ).toEqual(["请求数", "总 Token", "缓存命中率", "折算金额"]);
+    expect(groups()[0].querySelectorAll("svg")).toHaveLength(0);
+    const details = [...groups()[0].querySelectorAll("dd + dd")].map(
+      (detail) => detail.textContent,
+    );
+    expect(details).toEqual(["今天 24 次", "输入 600 · 输出 200"]);
+    expect(
+      trail.querySelector("[data-slot='star-trail-models']"),
+    ).not.toBeNull();
+
+    // The chart keeps its four tiles above the panel, without today's count.
+    await act(async () => button("图表").click());
+    expect(
+      container.querySelector("[data-slot='usage-star-trail']"),
+    ).toBeNull();
+    expect(groups()).toHaveLength(1);
+    expect(groups()[0].querySelectorAll("svg")).toHaveLength(4);
+    expect(groups()[0].textContent).not.toContain("今天");
+  });
+
+  it("draws a day as a ring per model and leaves out today's count", async () => {
+    const summary = emptyUsageSummary(oneDayWindow);
+    const today = summary.by_day.at(-1)!.date;
+    const models = [
+      "gpt-5.5",
+      "claude-opus-5-5",
+      "glm-5.3",
+      "gemini-3-pro",
+      "kimi-k3",
+      "qwen-4",
+      "deepseek-v4",
+    ];
+    summary.totals = {
+      ...emptyUsageTotals(),
+      requests: 28,
+      total_tokens: 2800,
+    };
+    summary.by_day = summary.by_day.map((day) =>
+      day.date === today ? { ...day, requests: 28 } : day,
+    );
+    summary.by_model = models.map((id, index) =>
+      group(id, { total_tokens: 700 - index * 100, requests: 7 - index }),
+    );
+    summary.by_hour_model = models.map((model, index) => ({
+      date: today,
+      hour: 8 + index,
+      model,
+      requests: 7 - index,
+      total_tokens: 700 - index * 100,
+    }));
+    await renderOverview({
+      usageRange: "1d",
+      usage: { status: "ready", summary, error: null },
+    });
+    const trail = container.querySelector("[data-slot='usage-star-trail']")!;
+    expect(
+      trail.querySelector("[aria-label^='星轨：近 24 小时']"),
+    ).not.toBeNull();
+    // Five named rings, the busiest outermost, and one muted ring for the rest.
+    const arc = (hour: number, ring: number | "rest") =>
+      trail.querySelector<SVGPathElement>(
+        `[data-slot='star-trail-arc'][data-keys~='${today}T${hour}/${ring}']`,
+      );
+    const rows = [
+      ...trail.querySelectorAll<HTMLElement>("[data-slot='star-trail-model']"),
+    ];
+    expect(rows).toHaveLength(6);
+    rows.slice(0, 5).forEach((row, index) => {
+      const bar = row.querySelector("[data-slot='star-trail-model-bar']")!;
+      expect(bar.getAttribute("style")).toContain(
+        `background: ${arc(8 + index, index)!.getAttribute("stroke")}`,
+      );
+    });
+    for (const hour of [13, 14])
+      expect(arc(hour, "rest")!.getAttribute("stroke")).toBe(
+        "var(--muted-foreground)",
+      );
+    // The day's requests already are today's.
+    const details = [
+      ...trail.querySelectorAll("[data-slot='metric-group'] dd + dd"),
+    ].map((detail) => detail.textContent);
+    expect(details.some((detail) => detail?.startsWith("今天"))).toBe(false);
+
+    await act(async () =>
+      container
+        .querySelector<HTMLButtonElement>('button[aria-label="统计说明"]')!
+        .click(),
+    );
+    expect(document.body.textContent).toContain("每一圈是一个模型");
+  });
+
+  it("keeps big numbers short and on one line in the star trail's panel", async () => {
+    billingMocks.getBillingSummary.mockResolvedValue({
+      from: "",
+      to: "",
+      amount_usd: "12345.67",
+      priced: 9,
+      unpriced: 0,
+      pending: 0,
+      revalued: 0,
+      requests: 9,
+      by_model: [],
+      by_token: [],
+      by_service: [],
+    });
+    const summary = emptyUsageSummary(resolveUsageWindow("30d", new Date()));
+    summary.totals = {
+      ...emptyUsageTotals(),
+      requests: 1_234_567,
+      input_tokens: 1_200_000_000,
+      output_tokens: 30_000_000,
+      total_tokens: 1_230_000_000,
+      cache_read_tokens: 1_200_000_000,
+    };
+    summary.by_model = [
+      group("gpt-5.5", { requests: 1_000_000, total_tokens: 987_000_000 }),
+    ];
+    summary.by_hour_model = [
+      {
+        date: summary.by_day[0].date,
+        hour: 9,
+        model: "gpt-5.5",
+        requests: 1_000_000,
+        total_tokens: 987_000_000,
+      },
+    ];
+    await renderOverview({
+      usageRange: "30d",
+      usage: { status: "ready", summary, error: null },
+    });
+    await act(async () => {});
+
+    const row = container.querySelector("[data-slot='metric-group']")!;
+    // Two by two in a narrow column, four across once it has the room.
+    expect(row.className).toContain("grid-cols-2");
+    expect(row.className).toContain("@min-[35rem]:grid-cols-4");
+    const values = [...row.querySelectorAll("dt + dd")];
+    expect(values.map((value) => value.textContent)).toEqual([
+      "123万",
+      "12.3亿",
+      "100%",
+      "$12,346",
+    ]);
+    for (const value of values) expect(value.className).toContain("truncate");
+    expect(values[0].getAttribute("title")).toBe("1,234,567");
+    expect(values[1].querySelector("[title]")?.getAttribute("title")).toBe(
+      "1,230,000,000",
+    );
+    expect(values[3].getAttribute("title")).toContain("$12,345.67");
+
+    const tokens = row.querySelectorAll("dd + dd")[1];
+    expect(tokens.className).toContain("truncate");
+    expect(tokens.textContent).toBe("输入 12亿 · 输出 3000万");
+    expect(tokens.querySelector("[title]")?.getAttribute("title")).toBe(
+      "输入 1,200,000,000 · 输出 30,000,000",
+    );
+    const model = container.querySelector("[data-slot='star-trail-model']")!;
+    expect(model.textContent).toContain("9.87亿");
+  });
+
+  it("renders the star trail's disc again only for a new read", async () => {
+    let settle: (value: unknown) => void = () => undefined;
+    billingMocks.getBillingSummary.mockReturnValue(
+      new Promise((resolve) => {
+        settle = resolve;
+      }),
+    );
+    const summary = emptyUsageSummary(resolveUsageWindow("30d", now));
+    summary.by_model = [group("gpt-5.5", { requests: 3, total_tokens: 90 })];
+    summary.by_hour_model = [
+      {
+        date: summary.by_day[3].date,
+        hour: 9,
+        model: "gpt-5.5",
+        requests: 3,
+        total_tokens: 90,
+      },
+    ];
+    const usage = { status: "ready" as const, summary, error: null };
+    await renderOverview({ usageRange: "30d", usage });
+    const rendered = { ...trailRenders };
+
+    // The overview drawing again for anything else leaves the panel alone.
+    await renderOverview({ usageRange: "30d", usage });
+    expect(trailRenders).toEqual(rendered);
+
+    // The cost arriving changes the numbers, not the disc.
+    const amounts = {
+      amount_usd: "212.69",
+      priced: 3,
+      unpriced: 0,
+      pending: 0,
+      revalued: 0,
+      requests: 3,
+    };
+    await act(async () =>
+      settle({
+        from: summary.window.from,
+        to: summary.window.to,
+        ...amounts,
+        by_model: [],
+        by_token: [],
+        by_service: [],
+      }),
+    );
+    expect(
+      container.querySelector("[data-slot='metric-group']")?.textContent,
+    ).toContain("$212.69");
+    expect(trailRenders.panel).toBe(rendered.panel + 1);
+    expect(trailRenders.disc).toBe(rendered.disc);
+  });
+
+  it("colors each lit hour like its model in the list and splits clients into 100%", async () => {
+    const summary = emptyUsageSummary(resolveUsageWindow("30d", now));
+    const days = summary.by_day.map((day) => day.date);
+    const models = [
+      "gpt-5.5",
+      "claude-opus-5-5",
+      "glm-5.3",
+      "gemini-3-pro",
+      "kimi-k3",
+      "qwen-4",
+    ];
+    summary.by_model = [
+      ...models.map((id, index) =>
+        group(id, { total_tokens: 600 - index * 100, requests: index + 1 }),
+      ),
+      group(null, { total_tokens: 5, requests: 1 }),
+    ];
+    summary.by_hour_model = models.map((model, index) => ({
+      date: days[29 - index],
+      hour: 9 + index,
+      model,
+      requests: index + 1,
+      total_tokens: 600 - index * 100,
+    }));
+    summary.by_client = [
+      group("claude_code", { total_tokens: 1000 }),
+      group("codex", { total_tokens: 900 }),
+      group(null, { total_tokens: 205 }),
+    ];
+    await renderOverview({
+      usageRange: "30d",
+      usage: { status: "ready", summary, error: null },
+    });
+    await act(async () => button("星轨").click());
+
+    const rows = [
+      ...container.querySelectorAll<HTMLElement>(
+        "[data-slot='star-trail-model']",
+      ),
+    ];
+    expect(rows).toHaveLength(6);
+    expect(rows[5].textContent).toContain("其他 2 个模型");
+    const arcOf = (index: number) =>
+      container.querySelector(
+        `[data-slot='star-trail-arc'][data-keys~='${days[29 - index]}T${9 + index}']`,
+      )!;
+    rows.slice(0, 5).forEach((row, index) => {
+      expect(row.getAttribute("data-model")).toBe(models[index]);
+      const bar = row.querySelector<HTMLElement>(
+        "[data-slot='star-trail-model-bar']",
+      )!;
+      expect(bar.getAttribute("style")).toContain(
+        `background: ${arcOf(index).getAttribute("stroke")}`,
+      );
+    });
+    // The sixth model is not in the list, so its hour takes the rest's color.
+    expect(arcOf(5).getAttribute("stroke")).toBe("var(--muted-foreground)");
+    expect(arcOf(5).getAttribute("stroke-opacity")).toBe("1");
+
+    const chips = [
+      ...container.querySelectorAll("[data-slot='star-trail-client-chips'] li"),
+    ];
+    expect(chips.at(-1)?.textContent).toContain("未知客户端");
+    expect(
+      chips
+        .map((chip) => Number(/(\d+)%/.exec(chip.textContent ?? "")![1]))
+        .reduce((sum, value) => sum + value, 0),
+    ).toBe(100);
+
+    const chart = container.querySelector("[data-slot='star-trail-chart']")!;
+    expect(chart.getAttribute("aria-label")).toBe("星轨：每天每小时的请求");
+    expect(chart.textContent).toContain("最忙的是");
+    const latest = chart.querySelector<HTMLButtonElement>(
+      "[data-slot='star-trail-hour'][tabindex='0']",
+    )!;
+    await act(async () => latest.focus());
+    expect(document.querySelector('[role="tooltip"]')?.textContent).toContain(
+      "主要用 gpt-5.5",
+    );
+    await act(async () => {
+      latest.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true }),
+      );
+    });
+    expect(document.activeElement?.getAttribute("aria-label")).toContain(
+      "claude-opus-5-5",
+    );
+    expect(document.querySelector('[role="tooltip"]')?.textContent).toContain(
+      "2 次请求",
+    );
+  });
+
   it("refreshes cached calendar labels when language or summary data changes", async () => {
     const summary = emptyUsageSummary(resolveUsageWindow("1y", now));
     const usage = { status: "ready" as const, summary, error: null };
@@ -1410,8 +1982,8 @@ describe("Overview", () => {
         error: null,
       },
     });
-    // A retained short chart range remains usable when returning to Overview.
-    expect(button("图表").getAttribute("data-state")).toBe("on");
+    // A day opens on the star trail.
+    expect(button("星轨").getAttribute("data-state")).toBe("on");
     expect(
       container.querySelector('[aria-label="用量区间"]')?.textContent,
     ).toBe("近 24 小时");

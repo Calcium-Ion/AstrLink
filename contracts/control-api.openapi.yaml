@@ -1335,6 +1335,8 @@ paths:
         counts; token usage is accumulated only for successful requests. No
         pagination cap applies.
         Calendar buckets use the supplied IANA zone, including DST transitions.
+        Windows of at most 32 days also include hour-by-model buckets of
+        successful requests, whatever the bucket parameter.
       parameters:
         - name: from
           in: query
@@ -4400,6 +4402,66 @@ components:
             date: { type: string, format: date }
             hour: { type: integer, minimum: 0, maximum: 23 }
       unevaluatedProperties: false
+    UsageHourModelBucket:
+      type: object
+      additionalProperties: false
+      description: >-
+        Successful root inference requests of one model in one local hour.
+        model is null when no model was recorded.
+      required: [date, hour, model, requests, total_tokens]
+      properties:
+        date: { type: string, format: date }
+        hour: { type: integer, minimum: 0, maximum: 23 }
+        model: { type: [string, "null"] }
+        requests: { type: integer, minimum: 1 }
+        total_tokens: { type: integer, minimum: 0 }
+    GatewayRewrite:
+      type: string
+      description: >-
+        A change the gateway made to a request before it left for the
+        provider. global_prompt, reasoning_effort and client_identity are
+        known only for requests recorded since they were noted; older requests
+        never list them.
+      enum:
+        [
+          model_redirect,
+          privacy,
+          image_compression,
+          global_prompt,
+          reasoning_effort,
+          conversion,
+          client_identity,
+        ]
+    UsageRoute:
+      type: object
+      additionalProperties: false
+      description: >-
+        Succeeded and failed root inference requests that took one way through
+        the gateway.
+      required:
+        [client_type, service_id, failed_service_id, failed, rewrites, requests]
+      properties:
+        client_type:
+          type: [string, "null"]
+          description: >-
+            Detected client type; null for unknown clients and historical
+            requests without one.
+        service_id:
+          type: [string, "null"]
+          description: >-
+            Provider of the request's last attempt; null when it never reached
+            one.
+        failed_service_id:
+          type: [string, "null"]
+          description: >-
+            Provider whose failed attempt the request failed over from: the
+            newest failed attempt at another provider than service_id.
+        failed: { type: boolean }
+        rewrites:
+          type: array
+          description: In the order the gateway applies them.
+          items: { $ref: "#/components/schemas/GatewayRewrite" }
+        requests: { type: integer, minimum: 1 }
     UsageGroup:
       allOf:
         - $ref: "#/components/schemas/UsageTotals"
@@ -4443,6 +4505,9 @@ components:
           by_service,
           by_model,
           by_token,
+          by_hour_model,
+          by_client,
+          by_route,
           scanned_records,
         ]
       properties:
@@ -4466,6 +4531,25 @@ components:
         by_token:
           type: array
           items: { $ref: "#/components/schemas/UsageGroup" }
+        by_hour_model:
+          type: array
+          description: >-
+            Sparse local hours with successful requests, split by model and
+            ordered by date, hour, then tokens. Empty when the window spans
+            more than 32 days.
+          items: { $ref: "#/components/schemas/UsageHourModelBucket" }
+        by_client:
+          type: array
+          description: >-
+            Groups by detected client type. Unknown clients and historical
+            requests without a client share the null id.
+          items: { $ref: "#/components/schemas/UsageGroup" }
+        by_route:
+          type: array
+          description: >-
+            Routes from client to provider with their rewrites and failovers,
+            busiest first. Empty when the window spans more than 32 days.
+          items: { $ref: "#/components/schemas/UsageRoute" }
         scanned_records: { type: integer, minimum: 0 }
     PrivacyTotals:
       type: object
@@ -7675,6 +7759,24 @@ components:
             Tokens the upstream reported the call generated, reasoning
             included. Absent while the call runs, when no usage came back, and
             when the stream stopped before its usage was final.
+        service_id:
+          allOf:
+            - $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+          description: >-
+            Provider of the call's last attempt; set once the call has ended
+            and reached a provider.
+        failed_service_id:
+          allOf:
+            - $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+          description: >-
+            Provider the call failed over from; set once the call has ended.
+        rewrites:
+          type: array
+          minItems: 1
+          description: >-
+            What the gateway changed, in the order it applies them; set once
+            the call has ended and only when something changed.
+          items: { $ref: "#/components/schemas/GatewayRewrite" }
       additionalProperties: false
     RequestSession:
       type: object

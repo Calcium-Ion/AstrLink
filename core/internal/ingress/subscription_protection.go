@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/QuantumNous/astrlink/core/contract"
+	"github.com/QuantumNous/astrlink/core/internal/accountauth"
 )
 
 // subscriptionProtection holds the Routing switches of the subscription
@@ -16,6 +17,8 @@ type subscriptionProtection struct {
 	claudeRequests      bool
 	sessionIsolation    bool
 	claudeIdentity      bool
+	codexIdentity       bool
+	grokIdentity        bool
 	officialPassthrough bool
 	claudeAutoLearn     bool
 	codexAutoLearn      bool
@@ -29,10 +32,33 @@ func subscriptionProtectionFrom(settings contract.RoutingSettings) subscriptionP
 		claudeRequests:      settings.ClaudeRequestNormalization,
 		sessionIsolation:    settings.SubscriptionSessionIsolation,
 		claudeIdentity:      settings.ClaudeIdentityEnforcement,
+		codexIdentity:       settings.CodexIdentityEnforcement,
+		grokIdentity:        settings.GrokIdentityEnforcement,
 		officialPassthrough: settings.OfficialClientPassthrough,
 		claudeAutoLearn:     settings.ClaudeIdentityAutoLearn,
 		codexAutoLearn:      settings.CodexIdentityAutoLearn,
 		grokAutoLearn:       settings.GrokIdentityAutoLearn,
+	}
+}
+
+// sendsClientIdentity reports whether an attempt to a subscription provider
+// leaves under the subscription's own client identity instead of the
+// caller's, as the authorizer decides: Codex and Claude unless an official
+// client passes through, Grok while its enforcement is on, and the providers
+// that always present one client.
+func (protection subscriptionProtection) sendsClientIdentity(kind contract.ServiceKind, class accountauth.ClientClass) bool {
+	official := protection.officialPassthrough && class == accountauth.ClientClassOfficial
+	switch kind {
+	case contract.ServiceKindCodexSubscription:
+		return protection.codexIdentity && !official
+	case contract.ServiceKindClaudeSubscription:
+		return protection.claudeIdentity && !official
+	case contract.ServiceKindGrokSubscription:
+		return protection.grokIdentity
+	case contract.ServiceKindAntigravitySubscription, contract.ServiceKindCopilotSubscription, contract.ServiceKindDroidSubscription:
+		return true
+	default:
+		return false
 	}
 }
 

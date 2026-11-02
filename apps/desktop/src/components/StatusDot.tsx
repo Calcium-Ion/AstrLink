@@ -26,10 +26,16 @@ const toneClasses: Record<StatusTone, string> = {
 export function StatusDot({
   className,
   label,
+  pulse = false,
   tone = "neutral",
   ...props
-}: HTMLAttributes<HTMLSpanElement> & { label?: string; tone?: StatusTone }) {
-  const dot = (
+}: HTMLAttributes<HTMLSpanElement> & {
+  label?: string;
+  /** A ring breathes out of the dot; it animates only transform and opacity. */
+  pulse?: boolean;
+  tone?: StatusTone;
+}) {
+  const plain = (
     <span
       aria-hidden="true"
       className={cn(
@@ -40,6 +46,20 @@ export function StatusDot({
       data-tone={tone}
       {...props}
     />
+  );
+  const dot = pulse ? (
+    <span className="relative inline-flex shrink-0" data-slot="status-pulse">
+      <span
+        aria-hidden="true"
+        className={cn(
+          "absolute inset-0 rounded-full opacity-0 motion-safe:animate-[status-dot-pulse_2s_ease-in-out_infinite]",
+          toneClasses[tone],
+        )}
+      />
+      {plain}
+    </span>
+  ) : (
+    plain
   );
 
   if (!label) return dot;

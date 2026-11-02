@@ -114,7 +114,7 @@ export function conversationActivity(
  * for, at most `TOOL_WAIT_MS`, or for the grace. `own` is the conversation's
  * calls, oldest first.
  */
-function busyUntil(
+export function busyUntil(
   call: RequestActivityCall,
   own: readonly RequestActivityCall[],
 ): number {
@@ -176,7 +176,7 @@ const byStart = (left: RequestActivityCall, right: RequestActivityCall) =>
  * subagent links `parentOf` knows; one it does not know, or one in a loop of
  * links, is its own root.
  */
-function rootOf(
+export function rootOf(
   parentOf: ReadonlyMap<string, string>,
   sessionId: string,
 ): string {
@@ -323,7 +323,9 @@ export type LaneAction =
   /** Between calls, from a call that recorded no output. */
   | { kind: "idle" };
 
-export function laneAction(session: RequestSession): LaneAction {
+export function laneAction(
+  session: Pick<RequestSession, "status" | "active_request_starts" | "output">,
+): LaneAction {
   const output = session.output;
   if (sessionRunning(session)) {
     if (!output) return { kind: "waiting" };

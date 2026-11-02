@@ -33,7 +33,8 @@ func (store *Store) ListRequestActivity(
 	rows, err := store.db.QueryContext(ctx, `
 SELECT COALESCE(root.session_id, root.id), root.client_type, root.started_at, root.completed_at,
        root.status, root.http_status, root.output_json, root.parent_session_id,
-       json_extract(root.usage_json, '$.output_tokens'), json_extract(root.usage_json, '$.billing_incomplete')
+       json_extract(root.usage_json, '$.output_tokens'), json_extract(root.usage_json, '$.billing_incomplete'),
+       root.service_id, `+gatewayRewriteColumns("root")+`
 FROM request_records AS root INDEXED BY request_records_root_started_idx
 WHERE root.parent_request_id IS NULL
   AND root.started_at >= ?
@@ -69,8 +70,10 @@ ORDER BY root.started_at DESC, root.id DESC`,
 		var clientType, completedAt, output, parent sql.NullString
 		var httpStatus, outputTokens sql.NullInt64
 		var incomplete sql.NullBool
-		if err := rows.Scan(&sessionID, &clientType, &startedAt, &completedAt, &status, &httpStatus, &output, &parent,
-			&outputTokens, &incomplete); err != nil {
+		var service sql.NullString
+		var rewritten gatewayRewriteRow
+		if err := rows.Scan(append([]any{&sessionID, &clientType, &startedAt, &completedAt, &status, &httpStatus, &output, &parent,
+			&outputTokens, &incomplete, &service}, rewritten.targets()...)...); err != nil {
 			return nil, fmt.Errorf("scan request activity: %w", err)
 		}
 		call := contract.RequestActivityCall{
@@ -93,6 +96,17 @@ ORDER BY root.started_at DESC, root.id DESC`,
 			// A stream cut short keeps the usage it saw so far, which undercounts.
 			if outputTokens.Valid && outputTokens.Int64 > 0 && !incomplete.Bool {
 				call.OutputTokens = int(outputTokens.Int64)
+			}
+			if service.Valid && service.String != "" {
+				id := contract.ServiceID(service.String)
+				call.ServiceID = &id
+				if from := rewritten.failedService; from.Valid && from.String != "" && from.String != service.String {
+					failed := contract.ServiceID(from.String)
+					call.FailedServiceID = &failed
+				}
+			}
+			if rewrites := rewritten.rewrites(); len(rewrites) > 0 {
+				call.Rewrites = rewrites
 			}
 		}
 		record := contract.RequestRecord{Status: contract.RequestStatus(status)}

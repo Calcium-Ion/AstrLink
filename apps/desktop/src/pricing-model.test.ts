@@ -36,6 +36,11 @@ describe("official pricing boundary", () => {
       ).toThrow();
     }
     expect(formatUSD("18.420000000")).toBe("$18.42");
+    // Short amounts drop the cents from $1,000 up.
+    expect(formatUSD("999.99", { short: true })).toBe("$999.99");
+    expect(formatUSD("1000", { short: true })).toBe("$1,000");
+    expect(formatUSD("12345.67", { short: true })).toBe("$12,346");
+    expect(formatUSD("12345.67")).toBe("$12,345.67");
   });
   it("does not accept non-finite money, counts, or fabricated plan prices", () => {
     const row = {

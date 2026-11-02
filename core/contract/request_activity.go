@@ -20,6 +20,13 @@ type RequestActivityCall struct {
 	// reasoning included. Absent while the call runs, when no usage came back,
 	// and when the stream stopped before its usage was final.
 	OutputTokens int `json:"output_tokens,omitempty"`
+	// ServiceID is the provider of the call's last attempt, FailedServiceID
+	// the one that failed before it took the call over, and Rewrites what the
+	// gateway changed, in the order it applies them. All three are set once
+	// the call has ended.
+	ServiceID       *ServiceID       `json:"service_id,omitempty"`
+	FailedServiceID *ServiceID       `json:"failed_service_id,omitempty"`
+	Rewrites        []GatewayRewrite `json:"rewrites,omitempty"`
 }
 
 // RequestActivity lists the model calls that overlap a recent window, for the

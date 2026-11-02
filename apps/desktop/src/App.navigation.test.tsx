@@ -511,9 +511,12 @@ describe("App workspace navigation", () => {
       },
       by_day: [],
       by_hour: [],
+      by_hour_model: [],
       by_service: [],
       by_model: [],
       by_token: [],
+      by_client: [],
+      by_route: [],
       scanned_records: 0,
       capped: false,
     }));
@@ -1266,7 +1269,7 @@ describe("App workspace navigation", () => {
     expect(container.textContent).toContain("API 地址");
     expect(container.textContent).toContain("用量概览");
     expect(
-      container.querySelector("[data-slot='activity-heatmap']"),
+      container.querySelector("[data-slot='usage-star-trail']"),
     ).not.toBeNull();
     expect(container.textContent).toContain("按 API 提供商");
     expect(container.textContent).toContain("按模型");
@@ -1663,29 +1666,25 @@ describe("App workspace navigation", () => {
     expect(bridgeMocks.getUsageSummary).toHaveBeenCalledTimes(requestCalls);
   });
 
-  it("summarizes usage over the default yearly window", async () => {
+  it("reads the last 24 hours once when the overview first opens", async () => {
     await renderApp();
+    await act(async () => {
+      await Promise.resolve();
+    });
 
+    // The request sky is hidden by default and reads nothing.
+    expect(container.querySelector('[data-slot="request-sky"]')).toBeNull();
     const query = bridgeMocks.getUsageSummary.mock.calls[0]?.[0];
     expect(bridgeMocks.getUsageSummary).toHaveBeenCalledTimes(1);
     expect(bridgeMocks.listRequestRecords).not.toHaveBeenCalled();
-    expect(query).toMatchObject({ preset: "1y" });
+    expect(query).toMatchObject({ preset: "1d" });
     const from = new Date(query.from as string);
     const to = new Date(query.to as string);
-    expect(from.getHours()).toBe(0);
-    expect(from.getMinutes()).toBe(0);
-    expect(to.getHours()).toBe(0);
-    // 365 inclusive local days, ending today.
-    expect(Math.round((to.getTime() - from.getTime()) / 86_400_000)).toBe(365);
-
-    const today = new Date();
-    expect(to.getDate()).toBe(
-      new Date(
-        today.getFullYear(),
-        today.getMonth(),
-        today.getDate() + 1,
-      ).getDate(),
-    );
+    // 24 local hours, ending with the current one.
+    expect(to.getTime() - from.getTime()).toBe(24 * 3_600_000);
+    expect(to.getMinutes()).toBe(0);
+    expect(from.getTime()).toBeLessThanOrEqual(Date.now());
+    expect(to.getTime()).toBeGreaterThan(Date.now());
   });
 
   it("revalidates the overview silently on return, on a timer, and when shown again", async () => {

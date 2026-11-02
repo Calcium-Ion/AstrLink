@@ -34,8 +34,14 @@ const MAX_FRACTION_DIGITS = 2;
  * Rounds to at most two fraction digits and drops trailing zeros, so `1.00万`
  * renders as `1万`. The mantissa stays ungrouped: `4664.67万`, not `4,664.67万`.
  */
-function trimFraction(value: number): string {
-  return `${Number(value.toFixed(MAX_FRACTION_DIGITS))}`;
+function trimFraction(value: number, digits = MAX_FRACTION_DIGITS): number {
+  return Number(value.toFixed(digits));
+}
+
+/** About three significant digits: two fraction digits below 10, one below 100. */
+function shortFraction(mantissa: number): number {
+  const magnitude = Math.abs(mantissa);
+  return magnitude < 10 ? 2 : magnitude < 100 ? 1 : 0;
 }
 
 /** Full grouped digits, used for exact tooltips beside a compact value. */
@@ -48,13 +54,29 @@ export function formatExactNumber(value: number): string {
  * Abbreviate large counts for the active language: `K`/`M`/`B` in English and
  * `万`/`亿` or `万`/`億` in Chinese and Japanese. Values below the first unit
  * keep their grouped digits.
+ *
+ * `short` is for tight spots: fewer fraction digits as the number grows, so
+ * `1022.72万` reads `1023万` and `9.8765亿` reads `9.88亿`. A value that rounds
+ * up to the next unit takes it: `1亿`, not `10000万`.
  */
-export function formatCompactNumber(value: number): string {
+export function formatCompactNumber(
+  value: number,
+  { short = false }: { short?: boolean } = {},
+): string {
   if (!Number.isFinite(value)) return "—";
   const magnitude = Math.abs(value);
-  for (const unit of UNITS[currentLocale()]) {
+  const units = UNITS[currentLocale()];
+  for (const [at, unit] of units.entries()) {
     if (magnitude < unit.threshold) continue;
-    return `${trimFraction(value / unit.divisor)}${unit.suffix}`;
+    const mantissa = value / unit.divisor;
+    if (!short) return `${trimFraction(mantissa)}${unit.suffix}`;
+    const rounded = trimFraction(mantissa, shortFraction(mantissa));
+    const larger = units[at - 1];
+    if (larger && Math.abs(rounded) * unit.divisor >= larger.threshold) {
+      const next = (rounded * unit.divisor) / larger.divisor;
+      return `${trimFraction(next, shortFraction(next))}${larger.suffix}`;
+    }
+    return `${rounded}${unit.suffix}`;
   }
   return formatExactNumber(value);
 }

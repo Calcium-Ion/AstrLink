@@ -1081,6 +1081,7 @@ export default function App() {
               <Overview
                 catalog={catalog}
                 copyState={copyState}
+                coreSessionKey={coreSessionKey}
                 isNativeApp={isNativeApp}
                 isReady={isReady}
                 isRestarting={isRestarting}

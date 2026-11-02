@@ -54,7 +54,8 @@ func rewritesProtocol(protocol contract.ProtocolID) bool {
 	}
 }
 
-// gatewayReasoning is what the reasoning settings did to one attempt.
+// gatewayReasoning is what the reasoning settings and the global system
+// prompt did to one attempt.
 type gatewayReasoning struct {
 	// effort is the level sent when the settings changed the body; empty
 	// keeps the client's level.
@@ -62,6 +63,8 @@ type gatewayReasoning struct {
 	// diagnostic explains the decision for the request record; empty when
 	// the settings leave reasoning to the client.
 	diagnostic string
+	// systemPrompt is set when the global system prompt was added.
+	systemPrompt bool
 }
 
 // applyGatewayRewrite applies the reasoning settings and adds the global
@@ -124,6 +127,7 @@ func (handler *Handler) applyGatewayRewrite(
 			}{{rewrite.prefix, systemprompt.Prepend}, {rewrite.suffix, systemprompt.Append}} {
 				if updated, changed, editErr := edit.add(protocol, body, edit.text); editErr == nil && changed {
 					body = updated
+					result.systemPrompt = true
 				}
 			}
 		}
