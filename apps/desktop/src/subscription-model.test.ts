@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  accountAuthorizationFlows,
   parseAuthorizationSession,
   parseBeginCodexAuthorizationResult,
+  parseClaudeCLIStatus,
 } from "./subscription-model";
 
 const timestamps = {
@@ -192,5 +194,66 @@ describe("subscription IPC contract", () => {
         updated_at: timestamps.updated_at,
       }),
     ).toThrow("authorization URL http is only allowed on loopback");
+  });
+
+  it("accepts Claude CLI sign-ins only for Claude, with their page", () => {
+    const claude = {
+      id: "authorization_claude",
+      provider: "claude_code",
+      status: "pending",
+      flow: "claude_cli",
+      service_id: "service_claude_01",
+      authorization_url: "https://claude.ai/oauth/authorize?code=true",
+      expires_at: "2026-07-28T08:10:00Z",
+      ...timestamps,
+    };
+    const { authorization_url: _, ...withoutPage } = claude;
+    expect(parseAuthorizationSession(claude).flow).toBe("claude_cli");
+    expect(() => parseAuthorizationSession(withoutPage)).toThrow(
+      /requires authorization_url/,
+    );
+    expect(() =>
+      parseAuthorizationSession({ ...claude, provider: "openai_codex" }),
+    ).toThrow(/unsupported by provider/);
+    expect(
+      parseAuthorizationSession({ ...withoutPage, status: "completed" }).status,
+    ).toBe("completed");
+  });
+
+  it("offers each Claude account only its own mode's sign-in", () => {
+    expect(accountAuthorizationFlows("claude_code", "official")).toEqual([
+      "claude_cli",
+    ]);
+    expect(accountAuthorizationFlows("claude_code", "legacy")).toEqual([
+      "authorization_code",
+    ]);
+    expect(accountAuthorizationFlows("claude_code", undefined)).toEqual([
+      "authorization_code",
+    ]);
+    expect(accountAuthorizationFlows("openai_codex", undefined)).toEqual([
+      "browser",
+      "device_code",
+    ]);
+  });
+
+  it("parses the Claude CLI status strictly", () => {
+    const status = {
+      installed: true,
+      supported: false,
+      path: "/usr/local/bin/claude",
+      version: "2.0.1",
+      minimum_version: "2.1.248",
+      install_available: false,
+      installing: false,
+    };
+    expect(parseClaudeCLIStatus(status)).toEqual(status);
+    expect(() => parseClaudeCLIStatus({ ...status, token: "x" })).toThrow(
+      /unexpected field/,
+    );
+    expect(() => parseClaudeCLIStatus({ ...status, installing: "no" })).toThrow(
+      /expected a boolean/,
+    );
+    const { minimum_version: __, ...withoutMinimum } = status;
+    expect(() => parseClaudeCLIStatus(withoutMinimum)).toThrow(/missing field/);
   });
 });

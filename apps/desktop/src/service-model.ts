@@ -15,6 +15,7 @@ import {
 import { i18n } from "./i18n";
 import type {
   SubscriptionError,
+  SubscriptionMode,
   SubscriptionProvider,
   SubscriptionStatus,
 } from "./subscription-model";
@@ -319,6 +320,8 @@ export interface SubscriptionServiceConnection {
   status: SubscriptionStatus;
   account_hint?: string;
   provider_account_id?: string;
+  /** Claude only; absent on accounts created before modes existed (legacy). */
+  mode?: SubscriptionMode;
   credential_ref?: string;
   authorization_boundary?: string;
   token_expires_at?: string;
@@ -411,6 +414,8 @@ export type SubscriptionServiceCreateInput = {
   failure_policy?: FailurePolicy;
   name: string;
   kind: SubscriptionServiceKind;
+  /** Claude only; Core defaults new Claude accounts to official. */
+  subscription_mode?: SubscriptionMode;
   enabled?: boolean;
   models?: string[];
   capabilities?: ServiceCapability[];
@@ -963,6 +968,7 @@ function parseSubscriptionConnection(
     [
       "account_hint",
       "provider_account_id",
+      "mode",
       "credential_ref",
       "authorization_boundary",
       "token_expires_at",
@@ -993,6 +999,12 @@ function parseSubscriptionConnection(
     provider: subscription.provider,
     status,
   };
+  if (Object.hasOwn(subscription, "mode")) {
+    if (subscription.mode !== "legacy" && subscription.mode !== "official") {
+      invalid(`${path}.mode`, "unknown subscription mode");
+    }
+    result.mode = subscription.mode;
+  }
   for (const [field, max] of [
     ["account_hint", 128],
     ["provider_account_id", 256],

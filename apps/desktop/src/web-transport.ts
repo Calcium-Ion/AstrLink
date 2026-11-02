@@ -309,6 +309,8 @@ const commands: Record<string, Command> = {
     return { kind: "session", session: value };
   },
   get_service_authorization: route((a) => `${service(a)}/authorization`),
+  get_claude_cli: route("/claude-cli"),
+  install_claude_cli: route("/claude-cli/install", "POST"),
   complete_service_authorization: route(
     (a) => `${service(a)}/authorization`,
     "PUT",

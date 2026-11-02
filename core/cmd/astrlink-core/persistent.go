@@ -60,6 +60,9 @@ type persistentOptions struct {
 	responseStartTimeout     time.Duration
 	// noLoopbackCallback is set when sign-in browsers run on other machines.
 	noLoopbackCallback bool
+	// installClaudeCLI is set by the server edition, which installs the
+	// claude CLI on request into the data directory.
+	installClaudeCLI bool
 	// consoleSessions is set by the server edition; see
 	// controlapi.ConsoleSessions.
 	consoleSessions controlapi.ConsoleSessions
@@ -91,7 +94,10 @@ type persistentCore struct {
 	control  *controlapi.Handler
 	rawVault *controlapi.Vault
 	// gateway configures the inference plane; the caller adds its host gate.
-	gateway        ingress.Dependencies
+	gateway ingress.Dependencies
+	// claudeOfficial serves official Claude accounts; the caller reports the
+	// inference listener to it. Nil when they are unavailable.
+	claudeOfficial *officialClaude
 	retentionSweep func(context.Context) error
 	// close stops the background monitors, zeroes raw keys, closes the
 	// store and then the privacy worker.
@@ -207,6 +213,10 @@ func openPersistentCore(ctx context.Context, options persistentOptions) (*persis
 		return fail("configure subscription manager: %w", err)
 	}
 	subscriptionManager.SetRiskEventStore(store)
+	claudeOfficial, err := enableOfficialClaude(subscriptionManager, options, networkproxy.Resolver(store, store))
+	if err != nil {
+		logf("official Claude accounts are unavailable: %v", err)
+	}
 	pricingManager := pricing.NewManager(store, pricingClient)
 	syncEngine, err := syncengine.New(syncengine.Dependencies{Store: store, Logf: logf})
 	if err != nil {
@@ -278,6 +288,7 @@ func openPersistentCore(ctx context.Context, options persistentOptions) (*persis
 		ResponseStartTimeout:     options.responseStartTimeout,
 		SubscriptionRisk:         subscriptionRiskReporter{manager: subscriptionManager},
 		Identities:               identities,
+		ClaudeOfficial:           claudeOfficial.serving(),
 	}
 	handler, err := controlapi.NewWithDependencies(options.version, controlapi.Dependencies{
 		ServiceStore: store,
@@ -298,10 +309,11 @@ func openPersistentCore(ctx context.Context, options persistentOptions) (*persis
 		LocalData:          store,
 		ClientIdentities:   identities,
 		Subscriptions:      subscriptionManager,
+		ClaudeCLI:          claudeOfficial.controlCLI(),
 		RateLimits:         resolver,
 		ServicePackages:    resolver,
 		CodingPlans:        codingplan.New(store, nil),
-		ServiceModels:      servicemodel.New(store, subscriptionManager, nil).WithVertexTokens(vertexTokens),
+		ServiceModels:      servicemodel.New(store, subscriptionManager, nil).WithVertexTokens(vertexTokens).WithOfficialClaudeModels(claudeOfficial.models()),
 		ServiceTester:      servicetest.NewWithDependencies(gatewayDependencies, subscriptionManager.APIBaseURLFor),
 		BuiltinToolTester:  ingress.NewWithDependencies(gatewayDependencies),
 		ControlToken:       options.controlToken,
@@ -322,9 +334,10 @@ func openPersistentCore(ctx context.Context, options persistentOptions) (*persis
 	go func() { defer monitors.Done(); rawVault.Run(monitorCtx) }()
 	go func() { defer monitors.Done(); syncEngine.Run(monitorCtx, logf) }()
 	return &persistentCore{
-		control:  handler,
-		rawVault: rawVault,
-		gateway:  gatewayDependencies,
+		control:        handler,
+		rawVault:       rawVault,
+		gateway:        gatewayDependencies,
+		claudeOfficial: claudeOfficial,
 		retentionSweep: func(ctx context.Context) error {
 			_, err := store.SweepExpiredAuditData(ctx)
 			return err
@@ -333,6 +346,7 @@ func openPersistentCore(ctx context.Context, options persistentOptions) (*persis
 			// Zero every key an agent grant or the unlock session holds.
 			handler.RevokeRawGrants()
 			rawVault.Lock()
+			claudeOfficial.close()
 			stopMonitors()
 			monitors.Wait()
 			err := store.Close()

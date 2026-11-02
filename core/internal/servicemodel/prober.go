@@ -16,6 +16,7 @@ import (
 
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/accountauth"
+	"github.com/QuantumNous/astrlink/core/internal/claudeofficial"
 	"github.com/QuantumNous/astrlink/core/internal/networkproxy"
 	"github.com/QuantumNous/astrlink/core/internal/providerapi"
 	"github.com/QuantumNous/astrlink/core/internal/secretstore"
@@ -51,6 +52,8 @@ type Prober struct {
 	subscriptions *subscription.Manager
 	client        *http.Client
 	vertex        *vertexauth.Manager
+	// officialModels lists what an official Claude account's CLI offers.
+	officialModels func(context.Context, contract.ServiceID) ([]string, error)
 }
 
 func New(secrets secretstore.SecretStore, subscriptions *subscription.Manager, client *http.Client) *Prober {
@@ -69,6 +72,13 @@ func New(secrets secretstore.SecretStore, subscriptions *subscription.Manager, c
 
 func (prober *Prober) WithVertexTokens(tokens *vertexauth.Manager) *Prober {
 	prober.vertex = tokens
+	return prober
+}
+
+// WithOfficialClaudeModels lists the models of official Claude accounts with
+// models; without it they list none.
+func (prober *Prober) WithOfficialClaudeModels(models func(context.Context, contract.ServiceID) ([]string, error)) *Prober {
+	prober.officialModels = models
 	return prober
 }
 
@@ -177,6 +187,24 @@ func (prober *Prober) probeSubscription(
 	probeContext, err := prober.subscriptions.ProxyContext(probeContext, serviceID)
 	if err != nil {
 		return nil, err
+	}
+	if account, err := prober.subscriptions.Get(probeContext, serviceID); err == nil && account.Official() {
+		// Official Claude accounts are served by the claude CLI, which names
+		// the models it offers when it starts.
+		if protocol != contract.ProtocolOpenAIModels || prober.officialModels == nil {
+			return nil, ErrUnsupported
+		}
+		ids, err := prober.officialModels(probeContext, serviceID)
+		if err != nil {
+			if errors.Is(probeContext.Err(), context.DeadlineExceeded) {
+				return nil, context.DeadlineExceeded
+			}
+			if errors.Is(err, claudeofficial.ErrSignedOut) {
+				return nil, fmt.Errorf("%w: %v", ErrNotConnected, err)
+			}
+			return nil, fmt.Errorf("%w: %v", ErrUpstream, err)
+		}
+		return normalizeProbeIDs(ids)
 	}
 	tokens, err := prober.subscriptions.AccessToken(probeContext, serviceID)
 	if err != nil {

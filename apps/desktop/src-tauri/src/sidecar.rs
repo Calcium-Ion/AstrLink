@@ -2567,12 +2567,28 @@ impl CoreManager {
             };
         // Starting the Core session must still succeed when the OS refuses to
         // open a browser. Device Code remains visible in-app and can be opened
-        // again explicitly.
-        let _ = open_authorization_url(authorization_url);
+        // again explicitly. `claude auth login` opens its page itself.
+        if session.get("flow").and_then(|value| value.as_str()) != Some("claude_cli") {
+            let _ = open_authorization_url(authorization_url);
+        }
         Ok(serde_json::json!({
             "kind": "session",
             "session": session,
         }))
+    }
+
+    /// Reads the claude CLI official Claude accounts run. The desktop never
+    /// installs it; the status links to the official instructions instead.
+    pub async fn get_claude_cli(&self) -> Result<serde_json::Value, String> {
+        let (_, body) = self
+            .authenticated_control(Method::GET, "/control/v1/claude-cli", None, None)
+            .await?;
+        let status: serde_json::Value = serde_json::from_slice(&body)
+            .map_err(|error| format!("Claude Code status is invalid JSON: {error}"))?;
+        if !status.is_object() {
+            return Err("Claude Code status must be an object".to_string());
+        }
+        Ok(status)
     }
 
     pub async fn get_service_authorization(
@@ -5068,7 +5084,8 @@ const SUBSCRIPTION_PROVIDERS: &[&str] = &[
 ];
 const AUTHORIZATION_SESSION_STATUSES: &[&str] =
     &["pending", "completed", "cancelled", "expired", "failed"];
-const AUTHORIZATION_FLOWS: &[&str] = &["browser", "device_code", "authorization_code"];
+const AUTHORIZATION_FLOWS: &[&str] =
+    &["browser", "device_code", "authorization_code", "claude_cli"];
 
 fn validate_subscription_provider(value: &str) -> Result<(), String> {
     if !SUBSCRIPTION_PROVIDERS.contains(&value) {
@@ -5256,7 +5273,7 @@ fn parse_authorization_session_value(
         .ok_or_else(|| "authorization session omitted flow".to_string())?;
     validate_authorization_flow(flow)?;
 
-    if (provider == "claude_code") != (flow == "authorization_code") {
+    if (provider == "claude_code") != (flow == "authorization_code" || flow == "claude_cli") {
         return Err("authorization flow is unsupported by provider".to_string());
     }
     if provider == "antigravity" && flow != "browser" {
@@ -5308,7 +5325,9 @@ fn parse_authorization_session_value(
     if let Some(device_code) = device_code {
         session["device_code"] = parse_authorization_device_code_value(device_code)?;
     }
-    if status == "pending" && (flow == "browser" || flow == "authorization_code") {
+    if status == "pending"
+        && (flow == "browser" || flow == "authorization_code" || flow == "claude_cli")
+    {
         if authorization_url.is_none() {
             return Err(
                 "pending browser authorization session requires authorization_url".to_string(),
@@ -6478,6 +6497,15 @@ mod tests {
         assert!(parse_authorization_session_value(&claude).is_ok());
         claude["code"] = serde_json::json!("secret#state");
         assert!(parse_authorization_session_value(&claude).is_err());
+        claude.as_object_mut().unwrap().remove("code");
+        claude["flow"] = serde_json::json!("claude_cli");
+        claude["authorization_url"] = serde_json::json!("https://claude.ai/oauth/authorize");
+        assert!(parse_authorization_session_value(&claude).is_ok());
+        claude.as_object_mut().unwrap().remove("authorization_url");
+        assert!(parse_authorization_session_value(&claude).is_err());
+        let mut codex_cli = browser.clone();
+        codex_cli["flow"] = serde_json::json!("claude_cli");
+        assert!(parse_authorization_session_value(&codex_cli).is_err());
 
         let mut device = common.clone();
         device["flow"] = serde_json::json!("device_code");

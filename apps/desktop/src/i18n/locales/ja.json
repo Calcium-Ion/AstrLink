@@ -875,6 +875,29 @@
     "privacyTrustedBadgeHint": "このプロバイダーへのリクエストはプライバシー保護を通りません",
     "claudeOauth": "Claude Code 認可",
     "claudeOauthHint": "Claude Pro / Max アカウントです。Claude の認可コールバックページに表示されたコードを入力してください。",
+    "claudeOfficial": "Claude Code 経由",
+    "claudeOfficialHint": "インストール済みの Claude Code でログインし、リクエストもそれが Claude に送ります。",
+    "claudeLegacy": "直接接続",
+    "claudeKindHint": "Claude Pro / Max アカウントです。",
+    "claudeCLI": {
+      "readFailed": "Claude Code のインストール状況を確認できません。",
+      "installFailed": "Claude Code のインストールを開始できません。",
+      "openSetupFailed": "インストール手順を開けません。",
+      "installing": "Claude Code をインストールしています…",
+      "found": "Claude Code {{version}} を使います。",
+      "missingDesktop": "このコンピューターに Claude Code が見つかりません。公式の手順でインストールしてからログインしてください。",
+      "missingServer": "サーバーにまだ Claude Code がありません。インストールしてからログインしてください。",
+      "outdatedDesktop": "Claude Code {{version}} は古すぎます。{{minimum}} 以降が必要です。ターミナルで claude update を実行してください。",
+      "outdatedServer": "サーバーの Claude Code {{version}} は古すぎます。{{minimum}} 以降が必要です。",
+      "installError": "前回のインストールに失敗しました：{{error}}",
+      "install": "Claude Code をインストール",
+      "update": "Claude Code を更新",
+      "setup": "インストール手順",
+      "recheck": "再確認",
+      "loginTitle": "Claude Code にログイン",
+      "loginHintDesktop": "開いたページで Claude アカウントにログインしてください。終わるとここが自動で更新されます。最後にコードが表示された場合は、下に貼り付けてください。",
+      "loginHintServer": "ログインページで Claude アカウントにログインし、表示されたコードを下に貼り付けてください。"
+    },
     "authorizationCode": "認可コード",
     "completeLogin": "認可を完了",
     "codeExchangeFailed": "認可コードを確認できませんでした。もう一度ログインしてください。",
@@ -3295,7 +3318,8 @@
       "response_affinity": "Responses の継続: 直前のレスポンスはこの APIプロバイダーから",
       "websocket_connection": "WebSocket 接続: 接続を開いた APIプロバイダー",
       "failover": "フェイルオーバー: 先に試した APIプロバイダーが失敗または拒否",
-      "client_pin": "クライアント指定：リクエストがこの APIプロバイダーを指名"
+      "client_pin": "クライアント指定：リクエストがこの APIプロバイダーを指名",
+      "claude_cli": "Claude Code の呼び出し：このアカウントの Claude Code が親リクエストのために送信。使用量は親リクエストに計上"
     },
     "selectionsShort": {
       "priority": "優先度順",
@@ -3303,7 +3327,8 @@
       "response_affinity": "直前のレスポンスを継続",
       "websocket_connection": "同じ WebSocket 接続",
       "failover": "フェイルオーバー",
-      "client_pin": "クライアント指定"
+      "client_pin": "クライアント指定",
+      "claude_cli": "Claude Code の呼び出し"
     },
     "plans": {
       "native": "そのまま転送",

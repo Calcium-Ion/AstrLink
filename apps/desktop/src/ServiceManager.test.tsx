@@ -41,6 +41,16 @@ const bridgeMocks = vi.hoisted(() => ({
   getClientConfigStatus: vi.fn(),
   openServiceTerminal: vi.fn(),
   pickTerminalDirectory: vi.fn(),
+  getClaudeCLI: vi.fn().mockResolvedValue({
+    installed: true,
+    supported: true,
+    version: "2.1.300",
+    minimum_version: "2.1.248",
+    install_available: false,
+    installing: false,
+  }),
+  installClaudeCLI: vi.fn(),
+  openExternalURL: vi.fn(),
 }));
 
 vi.mock("./bridge", () => bridgeMocks);
@@ -1745,28 +1755,144 @@ describe("ServiceManager", () => {
     },
   );
 
-  it("creates a Claude subscription with its own authorization flow", async () => {
-    const claude: Service = {
+  it.each([
+    {
+      choice: null,
+      mode: "official",
+      flow: "claude_cli",
+      authorizationURL: "https://claude.ai/oauth/authorize",
+    },
+    {
+      choice: "直接连接",
+      mode: "legacy",
+      flow: "authorization_code",
+      authorizationURL: "https://claude.com/cai/oauth/authorize",
+    },
+  ] as const)(
+    "creates a $mode Claude subscription and signs in with $flow",
+    async ({ choice, mode, flow, authorizationURL }) => {
+      const claude: Service = {
+        ...codexService,
+        id: "service_claude",
+        name: "Claude Code",
+        kind: "claude_subscription",
+        subscription: { provider: "claude_code", status: "disconnected", mode },
+      };
+      bridgeMocks.createService.mockResolvedValue({ service: claude, etag });
+      bridgeMocks.beginServiceAuthorization.mockResolvedValue({
+        kind: "session",
+        session: {
+          id: "authorization_claude",
+          provider: "claude_code",
+          status: "pending",
+          flow,
+          authorization_url: authorizationURL,
+          service_id: claude.id,
+          created_at: timestamp,
+          updated_at: timestamp,
+          expires_at: "2099-09-18T00:00:00Z",
+        },
+      });
+      bridgeMocks.getServiceAuthorization.mockReturnValue(
+        new Promise(() => {}),
+      );
+      await act(async () =>
+        root.render(
+          <ServiceManager
+            catalogError={null}
+            catalogStatus="ready"
+            isReady
+            onDirtyChange={() => {}}
+            onRefresh={() => {}}
+            onServiceRemoved={() => {}}
+            onServiceSaved={() => {}}
+            onViewChange={() => {}}
+            protocols={[]}
+            services={[]}
+            view={{ kind: "create", serviceKind: "codex_subscription" }}
+          />,
+        ),
+      );
+      await chooseServiceKind("Claude Code 订阅");
+      expect(
+        container.querySelector<HTMLInputElement>("#service-name")?.value,
+      ).toBe("Claude Code");
+      expect(
+        container.querySelector('[role="radio"][aria-label="Device Code"]'),
+      ).toBeNull();
+      const official = container.querySelector<HTMLElement>(
+        '[role="radio"][aria-label="通过 Claude Code"]',
+      );
+      expect(official?.getAttribute("aria-checked")).toBe("true");
+      expect(container.textContent).toContain("使用 Claude Code 2.1.300。");
+      if (choice) {
+        await act(async () =>
+          container
+            .querySelector<HTMLElement>(
+              `[role="radio"][aria-label="${choice}"]`,
+            )!
+            .click(),
+        );
+        expect(container.textContent).not.toContain("使用 Claude Code");
+      }
+      await act(async () =>
+        container
+          .querySelector("form")!
+          .dispatchEvent(
+            new Event("submit", { bubbles: true, cancelable: true }),
+          ),
+      );
+      expect(bridgeMocks.createService).toHaveBeenCalledWith({
+        name: "Claude Code",
+        kind: "claude_subscription",
+        subscription_mode: mode,
+        enabled: true,
+        responses_websocket_enabled: false,
+        models: [],
+      });
+      expect(bridgeMocks.beginServiceAuthorization).toHaveBeenCalledWith(
+        "service_claude",
+        flow,
+      );
+    },
+  );
+
+  it("signs an official Claude account in again with the pasted code", async () => {
+    const claude = parseService({
       ...codexService,
-      id: "service_claude",
+      id: "service_claude_official",
       name: "Claude Code",
       kind: "claude_subscription",
-      subscription: { provider: "claude_code", status: "disconnected" },
+      capabilities: [
+        { protocol: "anthropic.messages", mode: "native", streaming: true },
+        { protocol: "openai.models", mode: "native", streaming: false },
+      ],
+      subscription: {
+        provider: "claude_code",
+        status: "needs_reauth",
+        mode: "official",
+      },
+    });
+    const pending = {
+      id: "authorization_claude",
+      provider: "claude_code",
+      status: "pending",
+      flow: "claude_cli",
+      authorization_url: "https://claude.ai/oauth/authorize",
+      service_id: claude.id,
+      created_at: timestamp,
+      updated_at: timestamp,
+      expires_at: "2099-09-18T00:00:00Z",
     };
-    bridgeMocks.createService.mockResolvedValue({ service: claude, etag });
     bridgeMocks.beginServiceAuthorization.mockResolvedValue({
       kind: "session",
-      session: {
-        id: "authorization_claude",
-        provider: "claude_code",
-        status: "pending",
-        flow: "authorization_code",
-        authorization_url: "https://claude.com/cai/oauth/authorize",
-        service_id: claude.id,
-        created_at: timestamp,
-        updated_at: timestamp,
-        expires_at: "2099-09-18T00:00:00Z",
-      },
+      session: pending,
+    });
+    bridgeMocks.getServiceAuthorization.mockResolvedValue(pending);
+    bridgeMocks.completeServiceAuthorization.mockResolvedValue({
+      ...pending,
+      status: "completed",
+      authorization_url: undefined,
     });
     await act(async () =>
       root.render(
@@ -1780,35 +1906,56 @@ describe("ServiceManager", () => {
           onServiceSaved={() => {}}
           onViewChange={() => {}}
           protocols={[]}
-          services={[]}
-          view={{ kind: "create", serviceKind: "codex_subscription" }}
+          services={[claude]}
+          view={{ kind: "list" }}
         />,
       ),
     );
-    await chooseServiceKind("Claude Code 订阅");
+    await openServiceOverflow("Claude Code");
+    await chooseMenuItem("登录");
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!;
     expect(
-      container.querySelector<HTMLInputElement>("#service-name")?.value,
-    ).toBe("Claude Code");
+      dialog
+        .querySelector('[role="radio"][aria-label="通过 Claude Code"]')
+        ?.getAttribute("aria-checked"),
+    ).toBe("true");
     expect(
-      container.querySelector('[role="radio"][aria-label="Device Code"]'),
+      dialog.querySelector('[role="radio"][aria-label="Claude Code 授权"]'),
     ).toBeNull();
+    const start = [...dialog.querySelectorAll("button")].find(
+      (button) => button.textContent === "开始登录",
+    )!;
+    await act(async () => start.click());
+    await act(async () => {});
+    expect(bridgeMocks.beginServiceAuthorization).toHaveBeenCalledWith(
+      claude.id,
+      "claude_cli",
+    );
+    expect(bridgeMocks.openAuthorizationURL).not.toHaveBeenCalled();
+    expect(document.body.textContent).toContain("登录 Claude Code");
+    expect(document.body.textContent).toContain("在打开的页面登录 Claude 账号");
+    const code = document.querySelector<HTMLInputElement>(
+      "#claude-authorization-code",
+    )!;
+    expect(code.placeholder).toBe("");
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value",
+      )!.set!.call(code, "pasted-code#state");
+      code.dispatchEvent(new Event("input", { bubbles: true }));
+    });
     await act(async () =>
-      container
-        .querySelector("form")!
+      code
+        .closest("form")!
         .dispatchEvent(
           new Event("submit", { bubbles: true, cancelable: true }),
         ),
     );
-    expect(bridgeMocks.createService).toHaveBeenCalledWith({
-      name: "Claude Code",
-      kind: "claude_subscription",
-      enabled: true,
-      responses_websocket_enabled: false,
-      models: [],
-    });
-    expect(bridgeMocks.beginServiceAuthorization).toHaveBeenCalledWith(
-      "service_claude",
-      "authorization_code",
+    expect(bridgeMocks.completeServiceAuthorization).toHaveBeenCalledWith(
+      claude.id,
+      "authorization_claude",
+      "pasted-code#state",
     );
   });
 

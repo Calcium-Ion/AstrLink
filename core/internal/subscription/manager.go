@@ -59,6 +59,7 @@ type Manager struct {
 	usageCache              map[contract.ServiceID]usageCacheEntry
 	riskEvents              RiskEventStore
 	forcedRefreshAt         map[contract.ServiceID]time.Time
+	official                *officialClaude
 }
 
 const usageCacheTTL = 30 * time.Second
@@ -252,6 +253,12 @@ func (manager *Manager) BeginAuthorization(
 	if err != nil {
 		return contract.AuthorizationSession{}, err
 	}
+	if account.Official() {
+		return manager.beginOfficialAuthorization(ctx, id, flow)
+	}
+	if flow == contract.AuthorizationFlowClaudeCLI {
+		return contract.AuthorizationSession{}, fmt.Errorf("only official Claude accounts sign in with the claude CLI")
+	}
 	sessions := manager.sessionsFor(account.Provider)
 	attemptID, err := manager.reserveAuthorizationAttempt(ctx, id)
 	if err != nil {
@@ -293,6 +300,9 @@ func (manager *Manager) GetAuthorization(
 			break
 		}
 	}
+	if !ok && manager.official != nil {
+		session, ok = manager.official.logins.Get(id)
+	}
 	if !ok {
 		manager.reconcileEndedAuthorization(ctx, id, &contract.SubscriptionError{
 			Code:    accountauth.ErrCodeSessionInterrupted,
@@ -321,7 +331,7 @@ func (manager *Manager) reconcileEndedAuthorization(
 			return nil
 		}
 		account.Status = contract.SubscriptionStatusDisconnected
-		if account.CredentialRef != "" {
+		if hadLogin(*account) {
 			account.Status = contract.SubscriptionStatusNeedsReauth
 		}
 		account.LastError = failure
@@ -336,7 +346,16 @@ func (manager *Manager) CancelAuthorization(ctx context.Context, id contract.Ser
 	if err != nil {
 		return contract.AuthorizationSession{}, err
 	}
-	session, err := manager.sessionsFor(account.Provider).Cancel(ctx, id)
+	var session contract.AuthorizationSession
+	if account.Official() {
+		if manager.official == nil {
+			return contract.AuthorizationSession{}, fmt.Errorf("%w", accountauth.ErrSessionNotFound)
+		}
+		session, err = manager.official.logins.Cancel(id)
+		err = officialLoginError(err)
+	} else {
+		session, err = manager.sessionsFor(account.Provider).Cancel(ctx, id)
+	}
 	if err != nil {
 		return session, err
 	}
@@ -346,7 +365,7 @@ func (manager *Manager) CancelAuthorization(ctx context.Context, id contract.Ser
 			return nil
 		}
 		account.Status = contract.SubscriptionStatusDisconnected
-		if account.CredentialRef != "" {
+		if hadLogin(*account) {
 			account.Status = contract.SubscriptionStatusNeedsReauth
 		}
 		account.LastError = nil
@@ -373,13 +392,21 @@ func (manager *Manager) Logout(ctx context.Context, id contract.SubscriptionAcco
 	}
 	defer manager.endLifecycleTransition(id)
 
+	current, err := manager.Get(ctx, id)
+	if err != nil {
+		return contract.SubscriptionAccount{}, err
+	}
 	for _, sessions := range manager.allSessions() {
 		sessions.CancelAllForService(id)
 	}
 	manager.clearAuthorizationAttempt(id)
 	manager.invalidateTokens(id)
 	manager.clearUsageCache(id)
-	if err := manager.credentials.Delete(ctx, id); err != nil {
+	if current.Official() {
+		if err := manager.signOutOfficial(ctx, id, false); err != nil {
+			return contract.SubscriptionAccount{}, err
+		}
+	} else if err := manager.credentials.Delete(ctx, id); err != nil {
 		return contract.SubscriptionAccount{}, fmt.Errorf("%w: %v", ErrCredentialUnavailable, err)
 	}
 	account, err := manager.mutateAccount(ctx, id, func(account *contract.SubscriptionAccount) error {
@@ -418,12 +445,19 @@ func (manager *Manager) CleanupCredentialsForDelete(ctx context.Context, id cont
 	}
 	defer manager.endLifecycleTransition(id)
 
+	current, err := manager.Get(ctx, id)
+	if err != nil {
+		return err
+	}
 	for _, sessions := range manager.allSessions() {
 		sessions.CancelAllForService(id)
 	}
 	manager.clearAuthorizationAttempt(id)
 	manager.invalidateTokens(id)
 	manager.clearUsageCache(id)
+	if current.Official() {
+		return manager.signOutOfficial(ctx, id, true)
+	}
 	if err := manager.credentials.Delete(ctx, id); err != nil {
 		return fmt.Errorf("%w: %v", ErrCredentialUnavailable, err)
 	}
@@ -440,6 +474,9 @@ func (manager *Manager) AccessToken(ctx context.Context, id contract.Subscriptio
 	}
 	if transitioning {
 		return accountauth.AccountTokens{}, accountauth.ErrTokenSourceInvalidated
+	}
+	if account.Official() {
+		return accountauth.AccountTokens{}, ErrOfficialAccount
 	}
 	if account.Status != contract.SubscriptionStatusConnected {
 		if account.Status == contract.SubscriptionStatusNeedsReauth {
@@ -494,6 +531,14 @@ func (manager *Manager) Usage(ctx context.Context, id contract.ServiceID) (contr
 	manager.mu.Unlock()
 
 	tokens, err := manager.AccessToken(ctx, id)
+	if errors.Is(err, ErrOfficialAccount) {
+		// Official accounts have nothing to read usage with; their snapshot
+		// comes only from the headers of their own model calls.
+		if usage, ok := manager.CachedUsage(id); ok {
+			return usage, nil
+		}
+		return contract.SubscriptionUsage{}, usageError(contract.SubscriptionProviderClaudeCode, fmt.Errorf("%w", ErrUsageUnavailable))
+	}
 	if err != nil {
 		return contract.SubscriptionUsage{}, fmt.Errorf("%w", ErrNotConnected)
 	}
@@ -657,6 +702,9 @@ func (manager *Manager) CompleteAuthorizationCode(ctx context.Context, id contra
 	account, err := manager.Get(ctx, id)
 	if err != nil {
 		return contract.AuthorizationSession{}, err
+	}
+	if account.Official() {
+		return manager.completeOfficialCode(ctx, id, sessionID, code)
 	}
 	return manager.sessionsFor(account.Provider).CompleteCode(ctx, id, sessionID, code)
 }
@@ -1021,7 +1069,7 @@ func (manager *Manager) RunUsageMonitor(ctx context.Context) {
 		accounts, err := manager.List(ctx)
 		if err == nil {
 			for _, account := range accounts {
-				if account.Status != contract.SubscriptionStatusConnected || time.Now().Before(next[account.ID]) ||
+				if account.Status != contract.SubscriptionStatusConnected || account.Official() || time.Now().Before(next[account.ID]) ||
 					(account.Risk != nil && account.Risk.State == contract.SubscriptionRiskSuspended) {
 					continue
 				}

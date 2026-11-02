@@ -152,9 +152,11 @@ import { parseLocalDataStatus, type LocalDataStatus } from "./local-data-model";
 import {
   parseAuthorizationSession,
   parseBeginCodexAuthorizationResult,
+  parseClaudeCLIStatus,
   type AuthorizationFlow,
   type AuthorizationSession,
   type BeginCodexAuthorizationResult,
+  type ClaudeCLIStatus,
 } from "./subscription-model";
 import {
   parseSubscriptionUsage,
@@ -686,6 +688,18 @@ export async function getServiceAuthorization(
   return parseAuthorizationSession(
     await invoke<unknown>("get_service_authorization", { serviceId }),
   );
+}
+
+/** The claude CLI official Claude accounts run. */
+export async function getClaudeCLI(): Promise<ClaudeCLIStatus> {
+  requireNativeBridge();
+  return parseClaudeCLIStatus(await invoke<unknown>("get_claude_cli"));
+}
+
+/** Starts the official installer; only the server edition offers it. */
+export async function installClaudeCLI(): Promise<ClaudeCLIStatus> {
+  requireNativeBridge();
+  return parseClaudeCLIStatus(await invoke<unknown>("install_claude_cli"));
 }
 
 export async function cancelServiceAuthorization(

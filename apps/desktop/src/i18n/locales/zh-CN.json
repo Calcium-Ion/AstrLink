@@ -875,6 +875,29 @@
     "privacyTrustedBadgeHint": "发往此提供商的请求不经过隐私保护",
     "claudeOauth": "Claude Code 授权",
     "claudeOauthHint": "Claude Pro / Max 账号；在 Claude 授权后填写回调页的授权码。",
+    "claudeOfficial": "通过 Claude Code",
+    "claudeOfficialHint": "用你安装的 Claude Code 登录，请求也由它发给 Claude。",
+    "claudeLegacy": "直接连接",
+    "claudeKindHint": "Claude Pro / Max 账号。",
+    "claudeCLI": {
+      "readFailed": "无法读取 Claude Code 的安装情况。",
+      "installFailed": "无法开始安装 Claude Code。",
+      "openSetupFailed": "无法打开安装说明。",
+      "installing": "正在安装 Claude Code…",
+      "found": "使用 Claude Code {{version}}。",
+      "missingDesktop": "这台电脑上没有找到 Claude Code。按官方说明安装后再登录。",
+      "missingServer": "服务器上还没有 Claude Code。安装后再登录。",
+      "outdatedDesktop": "Claude Code {{version}} 太旧，需要 {{minimum}} 或更新的版本。在终端运行 claude update 更新。",
+      "outdatedServer": "服务器上的 Claude Code {{version}} 太旧，需要 {{minimum}} 或更新的版本。",
+      "installError": "上次安装失败：{{error}}",
+      "install": "安装 Claude Code",
+      "update": "更新 Claude Code",
+      "setup": "查看安装说明",
+      "recheck": "重新检查",
+      "loginTitle": "登录 Claude Code",
+      "loginHintDesktop": "在打开的页面登录 Claude 账号，完成后这里会自动更新。如果页面最后显示一串代码，把它粘贴到下面。",
+      "loginHintServer": "在登录页面登录 Claude 账号，再把页面显示的代码粘贴到下面。"
+    },
     "authorizationCode": "授权码",
     "completeLogin": "完成授权",
     "codeExchangeFailed": "授权码验证失败，请重新授权。",
@@ -3295,7 +3318,8 @@
       "response_affinity": "Responses 续接：上一条响应来自该 API 提供商",
       "websocket_connection": "WebSocket 连接：沿用建立连接的 API 提供商",
       "failover": "故障切换：此前尝试的 API 提供商失败或被拒绝",
-      "client_pin": "客户端指定：请求点名要用这个 API 提供商"
+      "client_pin": "客户端指定：请求点名要用这个 API 提供商",
+      "claude_cli": "Claude Code 调用：这个账号的 Claude Code 为上级请求发出，用量计入上级请求"
     },
     "selectionsShort": {
       "priority": "按优先级",
@@ -3303,7 +3327,8 @@
       "response_affinity": "续接上一条响应",
       "websocket_connection": "沿用 WebSocket 连接",
       "failover": "故障切换",
-      "client_pin": "客户端指定"
+      "client_pin": "客户端指定",
+      "claude_cli": "Claude Code 调用"
     },
     "plans": {
       "native": "原样转发",

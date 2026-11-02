@@ -88,6 +88,9 @@ type Dependencies struct {
 	// Identities is optional. It learns the client identity of recognized
 	// official Claude Code and Codex requests; nil learns nothing.
 	Identities *accountauth.IdentityRegistry
+	// ClaudeOfficial is optional. It serves official Claude accounts through
+	// their claude CLI; nil leaves those accounts unavailable.
+	ClaudeOfficial ClaudeOfficial
 }
 
 type Classifier interface {
@@ -140,6 +143,8 @@ type Handler struct {
 	subscriptionRisk         SubscriptionRiskReporter
 	identities               *accountauth.IdentityRegistry
 	sessionFingerprints      sessionFingerprints
+	claudeOfficial           ClaudeOfficial
+	claudeOfficialForwarder  Forwarder
 }
 
 const (
@@ -281,7 +286,12 @@ func NewWithDependencies(dependencies Dependencies) *Handler {
 	if dependencies.Forwarder == nil {
 		dependencies.Forwarder = transport.New(nil)
 	}
+	var claudeOfficialForwarder Forwarder
+	if dependencies.ClaudeOfficial != nil {
+		claudeOfficialForwarder = transport.New(dependencies.ClaudeOfficial)
+	}
 	return &Handler{
+		claudeOfficial: dependencies.ClaudeOfficial, claudeOfficialForwarder: claudeOfficialForwarder,
 		proxyCredentials: dependencies.ProxyCredentials,
 		resolver:         dependencies.Resolver, authorizer: dependencies.Authorizer, forwarder: dependencies.Forwarder,
 		accessTokenAuthenticator: dependencies.AccessTokenAuthenticator, privacyFilter: dependencies.PrivacyFilter,
@@ -305,6 +315,13 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 	// The policy warning header is owned by this local response boundary.
 	// Strip any client-supplied value so it cannot be spoofed upstream.
 	request.Header.Del(PolicyWarningHeader)
+	if builtinInternalFrom(request.Context()) == nil && hasClaudeProcessHeader(request) {
+		// A serving claude CLI's own model call.
+		if accepted, ok := handler.acceptClaudeLoopback(writer, request); ok {
+			handler.serveClaudeLoopback(writer, accepted)
+		}
+		return
+	}
 	if builtinInternalFrom(request.Context()) == nil {
 		writer.Header().Set("Access-Control-Allow-Origin", "*")
 		writer.Header().Set("Access-Control-Expose-Headers", "*")

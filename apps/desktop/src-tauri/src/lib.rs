@@ -1607,6 +1607,11 @@ async fn get_service_authorization(
 }
 
 #[tauri::command]
+async fn get_claude_cli(manager: State<'_, Arc<CoreManager>>) -> Result<serde_json::Value, String> {
+    manager.get_claude_cli().await
+}
+
+#[tauri::command]
 async fn cancel_service_authorization(
     service_id: String,
     manager: State<'_, Arc<CoreManager>>,
@@ -2759,6 +2764,7 @@ pub fn run() {
             service_terminal::pick_terminal_directory,
             service_terminal::open_service_terminal,
             get_service_authorization,
+            get_claude_cli,
             cancel_service_authorization,
             logout_service,
             clear_service_risk,

@@ -16,6 +16,7 @@ import { useServicePerformance } from "./use-service-performance";
 import { UsageRangeSelect } from "./components/UsageRangeSelect";
 import { resolveUsageWindow, type UsageRangePreset } from "./usage-range";
 import { ServiceOrderHelp } from "./ServiceOrderHelp";
+import { ClaudeCLINotice } from "./ClaudeCLINotice";
 import {
   ServicePackageGrid,
   type CardBilling,
@@ -199,9 +200,10 @@ import {
 } from "./service-model";
 import type { SubscriptionUsageStatus } from "./SubscriptionUsageMeter";
 import {
-  providerAuthorizationFlows,
+  accountAuthorizationFlows,
   type AuthorizationFlow,
   type AuthorizationSession,
+  type SubscriptionMode,
   type SubscriptionProvider,
 } from "./subscription-model";
 import {
@@ -376,11 +378,27 @@ export function ServiceKindPickerDialog({
   );
 }
 
-/** The only login transport a single-flow provider offers; null when the user must pick. */
-function defaultAuthorizationFlow(kind: ServiceKind): AuthorizationFlow | null {
+/**
+ * The only login transport an account offers; null when the user must pick.
+ * Pass "official" for a new account: new Claude accounts start official.
+ */
+function defaultAuthorizationFlow(
+  kind: ServiceKind,
+  mode: SubscriptionMode | undefined,
+): AuthorizationFlow | null {
   if (!isSubscriptionKind(kind)) return null;
-  const flows = providerAuthorizationFlows[subscriptionKindProviders[kind]];
+  const flows = accountAuthorizationFlows(
+    subscriptionKindProviders[kind],
+    mode,
+  );
   return flows.length === 1 ? flows[0] : null;
+}
+
+function officialClaude(service: Service | null | undefined): boolean {
+  return (
+    service?.kind === "claude_subscription" &&
+    service.subscription?.mode === "official"
+  );
 }
 
 function subscriptionDefaultName(kind: SubscriptionServiceKind): string {
@@ -395,7 +413,7 @@ function subscriptionDefaultName(kind: SubscriptionServiceKind): string {
 function subscriptionKindHint(kind: SubscriptionServiceKind): string {
   if (kind === "antigravity_subscription")
     return i18n.t("services.antigravityHint");
-  if (kind === "claude_subscription") return i18n.t("services.claudeOauthHint");
+  if (kind === "claude_subscription") return i18n.t("services.claudeKindHint");
   if (kind === "grok_subscription") return i18n.t("services.grokHint");
   if (kind === "copilot_subscription") return i18n.t("services.copilotHint");
   if (kind === "droid_subscription") return i18n.t("services.droidHint");
@@ -589,7 +607,7 @@ function draftForKind(
       capabilities: subscriptionNativeCapabilities[kind].map((capability) => ({
         ...capability,
       })),
-      authorizationFlow: defaultAuthorizationFlow(kind),
+      authorizationFlow: defaultAuthorizationFlow(kind, "official"),
       modelListPath: "",
       vertexProjectID: "",
       vertexLocation: "global",
@@ -1803,7 +1821,10 @@ export function ServiceManager({
     requestedFlow: AuthorizationFlow,
     session: AuthorizationSession,
   ) => {
-    if (session.flow === "authorization_code") {
+    if (
+      session.flow === "authorization_code" ||
+      session.flow === "claude_cli"
+    ) {
       setAuthorizationDialog({ service, requestedFlow, session });
       return;
     }
@@ -1893,6 +1914,14 @@ export function ServiceManager({
               : {}),
             name: draft.name.trim(),
             kind: draft.kind,
+            ...(draft.kind === "claude_subscription"
+              ? {
+                  subscription_mode:
+                    draft.authorizationFlow === "claude_cli"
+                      ? "official"
+                      : "legacy",
+                }
+              : {}),
             enabled: draft.enabled,
             responses_websocket_enabled: draft.responsesWebSocket,
             ...(draft.privacyTrusted ? { privacy_trusted: true } : {}),
@@ -2025,7 +2054,8 @@ export function ServiceManager({
       const session = await getServiceAuthorization(service.id);
       if (
         session.flow === "device_code" ||
-        session.flow === "authorization_code"
+        session.flow === "authorization_code" ||
+        session.flow === "claude_cli"
       ) {
         setAuthorizationDialog({
           service,
@@ -2182,7 +2212,9 @@ export function ServiceManager({
     const filtered = !!query.trim() || serviceFilter !== "all";
     const startLogin = (service: Service) => {
       setLoginChoice(service);
-      setLoginChoiceFlow(defaultAuthorizationFlow(service.kind));
+      setLoginChoiceFlow(
+        defaultAuthorizationFlow(service.kind, service.subscription?.mode),
+      );
       setError(null);
     };
     const serviceMenu = (service: Service) => {
@@ -2393,7 +2425,6 @@ export function ServiceManager({
                 aria-label={t("services.add")}
                 disabled={!isReady || busy}
                 onClick={() => setKindPickerOpen(true)}
-                size="sm"
                 type="button"
               >
                 <Plus aria-hidden="true" />
@@ -2590,11 +2621,13 @@ export function ServiceManager({
               <DialogDescription>
                 {deviceCodeOnlyKind(shownLoginChoice?.kind)
                   ? deviceCodeKindHint(shownLoginChoice?.kind)
-                  : shownLoginChoice?.kind === "claude_subscription"
-                    ? t("services.claudeOauthHint")
-                    : shownLoginChoice?.kind === "antigravity_subscription"
-                      ? t("services.antigravityHint")
-                      : t("services.chooseOauthHint")}
+                  : officialClaude(shownLoginChoice)
+                    ? t("services.claudeOfficialHint")
+                    : shownLoginChoice?.kind === "claude_subscription"
+                      ? t("services.claudeOauthHint")
+                      : shownLoginChoice?.kind === "antigravity_subscription"
+                        ? t("services.antigravityHint")
+                        : t("services.chooseOauthHint")}
               </DialogDescription>
             </DialogHeader>
             <RadioGroup
@@ -2605,7 +2638,14 @@ export function ServiceManager({
               }
               value={shownLoginChoiceFlow ?? ""}
             >
-              {shownLoginChoice?.kind === "claude_subscription" ? (
+              {officialClaude(shownLoginChoice) ? (
+                <ChoiceCard
+                  label={t("services.claudeOfficial")}
+                  description={t("services.claudeOfficialHint")}
+                  selected={shownLoginChoiceFlow === "claude_cli"}
+                  value="claude_cli"
+                />
+              ) : shownLoginChoice?.kind === "claude_subscription" ? (
                 <ChoiceCard
                   label={t("services.claudeOauth")}
                   description={t("services.claudeOauthHint")}
@@ -2643,6 +2683,7 @@ export function ServiceManager({
                 </>
               )}
             </RadioGroup>
+            {officialClaude(shownLoginChoice) ? <ClaudeCLINotice /> : null}
             <DialogFooter>
               <Button
                 variant="outline"
@@ -2676,16 +2717,22 @@ export function ServiceManager({
             <DialogContent className="max-w-[460px] sm:max-w-[460px]">
               <DialogHeader>
                 <DialogTitle>
-                  {authorizationDialog.session.flow === "authorization_code"
-                    ? t("services.claudeOauth")
-                    : t("services.deviceCodeTitle")}
+                  {authorizationDialog.session.flow === "claude_cli"
+                    ? t("services.claudeCLI.loginTitle")
+                    : authorizationDialog.session.flow === "authorization_code"
+                      ? t("services.claudeOauth")
+                      : t("services.deviceCodeTitle")}
                 </DialogTitle>
                 <DialogDescription>
-                  {authorizationDialog.session.flow === "authorization_code"
-                    ? t("services.claudeOauthHint")
-                    : deviceCodeDescription(
-                        authorizationDialog.session.provider,
-                      )}
+                  {authorizationDialog.session.flow === "claude_cli"
+                    ? isWebEdition
+                      ? t("services.claudeCLI.loginHintServer")
+                      : t("services.claudeCLI.loginHintDesktop")
+                    : authorizationDialog.session.flow === "authorization_code"
+                      ? t("services.claudeOauthHint")
+                      : deviceCodeDescription(
+                          authorizationDialog.session.provider,
+                        )}
                 </DialogDescription>
               </DialogHeader>
               {authorizationDialog.requestedFlow === "browser" ? (
@@ -2694,7 +2741,8 @@ export function ServiceManager({
                 </FormMessage>
               ) : null}
               {authorizationDialog.session.status === "pending" &&
-              authorizationDialog.session.flow === "authorization_code" ? (
+              (authorizationDialog.session.flow === "authorization_code" ||
+                authorizationDialog.session.flow === "claude_cli") ? (
                 <form
                   className="grid gap-4"
                   onSubmit={async (event) => {
@@ -2734,7 +2782,11 @@ export function ServiceManager({
                       aria-label={t("services.authorizationCode")}
                       type="password"
                       autoComplete="off"
-                      placeholder="code#state"
+                      placeholder={
+                        authorizationDialog.session.flow === "claude_cli"
+                          ? undefined
+                          : "code#state"
+                      }
                       value={authorizationCode}
                       maxLength={8192}
                       onChange={(event) =>
@@ -3358,12 +3410,22 @@ export function ServiceManager({
                     value={draft.authorizationFlow ?? ""}
                   >
                     {draft.kind === "claude_subscription" ? (
-                      <ChoiceCard
-                        label={t("services.claudeOauth")}
-                        description={t("services.claudeOauthHint")}
-                        selected
-                        value="authorization_code"
-                      />
+                      <>
+                        <ChoiceCard
+                          label={t("services.claudeOfficial")}
+                          description={t("services.claudeOfficialHint")}
+                          selected={draft.authorizationFlow === "claude_cli"}
+                          value="claude_cli"
+                        />
+                        <ChoiceCard
+                          label={t("services.claudeLegacy")}
+                          description={t("services.claudeOauthHint")}
+                          selected={
+                            draft.authorizationFlow === "authorization_code"
+                          }
+                          value="authorization_code"
+                        />
+                      </>
                     ) : deviceCodeOnlyKind(draft.kind) ? (
                       <ChoiceCard
                         label="Device Code"
@@ -3399,6 +3461,11 @@ export function ServiceManager({
                     <small className="mt-2 block text-warning-foreground">
                       {t("services.chooseLoginContinue")}
                     </small>
+                  ) : null}
+                  {draft.authorizationFlow === "claude_cli" ? (
+                    <div className="mt-2">
+                      <ClaudeCLINotice />
+                    </div>
                   ) : null}
                 </fieldset>
               ) : null}

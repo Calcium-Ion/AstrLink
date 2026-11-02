@@ -875,6 +875,29 @@
     "privacyTrustedBadgeHint": "Requests to this provider skip privacy protection",
     "claudeOauth": "Claude Code authorization",
     "claudeOauthHint": "Claude Pro / Max account; enter the code from the Claude authorization callback page.",
+    "claudeOfficial": "Through Claude Code",
+    "claudeOfficialHint": "Signs in with your installed Claude Code, which also sends the requests to Claude.",
+    "claudeLegacy": "Direct connection",
+    "claudeKindHint": "Claude Pro / Max account.",
+    "claudeCLI": {
+      "readFailed": "Couldn't check the Claude Code install.",
+      "installFailed": "Couldn't start installing Claude Code.",
+      "openSetupFailed": "Couldn't open the install instructions.",
+      "installing": "Installing Claude Code…",
+      "found": "Uses Claude Code {{version}}.",
+      "missingDesktop": "Claude Code isn't installed on this computer. Install it with the official instructions, then sign in.",
+      "missingServer": "Claude Code isn't installed on the server yet. Install it, then sign in.",
+      "outdatedDesktop": "Claude Code {{version}} is too old; {{minimum}} or later is needed. Run claude update in a terminal.",
+      "outdatedServer": "The server's Claude Code {{version}} is too old; {{minimum}} or later is needed.",
+      "installError": "The last install failed: {{error}}",
+      "install": "Install Claude Code",
+      "update": "Update Claude Code",
+      "setup": "Install instructions",
+      "recheck": "Check again",
+      "loginTitle": "Sign in to Claude Code",
+      "loginHintDesktop": "Sign in to your Claude account on the page that opened; this updates by itself when you're done. If the page ends by showing a code, paste it below.",
+      "loginHintServer": "Sign in to your Claude account on the sign-in page, then paste the code it shows below."
+    },
     "authorizationCode": "Authorization code",
     "completeLogin": "Complete authorization",
     "codeExchangeFailed": "Authorization code could not be verified. Sign in again.",
@@ -3295,7 +3318,8 @@
       "response_affinity": "Responses continuation: the previous response came from this API provider",
       "websocket_connection": "WebSocket connection: the API provider that opened it",
       "failover": "Failover: an API provider tried earlier failed or was rejected",
-      "client_pin": "Named by the client: the request asked for this API provider"
+      "client_pin": "Named by the client: the request asked for this API provider",
+      "claude_cli": "Claude Code call: this account's Claude Code made it for the parent request, which counts its usage"
     },
     "selectionsShort": {
       "priority": "By priority",
@@ -3303,7 +3327,8 @@
       "response_affinity": "Continues the previous response",
       "websocket_connection": "Same WebSocket connection",
       "failover": "Failover",
-      "client_pin": "Named by the client"
+      "client_pin": "Named by the client",
+      "claude_cli": "Claude Code call"
     },
     "plans": {
       "native": "Forwarded as is",

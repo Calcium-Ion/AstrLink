@@ -74,6 +74,9 @@ type Dependencies struct {
 	// ClientIdentities reports learned client identity versions. Optional.
 	ClientIdentities ClientIdentityReporter
 	Subscriptions    *subscription.Manager
+	// ClaudeCLI reports and installs the CLI official Claude accounts run.
+	// Optional; without it the routes are not registered.
+	ClaudeCLI ClaudeCLI
 	// RateLimits releases gateway cooldowns when subscription risk is cleared.
 	// Supply the same resolver used by ingress. Optional.
 	RateLimits RateLimitReleaser
@@ -158,6 +161,7 @@ type Handler struct {
 	localData         storage.LocalDataStore
 	clientIdentities  ClientIdentityReporter
 	subscriptions     *subscription.Manager
+	claudeCLI         ClaudeCLI
 	rateLimits        RateLimitReleaser
 	servicePackages   ServicePackageLister
 	codingPlans       CodingPlanUsage
@@ -232,6 +236,7 @@ func newHandler(version contract.VersionResponse, dependencies Dependencies) (*H
 		rawGrants:       newRawGrantManager(),
 		localData:       dependencies.LocalData,
 		subscriptions:   dependencies.Subscriptions,
+		claudeCLI:       dependencies.ClaudeCLI,
 		rateLimits:      dependencies.RateLimits,
 		servicePackages: dependencies.ServicePackages,
 		codingPlans:     dependencies.CodingPlans,
@@ -291,6 +296,7 @@ func newHandler(version contract.VersionResponse, dependencies Dependencies) (*H
 		}
 		handler.registerServiceRoutes()
 	}
+	handler.registerClaudeCLIRoutes()
 	handler.mux.HandleFunc(ServiceOrderPath, handler.authenticated(handler.serviceOrderResource, RoleObserver))
 	handler.mux.HandleFunc(ServicePackagesPath, handler.authenticated(handler.servicePackagesResource, RoleObserver))
 	handler.mux.HandleFunc(ServicePackagesPath+"/", handler.authenticated(handler.servicePackagesResource, RoleObserver))

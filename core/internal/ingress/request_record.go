@@ -270,6 +270,9 @@ type recordSession struct {
 	// sideCall is set for a helper call of its conversation, such as a
 	// title request: it keeps the turn and carries no preview.
 	sideCall bool
+	// delegatedParent is the request an official Claude account's CLI made
+	// this call for; the call is recorded as its child.
+	delegatedParent *contract.RequestID
 	// parentSessionID names the conversation that started this one as a
 	// subagent.
 	parentSessionID *contract.SessionID
@@ -584,7 +587,7 @@ func (session *recordSession) recordSnapshot(
 	record := contract.RequestRecord{
 		ClientType:         session.clientType,
 		ID:                 session.id,
-		ParentRequestID:    nil,
+		ParentRequestID:    session.delegatedParent,
 		AttemptIndex:       session.attemptIndex,
 		ChildCount:         session.childCount,
 		StartedAt:          session.startedAt,

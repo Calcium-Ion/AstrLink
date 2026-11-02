@@ -299,6 +299,37 @@ describe("service model", () => {
     ).toThrow(/provider does not match service kind/);
   });
 
+  it("parses the Claude subscription mode", () => {
+    const claude = {
+      id: "service_claude_official",
+      name: "Claude Code",
+      kind: "claude_subscription",
+      enabled: true,
+      models: [],
+      capabilities: [],
+      subscription: {
+        provider: "claude_code",
+        status: "connected",
+        mode: "official",
+      },
+      created_at: createdAt,
+      updated_at: createdAt,
+    };
+    expect(parseService(claude).subscription?.mode).toBe("official");
+    expect(
+      parseService({
+        ...claude,
+        subscription: { provider: "claude_code", status: "connected" },
+      }).subscription?.mode,
+    ).toBeUndefined();
+    expect(() =>
+      parseService({
+        ...claude,
+        subscription: { ...claude.subscription, mode: "cli" },
+      }),
+    ).toThrow(/unknown subscription mode/);
+  });
+
   it("parses Copilot subscription services and keeps Responses off WebSocket", () => {
     const copilot = parseService({
       id: "service_copilot_personal",

@@ -175,7 +175,9 @@ type SubscriptionConnection struct {
 	ProviderAccountID string               `json:"provider_account_id,omitempty"`
 	// PlanType is the plan the last usage read reported, kept so the account
 	// stays in its plan's package after a restart. It never leaves the device.
-	PlanType              string             `json:"plan_type,omitempty"`
+	PlanType string `json:"plan_type,omitempty"`
+	// Mode is empty on documents written before modes existed; they are legacy.
+	Mode                  SubscriptionMode   `json:"mode,omitempty"`
 	CredentialRef         string             `json:"credential_ref,omitempty"`
 	AuthorizationBoundary string             `json:"authorization_boundary,omitempty"`
 	TokenExpiresAt        *time.Time         `json:"token_expires_at,omitempty"`
@@ -193,6 +195,7 @@ func (connection SubscriptionConnection) Validate(serviceID ServiceID) error {
 		AccountHint:           connection.AccountHint,
 		ProviderAccountID:     connection.ProviderAccountID,
 		PlanType:              connection.PlanType,
+		Mode:                  connection.Mode,
 		CredentialRef:         connection.CredentialRef,
 		Capabilities:          connection.Provider.Capabilities(),
 		AuthorizationBoundary: connection.AuthorizationBoundary,
@@ -515,7 +518,8 @@ func ServiceFromSubscriptionAccount(account SubscriptionAccount) Service {
 		Capabilities: append([]Capability(nil), account.Capabilities...),
 		Subscription: &SubscriptionConnection{
 			Provider: account.Provider, Status: account.Status, AccountHint: account.AccountHint,
-			ProviderAccountID: account.ProviderAccountID, PlanType: account.PlanType, CredentialRef: account.CredentialRef,
+			ProviderAccountID: account.ProviderAccountID, PlanType: account.PlanType, Mode: account.Mode,
+			CredentialRef:         account.CredentialRef,
 			AuthorizationBoundary: account.AuthorizationBoundary, TokenExpiresAt: account.TokenExpiresAt,
 			LastRefreshAt: account.LastRefreshAt, LastError: account.LastError, Risk: account.Risk,
 		},
@@ -532,6 +536,7 @@ func (service Service) SubscriptionAccountView() (SubscriptionAccount, error) {
 		DisplayName: service.Name, AccountHint: service.Subscription.AccountHint,
 		ProviderAccountID:     service.Subscription.ProviderAccountID,
 		PlanType:              service.Subscription.PlanType,
+		Mode:                  service.Subscription.Mode,
 		CredentialRef:         service.Subscription.CredentialRef,
 		Capabilities:          append([]Capability(nil), service.Capabilities...),
 		AuthorizationBoundary: service.Subscription.AuthorizationBoundary,

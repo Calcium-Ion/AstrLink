@@ -15,6 +15,7 @@ import (
 
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/accountauth"
+	"github.com/QuantumNous/astrlink/core/internal/claudeofficial"
 	"github.com/QuantumNous/astrlink/core/internal/storage"
 	"github.com/QuantumNous/astrlink/core/internal/storage/sqlite"
 	"github.com/QuantumNous/astrlink/core/internal/subscription"
@@ -306,6 +307,59 @@ func TestProbeServiceUsesConnectedCodexAccountAndRejectsMalformedResponse(t *tes
 	responseBody = `{}`
 	if _, err := prober.ProbeService(context.Background(), service, contract.ProtocolOpenAIModels); !errors.Is(err, ErrUpstream) {
 		t.Fatalf("malformed Codex response error = %v, want ErrUpstream", err)
+	}
+}
+
+func TestProbeOfficialClaudeAsksItsCLI(t *testing.T) {
+	store, err := sqlite.Open(context.Background(), t.TempDir()+"/astrlink.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		t.Errorf("an official account's model list sent %s", request.URL)
+		return nil, errors.New("unexpected request")
+	})}
+	manager, err := subscription.NewManager(subscription.StorageAccountStore{Store: store}, accountauth.NewMemoryCredentialStore(),
+		accountauth.OAuthConfig{HTTPClient: client})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := contract.Service{
+		ID: "service_claude_official", Name: "Claude", Kind: contract.ServiceKindClaudeSubscription,
+		Enabled: true, Models: []string{},
+		Capabilities: []contract.Capability{
+			{Protocol: contract.ProtocolAnthropicMessages, Mode: contract.CapabilityModeNative, Streaming: true},
+			{Protocol: contract.ProtocolOpenAIModels, Mode: contract.CapabilityModeNative},
+		},
+		Subscription: &contract.SubscriptionConnection{
+			Provider: contract.SubscriptionProviderClaudeCode, Status: contract.SubscriptionStatusConnected,
+			Mode: contract.SubscriptionModeOfficial, ProviderAccountID: "org-1:person@example.com",
+		},
+	}
+	if _, err := store.CreateService(context.Background(), service, storage.CredentialMutation{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := New(store, manager, client).ProbeService(context.Background(), service, contract.ProtocolOpenAIModels); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("without the CLI: error = %v, want ErrUnsupported", err)
+	}
+	var asked []contract.ServiceID
+	listed, listErr := []string{"claude-sonnet-5-5", "claude-opus-5-5", "claude-sonnet-5-5"}, error(nil)
+	prober := New(store, manager, client).WithOfficialClaudeModels(func(_ context.Context, id contract.ServiceID) ([]string, error) {
+		asked = append(asked, id)
+		return listed, listErr
+	})
+	models, err := prober.ProbeService(context.Background(), service, contract.ProtocolOpenAIModels)
+	if err != nil || strings.Join(models.Models, ",") != "claude-opus-5-5,claude-sonnet-5-5" || len(asked) != 1 || asked[0] != service.ID {
+		t.Fatalf("models=%v err=%v asked=%v", models, err, asked)
+	}
+	listErr = claudeofficial.ErrSignedOut
+	if _, err := prober.ProbeService(context.Background(), service, contract.ProtocolOpenAIModels); !errors.Is(err, ErrNotConnected) {
+		t.Fatalf("signed-out error = %v, want ErrNotConnected", err)
+	}
+	listErr = errors.New("claude exited")
+	if _, err := prober.ProbeService(context.Background(), service, contract.ProtocolOpenAIModels); !errors.Is(err, ErrUpstream) {
+		t.Fatalf("CLI failure error = %v, want ErrUpstream", err)
 	}
 }
 

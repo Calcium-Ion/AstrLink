@@ -715,7 +715,7 @@ paths:
       summary: Start provider-specific OAuth for this subscription service only.
       requestBody:
         required: false
-        description: Omit the body only for legacy browser-flow callers; JSON bodies must include an explicit flow.
+        description: Omit the body only for legacy browser-flow callers and official Claude Code accounts, which then start claude_cli; JSON bodies must include an explicit flow.
         content:
           application/json:
             schema:
@@ -745,6 +745,7 @@ paths:
       tags: [Services]
       operationId: completeServiceAuthorization
       summary: Exchange a Claude authorization code for the active service session.
+      description: For a claude_cli session the code goes to the waiting `claude auth login`, which exchanges it itself; the response is the session once the CLI finishes, or still pending after two minutes.
       requestBody:
         required: true
         content:
@@ -760,7 +761,7 @@ paths:
                   minLength: 1
                   maxLength: 8192
                   writeOnly: true
-                  description: Short-lived code#state from the registered Claude callback page. Never persisted or returned.
+                  description: Short-lived code#state from the registered Claude callback page, or the code the claude_cli sign-in page shows. Never persisted or returned.
               additionalProperties: false
       responses:
         "200":
@@ -815,6 +816,42 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /control/v1/claude-cli:
+    get:
+      x-astrlink-role: observer
+      x-astrlink-implementation-status: implemented
+      tags: [Services]
+      operationId: getClaudeCLI
+      summary: Read the claude CLI that official Claude Code accounts run.
+      description: Core looks for the executable named by ASTRLINK_CLAUDE_BIN, else claude on PATH, the official installer's locations and, in the server edition, the install directory in the data volume. Reading the version runs `claude --version`; nothing contacts Anthropic.
+      responses:
+        "200":
+          description: The located CLI and the progress of the last install.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClaudeCLIStatus"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /control/v1/claude-cli/install:
+    post:
+      x-astrlink-role: operator
+      x-astrlink-implementation-status: implemented
+      tags: [Services]
+      operationId: installClaudeCLI
+      summary: Run Anthropic's official claude installer in the server edition.
+      description: Runs `curl -fsSL https://claude.ai/install.sh | bash` with HOME set to the data directory's claude-cli folder, so the CLI survives image updates. Only on request; the image never contains the CLI. Poll getClaudeCLI for the outcome. The desktop answers 409 and links to the official instructions instead.
+      responses:
+        "202":
+          description: Install started.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClaudeCLIStatus"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
         "409":
           $ref: "#/components/responses/Conflict"
   /control/v1/services/{service_id}/logout:
@@ -5317,6 +5354,11 @@ components:
         provider_account_id:
           type: string
           maxLength: 256
+        mode:
+          type: string
+          enum: [legacy, official]
+          readOnly: true
+          description: How a Claude Code account signs in and serves requests, fixed when the service is created. official runs the user's own claude CLI, signed in with `claude auth login` in a config directory of its own, and has no credential_ref; provider_account_id is the organization and email `claude auth status` reports. legacy, or no mode on services created before modes existed, signs in through AstrLink's OAuth client and stores the token. Other providers have no mode.
         credential_ref:
           type: string
           maxLength: 512
@@ -5540,6 +5582,10 @@ components:
           $ref: "#/components/schemas/ServiceModels"
         http:
           $ref: "#/components/schemas/HTTPServiceConnectionInput"
+        subscription_mode:
+          type: string
+          enum: [legacy, official]
+          description: Subscription services only. claude_subscription defaults to official, which signs in through the user's claude CLI; legacy keeps AstrLink's own OAuth sign-in. Other providers accept only legacy, stored as no mode.
         capabilities:
           type: array
           description: Required for HTTP services. Subscription services default to the provider's fixed native capabilities; when supplied, the list must keep those unchanged and may only add native-mode local conversions whose convert_to is a protocol the provider serves (openai.responses for Codex, anthropic.messages for Claude, openai.responses or openai.chat for Grok, anthropic.messages, openai.responses or openai.chat for GitHub Copilot and Factory Droid).
@@ -5564,6 +5610,8 @@ components:
             kind:
               $ref: ./protocol-capabilities.schema.json#/$defs/HTTPServiceKind
           required: [http, capabilities]
+          not:
+            required: [subscription_mode]
     HTTPServiceConnectionPatch:
       type: object
       minProperties: 1
@@ -7416,6 +7464,7 @@ components:
           websocket_connection,
           failover,
           client_pin,
+          claude_cli,
         ]
       description: |
         Why the attempt used service_id. Absent when no provider could be selected.
@@ -7425,6 +7474,7 @@ components:
         websocket_connection: the provider the Responses WebSocket connection is bound to.
         failover: an earlier provider of this request was rejected or failed.
         client_pin: the provider the request named in X-AstrLink-Service; no other provider could serve it.
+        claude_cli: a call an official Claude account's claude CLI made while serving the parent request; the parent counts and bills its usage.
     RoutingSkip:
       type: object
       additionalProperties: false
@@ -9432,8 +9482,36 @@ components:
       additionalProperties: false
     AuthorizationFlow:
       type: string
-      enum: [browser, device_code, authorization_code]
-      description: Codex supports browser and device_code. Claude Code supports authorization_code with PKCE and a manual code#state callback. Grok (xai_grok) supports device_code only (RFC 8628 against auth.x.ai). Antigravity supports browser authorization with Google OAuth and a loopback callback. GitHub Copilot (github_copilot) supports device_code only (RFC 8628 against github.com with the OpenCode OAuth app). Factory Droid (factory_droid) supports device_code only (RFC 8628 against WorkOS with the Droid CLI's public client).
+      enum: [browser, device_code, authorization_code, claude_cli]
+      description: Codex supports browser and device_code. Legacy Claude Code accounts support authorization_code with PKCE and a manual code#state callback; official ones support claude_cli only, where Core runs `claude auth login --claudeai` in the account's config directory, authorization_url is the sign-in page the CLI shows (on a desktop the CLI also opens it and finishes by itself), and the code that page shows is submitted with completeServiceAuthorization. Grok (xai_grok) supports device_code only (RFC 8628 against auth.x.ai). Antigravity supports browser authorization with Google OAuth and a loopback callback. GitHub Copilot (github_copilot) supports device_code only (RFC 8628 against github.com with the OpenCode OAuth app). Factory Droid (factory_droid) supports device_code only (RFC 8628 against WorkOS with the Droid CLI's public client).
+    ClaudeCLIStatus:
+      type: object
+      required:
+        [installed, supported, minimum_version, install_available, installing]
+      additionalProperties: false
+      properties:
+        installed:
+          type: boolean
+          description: An executable was found, even one older than minimum_version.
+        supported:
+          type: boolean
+          description: The found executable is at least minimum_version.
+        path:
+          type: string
+          description: The found executable.
+        version:
+          type: string
+        minimum_version:
+          type: string
+          description: Oldest CLI official accounts run.
+        install_available:
+          type: boolean
+          description: Core installs the CLI on request (the server edition).
+        installing:
+          type: boolean
+        install_error:
+          type: string
+          description: Why the last install failed; cleared by the next one.
     AuthorizationStartRequest:
       type: object
       required: [flow]
@@ -9509,7 +9587,7 @@ components:
               status:
                 const: pending
               flow:
-                enum: [browser, authorization_code]
+                enum: [browser, authorization_code, claude_cli]
             required: [status, flow]
           then:
             required: [authorization_url]

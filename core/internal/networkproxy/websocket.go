@@ -18,30 +18,9 @@ import (
 // ConfigureWebSocket shares the HTTP instance policy, including TLS to HTTPS
 // proxies, which Gorilla's built-in proxy adapter does not implement.
 func ConfigureWebSocket(ctx context.Context, dialer *websocket.Dialer, target *url.URL) error {
-	base, ok := BaseTransport(http.DefaultTransport)
-	if !ok {
-		return errors.New("WebSocket requires an HTTP transport")
-	}
-	selectProxy := base.Proxy
-	if s, ok := ctx.Value(snapshotKey{}).(snapshot); ok {
-		switch s.mode {
-		case "direct":
-			selectProxy = nil
-		case "custom":
-			selectProxy = http.ProxyURL(s.proxy)
-		}
-	}
-	var selected *url.URL
-	if selectProxy != nil {
-		var err error
-		selected, err = selectProxy(&http.Request{URL: target})
-		if err != nil {
-			return &connectionError{err}
-		}
-	}
-	dial := base.DialContext
-	if dial == nil {
-		dial = (&net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}).DialContext
+	base, selected, dial, err := route(ctx, target)
+	if err != nil {
+		return err
 	}
 	dialer.Proxy = nil
 	dialer.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12}
@@ -61,6 +40,55 @@ func ConfigureWebSocket(ctx context.Context, dialer *websocket.Dialer, target *u
 		return conn, nil
 	}
 	return nil
+}
+
+// route picks the proxy an HTTP request to target takes under ctx's instance
+// policy, with the base transport's dialer.
+func route(ctx context.Context, target *url.URL) (*http.Transport, *url.URL, func(context.Context, string, string) (net.Conn, error), error) {
+	base, ok := BaseTransport(http.DefaultTransport)
+	if !ok {
+		return nil, nil, nil, errors.New("proxy routing requires an HTTP transport")
+	}
+	selectProxy := base.Proxy
+	if s, ok := ctx.Value(snapshotKey{}).(snapshot); ok {
+		switch s.mode {
+		case "direct":
+			selectProxy = nil
+		case "custom":
+			selectProxy = http.ProxyURL(s.proxy)
+		}
+	}
+	var selected *url.URL
+	if selectProxy != nil {
+		var err error
+		selected, err = selectProxy(&http.Request{URL: target})
+		if err != nil {
+			return nil, nil, nil, &connectionError{err}
+		}
+	}
+	dial := base.DialContext
+	if dial == nil {
+		dial = (&net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}).DialContext
+	}
+	return base, selected, dial, nil
+}
+
+// Dial opens a TCP connection to address, the host:port of an HTTPS origin,
+// over the route an HTTPS request bound to ctx takes: directly, or through the
+// instance's or the gateway's HTTP, HTTPS or SOCKS5 proxy.
+func Dial(ctx context.Context, address string) (net.Conn, error) {
+	base, selected, dial, err := route(ctx, &url.URL{Scheme: "https", Host: address})
+	if err != nil {
+		return nil, err
+	}
+	if selected == nil {
+		return dial(ctx, "tcp", address)
+	}
+	conn, err := dialProxy(ctx, "tcp", address, selected, dial, base.TLSClientConfig)
+	if err != nil {
+		return nil, &connectionError{err}
+	}
+	return conn, nil
 }
 
 func dialProxy(ctx context.Context, network, address string, proxyURL *url.URL, dial func(context.Context, string, string) (net.Conn, error), tlsConfig *tls.Config) (net.Conn, error) {

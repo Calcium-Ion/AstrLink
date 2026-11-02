@@ -27,12 +27,17 @@ const (
 	// RoutingSelectionClientPin is the provider the request named in
 	// X-AstrLink-Service; no other provider could serve it.
 	RoutingSelectionClientPin RoutingSelection = "client_pin"
+	// RoutingSelectionClaudeCLI is the official Claude account whose claude
+	// CLI made this call while serving its parent request. Such a call is
+	// counted and billed on the parent.
+	RoutingSelectionClaudeCLI RoutingSelection = "claude_cli"
 )
 
 func (selection RoutingSelection) Valid() bool {
 	switch selection {
 	case RoutingSelectionPriority, RoutingSelectionSessionBinding, RoutingSelectionResponseAffinity,
-		RoutingSelectionWebSocketConnection, RoutingSelectionFailover, RoutingSelectionClientPin:
+		RoutingSelectionWebSocketConnection, RoutingSelectionFailover, RoutingSelectionClientPin,
+		RoutingSelectionClaudeCLI:
 		return true
 	default:
 		return false
