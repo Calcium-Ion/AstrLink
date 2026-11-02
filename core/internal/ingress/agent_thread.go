@@ -40,7 +40,9 @@ var (
 
 const (
 	// A DeepSeek Harness subagent's prompt is followed, in the same message,
-	// by this note naming its parent. It sends no thread ids at all.
+	// by this note naming its parent's session id. Over Responses every
+	// agent sends its own session id as prompt_cache_key; over Chat it sends
+	// no thread ids at all.
 	deepSeekHarnessParentMarker = `Your parent agent id is "`
 	// Title requests quote the conversation's opening message.
 	deepSeekHarnessTitlePrefix = "Generate the session title from this JSON array of human messages:"
@@ -65,8 +67,8 @@ type agentThread struct {
 	// DeepSeek Harness does. Raw client text: never persist or log it.
 	quotedOpener string
 	// spawnOpener is the newest DeepSeek Harness user message that carries
-	// the parent note, which names its subagent thread. Raw client text:
-	// never persist or log it.
+	// the parent note, which names its subagent thread when the request
+	// carries no thread id. Raw client text: never persist or log it.
 	spawnOpener string
 }
 
@@ -98,8 +100,9 @@ func readAgentThread(
 		thread.helper = client == contract.ClientOpenCode && !summary.HasTools &&
 			strings.HasPrefix(strings.TrimSpace(firstUserRawText(protocol, fields)), openCodeTitlePrefix)
 	}
-	if client == contract.ClientDeepSeekHarness && protocol == contract.ProtocolOpenAIChat {
-		readDeepSeekHarnessThread(&thread, fields, summary)
+	if client == contract.ClientDeepSeekHarness &&
+		(protocol == contract.ProtocolOpenAIChat || protocol == contract.ProtocolOpenAIResponses) {
+		readDeepSeekHarnessThread(&thread, protocol, fields, summary)
 	}
 	return thread
 }
@@ -185,13 +188,23 @@ func readCodexThread(thread *agentThread, header http.Header, fields map[string]
 	}
 }
 
-func readDeepSeekHarnessThread(thread *agentThread, fields map[string]json.RawMessage, summary convo.RequestSummary) {
-	texts := userRawTexts(contract.ProtocolOpenAIChat, fields)
+func readDeepSeekHarnessThread(thread *agentThread, protocol contract.ProtocolID, fields map[string]json.RawMessage, summary convo.RequestSummary) {
+	texts := userRawTexts(protocol, fields)
 	for index := len(texts) - 1; index >= 0; index-- {
-		if strings.Contains(texts[index], deepSeekHarnessParentMarker) {
-			thread.spawnOpener = texts[index]
-			break
+		_, note, ok := strings.Cut(texts[index], deepSeekHarnessParentMarker)
+		if !ok {
+			continue
 		}
+		// A request that names its own thread came from a client whose
+		// parent named its own the same way, so the note's id finds it.
+		if thread.cursor != "" || len(summary.ExplicitCursors) > 0 {
+			if parent, _, ok := strings.Cut(note, `"`); ok {
+				thread.parent = threadCursor(parent)
+			}
+		} else {
+			thread.spawnOpener = texts[index]
+		}
+		break
 	}
 	if summary.HasTools || len(texts) == 0 {
 		return
