@@ -4,11 +4,14 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"time"
 
 	"github.com/QuantumNous/astrlink/core/contract"
 	storagecontract "github.com/QuantumNous/astrlink/core/internal/storage"
 )
+
+// standInTimeLayout is fixed width so issued_at sorts as text; RFC3339Nano
+// drops trailing zeros and would put .1Z after .12Z.
+const standInTimeLayout = "2006-01-02T15:04:05.000000000Z"
 
 func (store *Store) PrivacyStandIns(ctx context.Context, session contract.SessionID) ([]storagecontract.PrivacyStandIn, error) {
 	rows, err := store.db.QueryContext(ctx, `SELECT stand_in, owner FROM privacy_stand_ins
@@ -43,7 +46,7 @@ func (store *Store) RememberPrivacyStandIns(ctx context.Context, session contrac
 		return fmt.Errorf("begin privacy stand-ins: %w", err)
 	}
 	defer rollbackOnError(transaction, &err)
-	issued := store.now().UTC().Format(time.RFC3339Nano)
+	issued := store.now().UTC().Format(standInTimeLayout)
 	for _, standIn := range standIns {
 		if _, err = transaction.ExecContext(ctx, `INSERT INTO privacy_stand_ins (session_id, stand_in, owner, issued_at)
 VALUES (?, ?, ?, ?) ON CONFLICT(session_id, stand_in) DO NOTHING`,

@@ -17,10 +17,14 @@ func TestPrivacyStandInsKeepTheirFirstOwnerAcrossReopen(t *testing.T) {
 	store := openTestStore(t, path)
 	ctx := context.Background()
 	session := contract.SessionID("session_one")
-	for _, batch := range [][]storagecontract.PrivacyStandIn{
+	// .1 then .12 of a second: RFC3339Nano text would sort the second first.
+	issued := time.Date(2026, 11, 2, 18, 0, 0, 100_000_000, time.UTC)
+	for index, batch := range [][]storagecontract.PrivacyStandIn{
 		{{StandIn: "198.51.100.91", Owner: "owner_a"}, {StandIn: "203.0.113.4", Owner: "owner_b"}},
 		{{StandIn: "198.51.100.91", Owner: "owner_c"}, {StandIn: "192.0.2.17", Owner: "owner_a"}},
 	} {
+		at := issued.Add(time.Duration(index) * 20 * time.Millisecond)
+		store.now = func() time.Time { return at }
 		if err := store.RememberPrivacyStandIns(ctx, session, batch); err != nil {
 			t.Fatal(err)
 		}
