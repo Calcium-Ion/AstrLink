@@ -463,8 +463,8 @@ const planTypeLabels: Record<SubscriptionProvider, Record<string, string>> = {
   },
   openai_codex: {
     plus: "Plus",
-    pro: "Pro 20×",
-    prolite: "Pro 5×",
+    pro: "Pro",
+    prolite: "ProLite",
     go: "Go",
     free: "Free",
     team: "Team",
