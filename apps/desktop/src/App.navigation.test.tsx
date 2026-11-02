@@ -227,6 +227,19 @@ async function setInput(selector: string, value: string): Promise<void> {
   });
 }
 
+/** Radix activates a tab on mouse down, not on click. */
+async function openTab(label: string): Promise<void> {
+  const tab = [
+    ...document.querySelectorAll<HTMLButtonElement>('[role="tab"]'),
+  ].find((candidate) => candidate.textContent === label);
+  if (!tab) throw new Error(`Missing tab: ${label}`);
+  await act(async () => {
+    tab.dispatchEvent(
+      new MouseEvent("mousedown", { bubbles: true, button: 0 }),
+    );
+  });
+}
+
 /** Picks a card in the open provider-type dialog. */
 async function chooseKindCard(option: string): Promise<void> {
   const card = [
@@ -1180,6 +1193,7 @@ describe("App workspace navigation", () => {
     bridgeMocks.getPreferences.mockResolvedValue(preferences);
     await renderApp();
     await act(async () => button("设置").click());
+    await openTab("网关与网络");
     await setInput('input[type="number"]', "9123");
     await act(async () => button("概览").click());
     await act(async () => button("放弃修改并离开").click());
@@ -1190,6 +1204,7 @@ describe("App workspace navigation", () => {
       }),
     );
     await act(async () => button("设置").click());
+    await openTab("网关与网络");
     const port = container.querySelector<HTMLInputElement>(
       'input[type="number"]',
     );
@@ -1483,9 +1498,9 @@ describe("App workspace navigation", () => {
       await Promise.resolve();
     });
     expect(workspaceHeading().textContent).toBe("设置");
-    expect(container.textContent).toContain("推理入口");
-    expect(container.textContent).toContain("检查并发");
-    expect(container.textContent).toContain("响应头等待");
+    expect(container.textContent).toContain("外观");
+    expect(container.textContent).toContain("关闭主窗口时");
+    expect(container.textContent).toContain("网关与网络");
     expect(container.textContent).not.toContain("工具接入");
     expect(
       container.querySelector('[data-slot="local-data-notice"]'),
@@ -1609,6 +1624,7 @@ describe("App workspace navigation", () => {
       button("设置").click();
       await Promise.resolve();
     });
+    await openTab("网关与网络");
     const port = container.querySelector<HTMLInputElement>(
       'input[type="number"]',
     );
