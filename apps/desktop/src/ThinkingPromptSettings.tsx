@@ -16,6 +16,7 @@ import {
 import { Field } from "./components/Field";
 import { HelpPopover } from "./components/HelpPopover";
 import { Panel, PanelHeader } from "./components/Panel";
+import { SettingSceneBody } from "./components/SettingSceneBody";
 import { Switch } from "./components/ui/switch";
 import { cn } from "./lib/utils";
 import { Textarea } from "./components/ui/textarea";
@@ -30,7 +31,11 @@ import {
   type RoutingSettings,
 } from "./failure-policy-model";
 import { useT } from "./i18n";
-import { PromptDemo, ThinkingDemo } from "./ThinkingPromptDemos";
+import {
+  PromptScene,
+  ThinkingScene,
+  thinkingSceneText,
+} from "./ThinkingPromptDemos";
 
 const modeIcons = {
   passthrough: SlidersHorizontal,
@@ -129,7 +134,7 @@ function SystemPromptField({
     >
       <Textarea
         id={id}
-        className="h-16 max-h-48 resize-y overflow-y-auto overscroll-contain field-sizing-fixed"
+        className="h-11 min-h-11 max-h-48 resize-y overflow-y-auto overscroll-contain field-sizing-fixed"
         aria-labelledby={`${id}-label`}
         aria-describedby={counterId}
         value={text}
@@ -169,15 +174,17 @@ export function ThinkingPromptSettings({
             <h2 className="text-sm font-semibold">
               {t("routing.thinkingTitle")}
             </h2>
-            <HelpPopover label={t("routing.thinkingHelp")} size="wide">
-              <ThinkingDemo settings={value} />
+            <HelpPopover label={t("routing.thinkingHelp")}>
+              <p className="m-0 text-xs leading-relaxed text-muted-foreground">
+                {t("routing.thinkingNotes")}
+              </p>
             </HelpPopover>
           </div>
           <p className="mt-1 text-xs text-muted-foreground">
             {t("routing.thinkingHint")}
           </p>
         </PanelHeader>
-        <div className="p-3">
+        <SettingSceneBody scene={<ThinkingScene settings={value} />}>
           <div className="grid grid-cols-[auto_minmax(0,1fr)] items-start gap-x-3 gap-y-2">
             <span id={`${id}-mode`} className={optionRowLabel}>
               {t("routing.thinkingModeLabel")}
@@ -309,8 +316,11 @@ export function ThinkingPromptSettings({
                 </div>
               </>
             ) : null}
+            <p className="col-start-2 text-xs leading-relaxed text-muted-foreground">
+              {thinkingSceneText(value, t)}
+            </p>
           </div>
-        </div>
+        </SettingSceneBody>
       </Panel>
       <Panel data-testid="global-prompt-settings">
         <PanelHeader
@@ -331,27 +341,38 @@ export function ThinkingPromptSettings({
             <h2 className="text-sm font-semibold">
               {t("routing.promptTitle")}
             </h2>
-            <HelpPopover label={t("routing.promptHelp")} size="wide">
-              <PromptDemo
-                enabled={enabled}
-                prefix={value.system_prompt_prefix ?? ""}
-                suffix={value.system_prompt_suffix ?? ""}
-              />
+            <HelpPopover label={t("routing.promptHelp")}>
+              <p className="m-0 text-xs leading-relaxed text-muted-foreground">
+                {t("routing.promptNotes")}
+              </p>
             </HelpPopover>
           </div>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {t("routing.promptHint")}
+          </p>
         </PanelHeader>
-        <div className="grid gap-3 p-3">
-          {promptFields.map(({ key, label, placeholder, Icon }) => (
-            <SystemPromptField
-              key={key}
-              Icon={Icon}
-              label={t(label)}
-              placeholder={t(placeholder)}
-              value={value[key] ?? ""}
-              onCommit={(next) => onChange({ ...value, [key]: next })}
+        <SettingSceneBody
+          scene={
+            <PromptScene
+              enabled={enabled}
+              prefix={value.system_prompt_prefix ?? ""}
+              suffix={value.system_prompt_suffix ?? ""}
             />
-          ))}
-        </div>
+          }
+        >
+          <div className="grid gap-2">
+            {promptFields.map(({ key, label, placeholder, Icon }) => (
+              <SystemPromptField
+                key={key}
+                Icon={Icon}
+                label={t(label)}
+                placeholder={t(placeholder)}
+                value={value[key] ?? ""}
+                onCommit={(next) => onChange({ ...value, [key]: next })}
+              />
+            ))}
+          </div>
+        </SettingSceneBody>
       </Panel>
     </>
   );

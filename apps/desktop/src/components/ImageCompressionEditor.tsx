@@ -6,7 +6,7 @@ import type {
 import { imageCompressionModes } from "@/failure-policy-model";
 import { useT } from "@/i18n";
 import { HelpPopover } from "./HelpPopover";
-import { ImageCompressionDemo } from "./ImageCompressionDemo";
+import { ImageCompressionScene } from "./ImageCompressionScene";
 import {
   FoldHorizontal,
   ImageDown,
@@ -16,6 +16,7 @@ import {
 import { NumberInput } from "./NumberField";
 import { OptionRow, optionRowLabel } from "./OptionRow";
 import { Panel, PanelHeader } from "./Panel";
+import { SettingSceneBody } from "./SettingSceneBody";
 import { StrengthMeter } from "./StrengthMeter";
 import { Switch } from "./ui/switch";
 
@@ -54,6 +55,7 @@ export function ImageCompressionEditor({
     <Panel className="shrink-0" data-testid="image-compression-settings">
       <PanelHeader
         icon={<ImageDown size={16} />}
+        iconTone="success"
         size="sm"
         actions={
           <Switch
@@ -69,15 +71,17 @@ export function ImageCompressionEditor({
           <h2 className="text-sm font-semibold">
             {t("imageCompression.title")}
           </h2>
-          <HelpPopover label={t("imageCompression.help")} size="wide">
-            <ImageCompressionDemo mode={value.mode} />
+          <HelpPopover label={t("imageCompression.help")}>
+            <p className="m-0 text-xs leading-relaxed text-muted-foreground">
+              {t("imageCompression.demo.notes")}
+            </p>
           </HelpPopover>
         </div>
         <p className="mt-1 text-xs text-muted-foreground">
           {t("imageCompression.hint")}
         </p>
       </PanelHeader>
-      <div className="p-3">
+      <SettingSceneBody scene={<ImageCompressionScene value={value} />}>
         <div className="grid grid-cols-[auto_minmax(0,1fr)] items-start gap-x-3 gap-y-2">
           <span id={`${id}-mode`} className={optionRowLabel}>
             {t("imageCompression.mode")}
@@ -159,7 +163,7 @@ export function ImageCompressionEditor({
             {t(`imageCompression.modeHints.${value.mode}`)}
           </p>
         </div>
-      </div>
+      </SettingSceneBody>
     </Panel>
   );
 }

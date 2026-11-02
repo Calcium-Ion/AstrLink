@@ -3524,6 +3524,8 @@
     },
     "thinkingTitle": "Thinking level",
     "thinkingHint": "Sets how long models think before they answer.",
+    "thinkingHelp": "About thinking levels",
+    "thinkingNotes": "Adaptive watches three things: a long chat, many tools, and a long question. Each one raises the level a step, and all three reach the top of the range. Everyday suits regular coding and chat. Research suits hard problems and long research, though answers take longer and cost more. When both ends of a custom range match, every request uses that level.",
     "thinkingModeLabel": "Mode",
     "thinkingLevelLabel": "Level",
     "thinkingRangeLabel": "Range",
@@ -3548,11 +3550,7 @@
     "thinkingRangeTo": "To",
     "thinkingRangeMin": "Least thinking",
     "thinkingRangeMax": "Most thinking",
-    "thinkingHelp": "About thinking levels",
     "thinkingDemo": {
-      "client": "Client",
-      "model": "Model",
-      "noThinking": "No thinking",
       "requests": {
         "quick": "Quick question",
         "bug": "Fixing a bug",
@@ -3562,26 +3560,20 @@
         "passthrough": "Each request uses the level its client picks. To pick another level, change it in the client.",
         "fixed": "Every request thinks at {{level}}. The level the client picks is replaced.",
         "fixedOff": "Models answer without thinking. Newer models that can't turn it off think the least.",
-        "everyday": "Simple questions get little thinking, complex ones get more. Starts at Low and rises step by step when the chat gets long, uses many tools, or the question is long, up to Max. A good fit for everyday coding and chat.",
-        "research": "Every question gets at least Medium thinking. Rises step by step when the chat gets long, uses many tools, or the question is long, up to the most this model can think. A good fit for hard problems and long research, though answers take longer and cost more.",
-        "custom": "You set the least and the most thinking. Simple questions use the lower end, and more complex ones move closer to the upper end. When both ends match, every request uses that level."
+        "everyday": "Simple questions get little thinking, complex ones get more.",
+        "research": "Every question gets at least Medium thinking, and complex ones get the most.",
+        "custom": "You set the least and the most thinking."
       }
     },
     "promptTitle": "Global prompt",
     "promptHelp": "About the global prompt",
+    "promptHint": "Adds your text before and after the system prompt of every request.",
+    "promptNotes": "Your start goes after the client's identity line. When on, these two texts add to the input usage of every request. Small tasks like titles use the client's own prompt.",
     "promptDemo": {
       "title": "System prompt sent to the model",
-      "identity": "Client identity line",
       "client": "Client's built-in prompt",
       "prefix": "Your start",
-      "suffix": "Your end",
-      "smallTasks": "Small tasks like titles",
-      "titleTask": "Give this conversation a title",
-      "unchanged": "As is",
-      "text": {
-        "on": "On. These two texts add to the input usage of every request.",
-        "off": "Off. Turn on the switch at the top right to add these two texts to every request."
-      }
+      "suffix": "Your end"
     },
     "promptEnabled": "Use the global prompt",
     "promptPrefix": "Add at the start",
@@ -4068,19 +4060,11 @@
     "enable": "Enable request image compression",
     "hint": "Converts request images to WebP before forwarding to save upload bandwidth.",
     "demo": {
-      "client": "Client",
-      "model": "Model",
       "files": {
         "screenshot": "screenshot",
-        "photo": "photo",
-        "animation": "animation",
-        "link": "Image link"
+        "photo": "photo"
       },
-      "text": {
-        "lossless": "Screenshots become WebP with every pixel intact, at a smaller size. A photo grows as lossless WebP, so it is sent as is.",
-        "lossy": "Photos become WebP too, at a smaller size, and fine text may blur. A screenshot goes lossless when that comes out smaller."
-      },
-      "notes": "The same image always compresses to the same bytes, so the prompt cache still hits. The first compression of a large screenshot takes a few tenths of a second. Models count image tokens by pixel size, so token usage stays the same."
+      "notes": "Lossless sends JPEG as is, since converting would only make it bigger. The same image always compresses to the same bytes, so the prompt cache still hits. The first compression of a large screenshot takes a few tenths of a second. Models count image tokens by pixel size, so token usage stays the same."
     },
     "mode": "Mode",
     "modes": {
@@ -4088,7 +4072,7 @@
       "lossy": "Lossy"
     },
     "modeHints": {
-      "lossless": "Every pixel stays the same. Compresses PNG and single-frame GIF; JPEG would only grow, so it is sent as is.",
+      "lossless": "Every pixel stays the same. Compresses PNG and single-frame GIF.",
       "lossy": "Also compresses JPEG for smaller images. Lower quality saves more bandwidth, but fine text may blur."
     },
     "quality": "Quality",

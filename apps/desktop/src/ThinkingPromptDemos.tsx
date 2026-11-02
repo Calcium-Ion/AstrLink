@@ -1,381 +1,279 @@
-import { useState } from "react";
-import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import { Fragment } from "react";
+import { motion, useReducedMotion } from "motion/react";
 
-import { FlowDemoStage } from "./components/FlowDemoStage";
-import { LockKeyhole } from "./components/icons";
-import { SegmentedControl } from "./components/SegmentedControl";
-import { StrengthMeter } from "./components/StrengthMeter";
 import {
-  adaptivePresets,
+  Hourglass,
+  LockKeyhole,
+  MessageCircle,
+  Terminal,
+} from "./components/icons";
+import { sceneFrameClass } from "./components/SettingSceneBody";
+import {
   adaptiveRange,
   reasoningLevels,
-  reasoningModes,
-  type AdaptivePreset,
   type LevelRange,
   type ReasoningLevel,
-  type ReasoningMode,
   type RoutingSettings,
 } from "./failure-policy-model";
 import { useT } from "./i18n";
 import { cn } from "./lib/utils";
-import { useLoopStep } from "./use-loop-step";
 
 const rank = (level: ReasoningLevel) => reasoningLevels.indexOf(level);
+const topRank = reasoningLevels.length - 1;
 
 /**
  * Where a request with hits signals lands inside range, as the gateway picks
  * it: the lower end without signals, a level higher for each, and the upper
- * end for all three. capped marks a request that would pass the upper end.
+ * end for all three.
  */
-export function rangeLevel(range: LevelRange, hits: number) {
-  const wanted = rank(range[0]) + hits;
+function rangeLevel(range: LevelRange, hits: number) {
   const top = rank(range[1]);
+  return reasoningLevels[
+    hits >= 3 ? top : Math.min(rank(range[0]) + hits, top)
+  ];
+}
+
+/** Three example requests: the signals each shows and the level its client picks. */
+const requestCards = [
+  { id: "quick", hits: 0, pick: "low", Icon: MessageCircle },
+  { id: "bug", hits: 1, pick: "high", Icon: Terminal },
+  { id: "afternoon", hits: 3, pick: "medium", Icon: Hourglass },
+] as const;
+
+/**
+ * The level each example request is sent with, and the levels the setting
+ * allows: none when following the client, one when fixed, the range when
+ * adaptive.
+ */
+export function thinkingSceneLevels(settings: RoutingSettings) {
+  const mode = settings.reasoning_mode ?? "passthrough";
+  if (mode === "passthrough")
+    return {
+      allowed: null,
+      cards: requestCards.map((card) => ({
+        ...card,
+        level: card.pick as ReasoningLevel,
+      })),
+    };
+  if (mode === "fixed") {
+    const level = settings.reasoning_level ?? "medium";
+    return {
+      allowed: [level, level] as LevelRange,
+      cards: requestCards.map((card) => ({ ...card, level })),
+    };
+  }
+  const range = adaptiveRange(settings);
   return {
-    level: reasoningLevels[hits >= 3 ? top : Math.min(wanted, top)],
-    capped: wanted > top,
+    allowed: range,
+    cards: requestCards.map((card) => ({
+      ...card,
+      level: rangeLevel(range, card.hits),
+    })),
   };
 }
 
-// What three clients pick in the passthrough and fixed examples.
-const clientPicks = ["low", "high", "medium"] as const;
-// Each card sets off at an odd step and comes out of AstrLink at the next
-// one, about when it passes the logo.
-const flowTimes = [0, 700, 1200, 1400, 1900, 2100, 2600] as const;
-const flowHold = 1600;
-
-/**
- * Passthrough and fixed: request cards pass through AstrLink. Passthrough
- * forwards each card's own level. Fixed gives every card the panel's level
- * and highlights the cards whose level changed; off reads as no thinking.
- */
-function FlowVisual({ fixed }: { fixed?: ReasoningLevel }) {
-  const t = useT();
-  const reducedMotion = useReducedMotion();
-  const { step, cycle } = useLoopStep(flowTimes, flowHold, true);
-  const departed = Math.ceil(step / 2);
-  const arrived = Math.floor(step / 2);
-  const name = (level: ReasoningLevel) =>
-    level === "off"
-      ? t("routing.thinkingDemo.noThinking")
-      : t(`routing.thinkingLevels.${level}`);
-  return (
-    <FlowDemoStage
-      className="h-28"
-      data-arrived={arrived}
-      data-flow={fixed ? "fixed" : "passthrough"}
-      data-visual="flow"
-      from={t("routing.thinkingDemo.client")}
-      gatewayTop={43}
-      to={t("routing.thinkingDemo.model")}
-    >
-      {/* What each client sent stays outlined where its card started. */}
-      {clientPicks.map((pick, index) => (
-        <span
-          className="absolute left-[5%] flex h-5 items-center gap-1 rounded-sm border border-dashed px-1.5 text-micro whitespace-nowrap text-muted-foreground"
-          key={pick}
-          style={{ top: 30 + index * 25 }}
-        >
-          <StrengthMeter level={rank(pick)} size="sm" />
-          {name(pick)}
-        </span>
-      ))}
-      {clientPicks.map((pick, index) => {
-        const out = index < arrived;
-        const level = out && fixed ? fixed : pick;
-        const changed = level !== pick;
-        return (
-          <motion.span
-            animate={{ left: index < departed ? "71%" : "5%", opacity: 1 }}
-            className={cn(
-              "absolute flex h-5 items-center gap-1 rounded-sm border px-1.5 text-micro font-medium whitespace-nowrap",
-              changed
-                ? "border-primary/40 bg-accent text-primary"
-                : "bg-background text-foreground",
-            )}
-            data-arrived={out || undefined}
-            data-card={pick}
-            data-changed={changed || undefined}
-            initial={reducedMotion ? false : { left: "5%", opacity: 0 }}
-            key={`${cycle}-${pick}`}
-            style={{ top: 30 + index * 25 }}
-            transition={{
-              left: { duration: reducedMotion ? 0 : 0.9, ease: "easeInOut" },
-              opacity: { duration: reducedMotion ? 0 : 0.25 },
-            }}
-          >
-            <StrengthMeter active level={rank(level)} size="sm" />
-            {name(level)}
-          </motion.span>
-        );
-      })}
-    </FlowDemoStage>
-  );
+/** Two cards share a row when they cannot touch; one at an end of the scale reaches further in. */
+function clearOfEachOther(a: number, b: number) {
+  const atEnd = [a, b].some((at) => at === 0 || at === topRank);
+  return Math.abs(a - b) >= (atEnd ? 3 : 2);
 }
 
-// The adaptive example's requests and the signals each shows.
-const requestCards = [
-  { id: "quick", hits: 0 },
-  { id: "bug", hits: 1 },
-  { id: "afternoon", hits: 3 },
-] as const;
-const scaleTop = 14;
-const scaleGap = 26;
-const scaleY = (level: ReasoningLevel) =>
-  scaleTop + (4 - rank(level)) * scaleGap;
-// The brackets settle before the cards move.
-const bracketMove = 0.35;
-const cardMove = 0.5;
+/** The row of each level's card, the first that has room for it. */
+export function thinkingCardRows(levels: readonly ReasoningLevel[]) {
+  const rows: number[][] = [];
+  return levels.map((level) => {
+    const at = rank(level);
+    let row = rows.findIndex((taken) =>
+      taken.every((other) => clearOfEachOther(at, other)),
+    );
+    if (row < 0) row = rows.push([]) - 1;
+    rows[row].push(at);
+    return row;
+  });
+}
+
+const cardHeight = 24;
+const rowPitch = cardHeight + 2;
+const axisBottom = 26;
+const rowTop = (row: number) => 5 + row * rowPitch;
+// A card hangs centred from its level, or flush with the frame's side at an
+// end of the scale, so the ends stay inside the frame.
+const cardShift = (level: ReasoningLevel) =>
+  rank(level) === 0 ? "-14%" : rank(level) === topRank ? "-86%" : "-50%";
+const levelLeft = (level: ReasoningLevel) =>
+  `${(rank(level) / topRank) * 100}%`;
 
 /**
- * Adaptive: a thermometer whose brackets mark the range. Three requests sit
- * where the gateway sends them; when the range changes the brackets move
- * first, then the cards. A card that would pass the upper end stops there
- * and the upper bracket gives a small bump.
+ * The level scale with the example requests hanging over the level each is
+ * sent with. The range the setting allows is marked on the scale, and the
+ * levels in use stand out. A change slides the cards to their new levels.
  */
-function ThermometerVisual({ range }: { range: LevelRange }) {
+export function ThinkingScene({ settings }: { settings: RoutingSettings }) {
   const t = useT();
   const reducedMotion = useReducedMotion();
-  const [low, high] = range;
-  const placed = requestCards.map((card) => ({
-    ...card,
-    ...rangeLevel(range, card.hits),
-  }));
-  const bump = placed.some((card) => card.capped);
-  const move = (delay: number, duration: number) => ({
-    delay: reducedMotion ? 0 : delay,
-    duration: reducedMotion ? 0 : duration,
-    ease: "easeInOut" as const,
-  });
-  const bottom = scaleY("off");
+  const { allowed, cards } = thinkingSceneLevels(settings);
+  const rows = thinkingCardRows(cards.map((card) => card.level));
+  const rowCount = Math.max(...rows) + 1;
+  const move = {
+    duration: reducedMotion ? 0 : 0.35,
+    ease: "easeInOut",
+  } as const;
+  const inUse = (level: ReasoningLevel) =>
+    allowed === null
+      ? cards.some((card) => card.level === level)
+      : rank(level) >= rank(allowed[0]) && rank(level) <= rank(allowed[1]);
   return (
     <div
       aria-hidden="true"
-      className="relative h-40 overflow-hidden rounded-md border bg-card"
-      data-range={`${low}..${high}`}
-      data-visual="thermometer"
+      className={cn(
+        sceneFrameClass,
+        "relative overflow-hidden transition-[min-height] duration-300 motion-reduce:transition-none",
+      )}
+      data-allowed={allowed ? `${allowed[0]}..${allowed[1]}` : undefined}
+      data-visual="levels"
+      style={{ minHeight: rowCount * rowPitch + 46 }}
     >
-      {reasoningLevels.map((stop) => (
-        <span key={stop}>
-          <span
-            className={cn(
-              "absolute left-0 w-11 -translate-y-1/2 text-right text-micro whitespace-nowrap",
-              rank(stop) >= rank(low) && rank(stop) <= rank(high)
-                ? "font-medium text-foreground"
-                : "text-muted-foreground",
-            )}
-            style={{ top: scaleY(stop) }}
-          >
-            {t(`routing.thinkingLevels.${stop}`)}
-          </span>
-          <span
-            className="absolute right-2 left-20 border-t border-dashed border-border"
-            style={{ top: scaleY(stop) }}
-          />
-        </span>
-      ))}
-      {/* The tube and its bulb; the column rises to the upper end. */}
-      <span
-        className="absolute left-[3.25rem] w-2.5 rounded-t-full bg-muted"
-        style={{ top: scaleY("max") - 7, height: bottom - scaleY("max") + 14 }}
-      />
-      <span
-        className="absolute left-[2.95rem] size-5 rounded-full bg-primary/35"
-        style={{ top: bottom + 5 }}
-      />
-      <motion.span
-        animate={{ top: scaleY(high) }}
-        className="absolute left-[3.25rem] w-2.5 rounded-t-full bg-primary/25"
-        initial={reducedMotion ? false : { top: bottom }}
-        style={{ bottom: 160 - bottom - 12 }}
-        transition={move(0, bracketMove)}
-      />
-      {/* The range, a little past each end so a single level shows too. */}
-      <motion.span
-        animate={{
-          top: scaleY(high) - 3,
-          height: scaleY(low) - scaleY(high) + 6,
-        }}
-        className="absolute left-[3.25rem] w-2.5 rounded-full bg-primary"
-        data-range-fill
-        initial={reducedMotion ? false : { top: bottom - 3, height: 6 }}
-        transition={move(0, bracketMove)}
-      />
-      {/* The brackets: the upper end and the lower end. */}
-      <motion.span
-        animate={{ top: scaleY(high) - 1 }}
-        className="absolute left-[4.25rem]"
-        data-bracket="max"
-        initial={reducedMotion ? false : { top: bottom - 1 }}
-        transition={move(0, bracketMove)}
-      >
-        <motion.span
-          animate={{ y: bump && !reducedMotion ? [0, -3, 0] : 0 }}
-          className="block h-2.5 w-3 rounded-tr-sm border-t-2 border-r-2 border-primary"
-          data-bump={bump || undefined}
-          key={`${low}-${high}`}
-          transition={{
-            delay: reducedMotion ? 0 : bracketMove + cardMove,
-            duration: reducedMotion ? 0 : 0.3,
-          }}
+      <div className="absolute inset-y-0 right-10 left-10">
+        <span
+          className="absolute inset-x-0 h-1 rounded-full bg-border"
+          style={{ bottom: axisBottom }}
         />
-      </motion.span>
-      <motion.span
-        animate={{ top: scaleY(low) - 9 }}
-        className="absolute left-[4.25rem] block h-2.5 w-3 rounded-br-sm border-r-2 border-b-2 border-primary"
-        data-bracket="min"
-        initial={reducedMotion ? false : { top: bottom - 9 }}
-        transition={move(0, bracketMove)}
-      />
-      <div className="absolute inset-y-0 right-2 left-[5.5rem] grid grid-cols-3 gap-1.5">
-        {placed.map((card) => (
-          <span className="relative" key={card.id}>
-            <motion.span
-              animate={{ top: scaleY(card.level) }}
+        {allowed ? (
+          <motion.span
+            animate={{
+              left: levelLeft(allowed[0]),
+              width: `${((rank(allowed[1]) - rank(allowed[0])) / topRank) * 100}%`,
+            }}
+            className="absolute h-1 rounded-full bg-warning"
+            initial={false}
+            style={{ bottom: axisBottom }}
+            transition={move}
+          />
+        ) : null}
+        {reasoningLevels.map((level) => (
+          <Fragment key={level}>
+            <span
               className={cn(
-                "absolute inset-x-0 -translate-y-1/2 rounded-sm border bg-background px-1.5 py-0.5 text-center text-micro leading-tight text-foreground",
-                card.capped && "border-primary/50",
+                "absolute size-2.5 -translate-x-1/2 rounded-full bg-card ring-2 transition-shadow",
+                inUse(level) ? "ring-warning" : "ring-muted-foreground/25",
               )}
-              data-capped={card.capped || undefined}
-              data-level={card.level}
-              data-request={card.id}
-              initial={reducedMotion ? false : { top: bottom }}
-              transition={move(bracketMove, cardMove)}
+              style={{ bottom: axisBottom - 3, left: levelLeft(level) }}
+            />
+            <span
+              className={cn(
+                "absolute -translate-x-1/2 text-micro whitespace-nowrap",
+                inUse(level)
+                  ? "font-semibold text-warning-foreground"
+                  : "text-muted-foreground",
+              )}
+              style={{ bottom: 4, left: levelLeft(level) }}
             >
-              {t(`routing.thinkingDemo.requests.${card.id}`)}
-            </motion.span>
-          </span>
+              {t(`routing.thinkingLevels.${level}`)}
+            </span>
+          </Fragment>
         ))}
+        {cards.map((card, index) => {
+          const top = rowTop(rows[index]);
+          return (
+            <Fragment key={card.id}>
+              <motion.span
+                animate={{ left: levelLeft(card.level), top: top + cardHeight }}
+                className="absolute w-px bg-muted-foreground/35"
+                initial={false}
+                style={{ bottom: axisBottom + 7 }}
+                transition={move}
+              />
+              <motion.span
+                animate={{
+                  left: levelLeft(card.level),
+                  top,
+                  x: cardShift(card.level),
+                }}
+                className="absolute flex h-6 items-center gap-1.5 rounded-md border bg-card px-2 text-micro whitespace-nowrap text-foreground shadow-xs"
+                data-level={card.level}
+                data-request={card.id}
+                initial={false}
+                transition={move}
+              >
+                <card.Icon
+                  animateOnHover={false}
+                  aria-hidden="true"
+                  className="shrink-0 text-muted-foreground"
+                  size={12}
+                />
+                {t(`routing.thinkingDemo.requests.${card.id}`)}
+              </motion.span>
+            </Fragment>
+          );
+        })}
       </div>
     </div>
   );
 }
 
-/**
- * The thinking explanation. It opens on the panel's mode and range; its
- * switchers change only the example.
- */
-export function ThinkingDemo({ settings }: { settings: RoutingSettings }) {
-  const t = useT();
-  const [mode, setMode] = useState<ReasoningMode>(
-    settings.reasoning_mode ?? "passthrough",
-  );
-  const [preset, setPreset] = useState<AdaptivePreset>(
-    settings.adaptive_preset ?? "everyday",
-  );
+/** The thinking setting in a sentence or two, for the saved mode and range. */
+export function thinkingSceneText(
+  settings: RoutingSettings,
+  t: ReturnType<typeof useT>,
+) {
+  const mode = settings.reasoning_mode ?? "passthrough";
   const level = settings.reasoning_level ?? "medium";
-  const range = adaptiveRange({ ...settings, adaptive_preset: preset });
-  let text = t("routing.thinkingDemo.text.passthrough");
   if (mode === "fixed")
-    text =
-      level === "off"
-        ? t("routing.thinkingDemo.text.fixedOff")
-        : t("routing.thinkingDemo.text.fixed", {
-            level: t(`routing.thinkingLevels.${level}`),
-          });
-  else if (mode === "adaptive") text = t(`routing.thinkingDemo.text.${preset}`);
-  return (
-    <div className="grid gap-2.5" data-thinking-demo={mode}>
-      <SegmentedControl
-        label={t("routing.thinkingModeLabel")}
-        options={reasoningModes.map((value) => ({
-          value,
-          label: t(`routing.thinkingModes.${value}`),
-        }))}
-        value={mode}
-        onValueChange={setMode}
-      />
-      {mode === "adaptive" ? (
-        <SegmentedControl
-          label={t("routing.thinkingRangeLabel")}
-          options={adaptivePresets.map((value) => ({
-            value,
-            label: t(`routing.thinkingPresets.${value}`),
-          }))}
-          value={preset}
-          onValueChange={setPreset}
-        />
-      ) : null}
-      {mode === "adaptive" ? (
-        <ThermometerVisual range={range} />
-      ) : (
-        <FlowVisual fixed={mode === "fixed" ? level : undefined} key={mode} />
-      )}
-      <p className="m-0 text-xs leading-relaxed text-muted-foreground">
-        {text}
-      </p>
-    </div>
-  );
+    return level === "off"
+      ? t("routing.thinkingDemo.text.fixedOff")
+      : t("routing.thinkingDemo.text.fixed", {
+          level: t(`routing.thinkingLevels.${level}`),
+        });
+  if (mode === "adaptive")
+    return t(
+      `routing.thinkingDemo.text.${settings.adaptive_preset ?? "everyday"}`,
+    );
+  return t("routing.thinkingDemo.text.passthrough");
 }
 
-// The prompt grows in steps, then holds before starting over.
-const promptTimes = [0, 900, 1800] as const;
-const promptHold = 2200;
-
-function excerpt(text: string, fallback: string) {
-  return text.trim().split("\n")[0].trim() || fallback;
-}
-
-function SkeletonLines({ widths }: { widths: readonly string[] }) {
-  return (
-    <span className="grid gap-1 pt-0.5">
-      {widths.map((width) => (
-        <span
-          className="h-1.5 rounded-full bg-muted-foreground/20"
-          key={width}
-          style={{ width }}
-        />
-      ))}
-    </span>
-  );
+/** The first line of a saved prompt text. */
+function excerpt(text: string) {
+  return text.trim().split("\n")[0].trim();
 }
 
 /**
- * A place for one of the user's texts. It stays the same height while empty,
- * so the popover keeps its size, and the text moves into it at its step.
+ * A place for one of the user's texts: filled with its first line when the
+ * prompt is on and the text is set, a dashed outline around an example
+ * otherwise.
  */
 function PromptSlot({
   block,
-  filled,
-  from,
+  example,
   label,
   text,
 }: {
   block: "prefix" | "suffix";
-  filled: boolean;
-  from: { x?: number; y?: number };
+  example: string;
   label: string;
   text: string;
 }) {
-  const reducedMotion = useReducedMotion();
   return (
     <li
-      className="relative h-6 rounded-sm border border-dashed border-primary/25"
-      data-prompt-slot={block}
+      className={cn(
+        "flex min-w-0 items-baseline gap-1.5 rounded-sm border px-2 py-1 text-micro transition-colors",
+        text
+          ? "border-transparent bg-tide-wash text-accent-foreground shadow-[inset_2px_0_0_var(--tide)]"
+          : "border-dashed text-muted-foreground",
+      )}
+      data-filled={text ? true : undefined}
+      data-prompt-block={block}
     >
-      <AnimatePresence initial={false}>
-        {filled ? (
-          <motion.span
-            animate={{ opacity: 1, x: 0, y: 0 }}
-            className="absolute inset-[-1px] flex min-w-0 items-center gap-1.5 rounded-sm border border-primary/30 bg-primary/10 px-1.5 text-micro text-primary"
-            data-prompt-block={block}
-            exit={{ opacity: 0 }}
-            initial={reducedMotion ? false : { opacity: 0, ...from }}
-            transition={{ duration: reducedMotion ? 0 : 0.45, ease: "easeOut" }}
-          >
-            <span className="shrink-0 font-medium">{label}</span>
-            <span className="truncate">{text}</span>
-          </motion.span>
-        ) : null}
-      </AnimatePresence>
+      <span className="shrink-0 font-semibold">{label}</span>
+      <span className="truncate">{text || example}</span>
     </li>
   );
 }
 
 /**
- * The system prompt a model receives, assembled block by block. The user's
- * two texts move into their places around the client's own prompt.
+ * The system prompt a model receives, block by block, with the user's two
+ * texts in their places around the client's own prompt.
  */
-export function PromptDemo({
+export function PromptScene({
   enabled,
   prefix,
   suffix,
@@ -385,85 +283,46 @@ export function PromptDemo({
   suffix: string;
 }) {
   const t = useT();
-  const { step } = useLoopStep(promptTimes, promptHold, enabled);
   return (
-    <div
-      className="grid gap-3"
-      data-prompt-demo={enabled ? "on" : "off"}
-      data-prompt-step={step}
+    <section
+      aria-hidden="true"
+      className={cn(sceneFrameClass, "grid content-start gap-1.5 px-3 py-2.5")}
+      data-prompt={enabled ? "on" : "off"}
+      data-visual="prompt"
     >
-      <div
-        aria-hidden="true"
-        className="grid grid-cols-[minmax(0,1fr)_8.5rem] items-start gap-2"
-      >
-        <section
-          className="rounded-md border bg-card p-2"
-          data-prompt-card="main"
+      <h3 className="m-0 text-micro font-normal text-muted-foreground">
+        {t("routing.promptDemo.title")}
+      </h3>
+      <ol className="m-0 grid list-none gap-1.5 p-0">
+        <PromptSlot
+          block="prefix"
+          example={t("routing.promptPrefixPlaceholder")}
+          label={t("routing.promptDemo.prefix")}
+          text={enabled ? excerpt(prefix) : ""}
+        />
+        <li
+          className="grid min-w-0 gap-1.5 rounded-sm border border-dashed px-2 py-1.5 text-micro text-muted-foreground"
+          data-prompt-block="client"
         >
-          <h4 className="m-0 text-micro font-medium text-muted-foreground">
-            {t("routing.promptDemo.title")}
-          </h4>
-          <ol className="m-0 mt-1.5 grid list-none gap-1 p-0">
-            <li
-              className="flex h-6 min-w-0 items-center gap-1 rounded-sm bg-muted px-1.5 text-micro text-muted-foreground"
-              data-prompt-block="identity"
-            >
-              <LockKeyhole
-                animateOnHover={false}
-                aria-hidden="true"
-                className="shrink-0"
-                size={11}
-              />
-              <span className="truncate">
-                {t("routing.promptDemo.identity")}
-              </span>
-            </li>
-            <PromptSlot
-              block="prefix"
-              filled={step >= 1}
-              from={{ y: -10 }}
-              label={t("routing.promptDemo.prefix")}
-              text={excerpt(prefix, t("routing.promptPrefixPlaceholder"))}
+          <span className="flex min-w-0 items-center gap-1">
+            <LockKeyhole
+              animateOnHover={false}
+              aria-hidden="true"
+              className="shrink-0"
+              size={11}
             />
-            <li
-              className="grid min-w-0 rounded-sm border border-dashed px-1.5 py-1 text-micro text-muted-foreground"
-              data-prompt-block="client"
-            >
-              <span>{t("routing.promptDemo.client")}</span>
-              <SkeletonLines widths={["88%"]} />
-            </li>
-            <PromptSlot
-              block="suffix"
-              filled={step >= 2}
-              from={{ x: 12 }}
-              label={t("routing.promptDemo.suffix")}
-              text={excerpt(suffix, t("routing.promptSuffixPlaceholder"))}
-            />
-          </ol>
-        </section>
-        <section
-          className="grid gap-1.5 rounded-md border bg-card p-2"
-          data-prompt-card="small-tasks"
-        >
-          <h4 className="m-0 text-micro font-medium text-muted-foreground">
-            {t("routing.promptDemo.smallTasks")}
-          </h4>
-          <span className="grid gap-1 rounded-sm bg-muted px-1.5 py-1 text-micro text-muted-foreground">
-            <span className="line-clamp-2">
-              {t("routing.promptDemo.titleTask")}
-            </span>
-            <SkeletonLines widths={["70%"]} />
+            <span className="truncate">{t("routing.promptDemo.client")}</span>
           </span>
-          <span className="w-fit rounded-sm border px-1.5 text-micro text-muted-foreground">
-            {t("routing.promptDemo.unchanged")}
-          </span>
-        </section>
-      </div>
-      <p className="m-0 text-xs leading-relaxed text-muted-foreground">
-        {enabled
-          ? t("routing.promptDemo.text.on")
-          : t("routing.promptDemo.text.off")}
-      </p>
-    </div>
+          <span className="h-1.5 w-[92%] rounded-full bg-border" />
+          <span className="h-1.5 w-[64%] rounded-full bg-border" />
+        </li>
+        <PromptSlot
+          block="suffix"
+          example={t("routing.promptSuffixPlaceholder")}
+          label={t("routing.promptDemo.suffix")}
+          text={enabled ? excerpt(suffix) : ""}
+        />
+      </ol>
+    </section>
   );
 }

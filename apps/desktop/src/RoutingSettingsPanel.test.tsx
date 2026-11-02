@@ -28,6 +28,7 @@ import {
   routingAutosaveDelay,
 } from "./RoutingSettingsPanel";
 import { RecoveryChain, RecoveryDetails } from "./components/RecoveryDetails";
+import { thinkingCardRows } from "./ThinkingPromptDemos";
 import type { RequestRecord } from "./request-record-model";
 import { applyLocale } from "./i18n";
 import { settleClosedLayer } from "./lib/test-layer-settle";
@@ -455,14 +456,11 @@ describe("shared global recovery settings", () => {
       vi.useFakeTimers();
     }
 
-    const help = {
-      thinking: "思考强度说明",
-      prompt: "全局提示词说明",
-    } as const;
+    const promptHelp = "全局提示词说明";
 
-    function helpButton(which: keyof typeof help) {
+    function helpButton() {
       return container.querySelector<HTMLButtonElement>(
-        `button[aria-label="${help[which]}"]`,
+        `button[aria-label="${promptHelp}"]`,
       )!;
     }
 
@@ -472,13 +470,13 @@ describe("shared global recovery settings", () => {
       );
     }
 
-    async function openHelp(which: keyof typeof help) {
-      await act(async () => helpButton(which).click());
+    async function openHelp() {
+      await act(async () => helpButton().click());
       expect(popover()).not.toBeNull();
       return popover()!;
     }
 
-    async function closeHelp(which: keyof typeof help) {
+    async function closeHelp() {
       // Radix returns focus on a timer, so the layer settles on real time.
       vi.useRealTimers();
       await act(async () =>
@@ -489,68 +487,48 @@ describe("shared global recovery settings", () => {
       await settleClosedLayer();
       vi.useFakeTimers();
       expect(popover()).toBeNull();
-      expect(document.activeElement).toBe(helpButton(which));
+      expect(document.activeElement).toBe(helpButton());
     }
 
-    function demoText() {
-      return popover()!.querySelector("p")?.textContent;
+    /** The sentences under the thinking controls. */
+    function thinkingText() {
+      return [...thinking().querySelectorAll("p")].at(-1)?.textContent;
     }
 
-    function demoSwitch(label: string) {
-      return [
-        ...popover()!.querySelectorAll<HTMLButtonElement>(
-          '[data-slot="segmented-control-item"]',
-        ),
-      ].find((item) => item.textContent === label);
-    }
-
-    async function showExample(label: string) {
-      await act(async () => demoSwitch(label)!.click());
-    }
-
-    function visual() {
-      return popover()!.querySelector<HTMLElement>("[data-visual]")!;
-    }
-
-    /** Where each request card of the thermometer sits; * marks a stopped card. */
-    function thermometer() {
-      const scale = visual();
-      expect(scale.dataset.visual).toBe("thermometer");
+    /** The levels the thinking picture marks and where each example request hangs on the scale. */
+    function levels() {
+      const scale = thinking().querySelector<HTMLElement>(
+        '[data-visual="levels"]',
+      )!;
+      expect(scale.getAttribute("aria-hidden")).toBe("true");
       return {
-        range: scale.dataset.range,
+        allowed: scale.dataset.allowed,
         cards: [...scale.querySelectorAll<HTMLElement>("[data-request]")].map(
-          (card) =>
-            `${card.textContent}: ${card.dataset.level}${card.dataset.capped ? "*" : ""}`,
-        ),
-        bump: scale.querySelector<HTMLElement>("[data-bump]") !== null,
-      };
-    }
-
-    /**
-     * The request cards passing through AstrLink, as the model side shows
-     * them once they arrive; * marks a card whose level changed.
-     */
-    function flow() {
-      const scene = visual();
-      expect(scene.dataset.visual).toBe("flow");
-      const gateway = scene.querySelector<HTMLElement>("[data-gateway]")!;
-      expect(gateway.textContent).toBe("AstrLink");
-      expect(gateway.querySelector("img")?.getAttribute("alt")).toBe("");
-      return {
-        mode: scene.dataset.flow,
-        arrived: scene.dataset.arrived,
-        cards: [...scene.querySelectorAll<HTMLElement>("[data-card]")].map(
-          (card) => `${card.textContent}${card.dataset.changed ? "*" : ""}`,
+          (card) => `${card.textContent}: ${card.dataset.level}`,
         ),
       };
     }
 
+    function promptPanel() {
+      return container.querySelector<HTMLElement>(
+        '[data-testid="global-prompt-settings"]',
+      )!;
+    }
+
+    function promptScene() {
+      return promptPanel().querySelector<HTMLElement>(
+        '[data-visual="prompt"]',
+      )!;
+    }
+
+    /** The system prompt picture's blocks, with the text of a filled place. */
     function promptBlocks() {
       return [
-        ...popover()!.querySelectorAll<HTMLElement>(
-          '[data-prompt-card="main"] [data-prompt-block]',
-        ),
-      ].map((block) => block.dataset.promptBlock);
+        ...promptScene().querySelectorAll<HTMLElement>("[data-prompt-block]"),
+      ].map(
+        (block) =>
+          `${block.dataset.promptBlock}${block.dataset.filled ? ` ${block.textContent}` : ""}`,
+      );
     }
 
     it("scrolls inside the tab panel and shows the second row the mode uses", async () => {
@@ -676,139 +654,105 @@ describe("shared global recovery settings", () => {
       expect(rangeSelect("to")!.textContent).toBe("到最高");
     });
 
-    it("shows only controls in both panels and keeps explanations behind one help button", async () => {
+    it("shows each panel's effect beside its controls", async () => {
       await openWith({ reasoning_mode: "adaptive", adaptive_preset: "custom" });
       const header = thinking().querySelector('[data-slot="panel-header"]')!;
       expect(header.querySelector("h2")?.textContent).toBe("思考强度");
-      expect(header.querySelector("h2")?.nextElementSibling).toBe(
-        helpButton("thinking"),
-      );
       expect(header.querySelector("p")?.textContent).toBe(
         "设置模型回答前想多久。",
       );
-      expect(
-        thinking().querySelectorAll('button[aria-label$="说明"]'),
-      ).toHaveLength(1);
+      expect(header.querySelector("h2")?.nextElementSibling).toBe(
+        thinking().querySelector('button[aria-label="思考强度说明"]'),
+      );
       expect(thinking().querySelector('[aria-live="polite"]')).toBeNull();
-      expect(thinking().querySelectorAll("p")).toHaveLength(1);
-      expect(thinking().textContent).not.toContain("每个请求");
-      await act(async () => thinkingOption("固定").click());
-      expect(
-        thinking().querySelectorAll('button[aria-label$="说明"]'),
-      ).toHaveLength(1);
+      expect(thinking().querySelectorAll("p")).toHaveLength(2);
+      expect(thinkingText()).toBe("你来定最少想多少、最多想多少。");
+      expect(levels().allowed).toBe("low..max");
 
-      const prompt = container.querySelector<HTMLElement>(
-        '[data-testid="global-prompt-settings"]',
+      const promptHeader = promptPanel().querySelector(
+        '[data-slot="panel-header"]',
       )!;
-      const promptHeader = prompt.querySelector('[data-slot="panel-header"]')!;
       expect(promptHeader.querySelector("h2")?.nextElementSibling).toBe(
-        helpButton("prompt"),
+        helpButton(),
+      );
+      expect(promptHeader.querySelector("p")?.textContent).toBe(
+        "在每个请求的系统提示词前后加上你的话。",
       );
       expect(promptHeader.querySelector('[role="switch"]')).not.toBeNull();
-      expect(prompt.querySelector("p")).toBeNull();
-      expect(prompt.querySelector("ol")).toBeNull();
-      expect(prompt.querySelectorAll("textarea")).toHaveLength(2);
+      expect(promptPanel().querySelectorAll("textarea")).toHaveLength(2);
+      expect(promptScene().getAttribute("aria-hidden")).toBe("true");
       expect(popover()).toBeNull();
     });
 
-    it("explains each mode with its own picture, and the switchers change only the example", async () => {
+    it("moves the example requests to the level each setting sends", async () => {
       await openWith({ reasoning_mode: "fixed", reasoning_level: "high" });
-      await openHelp("thinking");
-      // It opens on the panel's mode: the client's cards pass through
-      // AstrLink one after another and come out at the fixed level, with
-      // the changed ones highlighted.
-      expect(demoSwitch("固定")?.getAttribute("data-state")).toBe("on");
-      expect(demoSwitch("日常")).toBeUndefined();
-      expect(visual().getAttribute("aria-hidden")).toBe("true");
-      expect(flow()).toEqual({
-        mode: "fixed",
-        arrived: "0",
-        cards: ["低", "高", "中"],
+      expect(levels()).toEqual({
+        allowed: "high..high",
+        cards: [
+          "问个小问题: high",
+          "调试一个 bug: high",
+          "改了一下午代码: high",
+        ],
       });
-      expect(demoText()).toBe(
+      expect(thinkingText()).toBe(
         "每个请求都按「高」思考。客户端自己选的档位被替换。",
       );
-      await act(async () => vi.advanceTimersByTime(1200));
-      expect(flow().cards).toEqual(["高*", "高", "中"]);
-      await act(async () => vi.advanceTimersByTime(1400));
-      expect(flow()).toEqual({
-        mode: "fixed",
-        arrived: "3",
-        cards: ["高*", "高", "高*"],
-      });
-      // It holds, then starts over.
-      await act(async () => vi.advanceTimersByTime(1600));
-      expect(flow().cards).toEqual(["低", "高", "中"]);
 
-      // Adaptive: a thermometer whose brackets mark the range, opening on
-      // the panel's preset.
-      await showExample("自适应");
-      expect(demoSwitch("日常")?.getAttribute("data-state")).toBe("on");
-      expect(thermometer()).toEqual({
-        range: "low..max",
+      await act(async () => thinkingOption("自适应").click());
+      expect(levels()).toEqual({
+        allowed: "low..max",
         cards: [
           "问个小问题: low",
           "调试一个 bug: medium",
           "改了一下午代码: max",
         ],
-        bump: false,
       });
-      expect(demoText()).toBe(
-        "简单的问题想得少，复杂的问题想得多。从「低」起步，对话变长、用的工具多或问题很长时逐级提高，最多到「最高」。适合平时写代码和聊天。",
-      );
-      await showExample("研究");
-      expect(thermometer()).toEqual({
-        range: "medium..max",
+      expect(thinkingText()).toBe("简单的问题想得少，复杂的问题想得多。");
+      await act(async () => thinkingOption("研究").click());
+      expect(levels()).toEqual({
+        allowed: "medium..max",
         cards: [
           "问个小问题: medium",
           "调试一个 bug: high",
-          "改了一下午代码: max*",
+          "改了一下午代码: max",
         ],
-        bump: true,
       });
-      expect(demoText()).toBe(
-        "每个问题至少按「中」思考。对话变长、用的工具多或问题很长时逐级提高，直到这个模型能想的最多。适合难题和长时间钻研，回答更慢，花费更多。",
-      );
-      // Custom shows the panel's own range.
-      await showExample("自定义");
-      expect(thermometer().range).toBe("low..max");
-      expect(demoText()).toBe(
-        "你来定最少想多少、最多想多少。简单的问题用下限，越复杂越靠近上限。两头选一样时，每个请求都按那一档。",
+      expect(thinkingText()).toBe(
+        "每个问题至少按「中」思考，复杂的问题想到最多。",
       );
 
-      // Passthrough: the same picture, and the cards come out with their
-      // levels as they were.
-      await showExample("跟随客户端");
-      expect(demoSwitch("日常")).toBeUndefined();
-      expect(flow()).toEqual({
-        mode: "passthrough",
-        arrived: "0",
-        cards: ["低", "高", "中"],
+      // Following the client sends each request at the level it picked.
+      await act(async () => thinkingOption("跟随客户端").click());
+      expect(levels()).toEqual({
+        allowed: undefined,
+        cards: [
+          "问个小问题: low",
+          "调试一个 bug: high",
+          "改了一下午代码: medium",
+        ],
       });
-      expect(demoText()).toBe(
+      expect(thinkingText()).toBe(
         "客户端怎么设，就怎么发。想换档位，去客户端里改。",
       );
-      await act(async () => vi.advanceTimersByTime(2600));
-      expect(flow()).toEqual({
-        mode: "passthrough",
-        arrived: "3",
-        cards: ["低", "高", "中"],
+      await flushAutosave();
+      expect(saved).toMatchObject({
+        reasoning_mode: "passthrough",
+        reasoning_level: "high",
+        adaptive_preset: "research",
       });
-
-      expect(checkedOptions()).toEqual(["固定", "高"]);
-      await closeHelp("thinking");
-      expect(bridge.updateRoutingSettings).not.toHaveBeenCalled();
     });
 
     it.each([
       [
         { reasoning_mode: "fixed", reasoning_level: "off" },
-        "flow fixed",
+        "off..off",
+        ["off", "off", "off"],
         "模型直接回答。关不掉的新模型想得最少。",
       ],
       [
         { reasoning_mode: "passthrough", reasoning_level: "max" },
-        "flow passthrough",
+        undefined,
+        ["low", "high", "medium"],
         "客户端怎么设，就怎么发。想换档位，去客户端里改。",
       ],
       [
@@ -819,191 +763,135 @@ describe("shared global recovery settings", () => {
           adaptive_max: "max",
         },
         "high..max",
-        "你来定最少想多少、最多想多少。简单的问题用下限，越复杂越靠近上限。两头选一样时，每个请求都按那一档。",
+        ["high", "max", "max"],
+        "你来定最少想多少、最多想多少。",
       ],
-    ])(
-      "opens the explanation on the panel's settings %o",
-      async (values, shown, text) => {
-        await openWith(values);
-        await openHelp("thinking");
-        expect(
-          visual().dataset.visual === "thermometer"
-            ? visual().dataset.range
-            : `flow ${visual().dataset.flow}`,
-        ).toBe(shown);
-        expect(demoText()).toBe(text);
-        await closeHelp("thinking");
+    ])("draws the saved settings %o", async (values, allowed, sent, text) => {
+      await openWith(values);
+      expect(levels().allowed).toBe(allowed);
+      expect(levels().cards.map((card) => card.split(": ")[1])).toEqual(sent);
+      expect(thinkingText()).toBe(text);
+    });
+
+    it.each([
+      ["adaptive", ["low", "medium", "max"], [0, 1, 0]],
+      ["following the client", ["low", "high", "medium"], [0, 0, 1]],
+      ["a range ending at the top", ["medium", "high", "max"], [0, 1, 2]],
+      ["a range starting at the bottom", ["off", "low", "medium"], [0, 1, 2]],
+      ["fixed", ["high", "high", "high"], [0, 1, 2]],
+    ] as const)(
+      "keeps the cards of %s from touching",
+      (_setting, levels, rows) => {
+        expect(thinkingCardRows(levels)).toEqual(rows);
       },
     );
 
-    it("shows no thinking on the model side when fixed is off", async () => {
-      motionPreference.reduced = true;
-      await openWith({ reasoning_mode: "fixed", reasoning_level: "off" });
-      await openHelp("thinking");
-      expect(flow()).toEqual({
-        mode: "fixed",
-        arrived: "3",
-        cards: ["不思考*", "不思考*", "不思考*"],
-      });
-      await closeHelp("thinking");
+    it("keeps the details the short line leaves out behind the help button", async () => {
+      await openWith({ reasoning_mode: "adaptive" });
+      await act(async () =>
+        thinking()
+          .querySelector<HTMLButtonElement>(
+            'button[aria-label="思考强度说明"]',
+          )!
+          .click(),
+      );
+      expect(popover()?.textContent).toBe(
+        "自适应看三件事：对话变长、用的工具多、问题很长。每多一件提高一档，三件都有时到范围上限。日常适合平时写代码和聊天。研究适合难题和长时间钻研，回答更慢，花费更多。自定义的两头选一样时，每个请求都按那一档。",
+      );
+      vi.useRealTimers();
+      await act(async () =>
+        document.dispatchEvent(
+          new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+        ),
+      );
+      await settleClosedLayer();
+      vi.useFakeTimers();
     });
 
-    it("stops a card at the upper end of a narrow range", async () => {
+    it("keeps every card inside a narrow range", async () => {
       await openWith({
         reasoning_mode: "adaptive",
         adaptive_preset: "custom",
         adaptive_min: "medium",
         adaptive_max: "medium",
       });
-      await openHelp("thinking");
-      expect(thermometer()).toEqual({
-        range: "medium..medium",
+      expect(levels()).toEqual({
+        allowed: "medium..medium",
         cards: [
           "问个小问题: medium",
-          "调试一个 bug: medium*",
-          "改了一下午代码: medium*",
+          "调试一个 bug: medium",
+          "改了一下午代码: medium",
         ],
-        bump: true,
       });
-      await closeHelp("thinking");
     });
 
-    it("keeps the explanations free of jargon and each preset to three sentences", async () => {
+    it("keeps the explanations free of jargon and each one to three sentences", async () => {
       await openWith({ reasoning_mode: "adaptive" });
       const banned = /预算|力度|token|effort|budget|缓存|haiku/i;
-      await openHelp("thinking");
-      for (const mode of ["跟随客户端", "固定", "自适应"]) {
-        await showExample(mode);
-        const presets = mode === "自适应" ? ["日常", "研究", "自定义"] : [""];
-        for (const preset of presets) {
-          if (preset) await showExample(preset);
-          expect(popover()!.textContent).not.toMatch(banned);
-          const sentences = demoText()!.split("。").filter(Boolean);
-          expect(sentences.length).toBeLessThanOrEqual(3);
-        }
+      for (const option of ["日常", "研究", "自定义", "固定", "跟随客户端"]) {
+        await act(async () => thinkingOption(option).click());
+        expect(thinking().textContent).not.toMatch(banned);
+        const sentences = thinkingText()!.split("。").filter(Boolean);
+        expect(sentences.length).toBeLessThanOrEqual(3);
       }
-      await closeHelp("thinking");
-      await openHelp("prompt");
-      expect(popover()!.textContent).not.toMatch(banned);
-      await closeHelp("prompt");
+      expect(promptPanel().textContent).not.toMatch(banned);
+      expect((await openHelp()).textContent).not.toMatch(banned);
+      await closeHelp();
+      await flushAutosave();
     });
 
-    it("assembles the system prompt in the help popover", async () => {
+    it("places the saved prompt texts in the system prompt picture", async () => {
       await openWith({
         system_prompt_enabled: true,
         system_prompt_prefix: "所有回答都用简体中文。\n第二行",
         system_prompt_suffix: "",
       });
-      const content = await openHelp("prompt");
-      const demo = content.querySelector<HTMLElement>("[data-prompt-demo]")!;
-      expect(
-        demo
-          .querySelector('[aria-hidden="true"]')
-          ?.contains(content.querySelector('[data-prompt-card="main"]')),
-      ).toBe(true);
-      expect(demo.dataset.promptStep).toBe("0");
-      expect(promptBlocks()).toEqual(["identity", "client"]);
-      expect(
-        content.querySelector('[data-prompt-card="main"] h4')?.textContent,
-      ).toBe("发给模型的系统提示词");
-      const identity = content.querySelector('[data-prompt-block="identity"]')!;
-      expect(identity.textContent).toBe("客户端的身份声明");
-      expect(identity.querySelector("svg")).not.toBeNull();
-      const smallTasks = content.querySelector(
-        '[data-prompt-card="small-tasks"]',
-      )!;
-      expect(smallTasks.querySelector("h4")?.textContent).toBe(
-        "起标题这类小任务",
+      expect(promptScene().dataset.prompt).toBe("on");
+      expect(promptScene().querySelector("h3")?.textContent).toBe(
+        "发给模型的系统提示词",
       );
-      expect(smallTasks.textContent).toContain("给这段对话起个标题");
-      expect(smallTasks.textContent).toContain("保持原样");
-      expect(demoText()).toBe("已开启。每个请求多出这两段文字的输入用量。");
-      await act(async () => vi.advanceTimersByTime(900));
-      expect(demo.dataset.promptStep).toBe("1");
-      expect(promptBlocks()).toEqual(["identity", "prefix", "client"]);
-      // The saved text's first line, or the placeholder when empty.
-      expect(
-        content.querySelector('[data-prompt-block="prefix"]')?.textContent,
-      ).toBe("你的开头所有回答都用简体中文。");
-      await act(async () => vi.advanceTimersByTime(900));
-      expect(demo.dataset.promptStep).toBe("2");
+      const client = promptScene().querySelector(
+        '[data-prompt-block="client"]',
+      )!;
+      expect(client.textContent).toBe("客户端自带提示词");
+      expect(client.querySelector("svg")).not.toBeNull();
+      // A set text shows its first line; an empty one keeps the example.
       expect(promptBlocks()).toEqual([
-        "identity",
-        "prefix",
+        "prefix 你的开头所有回答都用简体中文。",
         "client",
         "suffix",
       ]);
       expect(
-        content.querySelector('[data-prompt-block="suffix"]')?.textContent,
+        promptScene().querySelector('[data-prompt-block="suffix"]')
+          ?.textContent,
       ).toBe("你的末尾例如：改代码之前，先说明打算怎么改。");
-      // It holds the result, then starts over.
-      await act(async () => vi.advanceTimersByTime(2200));
-      expect(demo.dataset.promptStep).toBe("0");
-      await act(async () => vi.advanceTimersByTime(900));
-      expect(demo.dataset.promptStep).toBe("1");
-      await closeHelp("prompt");
-    });
 
-    it("says nothing is added yet while the global prompt is off", async () => {
-      await openTab();
-      const content = await openHelp("prompt");
-      expect(demoText()).toBe(
-        "未开启。打开右上角的开关后，这两段文字会加进每个请求。",
+      const help = await openHelp();
+      expect(help.textContent).toBe(
+        "开头排在客户端的身份声明之后。开启后，每个请求多出这两段文字的输入用量。起标题这类小任务用客户端自己的提示词。",
       );
-      await act(async () => vi.advanceTimersByTime(5000));
-      expect(
-        content.querySelector<HTMLElement>("[data-prompt-demo]")?.dataset
-          .promptStep,
-      ).toBe("0");
-      expect(promptBlocks()).toEqual(["identity", "client"]);
-      await closeHelp("prompt");
+      await closeHelp();
     });
 
-    it("shows every explanation at its final state when motion is reduced", async () => {
-      motionPreference.reduced = true;
+    it("adds neither text to the picture while the global prompt is off", async () => {
       await openWith({
-        reasoning_mode: "adaptive",
-        adaptive_preset: "research",
-        reasoning_level: "low",
-        system_prompt_enabled: true,
+        system_prompt_enabled: false,
         system_prompt_prefix: "先给结论。",
         system_prompt_suffix: "最后列出风险。",
       });
-      await openHelp("thinking");
-      expect(thermometer().cards).toEqual([
-        "问个小问题: medium",
-        "调试一个 bug: high",
-        "改了一下午代码: max*",
-      ]);
-      await showExample("固定");
-      expect(flow()).toEqual({
-        mode: "fixed",
-        arrived: "3",
-        cards: ["低", "低*", "低*"],
-      });
-      await showExample("跟随客户端");
-      expect(flow()).toEqual({
-        mode: "passthrough",
-        arrived: "3",
-        cards: ["低", "高", "中"],
-      });
-      await closeHelp("thinking");
-
-      const content = await openHelp("prompt");
-      expect(
-        content.querySelector<HTMLElement>("[data-prompt-demo]")?.dataset
-          .promptStep,
-      ).toBe("2");
+      expect(promptScene().dataset.prompt).toBe("off");
+      expect(promptBlocks()).toEqual(["prefix", "client", "suffix"]);
+      await act(async () =>
+        promptPanel()
+          .querySelector<HTMLButtonElement>('[role="switch"]')!
+          .click(),
+      );
       expect(promptBlocks()).toEqual([
-        "identity",
-        "prefix",
+        "prefix 你的开头先给结论。",
         "client",
-        "suffix",
+        "suffix 你的末尾最后列出风险。",
       ]);
-      expect(
-        content.querySelector('[data-prompt-block="suffix"]')?.textContent,
-      ).toBe("你的末尾最后列出风险。");
-      await closeHelp("prompt");
+      await flushAutosave();
     });
 
     it("saves the switch and commits prompt text verbatim on blur", async () => {

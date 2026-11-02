@@ -46,7 +46,7 @@ export function PanelHeader({
   actions?: ReactNode;
   children: ReactNode;
   icon?: ReactNode;
-  iconTone?: "primary" | "warm";
+  iconTone?: "primary" | "success" | "warm";
   size?: "default" | "sm";
 }) {
   return (
@@ -67,7 +67,9 @@ export function PanelHeader({
               "inline-flex size-8 shrink-0 items-center justify-center rounded-md",
               iconTone === "warm"
                 ? "bg-warning-wash text-warning-foreground"
-                : "bg-accent text-primary",
+                : iconTone === "success"
+                  ? "bg-success-wash text-success-foreground"
+                  : "bg-accent text-primary",
             )}
           >
             {icon}
