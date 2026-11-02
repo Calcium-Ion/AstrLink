@@ -217,10 +217,10 @@ func TestOfficialCancelRestoresTheAccountState(t *testing.T) {
 
 func TestOfficialLogoutAndDeleteSignTheCLIOut(t *testing.T) {
 	const id contract.ServiceID = "service_official_01"
-	fixture := newOfficialFixture(t, fakeclaude.Settings{Login: fakeclaude.LoginBrowser, Account: officialTestAccount}, id)
+	fixture := newOfficialFixture(t, fakeclaude.Settings{Code: "good-code", Account: officialTestAccount}, id)
 	ctx := context.Background()
 
-	fixture.login(t, id, "unused")
+	fixture.login(t, id, "good-code")
 	account, err := fixture.manager.Logout(ctx, id)
 	if err != nil {
 		t.Fatal(err)
@@ -235,7 +235,7 @@ func TestOfficialLogoutAndDeleteSignTheCLIOut(t *testing.T) {
 		t.Fatalf("logout removed the config dir: %v", err)
 	}
 
-	fixture.login(t, id, "unused")
+	fixture.login(t, id, "good-code")
 	if err := fixture.manager.Delete(ctx, id); err != nil {
 		t.Fatal(err)
 	}
@@ -252,10 +252,10 @@ func TestOfficialLogoutAndDeleteSignTheCLIOut(t *testing.T) {
 
 func TestOfficialSignedOutNeedsReauth(t *testing.T) {
 	const id contract.ServiceID = "service_official_01"
-	fixture := newOfficialFixture(t, fakeclaude.Settings{Login: fakeclaude.LoginBrowser, Account: officialTestAccount}, id)
+	fixture := newOfficialFixture(t, fakeclaude.Settings{Code: "good-code", Account: officialTestAccount}, id)
 	ctx := context.Background()
 
-	fixture.login(t, id, "unused")
+	fixture.login(t, id, "good-code")
 	if err := fixture.manager.MarkOfficialSignedOut(ctx, id); err != nil {
 		t.Fatal(err)
 	}

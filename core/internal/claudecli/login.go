@@ -276,7 +276,9 @@ func (logins *Logins) SubmitCode(id contract.ServiceID, sessionID contract.Autho
 		return contract.AuthorizationSession{}, ErrLoginNotPending
 	}
 	if _, err := io.WriteString(current.stdin, code+"\n"); err != nil {
-		return contract.AuthorizationSession{}, fmt.Errorf("pass the code to Claude Code: %w", err)
+		// The CLI stopped reading: it finished on its own, as when the
+		// browser sign-in completes first. Its outcome is the answer.
+		return current.session, nil
 	}
 	current.session.UpdatedAt = logins.now().UTC()
 	return current.session, nil

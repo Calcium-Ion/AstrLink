@@ -15,9 +15,10 @@ import (
 func TestLocatorSearchOrder(t *testing.T) {
 	home := t.TempDir()
 	install := t.TempDir()
+	name := executableName()
 	for _, path := range []string{
-		filepath.Join(home, ".local", "bin", "claude"),
-		filepath.Join(install, ".local", "bin", "claude"),
+		filepath.Join(home, ".local", "bin", name),
+		filepath.Join(install, ".local", "bin", name),
 	} {
 		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 			t.Fatal(err)
@@ -34,13 +35,13 @@ func TestLocatorSearchOrder(t *testing.T) {
 			return versions[path] + " (Claude Code)", nil
 		},
 	}
-	versions[filepath.Join(home, ".local", "bin", "claude")] = "2.1.100"
-	versions[filepath.Join(install, ".local", "bin", "claude")] = "2.1.300"
+	versions[filepath.Join(home, ".local", "bin", name)] = "2.1.100"
+	versions[filepath.Join(install, ".local", "bin", name)] = "2.1.300"
 	binary, err := locator.Find(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if binary.Path != filepath.Join(install, ".local", "bin", "claude") || binary.Version != "2.1.300" {
+	if binary.Path != filepath.Join(install, ".local", "bin", name) || binary.Version != "2.1.300" {
 		t.Fatalf("Find = %+v; an older CLI earlier in the search must be skipped", binary)
 	}
 

@@ -511,6 +511,9 @@ func (current *turn) finish(result outcome) {
 	}
 	writer := current.writer
 	current.mu.Unlock()
+	// Record the outcome before the caller sees the end: a caller that
+	// answers a tool call at once must find the conversation parked.
+	current.done(turnResult)
 	if head != nil {
 		current.head <- head
 	}
@@ -518,7 +521,6 @@ func (current *turn) finish(result outcome) {
 	if writer != nil {
 		_ = writer.Close()
 	}
-	current.done(turnResult)
 }
 
 // messageBody is the merged message; full includes content for a

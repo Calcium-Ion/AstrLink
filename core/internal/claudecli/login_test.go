@@ -167,6 +167,35 @@ func TestLoginCompletesThroughBrowser(t *testing.T) {
 	}
 }
 
+func TestCodeAfterTheBrowserSignInWaitsForItsOutcome(t *testing.T) {
+	cli := newFakeCLI(t, fakeclaude.Settings{Login: fakeclaude.LoginBrowser, Account: testAccount})
+	completing, release := make(chan struct{}), make(chan struct{})
+	logins := NewLogins(cli.accounts, func(context.Context, contract.ServiceID, contract.AuthorizationSessionID, Status) error {
+		close(completing)
+		<-release
+		return nil
+	}, nil)
+
+	session, err := logins.Begin(context.Background(), testAccountID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The CLI has exited through the browser; its sign-in is not recorded yet.
+	<-completing
+	submitted, err := logins.SubmitCode(testAccountID, session.ID, "late-code")
+	close(release)
+	if err != nil {
+		t.Fatalf("a code pasted as the browser sign-in finished failed: %v", err)
+	}
+	if submitted.ID != session.ID {
+		t.Fatalf("submitted session = %+v", submitted)
+	}
+	<-logins.Done(testAccountID)
+	if final, _ := logins.Get(testAccountID); final.Status != contract.AuthorizationSessionStatusCompleted {
+		t.Fatalf("final session = %+v", final)
+	}
+}
+
 func TestLoginWithWrongCodeFails(t *testing.T) {
 	cli := newFakeCLI(t, fakeclaude.Settings{Code: "good-code", Account: testAccount})
 	complete, completed := recordCompletions(nil)
