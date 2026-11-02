@@ -26,7 +26,7 @@ const MAX_MODELS: usize = 2_000;
 const MAX_MODEL_CHARS: usize = 256;
 const MAX_PROTOCOLS: usize = 32;
 const MAX_HEADER_NAME_BYTES: usize = 128;
-const MAX_SECRET_BYTES: usize = 16_384;
+pub(crate) const MAX_SECRET_BYTES: usize = 16_384;
 const AUTH_SCHEMES: [&str; 5] = [
     "none",
     "bearer",
@@ -192,7 +192,7 @@ impl ProviderImports {
     }
 }
 
-fn new_id() -> Result<String, String> {
+pub(crate) fn new_id() -> Result<String, String> {
     let mut random = [0_u8; 16];
     getrandom::getrandom(&mut random)
         .map_err(|error| format!("unable to generate provider import id: {error}"))?;
@@ -337,13 +337,13 @@ fn parse(raw: &str) -> Result<Link, Rejection> {
     })
 }
 
-fn plain_text(value: &str) -> bool {
+pub(crate) fn plain_text(value: &str) -> bool {
     !value
         .chars()
         .any(|c| c.is_control() || c == char::REPLACEMENT_CHARACTER)
 }
 
-fn valid_base_url(value: &str) -> bool {
+pub(crate) fn valid_base_url(value: &str) -> bool {
     if value.len() > MAX_BASE_URL_BYTES {
         return false;
     }
@@ -395,7 +395,7 @@ fn list(value: Option<&str>, limit: usize, valid: impl Fn(&str) -> bool) -> Opti
 }
 
 /// Core's credential hint: the last four characters of a key of twelve or more.
-fn key_hint(key: &str) -> Option<String> {
+pub(crate) fn key_hint(key: &str) -> Option<String> {
     let count = key.chars().count();
     (count >= 12).then(|| format!("…{}", key.chars().skip(count - 4).collect::<String>()))
 }
@@ -442,7 +442,7 @@ fn authorize(entry: &Entry, mut input: Value) -> Result<Value, String> {
 }
 
 /// Keeps the link's key out of an error Core may have echoed.
-fn redact(error: String, api_key: Option<&str>) -> String {
+pub(crate) fn redact(error: String, api_key: Option<&str>) -> String {
     match api_key {
         Some(key) if key.len() >= 8 && error.contains(key) => "unable to add the service".into(),
         _ => error,

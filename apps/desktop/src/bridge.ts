@@ -30,6 +30,12 @@ import {
   parseProviderImportNotice,
   type ProviderImportNotice,
 } from "./provider-import-model";
+import {
+  parseLocalImportOpened,
+  parseLocalImportRead,
+  type LocalImportOpened,
+  type LocalImportRead,
+} from "./local-import-model";
 import { parseUsageSummary } from "./usage-summary-model";
 import {
   parsePrivacySummary,
@@ -1295,6 +1301,65 @@ export async function confirmProviderImport(
 export async function dismissProviderImport(id: string): Promise<void> {
   if (!hasNativeBridge()) return;
   await invoke("dismiss_provider_import", { id });
+}
+
+function requireLocalFiles(): void {
+  if (!hasNativeBridge()) throw new Error(i18n.t("bridge.desktopOnly"));
+}
+
+/** Finds the agent tools' config files and starts an import; reads none. */
+export async function openLocalImport(): Promise<LocalImportOpened> {
+  requireLocalFiles();
+  return parseLocalImportOpened(await invoke<unknown>("local_import_sources"));
+}
+
+/** Reads the checked sources; keys come back only as hints. */
+export async function readLocalImport(
+  session: string,
+  sources: string[],
+): Promise<LocalImportRead> {
+  requireLocalFiles();
+  return parseLocalImportRead(
+    await invoke<unknown>("read_local_import", { session, sources }),
+  );
+}
+
+/** The one model-list request a found provider gets; the host adds its key. */
+export async function probeLocalImportModels(
+  session: string,
+  candidate: string,
+  input: DraftServiceModelProbeInput,
+): Promise<ServiceModelProbe> {
+  requireLocalFiles();
+  return parseServiceModelProbe(
+    await invoke<unknown>("probe_local_import_models", {
+      session,
+      candidate,
+      input,
+    }),
+  );
+}
+
+/** Creates a found provider; the host attaches the key it read. */
+export async function confirmLocalImport(
+  session: string,
+  candidate: string,
+  input: HTTPServiceCreateInput,
+): Promise<ServiceRecord> {
+  requireLocalFiles();
+  return parseServiceRecord(
+    await invoke<unknown>("confirm_local_import", {
+      session,
+      candidate,
+      input,
+    }),
+  );
+}
+
+/** Ends the import; the host drops every key it read. */
+export async function dismissLocalImport(session: string): Promise<void> {
+  if (!hasNativeBridge()) return;
+  await invoke("dismiss_local_import", { session });
 }
 
 export async function listPrivacyPolicies(): Promise<PrivacyPolicyPage> {

@@ -12,6 +12,7 @@ mod host_files;
 mod i18n;
 mod instance;
 mod kek_store;
+mod local_import;
 #[cfg(target_os = "macos")]
 mod macos_app;
 mod model_updates;
@@ -2710,11 +2711,17 @@ pub fn run() {
         .manage(Arc::new(client_updates::ClientUpdateManager::default()))
         .manage(Arc::new(model_updates::PrivacyModelUpdates::default()))
         .manage(provider_import::ProviderImports::default())
+        .manage(local_import::LocalImports::default())
         .invoke_handler(tauri::generate_handler![
             client_updates::local_client_status,
             provider_import::pending_provider_import,
             provider_import::dismiss_provider_import,
             provider_import::confirm_provider_import,
+            local_import::local_import_sources,
+            local_import::read_local_import,
+            local_import::probe_local_import_models,
+            local_import::confirm_local_import,
+            local_import::dismiss_local_import,
             client_updates::refresh_local_clients,
             client_updates::update_local_clients,
             updates::app_update_status,

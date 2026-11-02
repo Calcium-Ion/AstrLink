@@ -29,9 +29,9 @@ use crate::{
 };
 
 const RECORDS_VERSION: u32 = 1;
-const CODEX_PROVIDER: &str = "astrlink";
+pub(crate) const CODEX_PROVIDER: &str = "astrlink";
 const CODEX_PROVIDER_PREFIX: &str = "model_providers.astrlink.";
-const PI_PROVIDER: &str = "astrlink";
+pub(crate) const PI_PROVIDER: &str = "astrlink";
 const PI_PROVIDER_PREFIX: &str = "providers.astrlink.";
 /// Pi's model list for the provider, written as `[{"id": <model>}]` plus
 /// the model's reasoning levels when the official catalog lists them.
@@ -50,7 +50,7 @@ const CODEX_HEADERS_KEY: &str = "model_providers.astrlink.http_headers";
 const CODEX_TOOLS_HEADER: &str = "x-openai-actor-authorization";
 const CODEX_TOOLS_HEADER_VALUE: &str = "codex-imagegen";
 /// Claude Code's model settings, by the `Models` field each comes from.
-const CLAUDE_MODEL_KEYS: [(&str, &str); 5] = [
+pub(crate) const CLAUDE_MODEL_KEYS: [(&str, &str); 5] = [
     ("model", "env.ANTHROPIC_MODEL"),
     ("haikuModel", "env.ANTHROPIC_DEFAULT_HAIKU_MODEL"),
     ("sonnetModel", "env.ANTHROPIC_DEFAULT_SONNET_MODEL"),
@@ -271,7 +271,7 @@ impl Models {
 }
 
 /// Whether a trimmed, non-empty model name fits in a client config.
-fn valid_model(value: &str) -> bool {
+pub(crate) fn valid_model(value: &str) -> bool {
     value.chars().count() <= 256 && !value.chars().any(char::is_control)
 }
 
@@ -1312,6 +1312,37 @@ impl Document {
                 }
             }
         }
+    }
+}
+
+/// Claude Code's settings or Pi's models.json as the client reads them, for
+/// importing the providers a file configures. Nothing here writes.
+fn read_json_config(file: ConfigFile, text: &str) -> Result<serde_json::Value, String> {
+    if text.trim().is_empty() {
+        return Ok(serde_json::Value::Object(serde_json::Map::new()));
+    }
+    let Document::Json { root, .. } = Document::parse(file, Some(text))? else {
+        return Err("is not valid JSON".into());
+    };
+    root.value()
+        .as_ref()
+        .and_then(cst_json)
+        .ok_or_else(|| "is not valid JSON".to_string())
+}
+
+pub(crate) fn read_claude_settings(text: &str) -> Result<serde_json::Value, String> {
+    read_json_config(ConfigFile::Claude, text)
+}
+
+pub(crate) fn read_pi_models(text: &str) -> Result<serde_json::Value, String> {
+    read_json_config(ConfigFile::PiModels, text)
+}
+
+/// Codex's config.toml as Codex reads it, for importing its providers.
+pub(crate) fn read_codex_config(text: &str) -> Result<DocumentMut, String> {
+    match Document::parse(ConfigFile::Codex, Some(text))? {
+        Document::Codex { document, .. } => Ok(document),
+        Document::Json { .. } => Err("is not valid TOML".into()),
     }
 }
 

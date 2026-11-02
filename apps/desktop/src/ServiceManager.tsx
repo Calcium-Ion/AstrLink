@@ -156,6 +156,10 @@ import {
 } from "./service-presets";
 import { notify } from "./notify";
 import { PageHeader } from "./PageHeader";
+import {
+  localImportPickerGroup,
+  localImportPickerValue,
+} from "./LocalImportDialog";
 import { decodeModelEditorValue, encodeModelEditorValue } from "./model-editor";
 import { filterModels } from "./model-groups";
 import {
@@ -250,6 +254,8 @@ export interface ServiceManagerProps {
   onDirtyChange: (dirty: boolean) => void;
   /** The gateway address a terminal opened for a provider connects to. */
   inferenceURL?: string;
+  /** Opens the import from agent tool configs; omitted where none is readable. */
+  onLocalImport?: () => void;
 }
 
 type Draft = {
@@ -359,21 +365,27 @@ function serviceKindPickerGroups(): DialogPickerGroup<ServiceKind>[] {
 
 /** Asks for the provider type before the add-provider editor opens. */
 export function ServiceKindPickerDialog({
+  onLocalImport,
   onOpenChange,
   onSelect,
   open,
 }: {
+  /** Lists importing from agent tool configs first when given. */
+  onLocalImport?: () => void;
   onOpenChange: (open: boolean) => void;
   onSelect: (kind: ServiceKind) => void;
   open: boolean;
 }) {
   const t = useT();
+  const kinds = serviceKindPickerGroups();
   return (
-    <PickerDialog
+    <PickerDialog<ServiceKind | typeof localImportPickerValue>
       description={t("services.kindPickerDescription")}
-      groups={serviceKindPickerGroups()}
+      groups={onLocalImport ? [localImportPickerGroup(t), ...kinds] : kinds}
       onOpenChange={onOpenChange}
-      onValueChange={onSelect}
+      onValueChange={(value) =>
+        value === localImportPickerValue ? onLocalImport?.() : onSelect(value)
+      }
       open={open}
       title={t("services.kindPickerTitle")}
     />
@@ -1096,6 +1108,7 @@ export function ServiceManager({
   onServiceRemoved,
   onDirtyChange,
   inferenceURL = "",
+  onLocalImport,
 }: ServiceManagerProps) {
   const routingDefaults = useRoutingDefaults(isReady);
   const gatewayTimeout = useGatewayResponseTimeout();
@@ -2354,6 +2367,7 @@ export function ServiceManager({
           />
         ) : null}
         <ServiceKindPickerDialog
+          onLocalImport={onLocalImport}
           onOpenChange={setKindPickerOpen}
           onSelect={(serviceKind) =>
             onViewChange({ kind: "create", serviceKind })
