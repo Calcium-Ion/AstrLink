@@ -5,8 +5,8 @@ use tauri::{LogicalSize, Manager, PhysicalPosition, PhysicalRect, PhysicalSize, 
 const WORK_AREA_FRACTION: f64 = 0.82;
 const ASPECT_RATIO: f64 = 19.0 / 12.0;
 // Keep the opening width while giving lists and editors more vertical room.
-// The height stays below 85% of the work area (0.82 × 1.03).
-const DEFAULT_HEIGHT_SCALE: f64 = 1.03;
+// The height stays below 89% of the work area (0.82 × 1.08).
+const DEFAULT_HEIGHT_SCALE: f64 = 1.08;
 // Large and ultrawide displays would otherwise open a window whose extra width
 // only spreads fixed-size content apart.
 const MAX_LOGICAL_WIDTH: f64 = 1200.0;
@@ -214,8 +214,8 @@ mod tests {
             2400,
         )
         .unwrap();
-        assert_eq!(geometry.inner_size, PhysicalSize::new(2313, 1504));
-        assert_eq!(geometry.position, PhysicalPosition::new(355, 205));
+        assert_eq!(geometry.inner_size, PhysicalSize::new(2313, 1577));
+        assert_eq!(geometry.position, PhysicalPosition::new(355, 168));
         assert_eq!(geometry.minimum_size, PhysicalSize::new(1520, 1200));
     }
 
@@ -228,17 +228,17 @@ mod tests {
             1200,
         )
         .unwrap();
-        assert_eq!(geometry.inner_size, PhysicalSize::new(747, 485));
-        assert_eq!(geometry.minimum_size, PhysicalSize::new(747, 485));
-        assert_eq!(geometry.position, PhysicalPosition::new(138, 69));
+        assert_eq!(geometry.inner_size, PhysicalSize::new(747, 509));
+        assert_eq!(geometry.minimum_size, PhysicalSize::new(747, 509));
+        assert_eq!(geometry.position, PhysicalPosition::new(138, 57));
     }
 
     #[test]
     fn scales_with_the_display_and_centers_on_offset_monitors() {
         for (scale, width, height, x, y) in [
-            (1, 1298, 844, -1609, 118),
-            (2, 2596, 1688, -3218, 196),
-            (3, 3895, 2533, -4828, 273),
+            (1, 1298, 885, -1609, 97),
+            (2, 2596, 1770, -3218, 155),
+            (3, 3895, 2656, -4828, 212),
         ] {
             let area = work_area(-1920 * scale as i32, 40, 1920 * scale, 1000 * scale);
             let geometry = startup_geometry(
@@ -263,9 +263,9 @@ mod tests {
             2400,
         )
         .unwrap();
-        assert_eq!(geometry.inner_size, PhysicalSize::new(2400, 1561));
+        assert_eq!(geometry.inner_size, PhysicalSize::new(2400, 1637));
         assert_eq!(geometry.minimum_size, PhysicalSize::new(1520, 1200));
-        assert_eq!(geometry.position, PhysicalPosition::new(1360, 324));
+        assert_eq!(geometry.position, PhysicalPosition::new(1360, 286));
     }
 
     #[test]
@@ -277,9 +277,9 @@ mod tests {
             1200,
         )
         .unwrap();
-        assert_eq!(geometry.inner_size, PhysicalSize::new(804, 495));
-        assert_eq!(geometry.minimum_size, PhysicalSize::new(760, 495));
-        assert_eq!(geometry.position, PhysicalPosition::new(2010, 333));
+        assert_eq!(geometry.inner_size, PhysicalSize::new(804, 521));
+        assert_eq!(geometry.minimum_size, PhysicalSize::new(760, 521));
+        assert_eq!(geometry.position, PhysicalPosition::new(2010, 320));
     }
 
     fn placement(x: i32, y: i32, width: u32, height: u32) -> Placement {

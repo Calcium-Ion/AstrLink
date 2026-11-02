@@ -2935,7 +2935,7 @@ const DiscoveryRow = memo(function DiscoveryRow({
         variant="ghost"
       >
         <StatusBadge
-          className="col-start-1 row-start-1"
+          className="col-start-1 row-span-2 row-start-1 self-center justify-self-center @[680px]:row-span-1"
           tone={
             session.status === "cancelled"
               ? "neutral"
@@ -3021,7 +3021,7 @@ const SessionRow = memo(function SessionRow({
         variant="ghost"
       >
         <StatusBadge
-          className="col-start-1 row-start-1"
+          className="col-start-1 row-span-2 row-start-1 self-center justify-self-center"
           tone={
             session.status === "cancelled"
               ? "neutral"
