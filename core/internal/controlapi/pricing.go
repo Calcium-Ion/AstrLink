@@ -21,6 +21,7 @@ type PricingStore interface {
 	ServiceBilling(context.Context, contract.ServiceID) (pricing.ServiceReport, error)
 	BackfillPricing(context.Context, contract.ServiceID) (int, error)
 	BillingSummary(context.Context, contract.ServiceID, string, time.Time, time.Time, pricing.BillingSummaryOptions) (pricing.Summary, error)
+	QuotaEstimates(context.Context) (pricing.QuotaEstimates, error)
 }
 
 func (h *Handler) pricingResource(w http.ResponseWriter, r *http.Request) {
@@ -70,6 +71,18 @@ func (h *Handler) pricingResource(w http.ResponseWriter, r *http.Request) {
 		value, err := h.pricingManager.Sync(ctx)
 		if err != nil {
 			writeError(w, 502, "pricing_sync_failed", err.Error())
+			return
+		}
+		writeJSON(w, 200, value)
+		return
+	}
+	if path == "estimates" {
+		if !allow("GET") {
+			return
+		}
+		value, err := h.pricingStore.QuotaEstimates(r.Context())
+		if err != nil {
+			h.writeStoreError(w, err)
 			return
 		}
 		writeJSON(w, 200, value)

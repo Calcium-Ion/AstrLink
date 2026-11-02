@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   parseBillingSummary,
+  parseQuotaEstimates,
   parseServiceBilling,
   parsePricingConfig,
   billingAmount,
@@ -197,5 +198,38 @@ describe("official pricing boundary", () => {
       currentBillingPeriod(periods, Date.parse("2026-09-19T04:00:00Z")),
     ).toBe(primary);
     expect(currentBillingPeriod(periods, Date.parse(primary.end))).toBe(month);
+  });
+});
+describe("quota estimates", () => {
+  it("reads each service's estimated windows and rejects unknown ones", () => {
+    const estimates = {
+      services: [
+        {
+          service_id: "service_codex",
+          windows: [{ kind: "primary", total_usd: "40.00" }],
+        },
+      ],
+    };
+    expect(parseQuotaEstimates(estimates)).toEqual(estimates.services);
+    expect(() =>
+      parseQuotaEstimates({
+        services: [
+          {
+            service_id: "service_codex",
+            windows: [{ kind: "spark/primary", total_usd: "40.00" }],
+          },
+        ],
+      }),
+    ).toThrow("Invalid quota window");
+    expect(() =>
+      parseQuotaEstimates({
+        services: [
+          {
+            service_id: "service_codex",
+            windows: [{ kind: "primary", total_usd: "about 40" }],
+          },
+        ],
+      }),
+    ).toThrow("Invalid billing amount");
   });
 });

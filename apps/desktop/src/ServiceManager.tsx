@@ -22,6 +22,7 @@ import {
   type CardBilling,
   type ServiceCardActions,
 } from "./ServicePackageGrid";
+import { useQuotaEstimates } from "./use-quota-estimates";
 import { useServicePackages } from "./use-service-packages";
 import {
   cardEnabled,
@@ -1174,6 +1175,10 @@ export function ServiceManager({
   const servicePackages = useServicePackages(
     isReady && view.kind === "list" && catalogStatus === "ready",
     services,
+    usageByService,
+  );
+  const quotaEstimates = useQuotaEstimates(
+    isReady && view.kind === "list",
     usageByService,
   );
   // A refresh moves the window's end to now, like the other list reads.
@@ -2521,6 +2526,7 @@ export function ServiceManager({
               actingID={actionID}
               actions={cardActions}
               billing={cardBilling}
+              estimates={quotaEstimates}
               filter={serviceFilter}
               now={now}
               onReorder={(next) => void serviceOrder.save(next)}

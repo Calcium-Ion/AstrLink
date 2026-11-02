@@ -124,7 +124,7 @@ describe("subscription usage contract", () => {
   it("parses a sanitized official snapshot", () => {
     expect(parseSubscriptionUsage(snapshot)).toEqual(snapshot);
     expect(windowLabel(18_000, false)).toBe("5 小时");
-    expect(windowLabel(604_800, true)).toBe("7 天");
+    expect(windowLabel(604_800, true)).toBe("每周");
     expect(usageBarPercent(134)).toBe(100);
     expect(usageWindowTone(80)).toBe("warning");
     expect(usageWindowTone(12, true)).toBe("critical");

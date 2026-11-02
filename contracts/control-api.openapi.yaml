@@ -61,6 +61,7 @@ x-astrlink-implementation:
     - GET /control/v1/pricing/catalog
     - POST /control/v1/pricing/sync
     - GET /control/v1/pricing/summary
+    - GET /control/v1/pricing/estimates
     - GET /control/v1/pricing/services/{service_id}
     - PUT /control/v1/pricing/services/{service_id}
     - POST /control/v1/pricing/services/{service_id}/backfill
@@ -254,6 +255,29 @@ paths:
           {
             description: Price synchronization failed; last valid catalog retained.,
           }
+  /control/v1/pricing/estimates:
+    get:
+      x-astrlink-role: observer
+      x-astrlink-implementation-status: implemented
+      tags: [Services]
+      operationId: getQuotaEstimates
+      summary: Estimate what each whole official quota window holds at official API prices.
+      description: >-
+        For each service, the priced calls recorded in its signed-in account's
+        primary or secondary windows of the last seven days, divided by the
+        share of those windows the provider reported used. A window counts only
+        when every call in it was priced; windows that began before billing
+        started recording are left out. A window kind gets an estimate once
+        the windows read add up to at least 10% used. Usage outside the
+        gateway counts toward the share but not the cost, so the estimate can
+        run low.
+      responses:
+        "200":
+          description: Local reference pricing result, denominated in USD.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/QuotaEstimates" }
+        "401": { description: Local control authentication required. }
   /control/v1/pricing/services/{service_id}:
     get:
       x-astrlink-role: observer
@@ -4247,6 +4271,37 @@ components:
       required: [processed]
       properties:
         processed: { type: integer, minimum: 0 }
+      additionalProperties: false
+    QuotaEstimates:
+      type: object
+      required: [services]
+      properties:
+        services:
+          type: array
+          description: Services with at least one estimated window, by service ID.
+          items:
+            type: object
+            required: [service_id, windows]
+            properties:
+              service_id: { type: string, minLength: 3, maxLength: 96 }
+              windows:
+                type: array
+                minItems: 1
+                maxItems: 2
+                items:
+                  type: object
+                  required: [kind, total_usd]
+                  properties:
+                    kind:
+                      type: string
+                      enum: [primary, secondary]
+                      description: The usage window of the same name.
+                    total_usd:
+                      type: string
+                      pattern: '^[0-9]+\.[0-9]{2}$'
+                      description: What the whole window holds, in USD.
+                  additionalProperties: false
+            additionalProperties: false
       additionalProperties: false
     ReadyEvent:
       type: object

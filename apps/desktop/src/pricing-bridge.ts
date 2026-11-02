@@ -1,7 +1,11 @@
 import { isWebEdition } from "./edition";
 import { webInvoke } from "./web-transport";
 import { invoke } from "@tauri-apps/api/core";
-import { parseBillingSummary, parseServiceBilling } from "./pricing-model";
+import {
+  parseBillingSummary,
+  parseQuotaEstimates,
+  parseServiceBilling,
+} from "./pricing-model";
 async function call(
   operation: string,
   serviceId?: string,
@@ -43,4 +47,8 @@ export async function getServiceBilling(id: string) {
 }
 export async function getBillingSummary(from: string, to: string) {
   return parseBillingSummary(await call("summary", undefined, { from, to }));
+}
+/** Estimated whole quota windows of every subscription account. */
+export async function getQuotaEstimates() {
+  return parseQuotaEstimates(await call("estimates"));
 }

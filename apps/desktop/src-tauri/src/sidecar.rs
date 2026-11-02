@@ -2311,7 +2311,9 @@ impl CoreManager {
     ) -> Result<serde_json::Value, String> {
         let base = "/control/v1/pricing";
         let (method, path, body) = match operation {
-            "status" | "catalog" => (Method::GET, format!("{base}/{operation}"), None),
+            "status" | "catalog" | "estimates" => {
+                (Method::GET, format!("{base}/{operation}"), None)
+            }
             // The official model behind a gateway model; null when unknown.
             "model" => {
                 let model = input

@@ -561,9 +561,9 @@ describe("TrayPopoverPanel", () => {
     );
     expect(rows.map((row) => row.title)).toEqual([
       "Codex · 5 小时 · 剩余 38% · 2 小时后重置",
-      "Codex · 7 天 · 剩余 82%",
+      "Codex · 每周 · 剩余 82%",
       "MiniMax Coding Plan · 5 小时 · 剩余 100% · 59 分钟后重置",
-      "MiniMax Coding Plan · 7 天 · 剩余 0% · 4 天后重置 · 额度已用尽",
+      "MiniMax Coding Plan · 每周 · 剩余 0% · 4 天后重置 · 额度已用尽",
     ]);
     // Every row fills the reset column; an unknown reset reads as a dash.
     expect(rows.map(captions)).toEqual([

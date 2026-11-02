@@ -111,6 +111,7 @@ export function QuotaBar({
 export function QuotaSummary({
   tone,
   status,
+  statusEnd,
   bar,
   captionStart,
   captionEnd,
@@ -118,6 +119,8 @@ export function QuotaSummary({
 }: {
   tone: QuotaBarTone;
   status: ReactNode;
+  /** A short figure at the end of the status line; the status gives way. */
+  statusEnd?: ReactNode;
   bar: ReactNode;
   captionStart?: ReactNode;
   captionEnd?: ReactNode;
@@ -145,6 +148,14 @@ export function QuotaSummary({
         >
           {status}
         </span>
+        {statusEnd ? (
+          <span
+            className="ml-auto shrink-0 pl-1 text-xs font-medium whitespace-nowrap text-muted-foreground tabular-nums"
+            data-slot="quota-status-end"
+          >
+            {statusEnd}
+          </span>
+        ) : null}
       </div>
       <div className="grid gap-1">
         {bar}

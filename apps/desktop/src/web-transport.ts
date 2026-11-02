@@ -458,6 +458,7 @@ const commands: Record<string, Command> = {
     switch (a.operation) {
       case "status":
       case "catalog":
+      case "estimates":
         return route(`${base}/${a.operation}`)(a);
       case "sync":
         return route(`${base}/sync`, "POST")(a);

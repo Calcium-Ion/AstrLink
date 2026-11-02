@@ -51,6 +51,16 @@ export interface ServiceBilling {
   config: PricingConfig;
   periods: BillingPeriod[];
 }
+/** What a whole quota window holds at official API prices, estimated. */
+export interface QuotaWindowEstimate {
+  kind: "primary" | "secondary";
+  total_usd: string;
+}
+/** A service's windows with an estimate; services without one are left out. */
+export interface ServiceQuotaEstimate {
+  service_id: string;
+  windows: QuotaWindowEstimate[];
+}
 
 export const OFFICIAL_PROVIDERS: Record<string, string> = {
   openai: "OpenAI",
@@ -235,4 +245,18 @@ export function parseServiceBilling(value: unknown): ServiceBilling {
       };
     }),
   };
+}
+export function parseQuotaEstimates(value: unknown): ServiceQuotaEstimate[] {
+  return array(object(value).services, (value) => {
+    const o = object(value);
+    return {
+      service_id: str(o.service_id),
+      windows: array(o.windows, (value) => {
+        const w = object(value);
+        if (w.kind !== "primary" && w.kind !== "secondary")
+          throw new Error("Invalid quota window");
+        return { kind: w.kind, total_usd: decimal(w.total_usd) };
+      }),
+    };
+  });
 }

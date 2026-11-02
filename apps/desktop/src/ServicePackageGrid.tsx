@@ -48,12 +48,19 @@ import {
   type ServicePackage,
 } from "./bridge";
 import { useT } from "./i18n";
-import { billingAmount, type BillingAmounts } from "./pricing-model";
+import {
+  billingAmount,
+  type BillingAmounts,
+  type ServiceQuotaEstimate,
+} from "./pricing-model";
 import { useQuotaDisplayMode, type QuotaDisplayMode } from "./quota-display";
 import {
   cardMatches,
   cardMatchesFilter,
+  formatEstimateUSD,
+  memberWindowTotals,
   packageCards,
+  packageMoney,
   packageQuota,
   readFailureReason,
   remainingTone,
@@ -64,12 +71,15 @@ import {
   type QuotaWindow,
   type ServiceFilter,
   type UsageEntry,
+  type WindowTotals,
+  windowMoney,
 } from "./service-package-model";
 import {
   activeServiceRisk,
   hasPlanUsage,
   serviceKindLabel,
   serviceStatusLabel,
+  subscriptionRiskLabel,
   type Service,
 } from "./service-model";
 import type { SubscriptionProvider } from "./subscription-model";
@@ -130,6 +140,8 @@ interface CardEnv {
   };
   preset: UsageRangePreset;
   billing: CardBilling;
+  /** Estimated whole quota windows by service, borrowed within a plan. */
+  totals: Record<string, WindowTotals>;
   ready: boolean;
   actingID: string | null;
   /** Services whose quota is being read again. */
@@ -209,20 +221,26 @@ function packageTitle(card: PackageCard, t: Translate) {
   return plan ? `${brand} ${plan}` : t("packages.unknownPlan", { brand });
 }
 
-/** "可用", or the state that keeps a service from taking requests. */
-function availability(services: Service[], now: Date, t: Translate) {
-  const enabled = services.filter((service) => service.enabled);
-  if (enabled.length === 0) return t("common.disabled");
-  if (services.length > 1) return t("packages.available");
-  const [service] = services;
-  return serviceDot(service, now) === "positive"
-    ? t("packages.available")
+/**
+ * Why a single service cannot take requests: a sign-in state or an upstream
+ * pause. The dot and the switch already show an available or switched-off
+ * service, so those get no words.
+ */
+function blocker(services: Service[], now: Date): string | null {
+  if (services.length !== 1) return null;
+  // Judged as if switched on; the switch shows that part.
+  const service = { ...services[0], enabled: true };
+  if (serviceDot(service, now) === "positive") return null;
+  const risk = activeServiceRisk(service, now);
+  return risk && service.subscription?.status === "connected"
+    ? subscriptionRiskLabel(risk.code, risk.state)
     : serviceStatusLabel(service, now);
 }
 
 interface QuotaView {
   tone: QuotaBarTone;
   status: string;
+  statusEnd?: ReactNode;
   bar: ReactNode;
   captionStart?: ReactNode;
   captionEnd?: ReactNode;
@@ -249,6 +267,55 @@ function windowText(
   );
 }
 
+/**
+ * What each estimated window of an account holds, with what is left or used
+ * of it in the display mode, and how the estimate is made.
+ */
+function windowEstimateHint(
+  totals: WindowTotals,
+  windows: Record<"primary" | "secondary", QuotaWindow | null>,
+  env: CardEnv,
+) {
+  const { t, mode } = env;
+  const lines = (["primary", "secondary"] as const).flatMap((kind) => {
+    const window = windows[kind];
+    const total = totals[kind];
+    if (!window || total === undefined) return [];
+    const share =
+      mode === "remaining" ? window.remaining : 100 - window.remaining;
+    return [
+      t(
+        mode === "remaining"
+          ? "packages.estimateLeft"
+          : "packages.estimateUsed",
+        {
+          window: windowLabel(window.seconds, kind === "secondary"),
+          total: formatEstimateUSD(total),
+          amount: formatEstimateUSD((total * share) / 100),
+        },
+      ),
+    ];
+  });
+  return [...lines, t("packages.estimateBasis")].join("\n");
+}
+
+/** "还剩约 $29", or what was used in the used display mode. */
+function moneyText(left: number, total: number, env: CardEnv) {
+  const { t, mode } = env;
+  return mode === "remaining"
+    ? t("packages.moneyLeft", { amount: formatEstimateUSD(left) })
+    : t("packages.moneyUsed", { amount: formatEstimateUSD(total - left) });
+}
+
+/** The status line's "共约 $41", explained on hover. */
+function estimateTotal(total: number, hint: string, env: CardEnv) {
+  return (
+    <span data-testid="quota-estimate" title={hint}>
+      {env.t("packages.estimateTotal", { amount: formatEstimateUSD(total) })}
+    </span>
+  );
+}
+
 function quotaView(
   quota: CardQuota,
   services: Service[],
@@ -257,7 +324,7 @@ function quotaView(
 ): QuotaView {
   const { t, mode, now, actions } = env;
   const empty = <QuotaBar kind="empty" />;
-  const prefix = availability(services, now, t);
+  const blocked = blocker(services, now);
   const shown = (remaining: number) =>
     Math.round(mode === "remaining" ? remaining : 100 - remaining);
   const percentLabel = (remaining: number) =>
@@ -281,11 +348,9 @@ function quotaView(
     const subscription = services[0]?.subscription;
     return {
       tone: dot,
-      status: prefix,
+      status: blocked ?? t("packages.noQuotaData"),
       bar: empty,
-      captionStart: subscription
-        ? t("packages.signInForQuota")
-        : t("packages.noQuotaData"),
+      captionStart: subscription ? t("packages.signInForQuota") : undefined,
       captionEnd:
         subscription && services[0].enabled ? (
           <Button
@@ -316,7 +381,8 @@ function quotaView(
       return {
         tone: "neutral",
         status: t("packages.unreadable"),
-        bar: empty,
+        // No placeholder bar: the reason takes its room.
+        bar: null,
         captionStart: (
           <span title={quota.message}>
             {t(`packages.readFailure.${reason.key}`, {
@@ -344,9 +410,9 @@ function quotaView(
     case "none":
       return {
         tone: dot,
-        status: prefix,
+        status: blocked ?? t("packages.noQuotaData"),
         bar: empty,
-        captionStart: t("packages.noQuotaData"),
+        captionStart: blocked ? t("packages.noQuotaData") : undefined,
       };
     case "disabled":
       return {
@@ -368,6 +434,10 @@ function quotaView(
     case "windows": {
       const { binding, primary, secondary } = quota;
       const tone = remainingTone(binding.remaining, binding.exhausted);
+      const totals = env.totals[services[0]!.id] ?? {};
+      // A used-up or paused account needs the status for when and why.
+      const money =
+        binding.exhausted || blocked ? null : windowMoney(quota, totals);
       const status = binding.exhausted
         ? joined(
             t("packages.usedUp"),
@@ -375,13 +445,10 @@ function quotaView(
               t("packages.backAt", { time: resetIn(binding.resetAt, now) }),
           )
         : joined(
-            prefix,
-            t("packages.windowFirst", {
-              window: windowLabel(
-                quota[binding.window]?.seconds,
-                binding.window === "secondary",
-              ),
-            }),
+            blocked,
+            money
+              ? moneyText(money.left, money.total, env)
+              : percentLabel(binding.remaining),
           );
       const part = (window: QuotaWindow | null) =>
         window
@@ -397,9 +464,30 @@ function quotaView(
         primary && windowText(primary, false, env, false),
         secondary && windowText(secondary, true, env, false),
       );
+      // A reset time shows only on a window running low; the used-up
+      // window's return is in the status. Hovering shows every reset.
+      const caption = (window: QuotaWindow | null, secondary: boolean) => {
+        if (!window) return undefined;
+        const kind = secondary ? "secondary" : "primary";
+        const reset =
+          window.remaining <= 20 &&
+          !(binding.exhausted && binding.window === kind);
+        return (
+          <span title={windowText(window, secondary, env, true)}>
+            {windowText(window, secondary, env, reset)}
+          </span>
+        );
+      };
       return {
         tone: services[0]?.enabled === false ? "neutral" : tone,
         status,
+        statusEnd: money
+          ? estimateTotal(
+              money.total,
+              windowEstimateHint(totals, { primary, secondary }, env),
+              env,
+            )
+          : undefined,
         bar:
           primary && secondary ? (
             <QuotaBar
@@ -417,17 +505,18 @@ function quotaView(
             />
           ),
         captionStart: primary
-          ? windowText(primary, false, env, true)
-          : secondary && windowText(secondary, true, env, true),
-        captionEnd:
-          primary && secondary
-            ? windowText(secondary, true, env, false)
-            : undefined,
+          ? caption(primary, false)
+          : caption(secondary, true),
+        captionEnd: primary && secondary ? caption(secondary, true) : undefined,
       };
     }
     case "accounts": {
       const tone = remainingTone(quota.average, quota.live === 0);
       const first = quota.exhausted[0];
+      const money =
+        quota.live === 0
+          ? null
+          : packageMoney(services, env.usage, env.totals, now.getTime());
       const status =
         quota.live === 0
           ? joined(
@@ -436,15 +525,14 @@ function quotaView(
                 resetIn(first.resetAt, now) &&
                 t("packages.backAt", { time: resetIn(first.resetAt, now) }),
             )
-          : joined(
-              prefix,
-              t(
+          : money
+            ? moneyText(money.left, money.total, env)
+            : t(
                 mode === "remaining"
                   ? "packages.liveAverageLeft"
                   : "packages.liveAverageUsed",
                 { count: quota.live, percent: shown(quota.average) },
-              ),
-            );
+              );
       const lowReset = quota.low && resetIn(quota.low.resetAt, now);
       const firstReset = first && resetIn(first.resetAt, now);
       const note = quota.exhausted.length
@@ -470,6 +558,16 @@ function quotaView(
       return {
         tone,
         status,
+        statusEnd: money
+          ? estimateTotal(
+              money.total,
+              [
+                t("packages.estimateAccounts", { count: money.accounts }),
+                t("packages.estimateBasis"),
+              ].join("\n"),
+              env,
+            )
+          : undefined,
         bar: flat(quota.average, tone),
         captionStart: note,
         captionEnd: quota.disabled
@@ -482,7 +580,7 @@ function quotaView(
       return {
         tone: dot === "positive" ? tone : dot,
         status: joined(
-          prefix,
+          blocked,
           t("packages.keyLeft", { amount: formatQuotaUSD(quota.remainingUSD) }),
         ),
         bar: flat(quota.remaining, tone),
@@ -495,7 +593,7 @@ function quotaView(
     case "unlimited":
       return {
         tone: dot,
-        status: joined(prefix, t("usage.quotaUnlimited")),
+        status: joined(blocked, t("usage.quotaUnlimited")),
         bar: empty,
         captionStart: quota.usedUSD
           ? t("usage.quotaUsed", { amount: formatQuotaUSD(quota.usedUSD) })
@@ -506,7 +604,7 @@ function quotaView(
       return {
         tone: dot,
         status: joined(
-          prefix,
+          blocked,
           t("packages.balance", { amount: quota.balance }),
         ),
         bar: empty,
@@ -535,6 +633,7 @@ function QuotaArea({
       captionEnd={view.captionEnd}
       captionStart={view.captionStart}
       status={view.status}
+      statusEnd={view.statusEnd}
       tone={view.tone}
     />
   );
@@ -1149,6 +1248,7 @@ export function ServicePackageGrid({
   performance,
   preset,
   billing,
+  estimates,
   ready,
   reorderDisabled,
   actingID,
@@ -1168,6 +1268,8 @@ export function ServicePackageGrid({
   performance: CardEnv["performance"];
   preset: UsageRangePreset;
   billing: CardBilling;
+  /** Estimated whole quota windows, from Core. */
+  estimates: ServiceQuotaEstimate[];
   ready: boolean;
   reorderDisabled: boolean;
   actingID: string | null;
@@ -1241,6 +1343,7 @@ export function ServicePackageGrid({
     performance,
     preset,
     billing,
+    totals: memberWindowTotals(allCards, estimates),
     ready,
     actingID,
     refreshing,

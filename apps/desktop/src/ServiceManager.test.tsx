@@ -57,6 +57,7 @@ vi.mock("./bridge", () => bridgeMocks);
 
 const pricingMocks = vi.hoisted(() => ({
   getBillingSummary: vi.fn(),
+  getQuotaEstimates: vi.fn(),
 }));
 vi.mock("./pricing-bridge", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./pricing-bridge")>()),
@@ -367,6 +368,7 @@ describe("ServiceManager", () => {
     // stacked cards return packages of their own.
     bridgeMocks.getServicePackages.mockResolvedValue([]);
     pricingMocks.getBillingSummary.mockResolvedValue(billingSummary([]));
+    pricingMocks.getQuotaEstimates.mockResolvedValue([]);
     container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
@@ -1107,7 +1109,7 @@ describe("ServiceManager", () => {
       // Codex B is used up, so only Codex A counts as live; the average
       // still includes B's empty window.
       expect(quotaOf(stack)).toEqual({
-        status: "可用 · 1 个号有额度，平均剩 35%",
+        status: "1 个号有额度，平均剩 35%",
         tone: "positive",
         bar: "flat",
         barLabel: "剩余 35%",
@@ -1142,9 +1144,7 @@ describe("ServiceManager", () => {
               ?.textContent,
         ),
       ).toEqual(["Plus", "Plus"]);
-      expect(quotaOf(packageCard("Codex A")).status).toBe(
-        "可用 · 5 小时额度先到",
-      );
+      expect(quotaOf(packageCard("Codex A")).status).toBe("剩余 70%");
       expect(quotaOf(packageCard("Codex B"))).toMatchObject({
         status: "已用完 · 2 小时后恢复",
         tone: "critical",
@@ -1176,6 +1176,64 @@ describe("ServiceManager", () => {
         "false",
       );
       expect(expandButton("Codex Plus").textContent).toBe("展开");
+    });
+
+    it("shows what a whole window holds on accounts and the package's sum", async () => {
+      // A switched-off account stays out of the package's sum.
+      const plusC: Service = {
+        ...plusB,
+        id: "service_codex_c",
+        name: "Codex C",
+        enabled: false,
+      };
+      bridgeMocks.getServicePackages.mockResolvedValue([
+        { ...plusPackage, service_ids: [plusA.id, plusB.id, plusC.id] },
+        claudePackage,
+      ]);
+      bridgeMocks.getServiceUsage.mockImplementation(async (id: string) =>
+        usageOf(id),
+      );
+      // Codex B has no estimate yet; it takes Codex A's, as they share a plan.
+      pricingMocks.getQuotaEstimates.mockResolvedValue([
+        {
+          service_id: plusA.id,
+          windows: [
+            { kind: "primary", total_usd: "40.00" },
+            { kind: "secondary", total_usd: "300.00" },
+          ],
+        },
+        {
+          service_id: claude.id,
+          windows: [{ kind: "secondary", total_usd: "512.40" }],
+        },
+      ]);
+      await renderPackages([plusA, plusB, plusC, claude]);
+
+      const basis = "按官方 API 价格估算：近 7 天的调用花费 ÷ 已用比例";
+      const estimate = (card: HTMLElement) =>
+        card.querySelector<HTMLElement>('[data-testid="quota-estimate"]');
+      // Codex B is used up: it adds its whole window and nothing left.
+      const stack = packageCard("Codex Plus");
+      expect(quotaOf(stack).status).toBe("还剩约 $28共约 $80");
+      expect(estimate(stack)?.title).toBe(
+        `2 个账户合计，各按最先用完的窗口\n${basis}`,
+      );
+      // Only Claude's weekly window has an estimate: what is left is unknown.
+      const single = packageCard("Claude personal");
+      expect(quotaOf(single).status).toBe("剩余 50%");
+      expect(estimate(single)).toBeNull();
+
+      await act(async () => expandButton("Codex Plus").click());
+      const own = packageCard("Codex A");
+      expect(quotaOf(own).status).toBe("还剩约 $28共约 $40");
+      expect(estimate(own)?.title).toBe(
+        `5 小时共约 $40，剩约 $28\n每周共约 $300，剩约 $270\n${basis}`,
+      );
+      // Its status needs the room for when it is back.
+      expect(quotaOf(packageCard("Codex B")).status).toBe(
+        "已用完 · 2 小时后恢复",
+      );
+      expect(estimate(packageCard("Codex B"))).toBeNull();
     });
 
     it("saves the tray's strategy and rolls back a failed save", async () => {
@@ -1415,7 +1473,7 @@ describe("ServiceManager", () => {
         "false",
       );
       expect(quotaOf(packageCard("Codex Plus")).status).toBe(
-        "可用 · 1 个号有额度，平均剩 35%",
+        "1 个号有额度，平均剩 35%",
       );
     });
 
@@ -1487,7 +1545,7 @@ describe("ServiceManager", () => {
       await renderPackages([grok, unlimited]);
 
       expect(quotaOf(packageCard("Unlimited key"))).toEqual({
-        status: "可用 · 不限额度",
+        status: "不限额度",
         tone: "positive",
         bar: "empty",
         barLabel: null,
@@ -1495,7 +1553,7 @@ describe("ServiceManager", () => {
         busy: false,
       });
       expect(quotaOf(packageCard("Grok personal"))).toEqual({
-        status: "可用 · 余额 $43.20",
+        status: "余额 $43.20",
         tone: "positive",
         bar: "empty",
         barLabel: null,
@@ -3162,8 +3220,8 @@ describe("ServiceManager", () => {
         expect(quotaOf(failedCard)).toMatchObject({
           status: "额度读不到",
           tone: "neutral",
-          bar: "empty",
-          caption: ["上次读取失败Quota temporarily unavailable", "重试"],
+          bar: undefined,
+          caption: ["Codex 订阅：Quota temporarily unavailable", "重试"],
         });
         expect(
           failedCard
@@ -3317,15 +3375,15 @@ describe("ServiceManager", () => {
       ),
     ).not.toBeNull();
     expect(quotaOf(packageCard("Kimi Coding"))).toEqual({
-      status: "可用 · 5 小时额度先到",
+      status: "剩余 75%",
       tone: "positive",
       bar: "nested",
-      barLabel: "5 小时 剩 75% · 7 天 剩 90%",
-      caption: ["5 小时 剩 75% · 4 小时后", "7 天 剩 90%"],
+      barLabel: "5 小时 剩 75% · 每周 剩 90%",
+      caption: ["5 小时 剩 75%", "每周 剩 90%"],
       busy: false,
     });
     expect(quotaOf(packageCard("new-api"))).toEqual({
-      status: "可用 · 还剩 $2.50",
+      status: "还剩 $2.50",
       tone: "positive",
       bar: "flat",
       barLabel: "剩余 25%",
@@ -3371,7 +3429,7 @@ describe("ServiceManager", () => {
       );
     });
     const card = packageCard("new-api");
-    expect(quotaOf(card).status).toBe("可用 · 还剩 $300.00");
+    expect(quotaOf(card).status).toBe("还剩 $300.00");
     const toolbarRefresh = container.querySelector<HTMLButtonElement>(
       'button[aria-label="刷新列表"]',
     )!;
@@ -3391,14 +3449,14 @@ describe("ServiceManager", () => {
     );
     // The card keeps its numbers while the lookup runs; the toolbar shows it.
     expect(toolbarRefresh.querySelector(".animate-spin")).not.toBeNull();
-    expect(quotaOf(card).status).toBe("可用 · 还剩 $300.00");
+    expect(quotaOf(card).status).toBe("还剩 $300.00");
 
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
       await act(async () =>
         reject(
           new Error(
-            `GET /control/v1/services/service_gateway/usage?refresh=1 returned 502 Bad Gateway: {"error":{"code":"subscription_usage_failed","message":"new-api usage unavailable: status 401"}}`,
+            `GET /control/v1/services/service_gateway/usage?refresh=1 returned 502 Bad Gateway: {"error":{"code":"subscription_usage_failed","message":"new-api usage unavailable: status 401","details":[{"reason":"key_rejected"}]}}`,
           ),
         ),
       );
@@ -3410,7 +3468,7 @@ describe("ServiceManager", () => {
     expect(quotaOf(card)).toMatchObject({
       status: "额度读不到",
       tone: "neutral",
-      bar: "empty",
+      bar: undefined,
     });
     expect(card.textContent).not.toContain("$300.00");
     const caption = card.querySelector('[data-slot="quota-caption"]')!;
@@ -3553,11 +3611,11 @@ describe("ServiceManager", () => {
     ).toBe("Plus");
     // The account is turned off, so its dot is grey while the numbers stay.
     expect(quotaOf(card)).toEqual({
-      status: "已停用 · 5 小时额度先到",
+      status: "剩余 66%",
       tone: "neutral",
       bar: "nested",
-      barLabel: "5 小时 剩 66% · 7 天 剩 88%",
-      caption: ["5 小时 剩 66% · 2 小时后", "7 天 剩 88%"],
+      barLabel: "5 小时 剩 66% · 每周 剩 88%",
+      caption: ["5 小时 剩 66%", "每周 剩 88%"],
       busy: false,
     });
     expect(

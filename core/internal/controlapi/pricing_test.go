@@ -47,4 +47,13 @@ func TestPricingAPIAuthAndConfig(t *testing.T) {
 			t.Fatalf("%s %d %s", p, r.Code, r.Body)
 		}
 	}
+	// A service without observed quota windows has no estimate.
+	r = accessTokenRequest(t, handler, http.MethodGet, PricingPath+"/estimates", "", "")
+	if r.Code != 200 || strings.TrimSpace(r.Body.String()) != `{"services":[]}` {
+		t.Fatalf("estimates %d %s", r.Code, r.Body)
+	}
+	r = accessTokenRequest(t, handler, http.MethodPost, PricingPath+"/estimates", "", "")
+	if r.Code != 405 {
+		t.Fatalf("estimates POST %d", r.Code)
+	}
 }

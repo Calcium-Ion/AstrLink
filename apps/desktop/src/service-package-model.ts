@@ -1,4 +1,5 @@
 import type { ServicePackage } from "./bridge";
+import type { ServiceQuotaEstimate } from "./pricing-model";
 import { codingPlanPresetIDs } from "./service-presets";
 import {
   hasPlanUsage,
@@ -429,6 +430,117 @@ export function packageQuota(
     failed,
     signedOut,
   };
+}
+
+/** Estimated whole quota windows of one account in USD, by usage window. */
+export type WindowTotals = Partial<Record<"primary" | "secondary", number>>;
+
+const windowKinds = ["primary", "secondary"] as const;
+
+/**
+ * Every member's estimated windows. Accounts of one plan share its limits, so
+ * a member without an estimate of its own takes the mean of the members that
+ * have one; a package whose plan is unknown may mix plans and lends nothing.
+ */
+export function memberWindowTotals(
+  cards: PackageCard[],
+  estimates: ServiceQuotaEstimate[],
+): Record<string, WindowTotals> {
+  const own: Record<string, WindowTotals> = {};
+  for (const estimate of estimates) {
+    const totals: WindowTotals = {};
+    for (const window of estimate.windows) {
+      const total = Number(window.total_usd);
+      if (Number.isFinite(total) && total > 0) totals[window.kind] = total;
+    }
+    own[estimate.service_id] = totals;
+  }
+  const result: Record<string, WindowTotals> = {};
+  for (const card of cards) {
+    const shared: WindowTotals = {};
+    if (card.pkg?.kind === "subscription" && card.pkg.plan_type)
+      for (const kind of windowKinds) {
+        const known = card.services
+          .map((service) => own[service.id]?.[kind])
+          .filter((total): total is number => total !== undefined);
+        if (known.length)
+          shared[kind] =
+            known.reduce((sum, total) => sum + total, 0) / known.length;
+      }
+    for (const service of card.services)
+      result[service.id] = { ...shared, ...own[service.id] };
+  }
+  return result;
+}
+
+/**
+ * What an account can still spend, valued: the reported window with the
+ * least left in USD, since it runs out first; a used-up account has nothing
+ * left of its binding window. Null unless every reported window has an
+ * estimate.
+ */
+export interface QuotaMoney {
+  window: "primary" | "secondary";
+  left: number;
+  total: number;
+}
+
+export function windowMoney(
+  quota: Extract<CardQuota, { kind: "windows" }>,
+  totals: WindowTotals | undefined,
+): QuotaMoney | null {
+  let money: QuotaMoney | null = null;
+  for (const kind of windowKinds) {
+    const window = quota[kind];
+    if (!window) continue;
+    const total = totals?.[kind];
+    if (total === undefined) return null;
+    const left = (total * window.remaining) / 100;
+    if (!money || left < money.left) money = { window: kind, left, total };
+  }
+  if (!money || !quota.binding.exhausted) return money;
+  const total = totals?.[quota.binding.window];
+  return total === undefined
+    ? null
+    : { window: quota.binding.window, left: 0, total };
+}
+
+/**
+ * A package's money over the accounts whose quota is known, the ones
+ * packageQuota averages: what they have left and what their windows hold.
+ * Null unless each of them has an estimate.
+ */
+export function packageMoney(
+  services: Service[],
+  usage: Record<string, UsageEntry | undefined>,
+  totals: Record<string, WindowTotals>,
+  now: number,
+): { left: number; total: number; accounts: number } | null {
+  let left = 0;
+  let total = 0;
+  let accounts = 0;
+  for (const service of services) {
+    if (!service.enabled || !hasPlanUsage(service)) continue;
+    const quota = serviceQuota(usage[service.id], now);
+    if (quota.kind !== "windows") continue;
+    const money = windowMoney(quota, totals[service.id]);
+    if (!money) return null;
+    left += money.left;
+    total += money.total;
+    accounts++;
+  }
+  return accounts ? { left, total, accounts } : null;
+}
+
+/** An estimate in whole dollars from $10 up, since it is not exact. */
+export function formatEstimateUSD(value: number): string {
+  const digits = value < 10 ? 2 : 0;
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  }).format(value);
 }
 
 export type ServiceFilter = "all" | "enabled" | "disabled";
