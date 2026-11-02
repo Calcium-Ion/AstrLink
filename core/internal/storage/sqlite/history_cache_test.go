@@ -224,7 +224,7 @@ func BenchmarkHistoryReadSnapshots(b *testing.B) {
 						_, err := store.ListRequestSessions(b.Context(), storage.RequestSessionListOptions{Limit: 20})
 						return err
 					}
-					_, err := listRequestSessions(b.Context(), store.db, storage.RequestSessionListOptions{Limit: 20})
+					_, err := listRequestSessions(b.Context(), store.db, &store.modelWindows, storage.RequestSessionListOptions{Limit: 20})
 					return err
 				}
 				if err := read(); err != nil {

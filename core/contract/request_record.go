@@ -629,6 +629,14 @@ type RequestRecord struct {
 	Cursors    []SessionCursor `json:"cursors"`
 	Events     []RequestEvent  `json:"events"`
 	Extensions map[string]any  `json:"extensions,omitempty"`
+	// Context is what the call carried to the model, read from its body;
+	// absent on retries, on calls whose body was not read, and on records
+	// from before it was kept.
+	Context *RequestContext `json:"context,omitempty"`
+	// Project is the working directory the agent named, with the home
+	// directory written as ~; absent when the request does not say. Only a
+	// record with a context names one.
+	Project *string `json:"project,omitempty"`
 }
 
 func (record RequestRecord) Validate() error {
@@ -817,6 +825,19 @@ func (record RequestRecord) Validate() error {
 			return fmt.Errorf("output: %w", err)
 		}
 	}
+	if record.Context != nil {
+		if err := record.Context.Validate(); err != nil {
+			return fmt.Errorf("context: %w", err)
+		}
+	}
+	if record.Project != nil {
+		if record.Context == nil {
+			return fmt.Errorf("project needs a context")
+		}
+		if err := validateBoundedText("project", *record.Project, MaxContextPathRunes, false); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -873,8 +894,32 @@ type RequestSession struct {
 	// subagent; absent for a top-level conversation.
 	ParentSessionID *SessionID `json:"parent_session_id,omitempty"`
 	// SubagentCount is how many conversations this one started as
-	// subagents.
+	// subagents, theirs included.
 	SubagentCount int `json:"subagent_count,omitempty"`
+	// ContextTokens is the context the newest main call sent: its input
+	// tokens, cache reads and writes included. Nil while no call reported
+	// usage.
+	ContextTokens *int `json:"context_tokens,omitempty"`
+	// CompactionPointTokens is where the client compacts this conversation:
+	// the larger context of its last two compactions, each just before it
+	// happened. Nil until the context was compacted.
+	CompactionPointTokens *int `json:"compaction_point_tokens,omitempty"`
+	// ContextWindowTokens is the model's context window from LLM Metadata,
+	// for the official model the newest priced call reached. Nil when the
+	// catalog gives none.
+	ContextWindowTokens *int `json:"context_window_tokens,omitempty"`
+	// CompactionCount counts the compactions the client marked or a drop in
+	// context showed.
+	CompactionCount int `json:"compaction_count,omitempty"`
+	// Usage sums the tokens of every call, retries included. Nil while no
+	// call reported usage.
+	Usage *SessionUsage `json:"usage,omitempty"`
+	// Cost values the calls at official API prices. Only a session's detail
+	// carries it; lists leave it out.
+	Cost *SessionCost `json:"cost,omitempty"`
+	// FailedRepeats is set while the newest main call's history ends with
+	// one tool call repeated with the same arguments, failing each time.
+	FailedRepeats *FailedRepeats `json:"failed_repeats,omitempty"`
 }
 
 func (session RequestSession) Validate() error {
@@ -959,6 +1004,29 @@ func (session RequestSession) Validate() error {
 			return fmt.Errorf("local_access_token_id: %w", err)
 		}
 	}
+	for _, tokens := range []*int{session.ContextTokens, session.CompactionPointTokens, session.ContextWindowTokens} {
+		if tokens != nil && *tokens < 0 {
+			return fmt.Errorf("context token counts must be non-negative")
+		}
+	}
+	if session.CompactionCount < 0 {
+		return fmt.Errorf("compaction_count must be non-negative")
+	}
+	if session.Usage != nil {
+		if err := session.Usage.Validate(); err != nil {
+			return err
+		}
+	}
+	if session.Cost != nil {
+		if err := session.Cost.Validate(); err != nil {
+			return err
+		}
+	}
+	if session.FailedRepeats != nil {
+		if err := session.FailedRepeats.Validate(); err != nil {
+			return fmt.Errorf("failed_repeats: %w", err)
+		}
+	}
 	return nil
 }
 
@@ -970,8 +1038,33 @@ type RequestSessionPage struct {
 type RequestSessionDetail struct {
 	RequestSession
 	Turns []RequestRecord `json:"turns"`
-	// Subagents are the conversations this one started, oldest first.
+	// Subagents are the conversations this one started, theirs included:
+	// each comes right after the one that started it, siblings oldest first.
 	Subagents []RequestSession `json:"subagents,omitempty"`
+	// Context follows the context the conversation sent call by call; nil
+	// for model listings.
+	Context *SessionContext `json:"context,omitempty"`
+	// WithSubagents sums this conversation together with every subagent
+	// under it; absent when it started none.
+	WithSubagents *SessionTotals `json:"with_subagents,omitempty"`
+}
+
+// SessionTotals sums the calls of a group of conversations and the tokens
+// they reported, retries included.
+type SessionTotals struct {
+	CallCount    int   `json:"call_count"`
+	InputTokens  int64 `json:"input_tokens"`
+	OutputTokens int64 `json:"output_tokens"`
+}
+
+func (totals SessionTotals) Validate() error {
+	if totals.CallCount < 1 {
+		return fmt.Errorf("call_count must be at least 1")
+	}
+	if totals.InputTokens < 0 || totals.OutputTokens < 0 {
+		return fmt.Errorf("token counts must be non-negative")
+	}
+	return nil
 }
 
 func (detail RequestSessionDetail) Validate() error {
@@ -989,6 +1082,16 @@ func (detail RequestSessionDetail) Validate() error {
 	for index, subagent := range detail.Subagents {
 		if err := subagent.Validate(); err != nil {
 			return fmt.Errorf("subagents[%d]: %w", index, err)
+		}
+	}
+	if detail.Context != nil {
+		if err := detail.Context.Validate(); err != nil {
+			return fmt.Errorf("context: %w", err)
+		}
+	}
+	if detail.WithSubagents != nil {
+		if err := detail.WithSubagents.Validate(); err != nil {
+			return fmt.Errorf("with_subagents: %w", err)
 		}
 	}
 	return nil

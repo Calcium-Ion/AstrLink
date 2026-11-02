@@ -1664,6 +1664,22 @@ async fn get_request_activity(
 }
 
 #[tauri::command]
+async fn get_project_memory(
+    query: serde_json::Value,
+    manager: State<'_, Arc<CoreManager>>,
+) -> Result<serde_json::Value, String> {
+    manager.get_project_memory(query).await
+}
+
+#[tauri::command]
+async fn get_project_memory_entry(
+    query: serde_json::Value,
+    manager: State<'_, Arc<CoreManager>>,
+) -> Result<serde_json::Value, String> {
+    manager.get_project_memory_entry(query).await
+}
+
+#[tauri::command]
 async fn get_request_session(
     session_id: String,
     manager: State<'_, Arc<CoreManager>>,
@@ -1736,6 +1752,14 @@ async fn get_request_audit_content(
     manager: State<'_, Arc<CoreManager>>,
 ) -> Result<serde_json::Value, String> {
     manager.get_request_audit_content(&request_id).await
+}
+
+#[tauri::command]
+async fn get_request_context_texts(
+    request_id: String,
+    manager: State<'_, Arc<CoreManager>>,
+) -> Result<serde_json::Value, String> {
+    manager.get_request_context_texts(&request_id).await
 }
 
 #[tauri::command]
@@ -2742,6 +2766,8 @@ pub fn run() {
             list_request_records,
             list_request_sessions,
             get_request_activity,
+            get_project_memory,
+            get_project_memory_entry,
             get_request_session,
             get_session_channel_bindings,
             release_session_channel_bindings,
@@ -2750,6 +2776,7 @@ pub fn run() {
             delete_request_record,
             purge_request_records,
             get_request_audit_content,
+            get_request_context_texts,
             list_raw_access,
             decide_raw_access,
             revoke_raw_grant,

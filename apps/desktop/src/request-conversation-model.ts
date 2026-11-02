@@ -746,11 +746,13 @@ function buildCall(
 
 /**
  * Routine calls fold into one row so the anomalies stand out. The last call
- * of a turn stays on its own row: it carries the reply's numbers.
+ * of a turn stays on its own row: it carries the reply's numbers. So does a
+ * call in `standalone`, which carries a note of its own.
  */
 export function foldRoutineCalls(
   calls: ConversationCall[],
   nowMs: number,
+  standalone?: ReadonlySet<string>,
 ): ConversationSegment[] {
   const segments: ConversationSegment[] = [];
   let run: ConversationCall[] = [];
@@ -781,7 +783,13 @@ export function foldRoutineCalls(
   calls.forEach((call, position) => {
     const last = position === calls.length - 1;
     // The reply call always has its own row: its text hangs beneath it.
-    if (call.anomaly || call.tone === "pending" || call.reply || last) {
+    if (
+      call.anomaly ||
+      call.tone === "pending" ||
+      call.reply ||
+      last ||
+      standalone?.has(call.record.id)
+    ) {
       flush();
       segments.push({ kind: "call", call });
       return;
@@ -802,12 +810,14 @@ function previewUser(record: RequestRecord): UserText {
 /**
  * Rebuilds the turns of a conversation from its calls. `parsed` holds the
  * calls whose content has been read; the rest still show their statistics.
+ * Calls in `standalone` never fold into a run.
  */
 export function conversationTurns(
   turns: RequestRecord[],
   childrenByRoot: Record<string, RequestRecord[]>,
   parsed: ReadonlyMap<string, ParsedCall>,
   nowMs: number = Date.now(),
+  standalone?: ReadonlySet<string>,
 ): ConversationTurn[] {
   return groupTurns(turns).map((group) => {
     const records = group.records;
@@ -879,7 +889,7 @@ export function conversationTurns(
       id: `turn:${group.turnIndex ?? records[0].id}`,
       turnIndex: group.turnIndex,
       calls,
-      segments: foldRoutineCalls(calls, nowMs),
+      segments: foldRoutineCalls(calls, nowMs, standalone),
       user,
       startedAt: records[0].started_at,
       reply: {

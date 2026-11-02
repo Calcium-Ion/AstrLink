@@ -2,8 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import {
   parseAuditContent,
+  parseMemoryEntryDetail,
+  parseProjectMemory,
   parsePurgeResult,
   parseRequestActivity,
+  parseRequestContextTexts,
   parseRequestRecord,
   parseRequestRecordPage,
   parseRequestSession,
@@ -996,9 +999,15 @@ describe("subagent links", () => {
       subagent_count: 1,
       turns: [{ ...fullRecord, parent_session_id: "session_grand" }],
       subagents: [{ ...sessionFields, parent_session_id: "session_parent" }],
+      with_subagents: { call_count: 4, input_tokens: 900, output_tokens: 40 },
     });
     expect(parent.subagent_count).toBe(1);
     expect(parent.subagents?.map((item) => item.id)).toEqual(["session_child"]);
+    expect(parent.with_subagents).toEqual({
+      call_count: 4,
+      input_tokens: 900,
+      output_tokens: 40,
+    });
     expect(parent.turns[0].parent_session_id).toBe("session_grand");
     const activity = parseRequestActivity({
       now: "2026-10-24T10:01:00Z",
@@ -1024,6 +1033,13 @@ describe("subagent links", () => {
     ).toThrow();
     expect(() =>
       parseRequestSessionDetail({ ...sessionFields, turns: [], subagents: {} }),
+    ).toThrow();
+    expect(() =>
+      parseRequestSessionDetail({
+        ...sessionFields,
+        turns: [],
+        with_subagents: { call_count: 1, input_tokens: -1, output_tokens: 0 },
+      }),
     ).toThrow();
   });
 });
@@ -1098,5 +1114,468 @@ describe("client attribution", () => {
       parseRequestSession({ ...fullSession, client_type: "future_client" })
         .client_type,
     ).toBe("unknown");
+  });
+});
+
+describe("session context and cost", () => {
+  const context = {
+    calls: [
+      { request_id: "req_1", tokens: 120_000 },
+      { request_id: "req_2", tokens: 30_000 },
+    ],
+    compactions: [
+      {
+        request_id: "req_2",
+        summary_request_id: "req_1",
+        before_tokens: 120_000,
+        after_tokens: 30_000,
+        marked: true,
+      },
+    ],
+    cache_misses: [
+      {
+        request_id: "req_1",
+        reason: "expired",
+        idle_ms: 600_000,
+        ttl_ms: 300_000,
+        rewritten_tokens: 100_000,
+        extra_usd: "0.345000000",
+      },
+    ],
+  };
+
+  it("reads the context fields of a summary and a detail", () => {
+    const session = parseRequestSession({
+      ...fullSession,
+      context_tokens: 30_000,
+      compaction_point_tokens: 120_000,
+      context_window_tokens: 200_000,
+      compaction_count: 1,
+      usage: {
+        input_tokens: 150_000,
+        output_tokens: 2_000,
+        cache_read_tokens: 20_000,
+        cache_write_tokens: 130_000,
+        cache_hit_ratio: 0.13,
+      },
+    });
+    expect(session).toMatchObject({
+      context_tokens: 30_000,
+      compaction_point_tokens: 120_000,
+      context_window_tokens: 200_000,
+      compaction_count: 1,
+      usage: { cache_hit_ratio: 0.13 },
+    });
+    expect(session.cost).toBeUndefined();
+    const plain = parseRequestSession(fullSession);
+    expect(plain.context_tokens).toBeUndefined();
+    expect(plain.usage).toBeUndefined();
+
+    const detail = parseRequestSessionDetail({
+      ...fullSession,
+      turns: [],
+      cost: { amount_usd: "1.250000000", priced: 2, unpriced: 0, pending: 1 },
+      context,
+    });
+    expect(detail.cost).toStrictEqual({
+      amount_usd: "1.250000000",
+      priced: 2,
+      unpriced: 0,
+      pending: 1,
+    });
+    expect(detail.context).toStrictEqual(context);
+    expect(
+      parseRequestSessionDetail({ ...fullSession, turns: [] }).context,
+    ).toBeUndefined();
+  });
+
+  it("rejects malformed amounts, ratios and reasons", () => {
+    expect(() =>
+      parseRequestSession({
+        ...fullSession,
+        cost: { amount_usd: "-1", priced: 1, unpriced: 0, pending: 0 },
+      }),
+    ).toThrow(/amount_usd/);
+    expect(() =>
+      parseRequestSession({
+        ...fullSession,
+        usage: {
+          input_tokens: 1,
+          output_tokens: 1,
+          cache_read_tokens: 0,
+          cache_write_tokens: 0,
+          cache_hit_ratio: 1.5,
+        },
+      }),
+    ).toThrow(/cache_hit_ratio/);
+    expect(() =>
+      parseRequestSession({ ...fullSession, context_tokens: -1 }),
+    ).toThrow(/context_tokens/);
+    expect(() =>
+      parseRequestSessionDetail({
+        ...fullSession,
+        turns: [],
+        context: {
+          ...context,
+          cache_misses: [{ ...context.cache_misses[0], reason: "cosmic" }],
+        },
+      }),
+    ).toThrow(/reason/);
+    expect(() =>
+      parseRequestSessionDetail({
+        ...fullSession,
+        turns: [],
+        context: { calls: [], compactions: [] },
+      }),
+    ).toThrow(/cache_misses/);
+  });
+});
+
+describe("call context", () => {
+  const callContext = {
+    parts: {
+      history: 9_000,
+      tool_results: 4_000,
+      tools: 3_000,
+      system: 2_000,
+      memory: 1_500,
+      other: 500,
+    },
+    items: [
+      {
+        kind: "rules",
+        name: "CLAUDE.md",
+        path: "~/.claude/CLAUDE.md",
+        scope: "global",
+        tokens: 600,
+        hash: "fp1_rules",
+      },
+      {
+        kind: "memory",
+        name: "MEMORY.md",
+        path: "~/.claude/projects/~-proj/memory/MEMORY.md",
+        count: 63,
+        tokens: 900,
+        hash: "fp1_memory",
+      },
+      {
+        kind: "mcp",
+        count: 38,
+        servers: ["paseo"],
+        tokens: 2_400,
+        hash: "fp1_mcp",
+      },
+      // A kind a later Core may add.
+      { kind: "hooks", tokens: 10 },
+    ],
+    system_hash: "fp1_system",
+    tools_hash: "fp1_tools",
+    summary: true,
+    compacted: "fp1_summary",
+    memory_writes: [
+      {
+        kind: "memory",
+        name: "MEMORY.md",
+        path: "~/.claude/projects/~-proj/memory/MEMORY.md",
+        title: "Reply in Chinese",
+        entry: "reply-in-chinese.md",
+        hook: "回复一律用中文",
+      },
+      { kind: "hooks", name: "hooks.json" },
+    ],
+    memory_reads: [
+      {
+        name: "reply-in-chinese.md",
+        path: "~/.claude/projects/~-proj/memory/reply-in-chinese.md",
+      },
+    ],
+    skills_used: ["humanizer"],
+    failed_repeats: { tool: "Bash", count: 3, command: true },
+  };
+
+  it("reads what a call carried and leaves out kinds it does not know", () => {
+    const record = parseRequestRecord({
+      ...fullRecord,
+      context: callContext,
+      project: "~/proj",
+    });
+    expect(record.project).toBe("~/proj");
+    expect(record.context).toStrictEqual({
+      parts: callContext.parts,
+      items: callContext.items.slice(0, 3),
+      system_hash: "fp1_system",
+      tools_hash: "fp1_tools",
+      summary: true,
+      compacted: "fp1_summary",
+      memory_writes: callContext.memory_writes.slice(0, 1),
+      memory_reads: callContext.memory_reads,
+      skills_used: ["humanizer"],
+      failed_repeats: { tool: "Bash", count: 3, command: true },
+    });
+    // A call that sent only what was new has no parts.
+    expect(
+      parseRequestRecord({ ...fullRecord, context: { items: [] } }).context,
+    ).toStrictEqual({ items: [], memory_writes: [] });
+    expect(parseRequestRecord(fullRecord).context).toBeUndefined();
+    expect(parseRequestRecord(fullRecord).project).toBeUndefined();
+  });
+
+  it("reads the failing repeats of a conversation", () => {
+    expect(
+      parseRequestSession({
+        ...fullSession,
+        failed_repeats: { tool: "shell_command", count: 4 },
+      }).failed_repeats,
+    ).toStrictEqual({ tool: "shell_command", count: 4 });
+    expect(parseRequestSession(fullSession).failed_repeats).toBeUndefined();
+  });
+
+  it("rejects a malformed context", () => {
+    expect(() =>
+      parseRequestRecord({
+        ...fullRecord,
+        context: {
+          ...callContext,
+          items: [{ kind: "rules", scope: "team", tokens: 1 }],
+        },
+      }),
+    ).toThrow(/items\[0\]\.scope/);
+    expect(() =>
+      parseRequestRecord({
+        ...fullRecord,
+        context: {
+          ...callContext,
+          parts: { ...callContext.parts, history: -1 },
+        },
+      }),
+    ).toThrow(/parts\.history/);
+    expect(() =>
+      parseRequestRecord({
+        ...fullRecord,
+        context: { ...callContext, memory_writes: [{ kind: "memory" }] },
+      }),
+    ).toThrow(/memory_writes\[0\]\.name/);
+    expect(() =>
+      parseRequestSession({ ...fullSession, failed_repeats: { tool: "Bash" } }),
+    ).toThrow(/failed_repeats\.count/);
+  });
+});
+
+describe("project memory", () => {
+  const entry = {
+    file: "no-jitter.md",
+    path: "~/.claude/projects/p/memory/no-jitter.md",
+    title: "No jitter-sensitive tests",
+    hook: "wait on done channels",
+    noted_at: "2026-10-31T07:05:00Z",
+    reads: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2],
+    total_reads: 3,
+  };
+  const memory = {
+    projects: [
+      {
+        project: "~/GolandProjects/astrlink",
+        client_types: ["claude_code", "future_client"],
+        last_seen_at: "2026-10-31T07:05:00Z",
+      },
+      { client_types: ["codex"], last_seen_at: "2026-10-30T07:05:00Z" },
+    ],
+    project: "~/GolandProjects/astrlink",
+    client_type: "claude_code",
+    day_start: "2026-10-31T16:00:00Z",
+    recent: 1,
+    entries: [
+      entry,
+      { file: "old.md", reads: Array(14).fill(0), total_reads: 0 },
+    ],
+    stories: [
+      {
+        file: "no-jitter.md",
+        title: "No jitter-sensitive tests",
+        at: "2026-10-31T07:05:00Z",
+        request_id: "req_new",
+        session_id: "session_2",
+        prompt: "把 failover 的单测补完",
+      },
+    ],
+    rules: [
+      {
+        name: "AGENTS.md",
+        path: "~/GolandProjects/astrlink/AGENTS.md",
+        scope: "project",
+        first_seen_at: "2026-10-21T02:00:00Z",
+        changed_at: "2026-10-31T06:58:00Z",
+        request_id: "req_rules",
+        before_request_id: "req_old",
+        captured: true,
+      },
+    ],
+    toolbox: {
+      skills: [
+        {
+          name: "humanizer",
+          description: "Rewrite text in plain words",
+          uses: 4,
+          carried: true,
+        },
+        { name: "deploy", uses: 0, carried: true },
+      ],
+      mcp: [
+        {
+          server: "paseo",
+          tools: [{ name: "create_agent", uses: 12, carried: true }],
+        },
+      ],
+      idle_tokens: 13_000,
+    },
+    has_memory: true,
+    has_rules: true,
+  };
+
+  it("parses what one client's agents remembered in a project", () => {
+    const parsed = parseProjectMemory(memory);
+    expect(parsed).toStrictEqual({
+      ...memory,
+      projects: [
+        { ...memory.projects[0], client_types: ["claude_code", "unknown"] },
+        memory.projects[1],
+      ],
+    });
+    // A project no call named has only the list.
+    const bare = {
+      projects: [],
+      day_start: "2026-10-31T16:00:00Z",
+      recent: 0,
+      entries: [],
+      stories: [],
+      rules: [],
+      toolbox: { skills: [], mcp: [], idle_tokens: 0 },
+      has_memory: false,
+      has_rules: false,
+    };
+    expect(parseProjectMemory(bare)).toStrictEqual(bare);
+  });
+
+  it("rejects a malformed project memory", () => {
+    const { stories: _stories, ...withoutStories } = memory;
+    expect(() => parseProjectMemory(withoutStories)).toThrow(/stories/);
+    expect(() =>
+      parseProjectMemory({
+        ...memory,
+        entries: [{ ...entry, reads: [1, -1] }],
+      }),
+    ).toThrow(/entries\[0\]\.reads\[1\]/);
+    expect(() =>
+      parseProjectMemory({
+        ...memory,
+        rules: [{ name: "AGENTS.md", scope: "team" }],
+      }),
+    ).toThrow(/rules\[0\]\.scope/);
+    expect(() =>
+      parseProjectMemory({
+        ...memory,
+        toolbox: { ...memory.toolbox, idle_tokens: "many" },
+      }),
+    ).toThrow(/toolbox\.idle_tokens/);
+    expect(() =>
+      parseProjectMemory({
+        ...memory,
+        toolbox: { ...memory.toolbox, mcp: [{ server: "paseo", tools: {} }] },
+      }),
+    ).toThrow(/toolbox\.mcp\[0\]\.tools/);
+  });
+
+  it("parses one memory and what happened to it", () => {
+    const detail = {
+      entry,
+      events: [
+        {
+          kind: "noted",
+          at: "2026-10-31T07:05:00Z",
+          request_id: "req_new",
+          session_id: "session_2",
+          prompt: "把 failover 的单测补完",
+          captured: true,
+        },
+        { kind: "read", at: "2026-11-01T02:00:00Z", request_id: "req_read" },
+        // A kind a later Core may add.
+        { kind: "moved", at: "2026-11-01T03:00:00Z", request_id: "req_x" },
+      ],
+    };
+    expect(parseMemoryEntryDetail(detail)).toStrictEqual({
+      ...detail,
+      events: detail.events.slice(0, 2),
+    });
+    expect(() =>
+      parseMemoryEntryDetail({ entry, events: [{ kind: "read" }] }),
+    ).toThrow(/events\[0\]\.at/);
+    expect(() => parseMemoryEntryDetail({ events: [] })).toThrow(/entry/);
+  });
+
+  it("parses the texts a captured call carried", () => {
+    const texts = {
+      request_id: "req_new",
+      truncated: true,
+      items: [
+        {
+          kind: "rules",
+          name: "AGENTS.md",
+          path: "~/proj/AGENTS.md",
+          text: "Run gofmt.",
+        },
+        { kind: "plugins", name: "x", text: "y" },
+      ],
+      summary: "The user asked to fix the retry order.",
+      writes: [
+        {
+          kind: "memory",
+          name: "no-jitter.md",
+          content: "Wait on done channels.",
+        },
+      ],
+      reads: [
+        {
+          name: "no-jitter.md",
+          path: "~/.claude/projects/p/memory/no-jitter.md",
+          content: "Tests must not depend on deadlines.",
+        },
+      ],
+    };
+    expect(parseRequestContextTexts(texts)).toStrictEqual({
+      ...texts,
+      items: [texts.items[0]],
+    });
+    expect(
+      parseRequestContextTexts({
+        request_id: "req_locked",
+        withheld: true,
+        reason: "raw_locked",
+        items: [],
+        writes: [],
+        reads: [],
+      }),
+    ).toStrictEqual({
+      request_id: "req_locked",
+      withheld: true,
+      reason: "raw_locked",
+      items: [],
+      writes: [],
+      reads: [],
+    });
+    expect(() =>
+      parseRequestContextTexts({ ...texts, reason: "lost" }),
+    ).toThrow(/reason/);
+    expect(() =>
+      parseRequestContextTexts({ request_id: "req", items: [] }),
+    ).toThrow(/writes/);
+    expect(() =>
+      parseRequestContextTexts({
+        ...texts,
+        writes: [{ kind: "memory", name: "a.md" }],
+      }),
+    ).toThrow(/writes\[0\]\.content/);
+    expect(() =>
+      parseRequestContextTexts({ ...texts, reads: [{ name: "a.md" }] }),
+    ).toThrow(/reads\[0\]\.content/);
   });
 });

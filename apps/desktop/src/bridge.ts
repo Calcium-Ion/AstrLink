@@ -102,14 +102,21 @@ import {
 } from "./privacy-policy-model";
 import {
   parseAuditContent,
+  parseMemoryEntryDetail,
+  parseProjectMemory,
   parsePurgeResult,
+  parseRequestContextTexts,
   parseRequestRecord,
   parseRequestActivity,
   parseRequestRecordPage,
   parseRequestSessionDetail,
   parseRequestSessionPage,
   type AuditContent,
+  type ClientType,
+  type MemoryEntryDetail,
+  type ProjectMemory,
   type RequestActivity,
+  type RequestContextTexts,
   type RequestRecord,
   type RequestRecordListQuery,
   type RequestRecordPage,
@@ -858,6 +865,49 @@ export async function getRequestAuditContent(
   requireNativeBridge();
   return parseAuditContent(
     await invoke<unknown>("get_request_audit_content", { requestId }),
+  );
+}
+
+/** What the texts of a call's captured body read: rules, memory, summary. */
+export async function getRequestContextTexts(
+  requestId: string,
+): Promise<RequestContextTexts> {
+  requireNativeBridge();
+  return parseRequestContextTexts(
+    await invoke<unknown>("get_request_context_texts", { requestId }),
+  );
+}
+
+/**
+ * Which project's memory to read: a project, or the calls that named none;
+ * without either, the project of the most recent call. Without a client, the
+ * one that called there last. `day_start` is when today began here, so the
+ * daily reads follow the local day.
+ */
+export type ProjectMemoryQuery = {
+  client_type?: ClientType;
+  day_start?: string;
+} & (
+  | { project?: string; no_project?: never }
+  | { no_project: true; project?: never }
+);
+
+export async function getProjectMemory(
+  query: ProjectMemoryQuery,
+): Promise<ProjectMemory> {
+  requireNativeBridge();
+  return parseProjectMemory(
+    await invoke<unknown>("get_project_memory", { query }),
+  );
+}
+
+/** One memory of a project's view and each turn that noted or read it. */
+export async function getProjectMemoryEntry(
+  query: ProjectMemoryQuery & { file: string },
+): Promise<MemoryEntryDetail> {
+  requireNativeBridge();
+  return parseMemoryEntryDetail(
+    await invoke<unknown>("get_project_memory_entry", { query }),
   );
 }
 

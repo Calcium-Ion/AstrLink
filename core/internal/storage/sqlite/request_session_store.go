@@ -135,11 +135,16 @@ func (store *Store) ListRequestSessions(
 	options storagecontract.RequestSessionListOptions,
 ) (storagecontract.RequestSessionPage, error) {
 	return cachedHistoryRead(ctx, store.db, &store.requestSessions, options, func(conn *sql.Conn) (storagecontract.RequestSessionPage, error) {
-		return listRequestSessions(ctx, conn, options)
+		return listRequestSessions(ctx, conn, &store.modelWindows, options)
 	})
 }
 
-func listRequestSessions(ctx context.Context, reader historyReader, options storagecontract.RequestSessionListOptions) (storagecontract.RequestSessionPage, error) {
+func listRequestSessions(
+	ctx context.Context,
+	reader historyReader,
+	windows *modelWindowCache,
+	options storagecontract.RequestSessionListOptions,
+) (storagecontract.RequestSessionPage, error) {
 	if options.Kind != "" && options.Kind != "inference" && options.Kind != "discovery" {
 		return storagecontract.RequestSessionPage{}, fmt.Errorf("%w: kind must be inference or discovery", storagecontract.ErrInvalidArgument)
 	}
@@ -235,7 +240,11 @@ func listRequestSessions(ctx context.Context, reader historyReader, options stor
 	for _, item := range matched {
 		page.Items = append(page.Items, summaries[item.id])
 	}
-	if err := loadSessionRuntimes(ctx, reader, page.Items); err != nil {
+	contexts, err := loadSessionRuntimes(ctx, reader, page.Items)
+	if err != nil {
+		return storagecontract.RequestSessionPage{}, err
+	}
+	if err := loadContextWindows(ctx, reader, windows, page.Items, contexts); err != nil {
 		return storagecontract.RequestSessionPage{}, err
 	}
 	if err := loadSubagentCounts(ctx, reader, page.Items); err != nil {
@@ -244,89 +253,171 @@ func listRequestSessions(ctx context.Context, reader historyReader, options stor
 	return page, nil
 }
 
-// loadSubagentCounts counts the conversations each of sessions started.
+// maxSubagentDepth bounds how many levels of subagents a walk follows.
+const maxSubagentDepth = 8
+
+// subagentParents walks down from roots through the conversations each one
+// started as subagents, to maxSubagentDepth levels, and maps every
+// conversation it meets to the one that started it. A root that another root
+// started is a key too.
+func subagentParents(ctx context.Context, reader historyReader, roots []string) (map[string]string, error) {
+	parents := make(map[string]string)
+	walked := make(map[string]struct{}, len(roots))
+	frontier := make([]any, 0, len(roots))
+	for _, id := range roots {
+		if _, ok := walked[id]; !ok {
+			walked[id] = struct{}{}
+			frontier = append(frontier, id)
+		}
+	}
+	for depth := 0; depth < maxSubagentDepth && len(frontier) > 0; depth++ {
+		rows, err := reader.QueryContext(ctx, `SELECT DISTINCT parent_session_id, COALESCE(session_id, id) FROM request_records
+WHERE parent_session_id IS NOT NULL AND parent_session_id IN (`+sessionPlaceholders(len(frontier))+`)
+  AND parent_request_id IS NULL`, frontier...)
+		if err != nil {
+			return nil, fmt.Errorf("list subagent sessions: %w", err)
+		}
+		var next []any
+		for rows.Next() {
+			var parent, id string
+			if err := rows.Scan(&parent, &id); err != nil {
+				rows.Close()
+				return nil, fmt.Errorf("scan subagent session: %w", err)
+			}
+			if _, ok := parents[id]; ok || id == parent {
+				continue
+			}
+			parents[id] = parent
+			if _, ok := walked[id]; !ok {
+				walked[id] = struct{}{}
+				next = append(next, id)
+			}
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("iterate subagent sessions: %w", err)
+		}
+		rows.Close()
+		frontier = next
+	}
+	return parents, nil
+}
+
+// loadSubagentCounts counts the conversations each of sessions started,
+// theirs included.
 func loadSubagentCounts(ctx context.Context, reader historyReader, sessions []contract.RequestSession) error {
 	if len(sessions) == 0 {
 		return nil
 	}
 	byID := make(map[string]*contract.RequestSession, len(sessions))
-	args := make([]any, len(sessions))
+	ids := make([]string, len(sessions))
 	for index := range sessions {
 		byID[string(sessions[index].ID)] = &sessions[index]
-		args[index] = string(sessions[index].ID)
+		ids[index] = string(sessions[index].ID)
 	}
-	rows, err := reader.QueryContext(ctx, `SELECT parent_session_id, COUNT(DISTINCT COALESCE(session_id, id))
-FROM request_records
-WHERE parent_session_id IS NOT NULL AND parent_session_id IN (`+sessionPlaceholders(len(args))+`)
-  AND parent_request_id IS NULL
-GROUP BY parent_session_id`, args...)
+	parents, err := subagentParents(ctx, reader, ids)
 	if err != nil {
-		return fmt.Errorf("count subagent sessions: %w", err)
+		return err
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var parent string
-		var count int
-		if err := rows.Scan(&parent, &count); err != nil {
-			return fmt.Errorf("scan subagent count: %w", err)
-		}
-		if session := byID[parent]; session != nil {
-			session.SubagentCount = count
+	// Credit each subagent to every listed conversation above it.
+	for id := range parents {
+		seen := map[string]struct{}{id: {}}
+		for parent, ok := parents[id]; ok; parent, ok = parents[parent] {
+			if _, loop := seen[parent]; loop {
+				break
+			}
+			seen[parent] = struct{}{}
+			if session := byID[parent]; session != nil {
+				session.SubagentCount++
+			}
 		}
 	}
-	return rows.Err()
+	return nil
 }
 
-// listSubagentSessions summarises the conversations parent started, oldest
-// first.
-func (store *Store) listSubagentSessions(ctx context.Context, parent contract.SessionID) ([]contract.RequestSession, error) {
-	rows, err := store.db.QueryContext(ctx, `SELECT COALESCE(session_id, id), MAX(started_at)
-FROM request_records
-WHERE parent_session_id IS NOT NULL AND parent_session_id = ? AND parent_request_id IS NULL
-GROUP BY COALESCE(session_id, id)`, string(parent))
+// listSubagentSessions summarises the conversations root started, theirs
+// included: each follows the one that started it, siblings oldest first.
+func (store *Store) listSubagentSessions(ctx context.Context, root contract.SessionID) ([]contract.RequestSession, error) {
+	parents, err := subagentParents(ctx, store.db, []string{string(root)})
 	if err != nil {
-		return nil, fmt.Errorf("list subagent sessions: %w", err)
-	}
-	defer rows.Close()
-	var items []sessionAggregate
-	for rows.Next() {
-		var item sessionAggregate
-		if err := rows.Scan(&item.id, &item.lastStartedAt); err != nil {
-			return nil, fmt.Errorf("scan subagent session: %w", err)
-		}
-		if item.id != string(parent) {
-			items = append(items, item)
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate subagent sessions: %w", err)
-	}
-	if err := rows.Close(); err != nil {
 		return nil, err
 	}
-	if len(items) == 0 {
+	delete(parents, string(root))
+	if len(parents) == 0 {
 		return nil, nil
+	}
+	items := make([]sessionAggregate, 0, len(parents))
+	for id := range parents {
+		items = append(items, sessionAggregate{id: id})
 	}
 	summaries, err := loadSessionSummaries(ctx, store.db, items)
 	if err != nil {
 		return nil, err
 	}
-	subagents := make([]contract.RequestSession, 0, len(items))
-	for _, item := range items {
-		if summary, ok := summaries[item.id]; ok {
+	// Nest by the parent each summary names, the one a client indents by;
+	// one that names no conversation here hangs off root.
+	children := make(map[contract.SessionID][]contract.RequestSession, len(summaries))
+	for _, summary := range summaries {
+		parent := root
+		if summary.ParentSessionID != nil {
+			if _, ok := summaries[string(*summary.ParentSessionID)]; ok {
+				parent = *summary.ParentSessionID
+			}
+		}
+		children[parent] = append(children[parent], summary)
+	}
+	for _, siblings := range children {
+		slices.SortStableFunc(siblings, func(left, right contract.RequestSession) int {
+			if order := left.StartedAt.Compare(right.StartedAt); order != 0 {
+				return order
+			}
+			return strings.Compare(string(left.ID), string(right.ID))
+		})
+	}
+	subagents := make([]contract.RequestSession, 0, len(summaries))
+	var visit func(contract.SessionID)
+	visit = func(parent contract.SessionID) {
+		siblings := children[parent]
+		delete(children, parent)
+		for _, summary := range siblings {
 			subagents = append(subagents, summary)
+			visit(summary.ID)
 		}
 	}
-	slices.SortStableFunc(subagents, func(left, right contract.RequestSession) int {
-		if order := left.StartedAt.Compare(right.StartedAt); order != 0 {
-			return order
-		}
-		return strings.Compare(string(left.ID), string(right.ID))
-	})
-	if err := store.loadSessionRuntimes(ctx, subagents); err != nil {
+	visit(root)
+	contexts, err := store.loadSessionRuntimes(ctx, subagents)
+	if err != nil {
+		return nil, err
+	}
+	if err := loadContextWindows(ctx, store.db, &store.modelWindows, subagents, contexts); err != nil {
 		return nil, err
 	}
 	return subagents, nil
+}
+
+// loadSessionTokens sums the tokens every call of sessions reported,
+// retries included.
+func loadSessionTokens(ctx context.Context, reader historyReader, sessions []contract.SessionID) (input, output int64, err error) {
+	args := make([]any, len(sessions))
+	for index, id := range sessions {
+		args[index] = string(id)
+	}
+	rows, err := reader.QueryContext(ctx, `
+SELECT COALESCE(SUM(json_extract(call.usage_json, '$.input_tokens')), 0),
+       COALESCE(SUM(json_extract(call.usage_json, '$.output_tokens')), 0)
+FROM request_records root INDEXED BY request_records_session_turns_idx
+JOIN request_records call ON call.id = root.id OR call.parent_request_id = root.id
+WHERE root.parent_request_id IS NULL AND COALESCE(root.session_id, root.id) IN (`+sessionPlaceholders(len(args))+`)`, args...)
+	if err != nil {
+		return 0, 0, fmt.Errorf("sum session tokens: %w", err)
+	}
+	defer rows.Close()
+	if rows.Next() {
+		if err := rows.Scan(&input, &output); err != nil {
+			return 0, 0, fmt.Errorf("scan session tokens: %w", err)
+		}
+	}
+	return input, output, rows.Err()
 }
 
 // requestSessionScan selects the roots the options match, newest first. Its
@@ -405,15 +496,44 @@ func (store *Store) GetRequestSession(
 		return contract.RequestSessionDetail{}, err
 	}
 	sessions := []contract.RequestSession{session}
-	if err := store.loadSessionRuntimes(ctx, sessions); err != nil {
+	contexts, err := store.loadSessionRuntimes(ctx, sessions)
+	if err != nil {
 		return contract.RequestSessionDetail{}, err
+	}
+	if err := loadContextWindows(ctx, store.db, &store.modelWindows, sessions, contexts); err != nil {
+		return contract.RequestSessionDetail{}, err
+	}
+	// Cost and the context view are worked out for a detail only: they read
+	// the billing ledger and price every cache miss.
+	ledger, err := store.loadSessionLedger(ctx, session.ID)
+	if err != nil {
+		return contract.RequestSessionDetail{}, err
+	}
+	if sessions[0].Cost, err = sessionCost(ledger); err != nil {
+		return contract.RequestSessionDetail{}, fmt.Errorf("%w: session cost: %v", storagecontract.ErrInvalidRecord, err)
 	}
 	subagents, err := store.listSubagentSessions(ctx, session.ID)
 	if err != nil {
 		return contract.RequestSessionDetail{}, err
 	}
 	sessions[0].SubagentCount = len(subagents)
-	return contract.RequestSessionDetail{RequestSession: sessions[0], Turns: turns, Subagents: subagents}, nil
+	detail := contract.RequestSessionDetail{RequestSession: sessions[0], Turns: turns, Subagents: subagents}
+	if len(subagents) > 0 {
+		totals := &contract.SessionTotals{CallCount: session.CallCount}
+		tree := []contract.SessionID{session.ID}
+		for _, subagent := range subagents {
+			totals.CallCount += subagent.CallCount
+			tree = append(tree, subagent.ID)
+		}
+		if totals.InputTokens, totals.OutputTokens, err = loadSessionTokens(ctx, store.db, tree); err != nil {
+			return contract.RequestSessionDetail{}, err
+		}
+		detail.WithSubagents = totals
+	}
+	if entry := contexts[string(session.ID)]; entry != nil && len(entry.fold.main) > 0 {
+		detail.Context = sessionContextDetail(entry.calls, entry.fold, turns, ledger)
+	}
+	return detail, nil
 }
 
 // Model time is the union of actual call runtimes, including demoted retry
@@ -422,46 +542,65 @@ func (store *Store) GetRequestSession(
 // end at "now", so they merge with any finished call they overlap into one
 // final block; clients add the elapsed time since its start once, instead of
 // once per running call.
-func (store *Store) loadSessionRuntimes(ctx context.Context, sessions []contract.RequestSession) error {
+//
+// The same pass sums each session's token usage and folds its root calls
+// into the context it carries; the calls it returns, by session, feed a
+// detail's context view.
+func (store *Store) loadSessionRuntimes(ctx context.Context, sessions []contract.RequestSession) (map[string]*sessionContextCalls, error) {
 	return loadSessionRuntimes(ctx, store.db, sessions)
 }
 
-func loadSessionRuntimes(ctx context.Context, reader historyReader, sessions []contract.RequestSession) error {
+func loadSessionRuntimes(ctx context.Context, reader historyReader, sessions []contract.RequestSession) (map[string]*sessionContextCalls, error) {
 	if len(sessions) == 0 {
-		return nil
+		return nil, nil
 	}
 	byID := make(map[string]*contract.RequestSession, len(sessions))
 	performance := make(map[string]*sessionPerformance, len(sessions))
 	runtimes := make(map[string][]runtimeInterval, len(sessions))
+	usage := make(map[string]*sessionUsageTotals, len(sessions))
+	contexts := make(map[string]*sessionContextCalls, len(sessions))
 	args := make([]any, len(sessions))
 	for i := range sessions {
 		session := &sessions[i]
 		session.ActiveRequestStarts = make([]time.Time, 0)
 		byID[string(session.ID)] = session
 		performance[string(session.ID)] = &sessionPerformance{}
+		usage[string(session.ID)] = &sessionUsageTotals{}
+		contexts[string(session.ID)] = &sessionContextCalls{}
 		args[i] = string(session.ID)
 	}
 	rows, err := reader.QueryContext(ctx, sessionRuntimeQuery(len(args)), args...)
 	if err != nil {
-		return fmt.Errorf("load session runtimes: %w", err)
+		return nil, fmt.Errorf("load session runtimes: %w", err)
 	}
 	defer rows.Close()
 	var id, startedAt, status string
-	var completedAt, errorCode sql.NullString
+	var completedAt, errorCode, rootModel, contextMarks sql.NullString
 	var latency sql.NullInt64
 	var rootID, callID, protocol string
 	var turn, firstToken, outputTokens sql.NullInt64
+	var inputTokens, cacheRead, cacheWrite, cacheWrite1h sql.NullInt64
 	var streaming bool
 	var incomplete sql.NullBool
 	for rows.Next() {
 		if err := rows.Scan(&id, &startedAt, &completedAt, &status, &latency, &errorCode,
-			&rootID, &turn, &callID, &protocol, &streaming, &firstToken, &outputTokens, &incomplete); err != nil {
-			return fmt.Errorf("scan session runtime: %w", err)
+			&rootID, &turn, &callID, &protocol, &streaming, &firstToken, &outputTokens, &incomplete,
+			&inputTokens, &cacheRead, &cacheWrite, &cacheWrite1h, &rootModel, &contextMarks); err != nil {
+			return nil, fmt.Errorf("scan session runtime: %w", err)
 		}
 		session := byID[id]
 		started, err := time.Parse(time.RFC3339Nano, startedAt)
 		if err != nil {
-			return fmt.Errorf("parse session runtime start: %w", err)
+			return nil, fmt.Errorf("parse session runtime start: %w", err)
+		}
+		reported := inputTokens.Valid || outputTokens.Valid
+		if reported {
+			usage[id].observe(inputTokens.Int64, outputTokens.Int64, cacheRead, cacheWrite)
+		}
+		if callID == rootID {
+			call := newContextCall(callID, started, protocol, rootModel, reported, inputTokens, cacheRead, cacheWrite, cacheWrite1h)
+			call.readMarks(contextMarks)
+			contexts[id].calls = append(contexts[id].calls, call)
 		}
 		record := contract.RequestRecord{ID: contract.RequestID(callID), StartedAt: started,
 			InputProtocol: contract.ProtocolID(protocol), Streaming: streaming}
@@ -482,7 +621,7 @@ func loadSessionRuntimes(ctx context.Context, reader historyReader, sessions []c
 		if completedAt.Valid && errorCode.String != "core_interrupted" {
 			completed, err := time.Parse(time.RFC3339Nano, completedAt.String)
 			if err != nil {
-				return fmt.Errorf("parse session runtime completion: %w", err)
+				return nil, fmt.Errorf("parse session runtime completion: %w", err)
 			}
 			record.CompletedAt = &completed
 		}
@@ -510,7 +649,7 @@ func loadSessionRuntimes(ctx context.Context, reader historyReader, sessions []c
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return fmt.Errorf("iterate session runtimes: %w", err)
+		return nil, fmt.Errorf("iterate session runtimes: %w", err)
 	}
 	for id, session := range byID {
 		session.DurationMs, session.RunningSince = mergeRuntimeIntervals(runtimes[id])
@@ -518,8 +657,13 @@ func loadSessionRuntimes(ctx context.Context, reader historyReader, sessions []c
 		// Calls arrive in index order; a long session would spill a sort by
 		// start time to disk on every poll, and only these starts need it.
 		slices.SortFunc(session.ActiveRequestStarts, time.Time.Compare)
+		usage[id].apply(session)
+		entry := contexts[id]
+		sortContextCalls(entry.calls)
+		entry.fold = foldContext(entry.calls)
+		applyContextFold(session, entry.fold)
 	}
-	return nil
+	return contexts, nil
 }
 
 // runtimeInterval is one call's runtime. A call still running has no end: it
@@ -622,7 +766,12 @@ func sessionRuntimeQuery(sessions int) string {
 SELECT COALESCE(root.session_id, root.id), call.started_at, call.completed_at,
        call.status, call.latency_ms, json_extract(call.error_json, '$.code'),
        root.id, root.turn_index, call.id, call.input_protocol, call.streaming, call.first_token_ms,
-       json_extract(call.usage_json, '$.output_tokens'), json_extract(call.usage_json, '$.billing_incomplete')
+       json_extract(call.usage_json, '$.output_tokens'), json_extract(call.usage_json, '$.billing_incomplete'),
+       json_extract(call.usage_json, '$.input_tokens'), json_extract(call.usage_json, '$.cache_read_tokens'),
+       json_extract(call.usage_json, '$.cache_write_tokens'), json_extract(call.usage_json, '$.cache_write_1h_tokens'),
+       root.requested_model,
+       CASE WHEN call.id = root.id
+            THEN json_extract(root.context_json, '$.helper', '$.summary', '$.compacted', '$.failed_repeats') END
 FROM request_records root INDEXED BY request_records_session_turns_idx
 JOIN request_records call ON call.id = root.id OR call.parent_request_id = root.id
 WHERE root.parent_request_id IS NULL AND COALESCE(root.session_id, root.id) IN (` + sessionPlaceholders(sessions) + `)`

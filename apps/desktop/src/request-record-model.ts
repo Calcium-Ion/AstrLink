@@ -325,8 +325,250 @@ export interface RequestRecord {
   session_link: SessionLink | null;
   /** The conversation that started this record's one as a subagent. */
   parent_session_id?: string;
+  /**
+   * What the call carried to the model; absent on retries, on calls whose
+   * body was not read, and on records from before it was kept.
+   */
+  context?: RequestContext;
+  /** The project the agent worked in, the home directory written as ~. */
+  project?: string;
   cursors: SessionCursor[];
   events: RequestEvent[];
+}
+
+export type ContextItemKind = "rules" | "memory" | "skills" | "mcp";
+export type ContextItemScope = "global" | "project" | "local";
+
+/** Where a call's input came from, in tokens; sums to its input once known. */
+export interface ContextParts {
+  history: number;
+  tool_results: number;
+  tools: number;
+  system: number;
+  /** Rules files, memory files and the skills catalog. */
+  memory: number;
+  other: number;
+}
+
+/** A rules file, memory file, skills catalog or the MCP tools a call carried. */
+export interface ContextItem {
+  kind: ContextItemKind;
+  /** File name; absent for skills and MCP. */
+  name?: string;
+  path?: string;
+  scope?: ContextItemScope;
+  /** Lines of a memory index, skills of a catalog, MCP tools. */
+  count?: number;
+  servers?: string[];
+  tokens: number;
+  /** Keyed digest; equal hashes mean unchanged content. */
+  hash?: string;
+}
+
+/** A memory or rules file the previous response's tool calls wrote. */
+export interface MemoryWrite {
+  kind: "rules" | "memory";
+  name: string;
+  path?: string;
+  /** Absent when the record may not show the client's text. */
+  title?: string;
+  /** The memory file a new index line points to. */
+  entry?: string;
+  /** What that index line says after the link. */
+  hook?: string;
+}
+
+/** A memory file the previous response's tool calls read. */
+export interface MemoryRead {
+  name: string;
+  path?: string;
+}
+
+/** One tool call repeated with the same arguments, failing each time. */
+export interface FailedRepeats {
+  tool: string;
+  count: number;
+  /** Set when the tool runs shell commands. */
+  command?: boolean;
+}
+
+/** What one call sent the model, read from its request body. */
+export interface RequestContext {
+  /** Absent when the body only held what is new since a stored response. */
+  parts?: ContextParts;
+  items: ContextItem[];
+  system_hash?: string;
+  tools_hash?: string;
+  /** The call asked for a compaction summary. */
+  summary?: boolean;
+  compacted?: string;
+  helper?: boolean;
+  memory_writes: MemoryWrite[];
+  /** Memory files the tool calls read, the index left out. */
+  memory_reads?: MemoryRead[];
+  /** Skills the tool calls loaded. */
+  skills_used?: string[];
+  failed_repeats?: FailedRepeats;
+}
+
+/** One project the calls named, and the clients whose calls named it. */
+export interface MemoryProject {
+  /** Absent for the calls that named no project. */
+  project?: string;
+  /** The most recent first. */
+  client_types: ClientType[];
+  last_seen_at: string;
+}
+
+/** One memory, a file the index links. */
+export interface MemoryEntry {
+  file: string;
+  /** Absent when the calls did not say where the index is. */
+  path?: string;
+  /** Absent when no record may show the client's text. */
+  title?: string;
+  hook?: string;
+  /** Absent when the index listed it before the gateway first saw it. */
+  noted_at?: string;
+  /** Turns that read it per day, 14 days, the oldest first. */
+  reads: number[];
+  total_reads: number;
+}
+
+/** A memory an agent noted, with what the user said in that turn. */
+export interface MemoryStory {
+  file: string;
+  title?: string;
+  hook?: string;
+  at: string;
+  request_id?: string;
+  session_id?: string;
+  prompt?: string;
+}
+
+/** A rules file the newest main call carried, with its latest change. */
+export interface MemoryRules {
+  name: string;
+  path?: string;
+  scope?: ContextItemScope;
+  first_seen_at?: string;
+  /** When a call first carried the current version, once one came before. */
+  changed_at?: string;
+  request_id?: string;
+  session_id?: string;
+  /** The last call that carried the version before. */
+  before_request_id?: string;
+  /** Both calls' bodies were captured, so the versions can be compared. */
+  captured?: boolean;
+}
+
+export interface ToolboxSkill {
+  name: string;
+  description?: string;
+  /** Turns that loaded it in the last 30 days. */
+  uses: number;
+  /** The newest main call's catalog lists it. */
+  carried: boolean;
+}
+
+export interface ToolboxTool {
+  name: string;
+  /** Calls that made it in the last 30 days. */
+  uses: number;
+  carried: boolean;
+}
+
+export interface ToolboxServer {
+  server: string;
+  tools: ToolboxTool[];
+}
+
+/** The skills and MCP tools carried, and those used in the last 30 days. */
+export interface MemoryToolbox {
+  skills: ToolboxSkill[];
+  mcp: ToolboxServer[];
+  /** Tokens the unused skills and tools add to each call. */
+  idle_tokens: number;
+}
+
+/** What one client's agents remembered in one project. */
+export interface ProjectMemory {
+  projects: MemoryProject[];
+  /** Absent for the calls that named no project, or when none named any. */
+  project?: string;
+  /** Absent when no call named the project. */
+  client_type?: ClientType;
+  /** When the newest day of the read counts began. */
+  day_start: string;
+  /** Entries noted in the last seven days. */
+  recent: number;
+  entries: MemoryEntry[];
+  /** The newest first. */
+  stories: MemoryStory[];
+  rules: MemoryRules[];
+  toolbox: MemoryToolbox;
+  has_memory: boolean;
+  has_rules: boolean;
+}
+
+export type MemoryEventKind = "noted" | "read";
+
+/** One note or read of a memory, at the call whose history shows it. */
+export interface MemoryEvent {
+  kind: MemoryEventKind;
+  at: string;
+  request_id: string;
+  session_id?: string;
+  prompt?: string;
+  /** The call's body was captured, so the file's text can be read. */
+  captured?: boolean;
+}
+
+/** One memory and what happened to it, the oldest first. */
+export interface MemoryEntryDetail {
+  entry: MemoryEntry;
+  events: MemoryEvent[];
+}
+
+/** A rules file, memory file or skills catalog as a call carried it. */
+export interface ContextItemText {
+  kind: "rules" | "memory" | "skills";
+  name?: string;
+  path?: string;
+  text: string;
+}
+
+/** What one tool call wrote to a memory or rules file. */
+export interface MemoryWriteText {
+  kind: "rules" | "memory";
+  name: string;
+  path?: string;
+  content: string;
+}
+
+/** A memory file one tool call read, as the tool returned it. */
+export interface MemoryReadText {
+  name: string;
+  path?: string;
+  content: string;
+}
+
+/** What one captured call carried, as text. */
+export interface RequestContextTexts {
+  request_id: string;
+  /**
+   * The body cannot be read in this view. `reason` says why, and is absent
+   * when the body was not captured.
+   */
+  withheld?: boolean;
+  reason?: AuditWithheldReason;
+  /** Capture kept only the start of the body. */
+  truncated?: boolean;
+  items: ContextItemText[];
+  /** The compaction summary the call continued from. */
+  summary?: string;
+  writes: MemoryWriteText[];
+  reads: MemoryReadText[];
 }
 
 export const emptyTrajectoryFields = {
@@ -373,8 +615,89 @@ export interface RequestSession {
   privacy_warned?: boolean;
   /** The conversation that started this one as a subagent. */
   parent_session_id?: string;
-  /** How many conversations this one started as subagents; absent for none. */
+  /**
+   * How many conversations this one started as subagents, theirs included;
+   * absent for none.
+   */
   subagent_count?: number;
+  /**
+   * Input tokens of the newest main call, cache included; absent when no
+   * main call reported usage. Helper calls such as a title are left out.
+   */
+  context_tokens?: number;
+  /** Where the client compacts, inferred; absent before any compaction. */
+  compaction_point_tokens?: number;
+  /** The official model's context window; absent when unknown. */
+  context_window_tokens?: number;
+  /** Absent when the context was never compacted. */
+  compaction_count?: number;
+  /** Tokens of every call, retries included; absent before any usage. */
+  usage?: SessionUsage;
+  /** Official-price value; only a session's detail carries it. */
+  cost?: SessionCost;
+  /** Set while the newest main call keeps repeating a failing tool call. */
+  failed_repeats?: FailedRepeats;
+}
+
+export interface SessionUsage {
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_write_tokens: number;
+  /** Absent when no call reported its cache use. */
+  cache_hit_ratio?: number;
+}
+
+export interface SessionCost {
+  amount_usd: string;
+  priced: number;
+  unpriced: number;
+  pending: number;
+}
+
+export interface ContextCall {
+  request_id: string;
+  tokens: number;
+}
+
+export interface ContextCompaction {
+  /** The first main call after it, whose context dropped. */
+  request_id: string;
+  /** The call that wrote the summary, when the client marked one. */
+  summary_request_id?: string;
+  before_tokens: number;
+  after_tokens: number;
+  /** False when only the drop in context showed the compaction. */
+  marked: boolean;
+}
+
+export type CacheMissReason =
+  | "provider_changed"
+  | "model_changed"
+  | "expired"
+  | "prefix_changed"
+  | "unknown";
+
+export interface CacheMiss {
+  request_id: string;
+  reason: CacheMissReason;
+  /**
+   * For prefix_changed: "system", "tools", "skills", a file such as
+   * AGENTS.md, or the kind ("rules", "memory") of a file without a name.
+   */
+  changed?: string;
+  idle_ms?: number;
+  ttl_ms?: number;
+  rewritten_tokens: number;
+  /** Absent when the call has no price. */
+  extra_usd?: string;
+}
+
+/** What a conversation sent the model, call by call. */
+export interface SessionContext {
+  calls: ContextCall[];
+  compactions: ContextCompaction[];
+  cache_misses: CacheMiss[];
 }
 
 export interface RequestSessionPage {
@@ -384,8 +707,22 @@ export interface RequestSessionPage {
 
 export interface RequestSessionDetail extends RequestSession {
   turns: RequestRecord[];
-  /** The conversations this one started as subagents, oldest first. */
+  /**
+   * The conversations this one started as subagents, theirs included: each
+   * right after the one that started it, siblings oldest first.
+   */
   subagents?: RequestSession[];
+  /** Absent when no main call reported usage. */
+  context?: SessionContext;
+  /** This conversation together with every subagent under it. */
+  with_subagents?: SessionTotals;
+}
+
+/** Calls, retries included, and the tokens they reported. */
+export interface SessionTotals {
+  call_count: number;
+  input_tokens: number;
+  output_tokens: number;
 }
 
 /** One root model call's span. Retries stay inside it. */
@@ -1221,6 +1558,12 @@ function parseRequestRecordAt(value: unknown, path: string): RequestRecord {
     turn_index: parseTurnIndex(record.turn_index, `${path}.turn_index`),
     session_link: parseSessionLink(record.session_link, `${path}.session_link`),
     ...optionalParentSession(record.parent_session_id, path),
+    ...(record.context == null
+      ? {}
+      : { context: parseRequestContext(record.context, `${path}.context`) }),
+    ...(record.project == null
+      ? {}
+      : { project: stringAt(record.project, `${path}.project`) }),
     cursors: parseSessionCursors(record.cursors, `${path}.cursors`),
     events: parseRequestEvents(record.events, `${path}.events`),
   };
@@ -1443,6 +1786,348 @@ function parseRequestSessionAt(value: unknown, path: string): RequestSession {
             `${path}.subagent_count`,
           ),
         }),
+    ...optionalCount(session, "context_tokens", path),
+    ...optionalCount(session, "compaction_point_tokens", path),
+    ...optionalCount(session, "context_window_tokens", path),
+    ...optionalCount(session, "compaction_count", path),
+    ...(session.usage == null
+      ? {}
+      : { usage: parseSessionUsage(session.usage, `${path}.usage`) }),
+    ...(session.cost == null
+      ? {}
+      : { cost: parseSessionCost(session.cost, `${path}.cost`) }),
+    ...(session.failed_repeats == null
+      ? {}
+      : {
+          failed_repeats: parseFailedRepeats(
+            session.failed_repeats,
+            `${path}.failed_repeats`,
+          ),
+        }),
+  };
+}
+
+type SessionCountField =
+  | "context_tokens"
+  | "compaction_point_tokens"
+  | "context_window_tokens"
+  | "compaction_count";
+
+function optionalCount<Field extends SessionCountField>(
+  value: JsonObject,
+  field: Field,
+  path: string,
+): Partial<Record<Field, number>> {
+  if (value[field] == null) return {};
+  return {
+    [field]: nonNegativeIntAt(value[field], `${path}.${field}`),
+  } as Partial<Record<Field, number>>;
+}
+
+const usdAmountPattern = /^(0|[1-9][0-9]*)(\.[0-9]{1,9})?$/;
+
+function usdAmountAt(value: unknown, path: string): string {
+  const amount = stringAt(value, path);
+  if (!usdAmountPattern.test(amount)) invalid(path, "badFormat");
+  return amount;
+}
+
+function parseSessionUsage(value: unknown, path: string): SessionUsage {
+  const usage = objectAt(value, path);
+  const ratio = usage.cache_hit_ratio;
+  if (
+    ratio != null &&
+    (typeof ratio !== "number" || !(ratio >= 0 && ratio <= 1))
+  ) {
+    invalid(`${path}.cache_hit_ratio`, "nonNegativeNumber");
+  }
+  return {
+    input_tokens: nonNegativeIntAt(usage.input_tokens, `${path}.input_tokens`),
+    output_tokens: nonNegativeIntAt(
+      usage.output_tokens,
+      `${path}.output_tokens`,
+    ),
+    cache_read_tokens: nonNegativeIntAt(
+      usage.cache_read_tokens,
+      `${path}.cache_read_tokens`,
+    ),
+    cache_write_tokens: nonNegativeIntAt(
+      usage.cache_write_tokens,
+      `${path}.cache_write_tokens`,
+    ),
+    ...(ratio == null ? {} : { cache_hit_ratio: ratio as number }),
+  };
+}
+
+function parseSessionCost(value: unknown, path: string): SessionCost {
+  const cost = objectAt(value, path);
+  return {
+    amount_usd: usdAmountAt(cost.amount_usd, `${path}.amount_usd`),
+    priced: nonNegativeIntAt(cost.priced, `${path}.priced`),
+    unpriced: nonNegativeIntAt(cost.unpriced, `${path}.unpriced`),
+    pending: nonNegativeIntAt(cost.pending, `${path}.pending`),
+  };
+}
+
+const cacheMissReasons = new Set<CacheMissReason>([
+  "provider_changed",
+  "model_changed",
+  "expired",
+  "prefix_changed",
+  "unknown",
+]);
+
+function parseSessionContext(value: unknown, path: string): SessionContext {
+  const context = objectAt(value, path);
+  for (const field of ["calls", "compactions", "cache_misses"]) {
+    if (!Array.isArray(context[field])) invalid(`${path}.${field}`, "array");
+  }
+  const calls = context.calls as unknown[];
+  const compactions = context.compactions as unknown[];
+  const misses = context.cache_misses as unknown[];
+  return {
+    calls: calls.map((item, index) => {
+      const itemPath = `${path}.calls[${index}]`;
+      const call = objectAt(item, itemPath);
+      return {
+        request_id: stringAt(call.request_id, `${itemPath}.request_id`),
+        tokens: nonNegativeIntAt(call.tokens, `${itemPath}.tokens`),
+      };
+    }),
+    compactions: compactions.map((item, index) => {
+      const itemPath = `${path}.compactions[${index}]`;
+      const compaction = objectAt(item, itemPath);
+      return {
+        request_id: stringAt(compaction.request_id, `${itemPath}.request_id`),
+        ...(compaction.summary_request_id == null
+          ? {}
+          : {
+              summary_request_id: stringAt(
+                compaction.summary_request_id,
+                `${itemPath}.summary_request_id`,
+              ),
+            }),
+        before_tokens: nonNegativeIntAt(
+          compaction.before_tokens,
+          `${itemPath}.before_tokens`,
+        ),
+        after_tokens: nonNegativeIntAt(
+          compaction.after_tokens,
+          `${itemPath}.after_tokens`,
+        ),
+        marked: boolAt(compaction.marked, `${itemPath}.marked`),
+      };
+    }),
+    cache_misses: misses.map((item, index) => {
+      const itemPath = `${path}.cache_misses[${index}]`;
+      const miss = objectAt(item, itemPath);
+      if (
+        typeof miss.reason !== "string" ||
+        !cacheMissReasons.has(miss.reason as CacheMissReason)
+      ) {
+        invalid(`${itemPath}.reason`, "unknownReason");
+      }
+      return {
+        request_id: stringAt(miss.request_id, `${itemPath}.request_id`),
+        reason: miss.reason as CacheMissReason,
+        ...(miss.changed == null
+          ? {}
+          : { changed: stringAt(miss.changed, `${itemPath}.changed`) }),
+        ...(miss.idle_ms == null
+          ? {}
+          : { idle_ms: nonNegativeIntAt(miss.idle_ms, `${itemPath}.idle_ms`) }),
+        ...(miss.ttl_ms == null
+          ? {}
+          : { ttl_ms: nonNegativeIntAt(miss.ttl_ms, `${itemPath}.ttl_ms`) }),
+        rewritten_tokens: nonNegativeIntAt(
+          miss.rewritten_tokens,
+          `${itemPath}.rewritten_tokens`,
+        ),
+        ...(miss.extra_usd == null
+          ? {}
+          : {
+              extra_usd: usdAmountAt(miss.extra_usd, `${itemPath}.extra_usd`),
+            }),
+      };
+    }),
+  };
+}
+
+const contextPartFields = [
+  "history",
+  "tool_results",
+  "tools",
+  "system",
+  "memory",
+  "other",
+] as const;
+const contextItemKinds = new Set<ContextItemKind>([
+  "rules",
+  "memory",
+  "skills",
+  "mcp",
+]);
+const contextItemScopes = new Set<ContextItemScope>([
+  "global",
+  "project",
+  "local",
+]);
+
+function optionalStringField<Field extends string>(
+  value: JsonObject,
+  field: Field,
+  path: string,
+): Partial<Record<Field, string>> {
+  if (value[field] == null) return {};
+  return { [field]: stringAt(value[field], `${path}.${field}`) } as Partial<
+    Record<Field, string>
+  >;
+}
+
+function parseFailedRepeats(value: unknown, path: string): FailedRepeats {
+  const repeats = objectAt(value, path);
+  return {
+    tool: stringAt(repeats.tool, `${path}.tool`),
+    count: nonNegativeIntAt(repeats.count, `${path}.count`),
+    ...(repeats.command == null
+      ? {}
+      : { command: boolAt(repeats.command, `${path}.command`) }),
+  };
+}
+
+/** The fields a carried item has wherever it is listed, but its hash. */
+function contextItemFields(
+  item: JsonObject,
+  path: string,
+): Omit<ContextItem, "hash"> {
+  if (
+    item.scope != null &&
+    !contextItemScopes.has(item.scope as ContextItemScope)
+  ) {
+    invalid(`${path}.scope`, "unknownScope");
+  }
+  return {
+    kind: item.kind as ContextItemKind,
+    ...optionalStringField(item, "name", path),
+    ...optionalStringField(item, "path", path),
+    ...(item.scope == null ? {} : { scope: item.scope as ContextItemScope }),
+    ...optionalIntField(item, "count", path),
+    ...optionalStringList(item, "servers", path),
+    tokens: nonNegativeIntAt(item.tokens, `${path}.tokens`),
+  };
+}
+
+function optionalIntField<Field extends string>(
+  value: JsonObject,
+  field: Field,
+  path: string,
+): Partial<Record<Field, number>> {
+  if (value[field] == null) return {};
+  return {
+    [field]: nonNegativeIntAt(value[field], `${path}.${field}`),
+  } as Partial<Record<Field, number>>;
+}
+
+function optionalStringList<Field extends string>(
+  value: JsonObject,
+  field: Field,
+  path: string,
+): Partial<Record<Field, string[]>> {
+  const list = value[field];
+  if (list == null) return {};
+  if (!Array.isArray(list)) invalid(`${path}.${field}`, "array");
+  return {
+    [field]: (list as unknown[]).map((entry, index) =>
+      stringAt(entry, `${path}.${field}[${index}]`),
+    ),
+  } as Partial<Record<Field, string[]>>;
+}
+
+/**
+ * What a call carried. Items of a kind this build does not know are left
+ * out rather than failing the record.
+ */
+function parseRequestContext(value: unknown, path: string): RequestContext {
+  const context = objectAt(value, path);
+  let parts: ContextParts | undefined;
+  if (context.parts != null) {
+    const raw = objectAt(context.parts, `${path}.parts`);
+    parts = Object.fromEntries(
+      contextPartFields.map((field) => [
+        field,
+        nonNegativeIntAt(raw[field], `${path}.parts.${field}`),
+      ]),
+    ) as unknown as ContextParts;
+  }
+  const items: ContextItem[] = [];
+  if (context.items != null) {
+    if (!Array.isArray(context.items)) invalid(`${path}.items`, "array");
+    (context.items as unknown[]).forEach((entry, index) => {
+      const itemPath = `${path}.items[${index}]`;
+      const item = objectAt(entry, itemPath);
+      if (!contextItemKinds.has(item.kind as ContextItemKind)) return;
+      items.push({
+        ...contextItemFields(item, itemPath),
+        ...optionalStringField(item, "hash", itemPath),
+      });
+    });
+  }
+  const writes: MemoryWrite[] = [];
+  if (context.memory_writes != null) {
+    if (!Array.isArray(context.memory_writes)) {
+      invalid(`${path}.memory_writes`, "array");
+    }
+    (context.memory_writes as unknown[]).forEach((entry, index) => {
+      const writePath = `${path}.memory_writes[${index}]`;
+      const write = objectAt(entry, writePath);
+      if (write.kind !== "rules" && write.kind !== "memory") return;
+      writes.push({
+        kind: write.kind,
+        name: stringAt(write.name, `${writePath}.name`),
+        ...optionalStringField(write, "path", writePath),
+        ...optionalStringField(write, "title", writePath),
+        ...optionalStringField(write, "entry", writePath),
+        ...optionalStringField(write, "hook", writePath),
+      });
+    });
+  }
+  let reads: MemoryRead[] | undefined;
+  if (context.memory_reads != null) {
+    if (!Array.isArray(context.memory_reads)) {
+      invalid(`${path}.memory_reads`, "array");
+    }
+    reads = (context.memory_reads as unknown[]).map((entry, index) => {
+      const readPath = `${path}.memory_reads[${index}]`;
+      const read = objectAt(entry, readPath);
+      return {
+        name: stringAt(read.name, `${readPath}.name`),
+        ...optionalStringField(read, "path", readPath),
+      };
+    });
+  }
+  const flag = (field: "summary" | "helper") =>
+    context[field] == null
+      ? {}
+      : { [field]: boolAt(context[field], `${path}.${field}`) };
+  return {
+    ...(parts ? { parts } : {}),
+    items,
+    ...optionalStringField(context, "system_hash", path),
+    ...optionalStringField(context, "tools_hash", path),
+    ...flag("summary"),
+    ...optionalStringField(context, "compacted", path),
+    ...flag("helper"),
+    memory_writes: writes,
+    ...(reads ? { memory_reads: reads } : {}),
+    ...optionalStringList(context, "skills_used", path),
+    ...(context.failed_repeats == null
+      ? {}
+      : {
+          failed_repeats: parseFailedRepeats(
+            context.failed_repeats,
+            `${path}.failed_repeats`,
+          ),
+        }),
   };
 }
 
@@ -1515,6 +2200,237 @@ export function parseRequestActivity(value: unknown): RequestActivity {
   };
 }
 
+/** A required client label; one this build does not know reads as unknown. */
+function clientTypeAt(value: unknown): ClientType {
+  return optionalClientType(value).client_type ?? "unknown";
+}
+
+function arrayAt(value: unknown, path: string): unknown[] {
+  if (!Array.isArray(value)) invalid(path, "array");
+  return value as unknown[];
+}
+
+function optionalBoolField<Field extends string>(
+  value: JsonObject,
+  field: Field,
+  path: string,
+): Partial<Record<Field, boolean>> {
+  if (value[field] == null) return {};
+  return {
+    [field]: boolAt(value[field], `${path}.${field}`),
+  } as Partial<Record<Field, boolean>>;
+}
+
+function parseMemoryEntry(value: unknown, path: string): MemoryEntry {
+  const entry = objectAt(value, path);
+  return {
+    file: stringAt(entry.file, `${path}.file`),
+    ...optionalStringField(entry, "path", path),
+    ...optionalStringField(entry, "title", path),
+    ...optionalStringField(entry, "hook", path),
+    ...optionalStringField(entry, "noted_at", path),
+    reads: arrayAt(entry.reads, `${path}.reads`).map((count, index) =>
+      nonNegativeIntAt(count, `${path}.reads[${index}]`),
+    ),
+    total_reads: nonNegativeIntAt(entry.total_reads, `${path}.total_reads`),
+  };
+}
+
+function parseMemoryToolbox(value: unknown, path: string): MemoryToolbox {
+  const toolbox = objectAt(value, path);
+  return {
+    skills: arrayAt(toolbox.skills, `${path}.skills`).map((entry, index) => {
+      const skillPath = `${path}.skills[${index}]`;
+      const skill = objectAt(entry, skillPath);
+      return {
+        name: stringAt(skill.name, `${skillPath}.name`),
+        ...optionalStringField(skill, "description", skillPath),
+        uses: nonNegativeIntAt(skill.uses, `${skillPath}.uses`),
+        carried: boolAt(skill.carried, `${skillPath}.carried`),
+      };
+    }),
+    mcp: arrayAt(toolbox.mcp, `${path}.mcp`).map((entry, index) => {
+      const serverPath = `${path}.mcp[${index}]`;
+      const server = objectAt(entry, serverPath);
+      return {
+        server: stringAt(server.server, `${serverPath}.server`),
+        tools: arrayAt(server.tools, `${serverPath}.tools`).map(
+          (raw, toolIndex) => {
+            const toolPath = `${serverPath}.tools[${toolIndex}]`;
+            const tool = objectAt(raw, toolPath);
+            return {
+              name: stringAt(tool.name, `${toolPath}.name`),
+              uses: nonNegativeIntAt(tool.uses, `${toolPath}.uses`),
+              carried: boolAt(tool.carried, `${toolPath}.carried`),
+            };
+          },
+        ),
+      };
+    }),
+    idle_tokens: nonNegativeIntAt(toolbox.idle_tokens, `${path}.idle_tokens`),
+  };
+}
+
+/** What one client's agents remembered in one project. */
+export function parseProjectMemory(value: unknown): ProjectMemory {
+  const memory = objectAt(value, "$");
+  const projects = arrayAt(memory.projects, "$.projects").map(
+    (entry, index) => {
+      const path = `$.projects[${index}]`;
+      const project = objectAt(entry, path);
+      return {
+        ...optionalStringField(project, "project", path),
+        client_types: arrayAt(project.client_types, `${path}.client_types`).map(
+          clientTypeAt,
+        ),
+        last_seen_at: stringAt(project.last_seen_at, `${path}.last_seen_at`),
+      };
+    },
+  );
+  const rules: MemoryRules[] = arrayAt(memory.rules, "$.rules").map(
+    (entry, index) => {
+      const path = `$.rules[${index}]`;
+      const file = objectAt(entry, path);
+      if (
+        file.scope != null &&
+        !contextItemScopes.has(file.scope as ContextItemScope)
+      ) {
+        invalid(`${path}.scope`, "unknownScope");
+      }
+      return {
+        name: stringAt(file.name, `${path}.name`),
+        ...optionalStringField(file, "path", path),
+        ...(file.scope == null
+          ? {}
+          : { scope: file.scope as ContextItemScope }),
+        ...optionalStringField(file, "first_seen_at", path),
+        ...optionalStringField(file, "changed_at", path),
+        ...optionalStringField(file, "request_id", path),
+        ...optionalStringField(file, "session_id", path),
+        ...optionalStringField(file, "before_request_id", path),
+        ...optionalBoolField(file, "captured", path),
+      };
+    },
+  );
+  return {
+    projects,
+    ...optionalStringField(memory, "project", "$"),
+    ...(memory.client_type == null
+      ? {}
+      : { client_type: clientTypeAt(memory.client_type) }),
+    day_start: stringAt(memory.day_start, "$.day_start"),
+    recent: nonNegativeIntAt(memory.recent, "$.recent"),
+    entries: arrayAt(memory.entries, "$.entries").map((entry, index) =>
+      parseMemoryEntry(entry, `$.entries[${index}]`),
+    ),
+    stories: arrayAt(memory.stories, "$.stories").map((entry, index) => {
+      const path = `$.stories[${index}]`;
+      const story = objectAt(entry, path);
+      return {
+        file: stringAt(story.file, `${path}.file`),
+        ...optionalStringField(story, "title", path),
+        ...optionalStringField(story, "hook", path),
+        at: stringAt(story.at, `${path}.at`),
+        ...optionalStringField(story, "request_id", path),
+        ...optionalStringField(story, "session_id", path),
+        ...optionalStringField(story, "prompt", path),
+      };
+    }),
+    rules,
+    toolbox: parseMemoryToolbox(memory.toolbox, "$.toolbox"),
+    has_memory: boolAt(memory.has_memory, "$.has_memory"),
+    has_rules: boolAt(memory.has_rules, "$.has_rules"),
+  };
+}
+
+/** One memory and its events; events of a kind unknown here are left out. */
+export function parseMemoryEntryDetail(value: unknown): MemoryEntryDetail {
+  const detail = objectAt(value, "$");
+  const events: MemoryEvent[] = [];
+  arrayAt(detail.events, "$.events").forEach((entry, index) => {
+    const path = `$.events[${index}]`;
+    const event = objectAt(entry, path);
+    if (event.kind !== "noted" && event.kind !== "read") return;
+    events.push({
+      kind: event.kind,
+      at: stringAt(event.at, `${path}.at`),
+      request_id: stringAt(event.request_id, `${path}.request_id`),
+      ...optionalStringField(event, "session_id", path),
+      ...optionalStringField(event, "prompt", path),
+      ...optionalBoolField(event, "captured", path),
+    });
+  });
+  return { entry: parseMemoryEntry(detail.entry, "$.entry"), events };
+}
+
+/** What a captured call carried, as text; unknown kinds are left out. */
+export function parseRequestContextTexts(value: unknown): RequestContextTexts {
+  const texts = objectAt(value, "$");
+  for (const field of ["items", "writes", "reads"]) {
+    if (!Array.isArray(texts[field])) invalid(`$.${field}`, "array");
+  }
+  let reason: AuditWithheldReason | undefined;
+  if (texts.reason != null) {
+    const raw = stringAt(texts.reason, "$.reason");
+    if (!auditWithheldReasons.has(raw as AuditWithheldReason)) {
+      invalid("$.reason", "unknownReason");
+    }
+    reason = raw as AuditWithheldReason;
+  }
+  const items: ContextItemText[] = [];
+  (texts.items as unknown[]).forEach((entry, index) => {
+    const path = `$.items[${index}]`;
+    const item = objectAt(entry, path);
+    if (
+      item.kind !== "rules" &&
+      item.kind !== "memory" &&
+      item.kind !== "skills"
+    ) {
+      return;
+    }
+    items.push({
+      kind: item.kind,
+      ...optionalStringField(item, "name", path),
+      ...optionalStringField(item, "path", path),
+      text: stringAt(item.text, `${path}.text`),
+    });
+  });
+  const writes: MemoryWriteText[] = [];
+  (texts.writes as unknown[]).forEach((entry, index) => {
+    const path = `$.writes[${index}]`;
+    const write = objectAt(entry, path);
+    if (write.kind !== "rules" && write.kind !== "memory") return;
+    writes.push({
+      kind: write.kind,
+      name: stringAt(write.name, `${path}.name`),
+      ...optionalStringField(write, "path", path),
+      content: stringAt(write.content, `${path}.content`),
+    });
+  });
+  return {
+    request_id: stringAt(texts.request_id, "$.request_id"),
+    ...(texts.withheld == null
+      ? {}
+      : { withheld: boolAt(texts.withheld, "$.withheld") }),
+    ...(reason ? { reason } : {}),
+    ...(texts.truncated == null
+      ? {}
+      : { truncated: boolAt(texts.truncated, "$.truncated") }),
+    items,
+    ...optionalStringField(texts, "summary", "$"),
+    writes,
+    reads: (texts.reads as unknown[]).map((entry, index) => {
+      const path = `$.reads[${index}]`;
+      const read = objectAt(entry, path);
+      return {
+        name: stringAt(read.name, `${path}.name`),
+        ...optionalStringField(read, "path", path),
+        content: stringAt(read.content, `${path}.content`),
+      };
+    }),
+  };
+}
+
 export function parseRequestSessionDetail(
   value: unknown,
 ): RequestSessionDetail {
@@ -1536,6 +2452,30 @@ export function parseRequestSessionDetail(
           ),
         }
       : {}),
+    ...(detail.context == null
+      ? {}
+      : { context: parseSessionContext(detail.context, "$.context") }),
+    ...(detail.with_subagents == null
+      ? {}
+      : { with_subagents: parseSessionTotals(detail.with_subagents) }),
+  };
+}
+
+function parseSessionTotals(value: unknown): SessionTotals {
+  const totals = objectAt(value, "$.with_subagents");
+  return {
+    call_count: nonNegativeIntAt(
+      totals.call_count,
+      "$.with_subagents.call_count",
+    ),
+    input_tokens: nonNegativeIntAt(
+      totals.input_tokens,
+      "$.with_subagents.input_tokens",
+    ),
+    output_tokens: nonNegativeIntAt(
+      totals.output_tokens,
+      "$.with_subagents.output_tokens",
+    ),
   };
 }
 

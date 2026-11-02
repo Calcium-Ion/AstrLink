@@ -64,6 +64,9 @@ type Request struct {
 	// sentBodyHeaders are the Content-Encoding and Content-Length the client
 	// sent with a body ingress decoded on arrival; the record keeps them.
 	sentBodyHeaders http.Header
+	// context is what the body carried to the model, for the request
+	// records; nil for protocols without history. It holds raw client text.
+	context *contextObservation
 }
 
 // routingModel is the model id used to select services and sent upstream.
@@ -191,6 +194,7 @@ func classify(request *http.Request, maxBodyBytes int64) (Request, error) {
 	// to an upstream account.
 	attachAgentThread(&result, request.Header, metadata.fields)
 	attachAutoClassifyText(&result, request, metadata.raw, maxBodyBytes)
+	result.context = observeRequestContext(result.Protocol, metadata.raw)
 	return validateClassifiedRequest(result)
 }
 

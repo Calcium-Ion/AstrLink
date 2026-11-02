@@ -56,6 +56,10 @@ type Dependencies struct {
 	AuditSettings      storage.AuditSettingsStore
 	AuditKeys          storage.AuditKeyStore
 	AuditBlobs         storage.AuditBlobStore
+	// ContextTexts reads what a captured request body carried as text: the
+	// gateway's own reading of request context. Optional; without it the
+	// route is not found.
+	ContextTexts func(contract.ProtocolID, []byte) contract.RequestContextTexts
 	// PrivacyWarnings is the feed of requests the warn action let through.
 	// Optional; without it the route is not registered.
 	PrivacyWarnings PrivacyWarningFeed
@@ -148,6 +152,7 @@ type Handler struct {
 	auditSettings     storage.AuditSettingsStore
 	auditKeys         storage.AuditKeyStore
 	auditBlobs        storage.AuditBlobStore
+	contextTexts      func(contract.ProtocolID, []byte) contract.RequestContextTexts
 	rawVault          RawVault
 	rawGrants         *rawGrantManager
 	localData         storage.LocalDataStore
@@ -222,6 +227,7 @@ func newHandler(version contract.VersionResponse, dependencies Dependencies) (*H
 		auditSettings:   dependencies.AuditSettings,
 		auditKeys:       dependencies.AuditKeys,
 		auditBlobs:      dependencies.AuditBlobs,
+		contextTexts:    dependencies.ContextTexts,
 		rawVault:        dependencies.RawVault,
 		rawGrants:       newRawGrantManager(),
 		localData:       dependencies.LocalData,

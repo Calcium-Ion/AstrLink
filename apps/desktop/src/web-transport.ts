@@ -340,6 +340,10 @@ const commands: Record<string, Command> = {
   get_request_activity: route(
     (a) => `/request-activity${query({ since: a.since })}`,
   ),
+  get_project_memory: route((a) => `/request-memory${query(a.query as Args)}`),
+  get_project_memory_entry: route(
+    (a) => `/request-memory/entry${query(a.query as Args)}`,
+  ),
   get_request_session: route(session),
   get_session_channel_bindings: route(
     (a) => `${session(a)}/channel-bindings${query({ before: a.before })}`,
@@ -353,6 +357,7 @@ const commands: Record<string, Command> = {
   delete_request_record: route(request, "DELETE"),
   purge_request_records: route("/requests/purge", "POST", input),
   get_request_audit_content: route((a) => `${request(a)}/audit`),
+  get_request_context_texts: route((a) => `${request(a)}/audit/context`),
   list_raw_access: route("/audit/raw-access"),
   decide_raw_access: (a) =>
     raw(

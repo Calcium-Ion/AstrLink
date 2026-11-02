@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -41,6 +42,8 @@ func (handler *Handler) registerRequestRecordRoutes() {
 	handler.mux.HandleFunc(RequestSessionsPath, handler.authenticated(handler.requestSessionCollection, RoleObserver))
 	handler.mux.HandleFunc(RequestSessionsPath+"/", handler.authenticated(handler.requestSessionItem, RoleObserver))
 	handler.mux.HandleFunc(RequestActivityPath, handler.authenticated(handler.getRequestActivity, RoleObserver))
+	handler.mux.HandleFunc(RequestMemoryPath, handler.authenticated(handler.getProjectMemory, RoleObserver))
+	handler.mux.HandleFunc(RequestMemoryEntryPath, handler.authenticated(handler.getProjectMemoryEntry, RoleObserver))
 	handler.mux.HandleFunc(RequestsPath, handler.authenticated(handler.requestRecordCollection, RoleObserver))
 	handler.mux.HandleFunc(RequestsPath+"/", handler.authenticatedBy(handler.requestRecordItem, requestRecordItemRole))
 }
@@ -197,6 +200,15 @@ func (handler *Handler) requestRecordItem(writer http.ResponseWriter, request *h
 		handler.getRequestAuditContent(writer, request, idPart)
 		return
 	}
+	if strings.HasSuffix(rawID, "/audit/context") {
+		idPart := strings.TrimSuffix(rawID, "/audit/context")
+		if idPart == "" || strings.Contains(idPart, "/") || handler.contextTexts == nil {
+			writeError(writer, http.StatusNotFound, "not_found", "control API path not found")
+			return
+		}
+		handler.getRequestContextTexts(writer, request, idPart)
+		return
+	}
 	if strings.HasSuffix(rawID, "/children") {
 		idPart := strings.TrimSuffix(rawID, "/children")
 		if idPart == "" || strings.Contains(idPart, "/") {
@@ -241,6 +253,27 @@ func (handler *Handler) requestRecordItem(writer http.ResponseWriter, request *h
 }
 
 func (handler *Handler) getRequestAuditContent(writer http.ResponseWriter, request *http.Request, rawID string) {
+	handler.readRequestAudit(writer, request, rawID, func(reader *auditReader, id contract.RequestID, blobs []storage.AuditBlob) (any, error) {
+		return reader.content(id, blobs)
+	})
+}
+
+// getRequestContextTexts reads what a captured call carried as text, from
+// its request body in the audit view asked for.
+func (handler *Handler) getRequestContextTexts(writer http.ResponseWriter, request *http.Request, rawID string) {
+	handler.readRequestAudit(writer, request, rawID, func(reader *auditReader, id contract.RequestID, blobs []storage.AuditBlob) (any, error) {
+		return reader.contextTexts(id, blobs, handler.contextTexts)
+	})
+}
+
+// readRequestAudit settles who may read a call's audit parts in the view
+// asked for, then answers with what read makes of the parts.
+func (handler *Handler) readRequestAudit(
+	writer http.ResponseWriter,
+	request *http.Request,
+	rawID string,
+	read func(*auditReader, contract.RequestID, []storage.AuditBlob) (any, error),
+) {
 	if request.Method != http.MethodGet {
 		writer.Header().Set("Allow", http.MethodGet)
 		writeError(writer, http.StatusMethodNotAllowed, "method_not_allowed", "only GET is allowed")
@@ -320,7 +353,7 @@ func (handler *Handler) getRequestAuditContent(writer http.ResponseWriter, reque
 		}
 	}
 	defer reader.close()
-	content, err := reader.content(id, blobs)
+	content, err := read(reader, id, blobs)
 	if err != nil {
 		reader.writeOpenError(writer, err)
 		return
@@ -333,6 +366,34 @@ func (handler *Handler) getRequestAuditContent(writer http.ResponseWriter, reque
 		handler.observers.noteRead(request, ReadLevelShareable)
 	}
 	writeJSON(writer, http.StatusOK, content)
+}
+
+// contextTexts reads the texts the request body carried, or says why the
+// body is withheld from this read.
+func (reader *auditReader) contextTexts(
+	id contract.RequestID,
+	blobs []storage.AuditBlob,
+	read func(contract.ProtocolID, []byte) contract.RequestContextTexts,
+) (contract.RequestContextTexts, error) {
+	empty := contract.RequestContextTexts{RequestID: id, Items: []contract.ContextItemText{}, Writes: []contract.MemoryWriteText{}, Reads: []contract.MemoryReadText{}}
+	index := slices.IndexFunc(blobs, func(blob storage.AuditBlob) bool { return blob.Direction == storage.AuditDirectionRequest })
+	if index < 0 {
+		// Withheld without a reason: the body was not captured.
+		empty.Withheld = true
+		return empty, nil
+	}
+	plaintext, withheld, err := reader.open(blobs[index])
+	if err != nil {
+		return contract.RequestContextTexts{}, err
+	}
+	defer clear(plaintext)
+	if withheld != "" {
+		empty.Withheld, empty.Reason = true, withheld
+		return empty, nil
+	}
+	texts := read(reader.record.InputProtocol, plaintext)
+	texts.RequestID, texts.Truncated = id, blobs[index].Truncated
+	return texts, nil
 }
 
 // content opens every part one read may see into the audit view.

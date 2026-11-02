@@ -293,6 +293,7 @@ func openPersistentCore(ctx context.Context, options persistentOptions) (*persis
 		AuditSettings:      store,
 		AuditKeys:          store,
 		AuditBlobs:         store,
+		ContextTexts:       ingress.ContextTexts,
 		RawVault:           rawVault,
 		LocalData:          store,
 		ClientIdentities:   identities,

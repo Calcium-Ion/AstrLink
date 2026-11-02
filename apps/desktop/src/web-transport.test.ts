@@ -137,6 +137,36 @@ describe("web command transport", () => {
       "/control/v1/request-sessions?local_access_token_id=token_a&local_access_token_id=token_b&model=claude-opus-5-5&model=gpt-6.1%2Fsol&cursor=x%2By&kind=agent",
     );
   });
+  it("reads a project's memory and the texts a call carried", async () => {
+    respond({ projects: [] });
+    await webInvoke("get_project_memory", {
+      query: {
+        project: "~/GolandProjects/astrlink 项目",
+        client_type: "claude_code",
+        day_start: "2026-10-26T00:00:00+08:00",
+      },
+    });
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "/control/v1/request-memory?project=%7E%2FGolandProjects%2Fastrlink+%E9%A1%B9%E7%9B%AE&client_type=claude_code&day_start=2026-10-26T00%3A00%3A00%2B08%3A00",
+    );
+    respond({ projects: [] });
+    await webInvoke("get_project_memory", { query: { no_project: true } });
+    expect(fetchMock.mock.calls[1][0]).toBe(
+      "/control/v1/request-memory?no_project=true",
+    );
+    respond({ entry: {}, events: [] });
+    await webInvoke("get_project_memory_entry", {
+      query: { project: "~/proj", file: "no jitter.md" },
+    });
+    expect(fetchMock.mock.calls[2][0]).toBe(
+      "/control/v1/request-memory/entry?project=%7E%2Fproj&file=no+jitter.md",
+    );
+    respond({ request_id: "request_one", items: [], writes: [], reads: [] });
+    await webInvoke("get_request_context_texts", { requestId: "request_one" });
+    expect(fetchMock.mock.calls[3][0]).toBe(
+      "/control/v1/requests/request_one/audit/context",
+    );
+  });
   it.each(["POST", "PUT", "PATCH", "DELETE"] as const)(
     "protects %s requests including login and empty bodies",
     async (method) => {

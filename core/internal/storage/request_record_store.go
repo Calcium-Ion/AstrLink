@@ -113,6 +113,22 @@ type SessionLinkMatch struct {
 	ParentSessionID *contract.SessionID
 }
 
+// ProjectMemoryOptions picks the project and client a memory view covers.
+type ProjectMemoryOptions struct {
+	// Project is the project shown. Without it, and without NoProject, the
+	// project of the most recent call is shown.
+	Project *string
+	// NoProject shows the calls that named no project.
+	NoProject bool
+	// ClientType is the client shown; nil shows the one that called in the
+	// project last.
+	ClientType *contract.ClientType
+	// DayStart is when the newest day the reads count began, in the
+	// reader's time zone; Now is when the view is read.
+	DayStart time.Time
+	Now      time.Time
+}
+
 type RequestRecordStore interface {
 	InsertRequestRecord(context.Context, contract.RequestRecord) error
 	UpsertRequestRecord(context.Context, contract.RequestRecord) error
@@ -139,4 +155,11 @@ type RequestRecordStore interface {
 	// conversation made no later call before since. Model discovery is left
 	// out.
 	ListRequestActivity(ctx context.Context, since time.Time) ([]contract.RequestActivityCall, error)
+	// GetProjectMemory reads what one client's agents keep in one project;
+	// see contract.ProjectMemory.
+	GetProjectMemory(context.Context, ProjectMemoryOptions) (contract.ProjectMemory, error)
+	// GetProjectMemoryEntry reads one memory of that view, by the file its
+	// index line links, and what happened to it. ErrNotFound when the view
+	// has no such memory.
+	GetProjectMemoryEntry(context.Context, ProjectMemoryOptions, string) (contract.MemoryEntryDetail, error)
 }

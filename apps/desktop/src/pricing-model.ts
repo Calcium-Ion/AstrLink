@@ -84,7 +84,12 @@ export function formatUSD(value: string | undefined): string {
     maximumFractionDigits: 2,
   }).format(Number(value));
 }
-export function billingAmount(amounts: BillingAmounts | undefined): string {
+export function billingAmount(
+  amounts:
+    | Pick<BillingAmounts, "amount_usd" | "priced" | "unpriced" | "pending">
+    | undefined,
+  options: { short?: boolean } = {},
+): string {
   if (
     !amounts ||
     (amounts.priced === 0 && amounts.unpriced + amounts.pending > 0)

@@ -61,35 +61,37 @@ func convoProtocol(protocol contract.ProtocolID) (convo.Protocol, bool) {
 }
 
 // sessionFingerprints lazily derives and caches the fingerprint keys from the
-// audit master key: the session key convo links calls with, and the key of
-// the link fingerprints that tie a subagent or a title request to its
-// conversation. The cache only fills on success so a transient storage error
+// audit master key: the session key convo links calls with, the key of the
+// link fingerprints that tie a subagent or a title request to its
+// conversation, and the key of the request context digests. The cache only fills on success so a transient storage error
 // on the first request does not disable fingerprints for the process.
 type sessionFingerprints struct {
 	mu          sync.Mutex
 	fingerprint *convo.Fingerprinter
 	link        *convo.Fingerprinter
+	context     *convo.Fingerprinter
 }
 
-func (cache *sessionFingerprints) get(ctx context.Context, blobs AuditBlobPersister, logf func(string, ...any)) (session, link *convo.Fingerprinter) {
+func (cache *sessionFingerprints) get(ctx context.Context, blobs AuditBlobPersister, logf func(string, ...any)) (session, link, requestContext *convo.Fingerprinter) {
 	if cache == nil || blobs == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
 	if cache.fingerprint != nil {
-		return cache.fingerprint, cache.link
+		return cache.fingerprint, cache.link, cache.context
 	}
 	master, err := blobs.GetOrCreateAuditKey(ctx)
 	if err != nil {
 		if logf != nil {
 			logf("session fingerprint key unavailable: %v", err)
 		}
-		return nil, nil
+		return nil, nil, nil
 	}
 	cache.fingerprint = convo.NewFingerprinter(convo.DeriveFingerprintKey(master, sessionFingerprintInfo))
 	cache.link = convo.NewFingerprinter(convo.DeriveFingerprintKey(master, linkFingerprintInfo))
-	return cache.fingerprint, cache.link
+	cache.context = convo.NewFingerprinter(convo.DeriveFingerprintKey(master, contextFingerprintInfo))
+	return cache.fingerprint, cache.link, cache.context
 }
 
 // sessionLookup adapts the record store to convo.Lookup, binding the

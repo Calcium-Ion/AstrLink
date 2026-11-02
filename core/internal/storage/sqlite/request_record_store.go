@@ -27,7 +27,9 @@ const requestRecordSelectColumns = `
            WHERE request_record_cursors.request_id = request_records.id
            ORDER BY kind, direction, value)) AS cursors_json, first_token_ms, model_redirect_json,
     routing_decision_json, client_type, privacy_decision, privacy_findings_json, conversion_diagnostics_json,
-    first_answer_ms, privacy_ignored_json, output_json, parent_session_id`
+    first_answer_ms, privacy_ignored_json, output_json, parent_session_id, context_json,
+    (SELECT project FROM context_sets WHERE context_sets.id = request_records.context_set_id) AS context_project,
+    (SELECT items_json FROM context_sets WHERE context_sets.id = request_records.context_set_id) AS context_items`
 
 const requestRecordInsertColumns = `
     id, parent_request_id, attempt_index, started_at, completed_at, status, input_protocol,
@@ -36,9 +38,10 @@ const requestRecordInsertColumns = `
     session_id, previous_response_id, output_response_id, input_preview, events_json, created_at,
     turn_index, session_link_json, turn_user_messages, turn_user_fingerprint, recovery_json, first_token_ms,
     model_redirect_json, routing_decision_json, client_type, privacy_decision, privacy_findings_json,
-    conversion_diagnostics_json, first_answer_ms, privacy_ignored_json, output_json, parent_session_id`
+    conversion_diagnostics_json, first_answer_ms, privacy_ignored_json, output_json, parent_session_id,
+    context_json, context_set_id`
 
-const requestRecordInsertValues = `(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+const requestRecordInsertValues = `(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 func (row requestRecordRow) insertArgs() []any {
 	return []any{
@@ -50,6 +53,7 @@ func (row requestRecordRow) insertArgs() []any {
 		row.turnIndex, row.sessionLinkJSON, row.turnUserMessages, row.turnUserFingerprint, row.recoveryJSON, row.firstTokenMs,
 		row.modelRedirectJSON, row.routingDecisionJSON, row.clientType, row.privacyDecision, row.privacyFindingsJSON,
 		row.conversionDiagnosticsJSON, row.firstAnswerMs, row.privacyIgnoredJSON, row.outputJSON, row.parentSessionID,
+		row.contextJSON, row.contextSetID,
 	}
 }
 
@@ -66,6 +70,9 @@ func (store *Store) InsertRequestRecord(ctx context.Context, record contract.Req
 		return fmt.Errorf("begin request insert: %w", err)
 	}
 	defer rollbackOnError(transaction, &err)
+	if row.contextSetID, err = recordContextSet(ctx, transaction, record); err != nil {
+		return err
+	}
 	if _, err = transaction.ExecContext(ctx,
 		`INSERT INTO request_records (`+requestRecordInsertColumns+`) VALUES `+requestRecordInsertValues,
 		row.insertArgs()...,
@@ -102,6 +109,9 @@ func (store *Store) UpsertRequestRecord(ctx context.Context, record contract.Req
 		return fmt.Errorf("begin request upsert: %w", err)
 	}
 	defer rollbackOnError(transaction, &err)
+	if row.contextSetID, err = recordContextSet(ctx, transaction, record); err != nil {
+		return err
+	}
 	result, err := transaction.ExecContext(ctx, `INSERT INTO request_records (`+requestRecordInsertColumns+`
 ) VALUES `+requestRecordInsertValues+`
 ON CONFLICT(id) DO UPDATE SET
@@ -144,7 +154,9 @@ ON CONFLICT(id) DO UPDATE SET
     privacy_ignored_json = excluded.privacy_ignored_json,
     conversion_diagnostics_json = excluded.conversion_diagnostics_json,
     output_json = excluded.output_json,
-    parent_session_id = COALESCE(excluded.parent_session_id, request_records.parent_session_id)
+    parent_session_id = COALESCE(excluded.parent_session_id, request_records.parent_session_id),
+    context_json = excluded.context_json,
+    context_set_id = excluded.context_set_id
 WHERE request_records.status = 'pending' OR excluded.status <> 'pending'`,
 		row.insertArgs()...,
 	)
@@ -164,6 +176,8 @@ WHERE request_records.status = 'pending' OR excluded.status <> 'pending'`,
 		if err = recordBilling(ctx, transaction, record, false); err != nil {
 			return err
 		}
+	} else if err = dropUnusedContextSet(ctx, transaction, row.contextSetID); err != nil {
+		return err
 	}
 	if err = transaction.Commit(); err != nil {
 		return fmt.Errorf("commit request upsert: %w", err)
@@ -711,50 +725,30 @@ func purgeRequestSessions(
 	return result, nil
 }
 
-// maxSubagentDepth bounds how many levels of subagents a purge follows.
-const maxSubagentDepth = 8
-
 // withSubagentSessions returns sessionIDs plus every conversation they
-// started as subagents, down to maxSubagentDepth levels, as query arguments.
+// started as subagents, theirs included, as query arguments.
 func withSubagentSessions(ctx context.Context, transaction *sql.Tx, sessionIDs []contract.SessionID) ([]any, error) {
-	seen := make(map[string]struct{}, len(sessionIDs))
-	args := make([]any, 0, len(sessionIDs))
-	frontier := make([]any, 0, len(sessionIDs))
-	for _, id := range sessionIDs {
-		if _, ok := seen[string(id)]; ok {
-			continue
-		}
-		seen[string(id)] = struct{}{}
-		args = append(args, string(id))
-		frontier = append(frontier, string(id))
+	roots := make([]string, len(sessionIDs))
+	for index, id := range sessionIDs {
+		roots[index] = string(id)
 	}
-	for depth := 0; depth < maxSubagentDepth && len(frontier) > 0; depth++ {
-		rows, err := transaction.QueryContext(ctx, `SELECT DISTINCT COALESCE(session_id, id) FROM request_records
-WHERE parent_session_id IS NOT NULL AND parent_session_id IN (`+sessionPlaceholders(len(frontier))+`)
-  AND parent_request_id IS NULL`, frontier...)
-		if err != nil {
-			return nil, fmt.Errorf("list subagent sessions: %w", err)
-		}
-		next := make([]any, 0)
-		for rows.Next() {
-			var id string
-			if err := rows.Scan(&id); err != nil {
-				rows.Close()
-				return nil, fmt.Errorf("scan subagent session: %w", err)
-			}
-			if _, ok := seen[id]; ok {
-				continue
-			}
+	parents, err := subagentParents(ctx, transaction, roots)
+	if err != nil {
+		return nil, err
+	}
+	seen := make(map[string]struct{}, len(roots)+len(parents))
+	args := make([]any, 0, len(roots)+len(parents))
+	for _, id := range roots {
+		if _, ok := seen[id]; !ok {
 			seen[id] = struct{}{}
 			args = append(args, id)
-			next = append(next, id)
 		}
-		if err := rows.Err(); err != nil {
-			rows.Close()
-			return nil, fmt.Errorf("iterate subagent sessions: %w", err)
+	}
+	for id := range parents {
+		if _, ok := seen[id]; !ok {
+			seen[id] = struct{}{}
+			args = append(args, id)
 		}
-		rows.Close()
-		frontier = next
 	}
 	return args, nil
 }
@@ -802,6 +796,8 @@ type requestRecordRow struct {
 	conversionDiagnosticsJSON any
 	outputJSON                any
 	parentSessionID           any
+	contextJSON               any
+	contextSetID              any
 }
 
 func encodeRequestRecordRow(record contract.RequestRecord, createdAt time.Time) (requestRecordRow, error) {
@@ -941,6 +937,13 @@ func encodeRequestRecordRow(record contract.RequestRecord, createdAt time.Time) 
 	if record.ParentSessionID != nil {
 		row.parentSessionID = string(*record.ParentSessionID)
 	}
+	if record.Context != nil {
+		encoded, err := encodeRecordContext(*record.Context)
+		if err != nil {
+			return requestRecordRow{}, err
+		}
+		row.contextJSON = encoded
+	}
 	if record.PreviousResponseID != nil {
 		row.previousResponseID = *record.PreviousResponseID
 	}
@@ -983,7 +986,7 @@ type scannable interface {
 func scanRequestRecord(row scannable) (contract.RequestRecord, error) {
 	var recoveryJSON, modelRedirectJSON, routingDecisionJSON, clientType sql.NullString
 	var privacyDecision, privacyFindingsJSON, privacyIgnoredJSON, conversionDiagnosticsJSON sql.NullString
-	var outputJSON, parentSessionID sql.NullString
+	var outputJSON, parentSessionID, contextJSON, contextProject, contextItems sql.NullString
 	var firstTokenMs, firstAnswerMs sql.NullInt64
 	var (
 		id, startedAt, status, inputProtocol, auditJSON, createdAt        string
@@ -1005,6 +1008,7 @@ func scanRequestRecord(row scannable) (contract.RequestRecord, error) {
 		&createdAt, &turnIndex, &sessionLinkJSON, &turnUserMessages, &turnUserFingerprint, &recoveryJSON, &childCount, &cursorsJSON, &firstTokenMs,
 		&modelRedirectJSON, &routingDecisionJSON, &clientType, &privacyDecision, &privacyFindingsJSON,
 		&conversionDiagnosticsJSON, &firstAnswerMs, &privacyIgnoredJSON, &outputJSON, &parentSessionID,
+		&contextJSON, &contextProject, &contextItems,
 	); err != nil {
 		return contract.RequestRecord{}, err
 	}
@@ -1150,6 +1154,21 @@ func scanRequestRecord(row scannable) (contract.RequestRecord, error) {
 		record.Output = &contract.OutputActivity{}
 		if err := json.Unmarshal([]byte(outputJSON.String), record.Output); err != nil {
 			return contract.RequestRecord{}, fmt.Errorf("%w: request %q output", storagecontract.ErrInvalidRecord, id)
+		}
+	}
+	if contextJSON.Valid && contextJSON.String != "" {
+		var items []contract.ContextItem
+		if contextItems.Valid {
+			if items, err = decodeContextItems(contextItems.String); err != nil {
+				return contract.RequestRecord{}, fmt.Errorf("%w: request %q context items", storagecontract.ErrInvalidRecord, id)
+			}
+		}
+		if record.Context, err = assembleContext(contextJSON.String, items, record.Usage); err != nil {
+			return contract.RequestRecord{}, fmt.Errorf("%w: request %q context", storagecontract.ErrInvalidRecord, id)
+		}
+		if contextProject.Valid && contextProject.String != "" {
+			value := contextProject.String
+			record.Project = &value
 		}
 	}
 	if sessionID.Valid {

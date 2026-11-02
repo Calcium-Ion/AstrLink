@@ -49,6 +49,7 @@ type Store struct {
 	serviceDocuments  serviceDocumentCache
 	usageSummaries    historyCache
 	requestSessions   historyCache
+	modelWindows      modelWindowCache
 	channelBindingsMu chan struct{}
 	db                *sql.DB
 	keys              *keyRing

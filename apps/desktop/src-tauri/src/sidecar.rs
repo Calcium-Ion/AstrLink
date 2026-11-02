@@ -2725,6 +2725,40 @@ impl CoreManager {
             .map_err(|error| format!("request activity returned invalid JSON: {error}"))
     }
 
+    pub async fn get_project_memory(
+        &self,
+        query: serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
+        let qs = build_project_memory_query(&query, false)?;
+        let (_, body) = self
+            .authenticated_control(
+                Method::GET,
+                &format!("/control/v1/request-memory{qs}"),
+                None,
+                None,
+            )
+            .await?;
+        serde_json::from_slice(&body)
+            .map_err(|error| format!("request memory returned invalid JSON: {error}"))
+    }
+
+    pub async fn get_project_memory_entry(
+        &self,
+        query: serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
+        let qs = build_project_memory_query(&query, true)?;
+        let (_, body) = self
+            .authenticated_control(
+                Method::GET,
+                &format!("/control/v1/request-memory/entry{qs}"),
+                None,
+                None,
+            )
+            .await?;
+        serde_json::from_slice(&body)
+            .map_err(|error| format!("request memory entry returned invalid JSON: {error}"))
+    }
+
     pub async fn get_request_session(&self, session_id: &str) -> Result<serde_json::Value, String> {
         validate_resource_id(session_id)?;
         let (_, body) = self
@@ -2837,6 +2871,23 @@ impl CoreManager {
             .await?;
         serde_json::from_slice(&body)
             .map_err(|error| format!("request audit content returned invalid JSON: {error}"))
+    }
+
+    pub async fn get_request_context_texts(
+        &self,
+        request_id: &str,
+    ) -> Result<serde_json::Value, String> {
+        validate_resource_id(request_id)?;
+        let (_, body) = self
+            .authenticated_control(
+                Method::GET,
+                &format!("/control/v1/requests/{request_id}/audit/context"),
+                None,
+                None,
+            )
+            .await?;
+        serde_json::from_slice(&body)
+            .map_err(|error| format!("request context texts returned invalid JSON: {error}"))
     }
 
     pub async fn builtin_tool_action(
@@ -3310,14 +3361,23 @@ fn is_subscription_usage_path(path: &str) -> bool {
         && (path.ends_with("/usage") || path.ends_with("/usage/reset"))
 }
 
+/// The reads that decrypt a call's captured body: its audit content and the
+/// texts it carried.
+fn is_request_audit_read_path(path: &str) -> bool {
+    path.starts_with("/control/v1/requests/")
+        && (path.ends_with("/audit") || path.ends_with("/audit/context"))
+}
+
 fn is_request_record_list_path(path: &str) -> bool {
-    if path.starts_with("/control/v1/requests/") && path.ends_with("/audit") {
+    if is_request_audit_read_path(path) {
         return false;
     }
     path == "/control/v1/requests"
         || path.starts_with("/control/v1/requests/")
         || path == "/control/v1/request-sessions"
         || path.starts_with("/control/v1/request-sessions/")
+        || path == "/control/v1/request-memory"
+        || path == "/control/v1/request-memory/entry"
 }
 
 fn is_builtin_tool_test(method: &Method, path: &str) -> bool {
@@ -3418,10 +3478,7 @@ fn control_request_timeout(method: &Method, path: &str) -> Duration {
     {
         return PRIVACY_MUTATION_TIMEOUT;
     }
-    if method == Method::GET
-        && path.starts_with("/control/v1/requests/")
-        && path.ends_with("/audit")
-    {
+    if method == Method::GET && is_request_audit_read_path(path) {
         return AUDIT_CONTENT_TIMEOUT;
     }
     if (*method == Method::GET || *method == Method::POST) && is_subscription_usage_path(path) {
@@ -3434,7 +3491,7 @@ fn control_request_timeout(method: &Method, path: &str) -> Duration {
 }
 
 fn control_body_limit(path: &str) -> usize {
-    if path.starts_with("/control/v1/requests/") && path.ends_with("/audit") {
+    if is_request_audit_read_path(path) {
         MAX_AUDIT_CONTENT_BODY
     } else {
         MAX_CONTROL_BODY
@@ -5328,6 +5385,113 @@ fn build_request_session_query(query: &serde_json::Value) -> Result<String, Stri
     Ok(qs)
 }
 
+/// Builds the request memory query: a project or the calls without one, a
+/// client, the day start and, for one entry, its file, each checked before it
+/// reaches Core.
+fn build_project_memory_query(query: &serde_json::Value, entry: bool) -> Result<String, String> {
+    if query.is_null() {
+        return if entry {
+            Err("request memory entry query must name a file".to_string())
+        } else {
+            Ok(String::new())
+        };
+    }
+    let object = query
+        .as_object()
+        .ok_or_else(|| "request memory query must be an object".to_string())?;
+    let mut project: Option<&str> = None;
+    let mut no_project = false;
+    let mut client_type: Option<&str> = None;
+    let mut day_start: Option<&str> = None;
+    let mut file: Option<&str> = None;
+    for (key, value) in object {
+        match key.as_str() {
+            "project" => {
+                let text = value
+                    .as_str()
+                    .ok_or_else(|| "request memory query project must be a string".to_string())?;
+                if text.is_empty()
+                    || text.chars().count() > 512
+                    || text.chars().any(char::is_control)
+                {
+                    return Err("request memory query project is invalid".to_string());
+                }
+                project = Some(text);
+            }
+            "no_project" => {
+                if value.as_bool() != Some(true) {
+                    return Err("request memory query no_project must be true".to_string());
+                }
+                no_project = true;
+            }
+            "client_type" => {
+                let text = value.as_str().ok_or_else(|| {
+                    "request memory query client_type must be a string".to_string()
+                })?;
+                if text.is_empty()
+                    || text.len() > 32
+                    || !text.bytes().all(|byte| matches!(byte, b'a'..=b'z' | b'_'))
+                {
+                    return Err("request memory query client_type is invalid".to_string());
+                }
+                client_type = Some(text);
+            }
+            "day_start" => {
+                let text = value
+                    .as_str()
+                    .ok_or_else(|| "request memory query day_start must be a string".to_string())?;
+                if !timestamp_query_charset_ok(text) {
+                    return Err(
+                        "request memory query day_start has an invalid timestamp charset"
+                            .to_string(),
+                    );
+                }
+                day_start = Some(text);
+            }
+            "file" if entry => {
+                let text = value
+                    .as_str()
+                    .ok_or_else(|| "request memory query file must be a string".to_string())?;
+                if text.is_empty()
+                    || text.chars().count() > 128
+                    || text.chars().any(char::is_control)
+                {
+                    return Err("request memory query file is invalid".to_string());
+                }
+                file = Some(text);
+            }
+            _ => return Err(format!("request memory query has an unknown field {key}")),
+        }
+    }
+    if project.is_some() && no_project {
+        return Err("request memory query cannot name a project and no project".to_string());
+    }
+    if entry && file.is_none() {
+        return Err("request memory entry query must name a file".to_string());
+    }
+    let mut pairs = Vec::new();
+    if let Some(project) = project {
+        pairs.push(format!("project={}", percent_encode_query(project)));
+    }
+    if no_project {
+        pairs.push("no_project=true".to_string());
+    }
+    if let Some(client_type) = client_type {
+        pairs.push(format!("client_type={client_type}"));
+    }
+    if let Some(day_start) = day_start {
+        pairs.push(format!("day_start={}", percent_encode_query(day_start)));
+    }
+    if let Some(file) = file {
+        pairs.push(format!("file={}", percent_encode_query(file)));
+    }
+    Ok(if pairs.is_empty() {
+        String::new()
+    } else {
+        format!("?{}", pairs.join("&"))
+    })
+}
+
 fn build_request_record_query(query: &serde_json::Value) -> Result<String, String> {
     if query.is_null() {
         return Ok(String::new());
@@ -6623,6 +6787,21 @@ mod tests {
             AUDIT_CONTENT_TIMEOUT
         );
         assert_eq!(
+            control_request_timeout(
+                &Method::GET,
+                "/control/v1/requests/req_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/audit/context"
+            ),
+            AUDIT_CONTENT_TIMEOUT
+        );
+        assert_eq!(
+            control_request_timeout(&Method::GET, "/control/v1/request-memory?no_project=true"),
+            REQUEST_LIST_TIMEOUT
+        );
+        assert_eq!(
+            control_request_timeout(&Method::GET, "/control/v1/request-memory/entry?file=a.md"),
+            REQUEST_LIST_TIMEOUT
+        );
+        assert_eq!(
             control_request_timeout(&Method::GET, "/control/v1/request-sessions?limit=50"),
             REQUEST_LIST_TIMEOUT
         );
@@ -6657,6 +6836,7 @@ mod tests {
 
     #[test]
     fn percent_encode_query_leaves_unreserved_and_encodes_specials() {
+        assert_eq!(percent_encode_query("~/proj"), "~%2Fproj");
         assert_eq!(percent_encode_query("Aa0-._~"), "Aa0-._~");
         assert_eq!(percent_encode_query("+"), "%2B");
         assert_eq!(percent_encode_query("="), "%3D");
@@ -6664,6 +6844,74 @@ mod tests {
         assert_eq!(percent_encode_query("/"), "%2F");
         assert_eq!(percent_encode_query(" "), "%20");
         assert_eq!(percent_encode_query("猫"), "%E7%8C%AB");
+    }
+
+    #[test]
+    fn build_project_memory_query_checks_each_field() {
+        assert_eq!(
+            build_project_memory_query(&serde_json::Value::Null, false).unwrap(),
+            ""
+        );
+        assert_eq!(
+            build_project_memory_query(&serde_json::json!({}), false).unwrap(),
+            ""
+        );
+        assert_eq!(
+            build_project_memory_query(
+                &serde_json::json!({
+                    "day_start": "2026-10-26T00:00:00+08:00",
+                    "client_type": "claude_code",
+                    "project": "~/GolandProjects/astrlink 项目"
+                }),
+                false
+            )
+            .unwrap(),
+            "?project=~%2FGolandProjects%2Fastrlink%20%E9%A1%B9%E7%9B%AE&client_type=claude_code&day_start=2026-10-26T00%3A00%3A00%2B08%3A00"
+        );
+        assert_eq!(
+            build_project_memory_query(&serde_json::json!({"no_project": true}), false).unwrap(),
+            "?no_project=true"
+        );
+        assert_eq!(
+            build_project_memory_query(
+                &serde_json::json!({"project": "~/proj", "file": "no jitter.md"}),
+                true
+            )
+            .unwrap(),
+            "?project=~%2Fproj&file=no%20jitter.md"
+        );
+        for query in [
+            serde_json::Value::Null,
+            serde_json::json!({"project": "~/proj"}),
+            serde_json::json!({"file": ""}),
+            serde_json::json!({"file": "a\nb.md"}),
+            serde_json::json!({"file": "x".repeat(129)}),
+        ] {
+            assert!(
+                build_project_memory_query(&query, true).is_err(),
+                "accepted entry {query}"
+            );
+        }
+        for query in [
+            serde_json::json!("~/proj"),
+            serde_json::json!({"project": ""}),
+            serde_json::json!({"project": "a\nb"}),
+            serde_json::json!({"project": "x".repeat(513)}),
+            serde_json::json!({"project": "~/proj", "no_project": true}),
+            serde_json::json!({"no_project": false}),
+            serde_json::json!({"no_project": "true"}),
+            serde_json::json!({"client_type": "Claude"}),
+            serde_json::json!({"client_type": "claude&code"}),
+            serde_json::json!({"day_start": "yesterday"}),
+            serde_json::json!({"since": "2026-10-26T00:00:00Z"}),
+            serde_json::json!({"file": "a.md"}),
+            serde_json::json!({"limit": 5}),
+        ] {
+            assert!(
+                build_project_memory_query(&query, false).is_err(),
+                "accepted {query}"
+            );
+        }
     }
 
     #[test]
@@ -6860,6 +7108,12 @@ mod tests {
     fn control_body_limit_raises_only_for_audit_content_paths() {
         assert_eq!(
             control_body_limit("/control/v1/requests/req_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/audit"),
+            MAX_AUDIT_CONTENT_BODY
+        );
+        assert_eq!(
+            control_body_limit(
+                "/control/v1/requests/req_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/audit/context"
+            ),
             MAX_AUDIT_CONTENT_BODY
         );
         assert_eq!(control_body_limit("/control/v1/requests"), MAX_CONTROL_BODY);

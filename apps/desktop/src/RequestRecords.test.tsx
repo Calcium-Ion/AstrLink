@@ -10,8 +10,11 @@ const bridgeMocks = vi.hoisted(() => ({
   getCoreStatus: vi.fn(),
   getPreferences: vi.fn(),
   getPrivacyPolicy: vi.fn(),
+  getProjectMemory: vi.fn(),
+  getProjectMemoryEntry: vi.fn(),
   getRawSealingStatus: vi.fn(),
   getRequestAuditContent: vi.fn(),
+  getRequestContextTexts: vi.fn(),
   getRequestRecord: vi.fn(),
   getRequestSession: vi.fn(),
   getRoutingSettings: vi.fn(),
@@ -999,15 +1002,213 @@ describe("RequestRecords", () => {
     expect(
       container.querySelector('[data-testid="active-sessions"]'),
     ).toBeNull();
+  });
 
+  it("says under a live lane when one tool call keeps failing", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-28T12:00:10Z"));
+    const live = {
+      started_at: "2026-07-28T11:50:00Z",
+      last_started_at: "2026-07-28T12:00:01Z",
+      completed_at: "2026-07-28T12:00:05Z",
+    };
+    bridgeMocks.listRequestSessions.mockResolvedValue({
+      items: [
+        sessionFromRecord(firstRecord, {
+          ...live,
+          id: "stuck",
+          title: "conversation running into the same error",
+          failed_repeats: { tool: "Bash", count: 4, command: true },
+        }),
+        sessionFromRecord(firstRecord, {
+          ...live,
+          id: "fine",
+          title: "conversation at work",
+        }),
+      ],
+      next_cursor: null,
+    });
+    await renderRecords();
+    const lane = (id: string) =>
+      container.querySelector<HTMLElement>(
+        `[data-testid="active-sessions"] [data-session-id="${id}"]`,
+      );
+    const line = lane("stuck")?.querySelector(
+      '[data-testid="lane-failed-repeats"]',
+    );
+    expect(line?.textContent).toBe("同一条 Bash 命令连续失败 4 次");
+    expect(line?.className).toContain("text-danger-foreground");
+    expect(
+      lane("fine")?.querySelector('[data-testid="lane-failed-repeats"]'),
+    ).toBeNull();
+  });
+
+  it("reads memory in its own tab, and moves between it and the conversation", async () => {
+    const entry = {
+      file: "no-jitter.md",
+      title: "No jitter-sensitive tests",
+      hook: "wait on done channels",
+      noted_at: firstRecord.started_at,
+      reads: Array<number>(14).fill(0),
+      total_reads: 0,
+    };
+    bridgeMocks.getProjectMemory.mockResolvedValue({
+      projects: [
+        {
+          project: "~/proj",
+          client_types: ["codex"],
+          last_seen_at: firstRecord.started_at,
+        },
+      ],
+      project: "~/proj",
+      client_type: "codex",
+      day_start: firstRecord.started_at,
+      recent: 0,
+      entries: [entry],
+      stories: [],
+      rules: [
+        { name: "AGENTS.md", path: "~/proj/AGENTS.md", scope: "project" },
+      ],
+      toolbox: { skills: [], mcp: [], idle_tokens: 0 },
+      has_memory: true,
+      has_rules: true,
+    });
+    bridgeMocks.getProjectMemoryEntry.mockResolvedValue({
+      entry,
+      events: [
+        {
+          kind: "noted",
+          at: firstRecord.started_at,
+          request_id: firstRecord.id,
+          session_id: firstRecord.id,
+        },
+      ],
+    });
+    // The call that noted it shows the write in its conversation.
+    const noted: RequestRecord = {
+      ...firstRecord,
+      client_type: "codex",
+      project: "~/proj",
+      context: {
+        items: [],
+        memory_writes: [
+          {
+            kind: "memory",
+            name: "MEMORY.md",
+            title: "No jitter-sensitive tests",
+            entry: "no-jitter.md",
+          },
+        ],
+      },
+    };
+    bridgeMocks.getRequestSession.mockImplementation(async () =>
+      sessionDetail(noted),
+    );
+    await renderRecords();
+    expect(
+      [
+        ...container.querySelectorAll(
+          `[aria-label="${i18n.t("records.kind")}"] [role="tab"]`,
+        ),
+      ].map((tab) => tab.textContent),
+    ).toStrictEqual(["模型调用", "模型获取", "全部", "记忆"]);
+    expect(bridgeMocks.getProjectMemory).not.toHaveBeenCalled();
+    const listPanel = () =>
+      container.querySelector<HTMLElement>(
+        '[data-testid="request-records-scroll"]',
+      )!;
+
+    listPanel().scrollTop = 600;
+
+    await act(async () => exactButton("记忆").focus());
+    await flush();
+    expect(bridgeMocks.getProjectMemory).toHaveBeenCalledTimes(1);
+    // The list stays mounted under the memory tab, hidden.
+    expect(listPanel().hidden).toBe(true);
+    expect(
+      listPanel().querySelector(`[data-session-id="${firstRecord.id}"]`),
+    ).not.toBeNull();
+    // WKWebView drops the offset while display: none hides the list.
+    listPanel().scrollTop = 0;
+    const row = () =>
+      container.querySelector<HTMLElement>('[data-testid="memory-entry"]');
+    expect(row()?.textContent).toContain("No jitter-sensitive tests");
+    // The list's filters give their row to the memory's own.
+    expect(
+      container
+        .querySelector(`button[aria-label="${i18n.t("records.moreFilters")}"]`)
+        ?.closest("[hidden]"),
+    ).not.toBeNull();
     await act(async () =>
-      board
-        .querySelector<HTMLButtonElement>('[data-testid="activity-failures"]')!
+      container
+        .querySelector<HTMLButtonElement>(
+          `button[aria-label="${i18n.t("common.refresh")}"]`,
+        )!
         .click(),
     );
+    await flush();
+    expect(bridgeMocks.getProjectMemory).toHaveBeenCalledTimes(2);
+
+    // A memory's history opens the conversation at the call that noted it.
+    await act(async () => row()!.querySelector("button")!.click());
+    await flush();
+    await act(async () =>
+      document
+        .querySelector<HTMLButtonElement>(
+          '[data-testid="memory-event"] button',
+        )!
+        .click(),
+    );
+    await settleFilterLayer();
+    await flush();
+    const selectedSection = () =>
+      container.querySelector(
+        `[aria-label="${i18n.t("records.sections")}"] [role="tab"][aria-selected="true"]`,
+      )?.textContent;
+    expect(selectedSection()).toBe("摘要");
+
+    // The conversation's new memory opens back in the memory tab.
+    await vi.waitFor(() => {
+      expect(
+        container.querySelector('[data-testid="conversation-memory"] button'),
+      ).not.toBeNull();
+    });
+    await act(async () =>
+      container
+        .querySelector<HTMLButtonElement>(
+          '[data-testid="conversation-memory"] button',
+        )!
+        .click(),
+    );
+    await flush();
+    expect(row()).not.toBeNull();
+    expect(bridgeMocks.getProjectMemory).toHaveBeenLastCalledWith(
+      expect.objectContaining({ project: "~/proj", client_type: "codex" }),
+    );
+    expect(bridgeMocks.getProjectMemoryEntry).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        project: "~/proj",
+        client_type: "codex",
+        file: "no-jitter.md",
+      }),
+    );
     expect(
-      container.querySelector('button[aria-label="清除筛选：状态: 失败"]'),
-    ).not.toBeNull();
+      document.querySelector('[data-testid="memory-entry-dialog"] h2')
+        ?.textContent,
+    ).toBe("No jitter-sensitive tests");
+    await act(async () => {
+      document.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+      );
+    });
+    await settleFilterLayer();
+
+    // Back on the lists, the list reads as it was left.
+    await act(async () => exactButton("模型调用").focus());
+    await flush();
+    expect(row()).toBeNull();
+    expect(listPanel().hidden).toBe(false);
+    expect(listPanel().scrollTop).toBe(600);
   });
 
   it("leads the list with conversations in progress until their wait runs out", async () => {
@@ -4762,7 +4963,8 @@ describe("RequestRecords", () => {
         `[aria-label="${i18n.t("records.sections")}"] [role="tab"]`,
       ),
     ].map((tab) => tab.textContent?.trim());
-    expect(tabs.slice(0, 2)).toEqual(["摘要", "追踪"]);
+    // The context sits right after the summary it explains.
+    expect(tabs.slice(0, 3)).toEqual(["摘要", "上下文", "追踪"]);
     expect(
       container.querySelector('[data-testid="request-conversation"]'),
     ).not.toBeNull();
