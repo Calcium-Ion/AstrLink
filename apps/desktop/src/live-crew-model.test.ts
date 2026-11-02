@@ -5,12 +5,15 @@ import {
   CLONE_LIMIT,
   createCrew,
   CREW_LIMIT,
+  CREW_STAGES,
+  CREW_TOP,
+  crewGrowth,
   MIN_HOLD,
   MIN_REST,
-  milestonePassed,
   QUEUE_LIMIT,
   readCrew,
   settleCrew,
+  stagePassed,
   stepCrew,
   syncCrew,
   toolAct,
@@ -22,7 +25,13 @@ import {
   type CrewReading,
   type CrewStation,
 } from "./live-crew-model";
-import { createScene, CREW_HEIGHT, CREW_SCENES } from "./live-crew-scenes";
+import { markOf, stepOrb, type Pixel } from "./live-crew-draw";
+import {
+  createScene,
+  CREW_HEIGHT,
+  CREW_SCENES,
+  DEFAULT_CREW_SCENE,
+} from "./live-crew-scenes";
 import type {
   RequestActivityCall,
   OutputActivity,
@@ -60,6 +69,7 @@ function member(
     act,
     tool,
     rate: 0,
+    model: "",
     clones: [],
     failovers: [],
     since: 0,
@@ -171,6 +181,33 @@ describe("readCrew", () => {
       { id: "sub-b", act: "think", tool: "" },
     ]);
     expect(codex).toMatchObject({ client: "codex", act: "write", tool: "" });
+  });
+
+  it("reads the model of each conversation's latest call that names one", () => {
+    const crew = readCrew({
+      now: "2026-11-02T08:10:00Z",
+      calls: [
+        call("main", "09:00", { model: "" }),
+        call("main", "08:00", {
+          completed_at: "2026-11-02T08:08:30Z",
+          status: "succeeded",
+          output: output("tool", ["Read"]),
+          model: "deepseek-v4",
+        }),
+        call("main", "07:00", {
+          completed_at: "2026-11-02T08:07:30Z",
+          status: "succeeded",
+          output: output("tool", ["Read"]),
+          model: "kimi-k3",
+        }),
+        call("sub", "09:30", { parent_session_id: "main", model: "glm-5.3" }),
+        call("bare", "09:00"),
+      ],
+    });
+    expect(crew.members.map(({ id, model }) => ({ id, model }))).toEqual([
+      { id: "main", model: "deepseek-v4" },
+      { id: "bare", model: "" },
+    ]);
   });
 });
 
@@ -289,8 +326,10 @@ describe("the crew", () => {
     ];
     syncCrew(crew, reading(member("a", "bash", "Task", { clones })), layout);
     const [owner] = crew.members;
+    // Codex is drawn at 1.5 px a cell; its clones at half, never below 1.
+    expect(owner.u).toBe(1.5);
     expect(owner.clones.map((clone) => [clone.id, clone.u])).toEqual(
-      clones.slice(0, CLONE_LIMIT).map((clone) => [clone.id, 2]),
+      clones.slice(0, CLONE_LIMIT).map((clone) => [clone.id, 1]),
     );
     run(crew, 4);
     expect(owner.clones[0]).toMatchObject({ phase: "work" });
@@ -346,12 +385,22 @@ describe("the crew", () => {
     });
   });
 
-  it("celebrates real milestones only", () => {
-    expect(milestonePassed(null, 12_000_000)).toBeNull();
-    expect(milestonePassed(9_900_000, 10_100_000)).toBe(10_000_000);
-    expect(milestonePassed(19_000_000, 41_000_000)).toBe(40_000_000);
-    expect(milestonePassed(10_100_000, 10_200_000)).toBeNull();
-    expect(milestonePassed(12_000_000, null)).toBeNull();
+  it("grows a stage at a time on a log scale", () => {
+    expect(crewGrowth(null)).toEqual({ stage: 0, level: 0 });
+    expect(crewGrowth(10_000)).toEqual({ stage: 0, level: 0 });
+    expect(crewGrowth(100_000)).toEqual({ stage: 1, level: 1 });
+    expect(crewGrowth(Math.sqrt(2e6 * 1e7)).level).toBeCloseTo(3.5);
+    expect(crewGrowth(999_999_999).stage).toBe(CREW_TOP - 1);
+    expect(crewGrowth(5e9)).toEqual({ stage: CREW_TOP, level: CREW_TOP });
+  });
+
+  it("celebrates stages passed while watching only", () => {
+    expect(stagePassed(null, 12_000_000)).toBeNull();
+    expect(stagePassed(9_900_000, 10_100_000)).toBe(4);
+    expect(CREW_STAGES[4]).toBe(10_000_000);
+    expect(stagePassed(1_000_000, 60_000_000)).toBe(5);
+    expect(stagePassed(10_100_000, 49_000_000)).toBeNull();
+    expect(stagePassed(12_000_000, null)).toBeNull();
     const crew = createCrew();
     syncCrew(crew, reading(member("a", "think")), layout);
     celebrate(crew, "today");
@@ -361,7 +410,95 @@ describe("the crew", () => {
   });
 });
 
+describe("the model orb", () => {
+  const T = 3;
+  function joined(model: string) {
+    const crew = createCrew();
+    syncCrew(crew, reading(member("a", "think", "", { model })), layout);
+    settleCrew(crew, layout);
+    return crew;
+  }
+
+  it("rides along only when a model is known", () => {
+    const fx: Pixel[] = [];
+    const crew = joined("");
+    stepOrb(crew.members[0], T, 1 / 30, fx, crew.rand);
+    expect(crew.members[0].orb).toBeNull();
+    syncCrew(
+      crew,
+      reading(member("a", "think", "", { model: "kimi-k3" })),
+      layout,
+    );
+    stepOrb(crew.members[0], T, 1 / 30, fx, crew.rand);
+    // Appearing for the first time bursts nothing.
+    expect(crew.members[0].orb).toMatchObject({ model: "kimi-k3", in: 1 });
+    expect(fx).toHaveLength(0);
+  });
+
+  it("bursts the old orb and flies the new one in on a model change", () => {
+    const fx: Pixel[] = [];
+    const crew = joined("kimi-k3");
+    const [owner] = crew.members;
+    stepOrb(owner, T, 1 / 30, fx, crew.rand);
+    const before = owner.orb!.y;
+    syncCrew(
+      crew,
+      reading(member("a", "think", "", { model: "deepseek-v4" })),
+      layout,
+    );
+    stepOrb(owner, T, 1 / 30, fx, crew.rand);
+    expect(fx).toHaveLength(14);
+    expect(owner.orb).toMatchObject({ model: "deepseek-v4" });
+    expect(owner.orb!.in).toBeLessThan(0.1);
+    expect(owner.orb!.y).toBeLessThan(before - 20);
+  });
+
+  it("keeps up with a walk and dozes while waiting", () => {
+    const fx: Pixel[] = [];
+    const model = "claude-opus-5-5";
+    const crew = joined(model);
+    const [owner] = crew.members;
+    // Codex stands 30 cells wide at 1.5 px: the orb flies 30.5 px aside.
+    const side = (30 * 1.5) / 2 + 8;
+    let walked = 0;
+    const follow = () => {
+      stepOrb(owner, crew.time, 1 / 30, fx, crew.rand);
+      const gap = Math.abs(owner.orb!.x - owner.x);
+      if (!owner.arrived) {
+        walked += 1;
+        expect(gap).toBeLessThanOrEqual(side + 30 + 1e-6);
+      }
+      expect(gap).toBeLessThanOrEqual(side + 2 + 80 + 1e-6);
+    };
+    syncCrew(crew, reading(member("a", "edit", "Edit", { model })), layout);
+    run(crew, MIN_HOLD + 6, follow);
+    expect(walked).toBeGreaterThan(0);
+    expect(owner).toMatchObject({ act: "edit", arrived: true });
+    syncCrew(crew, reading(member("a", "wait", "", { model })), layout);
+    run(crew, MIN_HOLD + 2, follow);
+    expect(owner.orb).toMatchObject({ dim: true, flap: false });
+  });
+
+  it("wears its vendor's mark, or the Brain's", () => {
+    expect(markOf("claude-opus-5-5")).toBe("claude");
+    expect(markOf("gpt-5.4")).toBe("openai");
+    expect(markOf("some-local-model")).toBe("brain");
+  });
+});
+
 describe("the scenes", () => {
+  it("opens in the camp", () => {
+    expect(DEFAULT_CREW_SCENE).toBe("camp");
+  });
+
+  it.each(CREW_SCENES)("%s bakes again only when it grows", (id) => {
+    const scene = createScene(id, 1006);
+    const keys = CREW_STAGES.map((tokens) => scene.grow(crewGrowth(tokens)));
+    expect(new Set(keys).size).toBe(CREW_STAGES.length);
+    expect(scene.grow(crewGrowth(CREW_STAGES[3]))).toBe(keys[3]);
+    expect(scene.grow(crewGrowth(CREW_STAGES[3] + 1))).toBe(keys[3]);
+  });
+
   it.each(CREW_SCENES)(
     "%s keeps the shared height and its places on the canvas",
     (id) => {

@@ -1,9 +1,13 @@
+import { modelVendor } from "@/components/ModelBrandIcon";
+import type { Vendor } from "@/components/vendor-marks";
+
 import type {
   Crew,
   CrewClone,
   CrewMember,
   CrewWalker,
 } from "./live-crew-model";
+import { crownOf, SKIN, spriteOf } from "./live-crew-sprites";
 import type { ClientType } from "./request-record-model";
 import { clientSeriesSlot } from "./series-colors";
 
@@ -90,6 +94,31 @@ const TOKENS = {
   green: "--crew-green",
   pink: "--crew-pink",
   violet: "--crew-violet",
+  gold: "--crew-gold",
+  brass: "--crew-brass",
+  redDark: "--crew-red-dark",
+  pine: "--crew-pine",
+  pineLight: "--crew-pine-light",
+  trunk: "--crew-trunk",
+  tent: "--crew-tent",
+  tentLight: "--crew-tent-light",
+  cabin: "--crew-cabin",
+  cabinLine: "--crew-cabin-line",
+  timber: "--crew-timber",
+  timberLight: "--crew-timber-light",
+  timberDark: "--crew-timber-dark",
+  skyline: "--crew-skyline",
+  skylineLight: "--crew-skyline-light",
+  sky: "--crew-sky",
+  parchment: "--crew-parchment",
+  rug: "--crew-rug",
+  rugEdge: "--crew-rug-edge",
+  footing: "--crew-footing",
+  tower: "--crew-tower",
+  towerLight: "--crew-tower-light",
+  towerRaw: "--crew-tower-raw",
+  towerRawWindow: "--crew-tower-raw-window",
+  shine: "--crew-shine",
   failover: "--crew-failover",
   unknown: "--crew-unknown",
   series1: "--crew-series-1",
@@ -414,6 +443,46 @@ export class Pen {
     return { canvas: made?.canvas ?? null, x, y };
   }
 
+  /** A vertical fade of `color` from alpha `top` down to `bottom`. */
+  wash(
+    x: number,
+    y: number,
+    w: number,
+    h: number,
+    color: string,
+    top: number,
+    bottom: number,
+  ) {
+    const x0 = this.dx(x);
+    const y0 = this.dy(y);
+    const y1 = this.dy(y + h);
+    const gradient = this.g.createLinearGradient(0, y0, 0, y1);
+    gradient.addColorStop(0, rgba(color, top));
+    gradient.addColorStop(1, rgba(color, bottom));
+    this.g.fillStyle = gradient;
+    this.fill = "";
+    this.g.fillRect(x0, y0, this.dx(x + w) - x0, y1 - y0);
+  }
+
+  /** A filled circle around a logical point. */
+  disc(x: number, y: number, r: number, color: string) {
+    const m = this.m;
+    this.g.beginPath();
+    this.g.arc(x * m + this.ox, y * m + this.oy, r * m, 0, Math.PI * 2);
+    this.color(color);
+    this.g.fill();
+  }
+
+  /** An image scaled smoothly into a logical rect. */
+  image(source: CanvasImageSource, x: number, y: number, w: number, h: number) {
+    const x0 = this.dx(x);
+    const y0 = this.dy(y);
+    const smooth = this.g.imageSmoothingEnabled;
+    this.g.imageSmoothingEnabled = true;
+    this.g.drawImage(source, x0, y0, this.dx(x + w) - x0, this.dy(y + h) - y0);
+    this.g.imageSmoothingEnabled = smooth;
+  }
+
   /** Draws `paint` clipped to a logical rect. */
   clip(x: number, y: number, w: number, h: number, paint: () => void) {
     const x0 = this.dx(x);
@@ -622,7 +691,7 @@ export function sparkle(
   count: number,
   maxY: number,
 ) {
-  const cells = Math.floor(pen.W / 4);
+  const cells = Math.round((252 * pen.W) / DEMO_WIDTH);
   for (let n = 0; n < count; n += 1) {
     const size = rand() < 0.2 ? 4 : 2;
     const alpha = 0.1 + rand() * 0.28;
@@ -644,8 +713,8 @@ export function seeded(seed: number): () => number {
 
 // ---------- particles ----------
 
-/** A palette color, or a client's body color. */
-export type Ink = CrewColor | { client: ClientType };
+/** A palette color, a client's body color, or a fixed brand color. */
+export type Ink = CrewColor | { client: ClientType } | { color: string };
 
 export interface Pixel {
   x: number;
@@ -659,7 +728,8 @@ export interface Pixel {
 }
 
 export function inkColor(palette: CrewPalette, ink: Ink): string {
-  return typeof ink === "string" ? palette[ink] : tintOf(palette, ink.client).o;
+  if (typeof ink === "string") return palette[ink];
+  return "color" in ink ? ink.color : tintOf(palette, ink.client).o;
 }
 
 /** A short-lived spray of pixels. */
@@ -714,127 +784,6 @@ export function drawPixels(pen: Pen, list: readonly Pixel[]) {
 }
 
 // ---------- characters ----------
-
-/**
- * Sprites by client, in rows: `o` body, `l` light, `d` dark, `w` white, `K`
- * eyes. The first five are the demo's; the rest follow its style.
- */
-const SPRITES: Partial<Record<ClientType, readonly string[]>> = {
-  claude_code: [
-    "..oo......oo..",
-    ".o.oo....oo.o.",
-    ".oooo....oooo.",
-    "..oo.oooo.oo..",
-    "...oooooooo...",
-    "..oooooooooo..",
-    "..ooKooooKoo..",
-    "..oooooooooo..",
-    "...oooooooo...",
-  ],
-  codex: [
-    ".....oo.....",
-    ".....ll.....",
-    "..oooooooo..",
-    ".oooooooooo.",
-    ".oKKooooKKo.",
-    ".oooooooooo.",
-    ".oowwwwwwoo.",
-    "..oooooooo..",
-    "..oooooooo..",
-  ],
-  deepseek_harness: [
-    "o..o............",
-    "oooo...oooooo...",
-    ".oo...oooooooo..",
-    "..oooooooooKooo.",
-    "...oooooooooooo.",
-    "...lllllllllll..",
-    "....lllllllll...",
-  ],
-  pi: [
-    "o..........o",
-    "oo........oo",
-    "oooooooooooo",
-    "oooooooooooo",
-    "ooKooooooKoo",
-    "oooooKKooooo",
-    "oooooooooooo",
-    ".oooooooooo.",
-  ],
-  cursor: [
-    "...llllll...",
-    ".llllllllll.",
-    ".oooooooooo.",
-    ".oKKooooKKo.",
-    ".oooooooooo.",
-    ".oooKKKKooo.",
-    ".oooooooooo.",
-    ".dddddddddd.",
-  ],
-  kimi_code: [
-    "..........ll",
-    "..........ll",
-    "..oooooooo..",
-    ".oooooooooo.",
-    ".oKKooooKKo.",
-    ".oooooooooo.",
-    ".oooodddooo.",
-    "..oooooooo..",
-  ],
-  opencode: [
-    "oooooooooooo",
-    "owwwwwwwwwwo",
-    "owKKwwwwKKwo",
-    "owwwwwwwwwwo",
-    "owwwwKKKKwwo",
-    "oooooooooooo",
-    ".dddddddddd.",
-  ],
-  gemini_cli: [
-    ".....oo.....",
-    "....oooo....",
-    "..oooooooo..",
-    "oooooooooooo",
-    "ooKKooooKKoo",
-    "oooooooooooo",
-    "..oooooooo..",
-    "...oooooo...",
-  ],
-  qwen_code: [
-    "...oooooo...",
-    "..oooooooo..",
-    ".oooooooooo.",
-    ".oKKooooKKo.",
-    ".oooooooooo.",
-    ".llllllllll.",
-    "..oooooooo..",
-    "...oooooo...",
-  ],
-  grok_cli: [
-    "....oooo....",
-    "..oooooooo..",
-    ".oooooooooo.",
-    ".oKKKKKKKKo.",
-    ".oKwKKKKwKo.",
-    ".oooooooooo.",
-    "..oooooooo..",
-  ],
-};
-
-/** Any other client, recognised or not. */
-const GENERIC = [
-  "...oooooo...",
-  "..oooooooo..",
-  ".oooooooooo.",
-  ".ooKKooKKoo.",
-  ".oooooooooo.",
-  ".oooooooooo.",
-  ".o.oo..oo.o.",
-] as const;
-
-export function spriteOf(client: ClientType): readonly string[] {
-  return SPRITES[client] ?? GENERIC;
-}
 
 /** A client's body color and the shades its sprite and limbs use. */
 export interface Tint {
@@ -897,7 +846,12 @@ export function figureOf(
   return figure;
 }
 
-const widthOf = (figure: Figure) => spriteOf(figure.client)[0].length;
+const widthOf = (figure: Figure) => spriteOf(figure.client).rows[0].length;
+
+/** The sleeve color: a girl's own, a critter's from its tint. */
+function armColor(palette: CrewPalette, client: ClientType): string {
+  return spriteOf(client).arm ?? tintOf(palette, client).arm;
+}
 
 type Pose = "stand" | "sit" | "lie";
 
@@ -912,7 +866,7 @@ export function body(
     pose === "stand" && (opt.legs === 0 || opt.legs === 1) ? opt.legs : -1;
   const hat = pose !== "lie" && Boolean(ch.hat);
   const face = ch.face > 0 ? 1 : -1;
-  const rows = spriteOf(ch.client);
+  const rows = spriteOf(ch.client).rows;
   const u = ch.u;
   const reach = (Math.max(rows[0].length, rows.length) / 2 + 5) * u;
   pen.stamp(
@@ -934,25 +888,25 @@ function paintBody(
   pose: Pose,
   legs: number,
 ) {
-  const rows = spriteOf(client);
+  const sprite = spriteOf(client);
   const tint = tintOf(pen.palette, client);
-  const w = rows[0].length;
-  const h = rows.length;
-  const color = (value: string) => tint[value as "o" | "l" | "d" | "w" | "K"];
+  const colors = sprite.pal ?? (tint as unknown as Record<string, string>);
+  const w = sprite.rows[0].length;
+  const h = sprite.rows.length;
   if (pose === "lie") {
     const ox = -(h * u) / 2;
     const oy = -w * u * 0.62;
-    rows.forEach((row, r) => {
+    sprite.rows.forEach((row, r) => {
       for (let q = 0; q < row.length; q += 1) {
         const value = row[q];
         if (value === ".") continue;
         const yy = face > 0 ? q : w - 1 - q;
         pen.rect(
-          Math.round(ox + (h - 1 - r) * u),
-          Math.round(oy + yy * u * 0.62),
+          ox + (h - 1 - r) * u,
+          oy + yy * u * 0.62,
           u,
           Math.ceil(u * 0.62),
-          color(value),
+          colors[value],
         );
       }
     });
@@ -965,46 +919,55 @@ function paintBody(
     pen.rect(-2.5 * u, -u, u / 2 + 1, u, seat);
     pen.rect(2 * u, -u, u / 2 + 1, u, seat);
   }
-  const legRow = sit ? 0 : 2;
+  // A girl stands on her own feet: sitting hides them, walking bobs.
+  const crop = sit ? sprite.crop : 0;
+  const rows = crop ? sprite.rows.slice(0, h - crop) : sprite.rows;
+  const legRow = sit || sprite.feet ? 0 : 2;
+  const bob = sprite.feet && legs === 1 ? u : 0;
   const ox = -(w * u) / 2;
-  const oy = -(h + legRow) * u - (sit ? u : 0);
+  const oy = -(rows.length + legRow) * u - (sit ? u : 0) - bob;
+  // Cells at 1.5 px land on whole device pixels only unrounded: the pen
+  // snaps each edge, so neighbours meet without a seam.
   rows.forEach((row, r) => {
     for (let q = 0; q < row.length; q += 1) {
       const value = row[q];
       if (value === ".") continue;
       pen.rect(
-        Math.round(ox + (face > 0 ? q : w - 1 - q) * u),
-        Math.round(oy + r * u),
+        ox + (face > 0 ? q : w - 1 - q) * u,
+        oy + r * u,
         u,
         u,
-        color(value),
+        colors[value],
       );
     }
   });
   if (hat) {
-    // Claude's ears stick up past the hat line.
-    const ears = client === "claude_code" ? 3 * u : 0;
+    const half = sprite.feet ? Math.round(w * 0.32) : 4;
+    const top = Math.round(oy + (sprite.hatTop - 2) * u);
+    pen.rect(-half * u, top, half * 2 * u, 2 * u, pen.palette.yellow);
     pen.rect(
-      -4 * u,
-      Math.round(oy - 2 * u + ears),
-      8 * u,
-      2 * u,
+      -(half + 1) * u,
+      top + 2 * u,
+      (half + 1) * 2 * u,
+      u,
       pen.palette.yellow,
     );
-    pen.rect(-5 * u, Math.round(oy + ears), 10 * u, u, pen.palette.yellow);
   }
-  if (!sit) {
+  if (!sit && !sprite.feet) {
     [-3 * u, 2 * u].forEach((leg, n) =>
       pen.rect(leg, -2 * u, u, legs === n ? u : 2 * u, tint.legs),
     );
   }
 }
 
-/** A hand at (dx past the body edge, dy up from the feet). */
+/**
+ * A hand at (dx past the body edge, dy up from the feet). Poses are written
+ * for an 11-row critter; taller sprites reach proportionally higher.
+ */
 export function handAt(ch: Figure, dx: number, dy: number): [number, number] {
   return [
     (ch.dx ?? ch.x) + ch.face * ((widthOf(ch) / 2) * ch.u + dx * ch.u),
-    ch.fy - dy * ch.u,
+    ch.fy - dy * spriteOf(ch.client).reach * ch.u,
   ];
 }
 
@@ -1015,14 +978,15 @@ export function arm(
   dx: number,
   dy: number,
 ): [number, number] {
+  const sprite = spriteOf(ch.client);
   const [x, y] = handAt(ch, dx, dy);
   const u = ch.u;
   const root = (ch.dx ?? ch.x) + ch.face * ((widthOf(ch) / 2 - 1) * u);
-  const color = tintOf(pen.palette, ch.client).arm;
+  const color = armColor(pen.palette, ch.client);
   const lo = Math.min(root, x);
   const hi = Math.max(root, x);
   pen.rect(Math.round(lo), Math.round(y), Math.round(hi - lo + u), u, color);
-  const ry = ch.fy - 5 * u;
+  const ry = ch.fy - sprite.shoulder * u;
   pen.rect(
     Math.round(root),
     Math.round(Math.min(y, ry)),
@@ -1030,6 +994,7 @@ export function arm(
     Math.round(Math.abs(y - ry) + u),
     color,
   );
+  if (sprite.feet) pen.rect(Math.round(x), Math.round(y), u, u, SKIN);
   return [x, y];
 }
 
@@ -1224,7 +1189,7 @@ export const Act = {
     body(pen, ch, { lift, legs: -1 });
     const [ax, ay] = handAt(ch, 0, 9 + lift / ch.u);
     const bx = (ch.dx ?? ch.x) - ch.face * (widthOf(ch) / 2) * ch.u;
-    const color = tintOf(pen.palette, ch.client).arm;
+    const color = armColor(pen.palette, ch.client);
     pen.rect(Math.round(ax), Math.round(ay), ch.u, 3 * ch.u, color);
     pen.rect(Math.round(bx), Math.round(ay), ch.u, 3 * ch.u, color);
   },
@@ -1253,7 +1218,7 @@ function thought(pen: Pen, ch: CrewMember) {
   pen.stamp(
     `thought|${ch.client}|${face}|${close}|${beat}`,
     ch.x + ch.face * 18,
-    ch.fy - 76,
+    crownOf(ch, ch.client) - 32,
     [-9 * u, -6 * u, 9 * u, 12 * u],
     (at) => {
       const p = at.palette;
@@ -1310,10 +1275,224 @@ function snore(pen: Pen, ch: CrewMember) {
   pen.alpha(1);
 }
 
+// ---------- model orbs ----------
+
+/**
+ * The model rides along as a little winged orb wearing its vendor's mark: the
+ * client is the body, the model the spirit. Vendors without a color here
+ * glow in their character's color.
+ */
+const MARK_COLOR: Partial<Record<Vendor, string>> = {
+  claude: "#d97757",
+  openai: "#10a37f",
+  kimi: "#1783ff",
+  deepseek: "#4d6bfe",
+  zhipu: "#3b6cf6",
+  gemini: "#8e75ff",
+};
+/** Models without a known vendor wear the Brain mark, as elsewhere. */
+export const BRAIN_MARK = "brain";
+const ORB = [
+  "..KKKKK..",
+  ".KWWWWWK.",
+  "KWhWWWWWK",
+  "KWWWWWWWK",
+  "KWWWWWWWK",
+  "KWWWWWWWK",
+  "KWWWWWWWK",
+  ".KWWWWWK.",
+  "..KKKKK..",
+] as const;
+/** Wings up and down; the right one mirrors the left. */
+const WING = [
+  ["..KK.", ".KWWK", "KWWK.", ".KK.."],
+  [".KK..", "KWWK.", ".KWWK", "..KK."],
+] as const;
+const orbInk = (p: CrewPalette, cell: string) =>
+  cell === "K" ? p.slate : cell === "h" ? p.shine : p.cloud;
+
+const vendors = new Map<string, string>();
+/** The mark a model wears: its vendor's, or the Brain's. */
+export function markOf(model: string): string {
+  let mark = vendors.get(model);
+  if (mark === undefined) {
+    mark = modelVendor(model) ?? BRAIN_MARK;
+    if (vendors.size > 256) vendors.clear();
+    vendors.set(model, mark);
+  }
+  return mark;
+}
+
+const orbInks = new Map<string, Ink>();
+/** The glow and sparks of an orb, made once per color. */
+function orbInkOf(mark: string, client: ClientType): Ink {
+  const color = MARK_COLOR[mark as Vendor];
+  const key = color ?? client;
+  let ink = orbInks.get(key);
+  if (!ink) {
+    ink = color ? { color } : { client };
+    orbInks.set(key, ink);
+  }
+  return ink;
+}
+
+/**
+ * Moves a character's orb toward where its act wants it: following while it
+ * moves, circling while it thinks, beside the face while it writes, resting
+ * while tools run, dozing while it waits. A new model bursts the old orb and
+ * flies the new one in from above. `snap` puts it there at once.
+ */
+export function stepOrb(
+  member: CrewMember,
+  T: number,
+  dt: number,
+  fx: Pixel[],
+  rand: () => number,
+  snap = false,
+) {
+  if (!member.model) {
+    member.orb = null;
+    return;
+  }
+  const top = crownOf(member, member.client);
+  const side = (widthOf(member as Figure) * member.u) / 2 + 8;
+  let o = member.orb;
+  if (!o) {
+    o = member.orb = {
+      x: member.x - member.face * side,
+      y: top + 6,
+      in: 1,
+      spark: 0,
+      model: member.model,
+      flap: true,
+      glow: false,
+      dim: false,
+    };
+  }
+  if (o.model !== member.model) {
+    if (!snap) {
+      spawn(
+        fx,
+        rand,
+        o.x,
+        o.y,
+        14,
+        orbInkOf(markOf(o.model), member.client),
+        90,
+        50,
+        0.8,
+        2,
+      );
+      o.y -= 50;
+      o.in = 0;
+    }
+    o.model = member.model;
+  }
+  o.in = snap ? 1 : Math.min(1, o.in + dt * 1.5);
+  const act =
+    !member.arrived || member.climb
+      ? "move"
+      : member.slip > 0
+        ? "slip"
+        : member.jump > 0
+          ? "jump"
+          : member.act;
+  let tx = member.x - member.face * side;
+  let ty = top + 8;
+  let ease = 5;
+  o.flap = true;
+  o.glow = false;
+  o.dim = false;
+  if (act === "move") ty = top + 4 + Math.sin(T * 5) * 2;
+  else if (act === "think") {
+    const a = T * 2.6 + member.order;
+    tx = member.x + Math.cos(a) * (side + 2);
+    ty = top + 4 + Math.sin(a) * 6;
+    ease = 14;
+  } else if (act === "write") {
+    tx = member.x + member.face * side;
+    ty = top + 2 + Math.sin(T * 6) * 2;
+    o.glow = true;
+    o.spark += (dt * (member.rate || 40)) / 22;
+    const ink = orbInkOf(markOf(o.model), member.client);
+    while (o.spark >= 1) {
+      o.spark -= 1;
+      spawn(fx, rand, o.x + (rand() - 0.5) * 10, o.y, 1, ink, 50, 30, 0.7, 2);
+    }
+  } else if (act === "slip") {
+    const a = T * 10;
+    tx = member.x + Math.cos(a) * 16;
+    ty = top + Math.sin(a) * 8;
+    ease = 18;
+  } else if (act === "jump") ty = top - 10 - Math.abs(Math.sin(T * 9)) * 8;
+  else if (act === "wait") {
+    ty = top + 16;
+    o.flap = false;
+    o.dim = true;
+  } else {
+    ty = top + 10;
+    o.flap = false;
+  }
+  if (snap) {
+    o.x = tx;
+    o.y = ty;
+    return;
+  }
+  o.x += (tx - o.x) * clamp(dt * ease);
+  o.y += (ty - o.y) * clamp(dt * ease);
+  // Long walks peak at several hundred px/s; the orb never trails far behind.
+  const lag = act === "move" ? 30 : 80;
+  o.x = clamp(o.x, tx - lag, tx + lag);
+  o.y = clamp(o.y, ty - lag, ty + lag);
+}
+
+/** Vendor marks rasterised once, by mark; a missing one draws no orb yet. */
+export type CrewMarks = ReadonlyMap<string, CanvasImageSource>;
+
+function drawOrb(pen: Pen, member: CrewMember, marks: CrewMarks) {
+  const o = member.orb;
+  if (!o || member.alpha < 0.05) return;
+  const markName = markOf(o.model);
+  const mark = marks.get(markName);
+  if (!mark) return;
+  const p = pen.palette;
+  const x = Math.round(o.x);
+  const y = Math.round(o.y);
+  pen.alpha(member.alpha * o.in * (o.dim ? 0.55 : 1));
+  if (o.glow) {
+    const color = inkColor(p, orbInkOf(markName, member.client));
+    pen.disc(x, y, 14, rgba(color, 0.16 + 0.08 * Math.sin(pen.T * 7)));
+  }
+  const f = o.flap ? Math.floor(pen.T * 9) % 2 : 1;
+  pen.stamp(`wing|${f}`, x - 19, y - (f ? 4 : 8), [0, 0, 38, 8], (at) =>
+    WING[f].forEach((row, wy) => {
+      for (let wx = 0; wx < row.length; wx += 1) {
+        if (row[wx] === ".") continue;
+        const color = orbInk(at.palette, row[wx]);
+        at.rect(wx * 2, wy * 2, 2, 2, color);
+        at.rect(36 - wx * 2, wy * 2, 2, 2, color);
+      }
+    }),
+  );
+  pen.stamp(`orb|${markName}`, x - 9, y - 9, [0, 0, 18, 18], (at) => {
+    ORB.forEach((row, oy) => {
+      for (let ox = 0; ox < row.length; ox += 1) {
+        if (row[ox] !== ".")
+          at.rect(ox * 2, oy * 2, 2, 2, orbInk(at.palette, row[ox]));
+      }
+    });
+    at.image(mark, 3, 3, 12, 12);
+  });
+  pen.alpha(1);
+}
+
 /** Words the crew shows; the shell passes them in the user's language. */
 export interface CrewWords {
   failover: string;
   name(client: ClientType): string;
+  /** The ship's cargo hold, and the places its window passes by stage. */
+  hold: string;
+  planets: readonly string[];
 }
 
 /** How a scene draws a character at its station, and its hats. */
@@ -1333,7 +1512,13 @@ const CONFETTI: readonly CrewColor[] = [
 ];
 
 /** Draws the crew over a scene: characters, clones, bubbles and names. */
-export function drawCrew(pen: Pen, crew: Crew, stage: Stage, words: CrewWords) {
+export function drawCrew(
+  pen: Pen,
+  crew: Crew,
+  stage: Stage,
+  words: CrewWords,
+  marks: CrewMarks,
+) {
   const p = pen.palette;
   const sorted = [...crew.members].sort((a, b) => a.fy - b.fy || a.x - b.x);
   const tags: Array<{ s: string; x: number; y: number; a: number }> = [];
@@ -1342,6 +1527,7 @@ export function drawCrew(pen: Pen, crew: Crew, stage: Stage, words: CrewWords) {
     if (member.x < -60 || member.x > pen.W + 60) continue;
     const ch = figureOf(member, undefined, stage.hat);
     const tint = tintOf(p, member.client);
+    const above = crownOf(member, member.client) - 16;
     for (const clone of member.clones) {
       const small = figureOf(member, clone, stage.hat);
       if (clone.phase === "work" && clone.act === "bash") Act.type(pen, small);
@@ -1378,23 +1564,25 @@ export function drawCrew(pen: Pen, crew: Crew, stage: Stage, words: CrewWords) {
     else if (member.climb) {
       body(pen, ch, { legs: Math.floor(member.walk) % 2 });
       const rung = Math.floor(member.walk) % 2 ? -1 : 1;
+      const sleeve = armColor(p, member.client);
       pen.rect(
         Math.round(member.x - 28),
         Math.round(member.fy - 30 + rung * 3),
         8,
         4,
-        tint.arm,
+        sleeve,
       );
       pen.rect(
         Math.round(member.x + 20),
         Math.round(member.fy - 30 - rung * 3),
         8,
         4,
-        tint.arm,
+        sleeve,
       );
     } else if (!member.arrived)
       body(pen, ch, { legs: Math.floor(member.walk) % 2 });
     else stage.perform(pen, member);
+    drawOrb(pen, member, marks);
     const working =
       !member.leaving && member.arrived && member.slip <= 0 && member.jump <= 0;
     if (working && member.act === "think") thought(pen, member);
@@ -1403,14 +1591,14 @@ export function drawCrew(pen: Pen, crew: Crew, stage: Stage, words: CrewWords) {
       bubbles.push({
         s: `${Math.round(member.rate)} tok/s`,
         x: member.x,
-        y: member.fy - 60,
+        y: above,
         color: tint.o,
       });
     } else if (working && member.tool) {
       bubbles.push({
         s: member.count > 1 ? `${member.tool} ×${member.count}` : member.tool,
         x: member.x,
-        y: member.fy - 60,
+        y: above,
         color: tint.o,
       });
     }
@@ -1418,7 +1606,7 @@ export function drawCrew(pen: Pen, crew: Crew, stage: Stage, words: CrewWords) {
       bubbles.push({
         s: words.failover,
         x: member.x,
-        y: member.fy - 60,
+        y: above,
         color: p.failover,
       });
     }

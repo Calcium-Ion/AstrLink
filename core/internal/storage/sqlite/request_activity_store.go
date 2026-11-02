@@ -16,12 +16,12 @@ import (
 const maxActivityCallSpan = time.Hour
 
 // ListRequestActivity reads the spans of root model calls running at or after
-// since, newest first, with the output tokens of those that ended. A call that
-// ended before since on the tool calls it asked for is read too while its
-// conversation has made no later call before since: the client may still be
-// running those tools. A call the core interrupted is left out: recovery
-// stamps when the core came back, not when the call stopped, so its span would
-// cover the downtime.
+// since, newest first, with the model each ran with and the output tokens of
+// those that ended. A call that ended before since on the tool calls it asked
+// for is read too while its conversation has made no later call before since:
+// the client may still be running those tools. A call the core interrupted is
+// left out: recovery stamps when the core came back, not when the call
+// stopped, so its span would cover the downtime.
 func (store *Store) ListRequestActivity(
 	ctx context.Context,
 	since time.Time,
@@ -29,9 +29,14 @@ func (store *Store) ListRequestActivity(
 	sinceText := since.UTC().Format(time.RFC3339Nano)
 	models, googleModels := string(contract.ProtocolOpenAIModels), string(contract.ProtocolGoogleModels)
 	// The later-call lookup applies the outer filters, so a call counts as the
-	// next one only when this read could list it.
+	// next one only when this read could list it. The model is the one usage
+	// groups by: served upstream, then a redirect's target, then requested.
 	rows, err := store.db.QueryContext(ctx, `
-SELECT COALESCE(root.session_id, root.id), root.client_type, root.started_at, root.completed_at,
+SELECT COALESCE(root.session_id, root.id), root.client_type, COALESCE(
+         NULLIF(json_extract(NULLIF(root.recovery_json, ''), '$.upstream_model'), ''),
+         NULLIF(json_extract(NULLIF(root.model_redirect_json, ''), '$.to'), ''),
+         root.requested_model),
+       root.started_at, root.completed_at,
        root.status, root.http_status, root.output_json, root.parent_session_id,
        json_extract(root.usage_json, '$.output_tokens'), json_extract(root.usage_json, '$.billing_incomplete'),
        root.service_id, `+gatewayRewriteColumns("root")+`
@@ -67,18 +72,19 @@ ORDER BY root.started_at DESC, root.id DESC`,
 	calls := make([]contract.RequestActivityCall, 0)
 	for rows.Next() {
 		var sessionID, startedAt, status string
-		var clientType, completedAt, output, parent sql.NullString
+		var clientType, model, completedAt, output, parent sql.NullString
 		var httpStatus, outputTokens sql.NullInt64
 		var incomplete sql.NullBool
 		var service sql.NullString
 		var rewritten gatewayRewriteRow
-		if err := rows.Scan(append([]any{&sessionID, &clientType, &startedAt, &completedAt, &status, &httpStatus, &output, &parent,
+		if err := rows.Scan(append([]any{&sessionID, &clientType, &model, &startedAt, &completedAt, &status, &httpStatus, &output, &parent,
 			&outputTokens, &incomplete, &service}, rewritten.targets()...)...); err != nil {
 			return nil, fmt.Errorf("scan request activity: %w", err)
 		}
 		call := contract.RequestActivityCall{
 			SessionID:  contract.SessionID(sessionID),
 			ClientType: contract.ClientType(clientType.String),
+			Model:      model.String,
 		}
 		if parent.Valid && parent.String != "" && parent.String != sessionID {
 			value := contract.SessionID(parent.String)

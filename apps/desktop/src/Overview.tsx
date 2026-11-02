@@ -430,9 +430,9 @@ export function Overview({
                   onUsageRangeChange("1d");
               }}
               options={[
+                { value: "trail", label: t("overview.starTrail") },
                 { value: "heatmap", label: t("overview.heatmap") },
                 { value: "chart", label: t("overview.chart") },
-                { value: "trail", label: t("overview.starTrail") },
               ]}
             />
             <span aria-hidden="true" className="h-4 w-px bg-border" />

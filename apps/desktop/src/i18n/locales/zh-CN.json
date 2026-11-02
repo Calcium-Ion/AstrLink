@@ -794,7 +794,18 @@
         }
       },
       "failover": "切换线路",
-      "milestone": "今天第 {{amount}} Token！"
+      "milestone": "今日破 {{amount}} Token！",
+      "hold": "货舱",
+      "planets": {
+        "earth": "地球",
+        "moon": "月球",
+        "mars": "火星",
+        "jupiter": "木星",
+        "saturn": "土星",
+        "neptune": "海王星",
+        "nebula": "星云",
+        "core": "银河中心"
+      }
     },
     "sky": "今天的请求",
     "skyToday": "今天的请求",

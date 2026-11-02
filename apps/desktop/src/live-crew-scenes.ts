@@ -3,6 +3,8 @@ import {
   arm,
   body,
   clamp,
+  type CrewColor,
+  type CrewWords,
   DEMO_WIDTH,
   drawPixels,
   figureOf,
@@ -19,24 +21,28 @@ import {
   tintOf,
   U,
 } from "./live-crew-draw";
-import type {
-  Crew,
-  CrewAct,
-  CrewLayout,
-  CrewMember,
-  CrewSpot,
-  CrewStation,
+import {
+  CREW_TOP,
+  type Crew,
+  type CrewAct,
+  type CrewGrowth,
+  type CrewLayout,
+  type CrewMember,
+  type CrewSpot,
+  type CrewStation,
 } from "./live-crew-model";
+import { smallU } from "./live-crew-sprites";
 import type { ClientType } from "./request-record-model";
 
 /**
  * The four places the crew works in. Each is the demo's scene: its props,
  * stations and timing at the demo's 1006 px, spread to the canvas width.
- * Props keep their size; only where they stand moves.
+ * Props keep their size; only where they stand moves. Today's tokens grow
+ * each one, a stage at a time.
  */
 export const CREW_SCENES = ["camp", "office", "ship", "site"] as const;
 export type CrewSceneId = (typeof CREW_SCENES)[number];
-export const DEFAULT_CREW_SCENE: CrewSceneId = "site";
+export const DEFAULT_CREW_SCENE: CrewSceneId = "camp";
 /** Every scene's logical height, so switching scenes keeps the module still. */
 export const CREW_HEIGHT = 240;
 
@@ -46,14 +52,26 @@ export interface CrewScene {
   readonly H: number;
   readonly layout: CrewLayout;
   readonly stage: Stage;
-  /** Drawn once per size and palette: the opaque background. */
+  /** Where the last bake added something new, for a burst of sparkles. */
+  readonly fresh: ReadonlyArray<readonly [number, number]>;
+  /**
+   * Takes how far today's tokens have come; returns what the cached layers
+   * show, so they bake again only when it changes.
+   */
+  grow(growth: CrewGrowth): string;
+  /** Drawn once per size, palette and growth: the opaque background. */
   back(pen: Pen): void;
   /** Drawn every frame between the two cached layers. */
   movers?(pen: Pen): void;
-  /** Drawn once per size and palette, over the movers. */
+  /** Drawn once per size, palette and growth, over the movers. */
   front?(pen: Pen): void;
   /** Props that move or light up, and the station labels. */
-  props(pen: Pen, crew: Crew, labels: Record<CrewStation, string>): void;
+  props(
+    pen: Pen,
+    crew: Crew,
+    labels: Record<CrewStation, string>,
+    words: CrewWords,
+  ): void;
   step(crew: Crew, dt: number): void;
   /** Nothing of the scene's own is still moving. */
   quiet(): boolean;
@@ -61,6 +79,7 @@ export interface CrewScene {
 
 type Rect = readonly [number, number, number, number, string];
 type Places = Record<CrewAct, number>;
+type Fresh = Array<readonly [number, number]>;
 
 /** Places beside a station, nearest first: the demo's four, then further out. */
 const OFFSETS = [-50, 50, -98, 98, -146, 146, -194, 194, -242, 242];
@@ -178,11 +197,73 @@ function starsOf(pen: Pen, list: ReadonlyArray<readonly number[]>) {
     pen.rectsOf(rgba(pen.palette.navy, step / 32), rects);
 }
 
+/** A pine `h` art pixels tall, standing on `floor`. */
+function pine(pen: Pen, x: number, floor: number, h: number, color: string) {
+  for (let n = 0; n < h; n += 1) {
+    const half = 1 + Math.floor(n * 0.55) - (n && n % 3 === 0 ? 1 : 0);
+    pen.P(x - half * U, floor - (h + 2 - n) * U, half * 2, 1, color);
+  }
+  pen.P(x - 2, floor - 2 * U, 1, 2, pen.palette.trunk);
+}
+
+const FLAGS: readonly CrewColor[] = [
+  "red",
+  "yellow",
+  "green",
+  "blue",
+  "pink",
+  "violet",
+];
+
+/** A string of flags from `a` to `b`, sagging `sag` px below `y0`. */
+function bunting(
+  pen: Pen,
+  a: number,
+  b: number,
+  y0: number,
+  sag: number,
+  seed: number,
+) {
+  const p = pen.palette;
+  for (let x = a; x <= b; x += 4) {
+    const k = (x - a) / (b - a);
+    const y = Math.round((y0 + Math.sin(k * Math.PI) * sag) / 2) * 2;
+    pen.rect(x, y, 4, 2, p.steam);
+    if ((x - a) % 32 === 16) {
+      const color = p[FLAGS[Math.floor(((x - a) / 32 + seed) % 6)]];
+      pen.rect(x - 4, y + 2, 12, 6, color);
+      pen.rect(x, y + 8, 4, 4, color);
+    }
+  }
+}
+
 // ---------- camp ----------
+
+const FIREWORKS: readonly CrewColor[] = ["yellow", "pink", "blue", "green"];
+
+/** Pines as `[x, stage, height]`: the woods fill in as the day goes on. */
+const PINES = [
+  [30, 1, 11],
+  [300, 1, 9],
+  [560, 2, 12],
+  [690, 2, 9],
+  [160, 3, 10],
+  [990, 3, 9],
+  [120, 4, 8],
+  [590, 4, 11],
+  [650, 5, 9],
+  [850, 5, 12],
+  [200, 6, 8],
+  [330, 6, 11],
+  [520, 7, 9],
+  [740, 7, 12],
+] as const;
 
 function camp(W: number): CrewScene {
   const FLOOR = 186;
   const H = CREW_HEIGHT;
+  const k = W / DEMO_WIDTH;
+  const at = (x: number) => Math.round(x * k);
   const X = spread(
     {
       bash: 78,
@@ -197,11 +278,18 @@ function camp(W: number): CrewScene {
   );
   const rand = seeded(11);
   const fx: Pixel[] = [];
+  const fresh: Fresh = [];
+  let st = 0;
   let dents = 0;
   let roll = 0;
+  let boom = 0;
+  const note = (x: number, y: number, min: number) => {
+    if (min === st) fresh.push([x, y]);
+  };
   return {
     id: "camp",
     H,
+    fresh,
     layout: {
       floors: [FLOOR],
       door: -40,
@@ -238,27 +326,15 @@ function camp(W: number): CrewScene {
         }
       },
     },
+    grow(growth) {
+      st = growth.stage;
+      return String(st);
+    },
     back(pen) {
-      pen.rect(0, 0, W, H, pen.palette.bg);
-      sparkle(pen, seeded(21), Math.round((70 * W) / DEMO_WIDTH), FLOOR - 60);
-    },
-    movers(pen) {
-      const k = W / DEMO_WIDTH;
-      const lit: number[][] = [];
-      for (let n = 0; n < 12; n += 1) {
-        if (Math.sin(pen.T * 0.9 + n * 2.2) > 0.3) {
-          lit.push([
-            Math.round(((n * 83 + 40) % DEMO_WIDTH) * k),
-            14 + ((n * 37) % 90),
-            4,
-            4,
-          ]);
-        }
-      }
-      pen.rectsOf(rgba(pen.palette.navy, 0.28), lit);
-    },
-    front(pen) {
       const p = pen.palette;
+      fresh.length = 0;
+      pen.rect(0, 0, W, H, p.bg);
+      sparkle(pen, seeded(21), Math.round((30 + st * 14) * k), FLOOR - 60);
       // Far hills.
       for (let x = 0; x < W; x += 16) {
         const h =
@@ -266,21 +342,88 @@ function camp(W: number): CrewScene {
           Math.floor(Math.sin(x * 0.012) * 8 + Math.sin(x * 0.031) * 5) * 2;
         pen.rect(x, FLOOR - h, 16, h, p.hills);
       }
-      const moon = W - 76;
-      [
-        "..ooo...",
-        ".ooo....",
-        "ooo.....",
-        "ooo.....",
-        "ooo.....",
-        ".ooo...o",
-        "..oooooo",
-        "....ooo.",
-      ].forEach((row, y) => {
-        for (let x = 0; x < row.length; x += 1) {
-          if (row[x] === "o") pen.rect(moon + x * 4, 12 + y * 4, 4, 4, p.moon);
+      // The moon fills out over the day.
+      const moon = W - 66;
+      for (let y = 0; y < 12; y += 1) {
+        for (let x = 0; x < 12; x += 1) {
+          const lit = (x - 5.5) ** 2 + (y - 5.5) ** 2 <= 34;
+          const shade =
+            st < CREW_TOP &&
+            (x - 5.5 - 2 - st * 1.4) ** 2 + (y - 5.5) ** 2 <= 34;
+          if (lit && !shade) {
+            pen.rect(
+              moon + x * 4,
+              10 + y * 4,
+              4,
+              4,
+              st === CREW_TOP ? p.gold : p.moon,
+            );
+          }
         }
+      }
+      // The camp grows: woods, more tents, bunting, a cabin, a watchtower.
+      PINES.forEach(([x, min, h], n) => {
+        if (st < min) return;
+        pine(pen, at(x), FLOOR, h, n % 2 ? p.pine : p.pineLight);
+        note(at(x), FLOOR - h * U, min);
       });
+      for (const [x, min] of [
+        [255, 2],
+        [655, 5],
+      ] as const) {
+        if (st < min) continue;
+        for (let n = 0; n < 8; n += 1) {
+          pen.rects(at(x), FLOOR, [
+            [-(n + 1), 8 - n, (n + 1) * 2, 1, n % 2 ? p.tent : p.tentLight],
+          ]);
+        }
+        pen.rects(at(x), FLOOR, [[-1, 0, 2, 4, p.paleLight]]);
+        note(at(x), FLOOR - 32, min);
+      }
+      if (st >= 4) {
+        pen.rects(at(425), FLOOR, [
+          [-10, 0, 20, 12, p.cabin],
+          [-10, 4, 20, 1, p.cabinLine],
+          [-10, 8, 20, 1, p.cabinLine],
+          [-2, 0, 4, 7, p.timberDark],
+          [-8, 5, 4, 4, p.gold],
+          [4, 5, 4, 4, p.gold],
+        ]);
+        for (let n = 0; n < 6; n += 1) {
+          pen.rects(at(425), FLOOR, [
+            [-12 + n * 2, 12 + n, 24 - n * 4, 1, p.timber],
+          ]);
+        }
+        note(at(425), FLOOR - 64, 4);
+      }
+      if (st >= 6) {
+        pen.rects(at(712), FLOOR, [
+          [-8, 0, 2, 22, p.timber],
+          [6, 0, 2, 22, p.timber],
+          [-6, 8, 12, 1, p.timberLight],
+          [-6, 15, 12, 1, p.timberLight],
+          [-10, 22, 20, 2, p.timber],
+          [-10, 24, 1, 4, p.timber],
+          [9, 24, 1, 4, p.timber],
+          [-11, 28, 22, 2, p.timberDark],
+          [-7, 30, 14, 1, p.timberDark],
+          [0, 31, 1, 6, p.steam],
+          [1, 34, 5, 3, p.red],
+        ]);
+        note(at(712), FLOOR - 130, 6);
+      }
+      if (st >= 3) {
+        bunting(pen, at(40), at(450), 50, 16, 0);
+        bunting(pen, at(450), at(860), 50, 16, 3);
+        note(at(245), 64, 3);
+        note(at(655), 64, 3);
+      }
+      if (st >= 5) {
+        bunting(pen, at(120), at(520), 28, 12, 1);
+        bunting(pen, at(520), at(900), 28, 12, 4);
+        note(at(320), 40, 5);
+        note(at(710), 40, 5);
+      }
       pen.rect(0, FLOOR, W, 4, p.line);
       pen.rect(0, FLOOR + 4, W, H - FLOOR - 4, p.ground);
       // Laptop on a crate.
@@ -308,7 +451,7 @@ function camp(W: number): CrewScene {
       // Workbench.
       table(pen, X.edit, 22, 7, FLOOR);
       pen.rects(X.edit, FLOOR, [[-8, 8, 16, 2, p.plank]]);
-      // Telescope legs.
+      // Telescope.
       pen.rects(X.search, FLOOR, [
         [-5, 0, 1, 3, p.steel],
         [3, 0, 1, 3, p.steel],
@@ -328,7 +471,12 @@ function camp(W: number): CrewScene {
         [-6, 6, 12, 4, p.steel],
         [-8, 10, 16, 2, p.console],
       ]);
-      // Tent and bedroll.
+      // Logs, and the tent nobody has to walk to.
+      pen.rects(X.think, FLOOR, [
+        [-6, 0, 12, 2, p.wood],
+        [-8, 0, 3, 1, p.steam],
+        [5, 0, 3, 1, p.steam],
+      ]);
       for (let n = 0; n < 11; n += 1) {
         pen.rects(X.wait, FLOOR, [
           [-(n + 1), 11 - n, (n + 1) * 2, 1, n % 2 ? p.pale : p.paleLight],
@@ -343,6 +491,47 @@ function camp(W: number): CrewScene {
     props(pen, crew, labels) {
       const p = pen.palette;
       const T = pen.T;
+      if (st === CREW_TOP) {
+        // A balloon drifts over, and fireworks go up now and then.
+        pen.stamp(
+          "balloon",
+          ((T * 14) % (W + 160)) - 80,
+          30 + Math.sin(T * 0.7) * 6 + 52,
+          [-24, -52, 24, 4],
+          (at) =>
+            at.rects(0, 0, [
+              [-4, 10, 8, 2, p.red],
+              [-5, 6, 10, 4, p.red],
+              [-5, 6, 2, 4, p.yellow],
+              [3, 6, 2, 4, p.yellow],
+              [-4, 4, 8, 2, p.red],
+              [-3, 3, 6, 1, p.redDark],
+              [-2, 0, 4, 2, p.woodTop],
+              [-2, 2, 1, 1, p.steam],
+              [1, 2, 1, 1, p.steam],
+            ]),
+        );
+        // Only for company, so an empty camp still goes quiet.
+        if (pen.dt > 0 && crew.members.length > 0 && T - boom > 1.6) {
+          boom = T;
+          const x = at(120 + ((T * 977) % 760));
+          const y = 30 + ((T * 331) % 50);
+          for (const color of FIREWORKS)
+            spawn(fx, rand, x, y, 6, color, 150, 80, 1, 4);
+        }
+      }
+      const lit: number[][] = [];
+      for (let n = 0; n < 12; n += 1) {
+        if (Math.sin(T * 0.9 + n * 2.2) > 0.3) {
+          lit.push([
+            at((n * 83 + 40) % DEMO_WIDTH),
+            14 + ((n * 37) % 90),
+            4,
+            4,
+          ]);
+        }
+      }
+      pen.rectsOf(rgba(p.navy, 0.28), lit);
       screenRows(
         pen,
         X.bash - 4 * U,
@@ -374,21 +563,18 @@ function camp(W: number): CrewScene {
           at.rects(0, 0, [[-5 + n * 2, 7.5 + tap, 1, 1, p.keys]]);
         }
       });
-      // Fire.
+      // Fire, bigger as the day goes on.
       const f = Math.floor(T * 7) % 3;
       const fireOn = Boolean(busy(crew, "think"));
-      const s = fireOn ? 1 : 0.55;
+      const s = (fireOn ? 1 : 0.55) * (0.8 + st * 0.08);
       pen.stamp(
-        `fire|${f}|${fireOn}`,
+        `fire|${f}|${fireOn}|${st}`,
         X.think,
         FLOOR,
         [-80, -80, 80, 48],
         (at) => {
           if (fireOn) at.glow(0, -16, 2, 62, p.orange, 0.26);
           at.rects(0, 0, [
-            [-6, 0, 12, 2, p.wood],
-            [-8, 0, 3, 1, p.steam],
-            [5, 0, 3, 1, p.steam],
             [-3, 2, 6, (5 + Number(f === 0)) * s, p.orange],
             [-2 + Number(f === 2), 2, 4, (7 + Number(f === 1)) * s, p.yellow],
             [-1 - Number(f === 1), 2, 2, (4 + Number(f === 2)) * s, p.flame],
@@ -430,17 +616,27 @@ function office(W: number): CrewScene {
     W,
   );
   const k = W / DEMO_WIDTH;
+  const at = (x: number) => Math.round(x * k);
   const rand = seeded(12);
   const fx: Pixel[] = [];
+  const fresh: Fresh = [];
+  let st = 0;
   let sheets = 0;
   let strokes = 0;
   let marks = 0;
   let globe = 0;
-  const windows = [140, 440, 710].map((x) => Math.round(x * k));
-  const clock = Math.round(330 * k);
+  const clock = at(330);
+  const note = (x: number, y: number, min: number) => {
+    if (min === st) fresh.push([x, y]);
+  };
+  const books = (pen: Pen) => {
+    const p = pen.palette;
+    return [p.pink, p.blue, p.green, p.yellow, p.violet, p.red];
+  };
   return {
     id: "office",
     H,
+    fresh,
     layout: {
       floors: [FLOOR],
       door: 18,
@@ -465,30 +661,153 @@ function office(W: number): CrewScene {
         else Act.coffee(pen, ch, fx, rand);
       },
     },
+    grow(growth) {
+      st = growth.stage;
+      return String(st);
+    },
     back(pen) {
       const p = pen.palette;
+      fresh.length = 0;
       pen.rect(0, 0, W, FLOOR, p.wall);
-      // Windows look out on the same star chart.
-      for (const x of windows) {
-        pen.rect(x - 2, 14, 108, 56, p.line);
-        pen.rect(x, 16, 104, 52, p.bg);
-      }
-      sparkle(pen, seeded(40), Math.round(14 * k), 0);
+      if (st === CREW_TOP) pen.wash(0, 0, W, FLOOR, p.gold, 0.3, 0.04);
+      // The company grows: more windows, a taller skyline outside, and
+      // things on the walls.
       const r = seeded(4);
-      for (const x of windows) {
+      for (const [x0, min] of [
+        [440, 0],
+        [140, 2],
+        [710, 4],
+      ] as const) {
+        if (st < min) continue;
+        const x = at(x0);
+        const w = 104;
+        pen.rect(x - 2, 14, w + 4, 56, p.line);
+        pen.rect(x, 16, w, 52, p.bg);
         for (let n = 0; n < 8; n += 1) {
           const color = rgba(p.navy, 0.15 + r() * 0.35);
-          const sx = x + Math.floor((r() * 104) / 4) * 4;
-          const sy = 18 + Math.floor((r() * 46) / 4) * 4;
-          const w = r() < 0.3 ? 4 : 2;
-          const h = r() < 0.3 ? 4 : 2;
-          pen.rect(sx, sy, w, h, color);
+          pen.rect(
+            x + Math.floor((r() * w) / 4) * 4,
+            18 + Math.floor((r() * 20) / 4) * 4,
+            2,
+            2,
+            color,
+          );
         }
+        for (let q = 0; q < 6; q += 1) {
+          const h = Math.min(44, 6 + st * (3 + ((q * 7 + x0) % 5)));
+          const bx = x + 2 + q * 17;
+          pen.rect(bx, 68 - h, 15, h, q % 2 ? p.skyline : p.skylineLight);
+          if (st < 3) continue;
+          for (let y = 68 - h + 4; y < 64; y += 7) {
+            if ((y + q) % 3) pen.rect(bx + 3, y, 3, 3, p.gold);
+            if ((y + q * 2) % 4) pen.rect(bx + 9, y, 3, 3, p.gold);
+          }
+        }
+        note(x + 52, 42, min);
+      }
+      if (st >= 1) {
+        pen.rects(at(72), 104, [
+          [-6, 0, 12, 10, p.paper],
+          [-6, 0, 12, 0.5, p.woodTop],
+          [-6, 9.5, 12, 0.5, p.woodTop],
+          [-6, 0, 0.5, 10, p.woodTop],
+          [5.5, 0, 0.5, 10, p.woodTop],
+          [-4, 2, 8, 4, p.sky],
+          [-3, 2, 3, 3, p.plantLight],
+          [1, 2, 3, 2, p.plant],
+          [2, 6, 2, 2, p.yellow],
+        ]);
+        note(at(72), 84, 1);
+      }
+      if (st >= 2) {
+        pen.rects(at(627), 74, [
+          [-7, 0, 14, 12, p.blue],
+          [-6, 1, 12, 10, p.monitor],
+          [-4, 3, 2, 3, p.pink],
+          [-1, 3, 2, 5, p.orange],
+          [2, 3, 2, 7, p.green],
+        ]);
+        note(at(627), 50, 2);
+      }
+      if (st >= 3) {
+        pen.rects(at(390), 80, [
+          [-6, 0, 12, 9, p.woodTop],
+          [-5, 1, 10, 7, p.parchment],
+          [-3, 5, 6, 1, p.steam],
+          [-3, 3, 4, 1, p.printer],
+          [1, 1, 2, 2, p.red],
+        ]);
+        note(at(390), 62, 3);
+      }
+      if (st >= 4) {
+        pen.rects(at(880), 106, [
+          [-14, 0, 28, 1, p.woodTop],
+          [-13, -1, 1, 1, p.wood],
+          [12, -1, 1, 1, p.wood],
+          [-10, 1, 6, 1, p.printer],
+          [-9, 2, 4, 3, p.printer],
+          [-10, 3, 1, 2, p.printer],
+          [-5, 3, 1, 2, p.printer],
+          [-8, 5, 2, 2, p.printer],
+          [-10, 7, 6, 1, p.printer],
+        ]);
+        note(at(872), 90, 4);
+      }
+      if (st >= 5) {
+        for (const x of [250, 588, 868].map(at)) {
+          pen.rect(x - 1, 0, 2, 16, p.steam);
+          pen.rect(x - 10, 16, 20, 6, p.steel);
+          pen.rect(x - 6, 22, 12, 2, p.gold);
+        }
+        pen.rects(at(577), FLOOR, [
+          [-5, 0, 10, 22, p.console],
+          [-4, 2, 8, 0.5, p.steel],
+          [-4, 6, 8, 0.5, p.steel],
+          [-4, 10, 8, 0.5, p.steel],
+          [-4, 14, 8, 0.5, p.steel],
+          [-4, 18, 8, 0.5, p.steel],
+        ]);
+        note(at(577), FLOOR - 90, 5);
+        note(at(250), 22, 5);
+        note(at(868), 22, 5);
+      }
+      if (st >= 6) {
+        pen.rects(at(880), 106, [
+          [2, 1, 6, 1, p.craneDark],
+          [3, 2, 4, 1, p.yellow],
+          [4, 3, 2, 2, p.yellow],
+          [2, 5, 6, 3, p.yellow],
+          [1, 6, 1, 2, p.yellow],
+          [8, 6, 1, 2, p.yellow],
+          [3, 6, 1, 1, p.flame],
+        ]);
+        pen.rects(at(300), FLOOR, [
+          [-3, 0, 6, 5, p.crate],
+          [-1, 5, 2, 5, p.plant],
+          [-5, 8, 4, 3, p.plantLight],
+          [1, 9, 4, 3, p.plantLight],
+          [-3, 11, 6, 3, p.plant],
+        ]);
+        note(at(890), 80, 6);
+        note(at(300), FLOOR - 50, 6);
+      }
+      if (st === CREW_TOP) {
+        bunting(pen, at(10), at(500), 2, 10, 0);
+        bunting(pen, at(500), at(1000), 2, 10, 2);
+        note(at(250), 12, CREW_TOP);
+        note(at(750), 12, CREW_TOP);
       }
       pen.rect(0, FLOOR - 6, W, 2, p.line);
       pen.rect(0, FLOOR, W, H - FLOOR, p.floor);
       for (let x = 0; x < W; x += 48)
         pen.rect(x, FLOOR, 2, H - FLOOR, p.floorSeam);
+      if (st >= 3) {
+        const rug = at(540);
+        pen.rect(at(300), FLOOR + 8, rug, 22, p.rug);
+        pen.rect(at(300), FLOOR + 8, rug, 2, p.rugEdge);
+        pen.rect(at(300), FLOOR + 28, rug, 2, p.rugEdge);
+        note(at(570), FLOOR + 10, 3);
+      }
       pen.rect(0, FLOOR, W, 3, p.skirting);
       // Door and clock.
       pen.rects(18, FLOOR, [
@@ -510,13 +829,20 @@ function office(W: number): CrewScene {
         [-1, 6.5, 2, 1, p.console],
         [-5, 7, 10, 0.5, p.steel],
       ]);
-      // Bookshelf.
+      // Bookshelf, minus the row whose books slide out.
       pen.rects(X.read, FLOOR, [
         [-8, 0, 16, 26, p.wood],
         [-7, 1, 14, 24, p.shelfBack],
       ]);
-      for (const y of [5, 12, 19])
+      [5, 12, 19].forEach((y, row) => {
         pen.rects(X.read, FLOOR, [[-7, y, 14, 1, p.wood]]);
+        if (row === 1) return;
+        books(pen).forEach((color, n) =>
+          pen.rects(X.read, FLOOR, [
+            [-6 + n * 2, y + 1, 2, 5 - (n % 3 === 1 ? 1 : 0), color],
+          ]),
+        );
+      });
       // Review desk.
       table(pen, X.edit, 20, 6, FLOOR);
       pen.rects(X.edit, FLOOR, [
@@ -546,7 +872,7 @@ function office(W: number): CrewScene {
         [-12, 7, 24, 16, p.steam],
         [-11, 8, 22, 14, p.paper],
       ]);
-      // Sofa and a plant.
+      // Sofa, and a plant once the day has begun.
       pen.rects(X.wait, FLOOR, [
         [-14, 0, 28, 2, p.slate],
         [-14, 2, 28, 4, p.panel],
@@ -554,17 +880,32 @@ function office(W: number): CrewScene {
         [-16, 2, 3, 8, p.panel],
         [13, 2, 3, 8, p.panel],
       ]);
-      pen.rects(W - 21, FLOOR, [
-        [-3, 0, 6, 4, p.crate],
-        [-1, 4, 2, 4, p.plant],
-        [-4, 7, 3, 2, p.plantLight],
-        [1, 8, 4, 2, p.plantLight],
-        [-2, 10, 3, 2, p.plant],
-      ]);
+      if (st >= 1) {
+        pen.rects(W - 21, FLOOR, [
+          [-3, 0, 6, 4, p.crate],
+          [-1, 4, 2, 4, p.plant],
+          [-4, 7, 3, 2, p.plantLight],
+          [1, 8, 4, 2, p.plantLight],
+          [-2, 10, 3, 2, p.plant],
+        ]);
+        note(W - 21, FLOOR - 40, 1);
+      }
     },
     props(pen, crew, labels) {
       const p = pen.palette;
       const T = pen.T;
+      if (st >= 5) {
+        // The server rack blinks.
+        for (let n = 0; n < 5; n += 1) {
+          pen.rect(
+            at(577) - 12 + ((n * 5) % 3) * 8,
+            FLOOR - 82 + n * 16,
+            4,
+            2,
+            Math.floor(T * 3 + n * 1.7) % 3 ? p.screenOn : p.yellow,
+          );
+        }
+      }
       pen.rect(clock - 1, 33, Math.floor(T) % 2 ? 7 : 5, 2, p.console);
       screenRows(
         pen,
@@ -576,22 +917,18 @@ function office(W: number): CrewScene {
       );
       // A book slides out when someone reads.
       const shelfOn = Boolean(busy(crew, "read"));
-      const books = [p.pink, p.blue, p.green, p.yellow, p.violet, p.red];
       const out = shelfOn ? Math.floor(T * 1.3) % 6 : -1;
-      pen.stamp(`books|${out}`, X.read, FLOOR, [-28, -112, 28, 0], (at) =>
-        [5, 12, 19].forEach((y, row) => {
-          books.forEach((color, n) => {
-            const pulled = row === 1 && n === out;
-            at.rects(0, 0, [
-              [
-                -6 + n * 2,
-                y + 1 + (pulled ? 1.5 : 0),
-                2,
-                5 - (n % 3 === 1 ? 1 : 0),
-                color,
-              ],
-            ]);
-          });
+      pen.stamp(`books|${out}`, X.read, FLOOR, [-28, -80, 28, 0], (at) =>
+        books(at).forEach((color, n) => {
+          at.rects(0, 0, [
+            [
+              -6 + n * 2,
+              13 + (n === out ? 1.5 : 0),
+              2,
+              5 - (n % 3 === 1 ? 1 : 0),
+              color,
+            ],
+          ]);
         }),
       );
       // The page collects red marks under the lamp.
@@ -683,12 +1020,65 @@ interface Beam {
   client: ClientType;
 }
 
+/**
+ * What the observation window passes as the voyage goes on, by stage: a
+ * planet's two colors and radius in 2 px cells, or a spiral without one.
+ */
+const PLANET_LOOK: ReadonlyArray<readonly [string, string, number]> = [
+  ["#2a78d6", "#1baf7a", 7],
+  ["#d5dbe6", "#aab4c4", 5],
+  ["#e0704a", "#b85c3c", 6],
+  ["#d9a66a", "#b8805a", 10],
+  ["#eac38a", "#c9a26a", 8],
+  ["#4d7fe0", "#3a66c4", 8],
+  ["#e87ba4", "#6250d6", 0],
+  ["#eda100", "#e87ba4", 0],
+];
+
+function paintPlanet(pen: Pen, stage: number) {
+  const [a, c, r] = PLANET_LOOK[stage];
+  if (!r) {
+    for (let n = 0; n < 90; n += 1) {
+      const t = (n / 90) * 12.6;
+      const rr = 1 + n * 0.17;
+      pen.rect(
+        Math.round(32 + Math.cos(t) * rr * 2.4),
+        Math.round(24 + Math.sin(t) * rr * 1.1),
+        2,
+        2,
+        n % 3 ? a : c,
+      );
+    }
+    pen.rect(29, 21, 6, 6, "#fff2b8");
+    return;
+  }
+  for (let y = -r; y <= r; y += 1) {
+    for (let x = -r; x <= r; x += 1) {
+      if (x * x + y * y > r * r + r * 0.6) continue;
+      const band =
+        stage === 0
+          ? ((x * 3 + y * 5) & 7) < 3
+          : stage === 3 || stage === 4
+            ? (y + 30) % 3 === 0
+            : stage === 1 || stage === 2
+              ? (x * 7 + y * 3) % 9 === 0
+              : x + y > r * 0.6;
+      pen.rect(32 + x * 2, 24 + y * 2, 2, 2, band ? c : a);
+    }
+  }
+  if (stage === 4) {
+    // Saturn's ring.
+    for (let x = -15; x <= 15; x += 1) {
+      if (Math.abs(x) > r - 2)
+        pen.rect(32 + x * 2, 24 + Math.round(x * 0.25) * 2, 2, 2, "#b8956a");
+    }
+  }
+}
+
 function ship(W: number): CrewScene {
   const H = CREW_HEIGHT;
-  // The demo's ship, 20 px higher and with less room below, to fit the
-  // height every scene shares.
-  const UP = 98;
-  const LO = 208;
+  const UP = 106;
+  const LO = 206;
   const k = W / DEMO_WIDTH;
   const rooms: Record<CrewAct, readonly [number, number]> = {
     bash: [165, 0],
@@ -709,6 +1099,8 @@ function ship(W: number): CrewScene {
   const rand = seeded(13);
   const fx: Pixel[] = [];
   const steam: Pixel[] = [];
+  const fresh: Fresh = [];
+  let st = 0;
   let beams: Beam[] = [];
   const stars: Star[] = Array.from({ length: 60 }, () => ({
     x: rand() * W,
@@ -719,16 +1111,22 @@ function ship(W: number): CrewScene {
   }));
   const xl = 30;
   const xr = W - 56;
-  const top = 6;
-  const bottom = H - 10;
+  const top = 12;
+  const bottom = H - 16;
+  // The hold sits at the stern end of the nose.
+  const hold = xr - 144;
   const NOSE = [
     [0, 36],
     [16, 62],
     [32, 84],
   ] as const;
+  const note = (x: number, y: number, min: number) => {
+    if (min === st) fresh.push([x, y]);
+  };
   return {
     id: "ship",
     H,
+    fresh,
     layout: {
       floors: [UP, LO],
       ladder,
@@ -759,7 +1157,12 @@ function ship(W: number): CrewScene {
         else Act.sleep(pen, ch);
       },
     },
+    grow(growth) {
+      st = growth.stage;
+      return String(st);
+    },
     back(pen) {
+      fresh.length = 0;
       pen.rect(0, 0, W, H, pen.palette.bg);
     },
     movers(pen) {
@@ -773,28 +1176,26 @@ function ship(W: number): CrewScene {
           star.o,
         ]),
       );
-      // Exhaust.
+      // More engines and longer flames the further the voyage.
       const flick = Math.floor(pen.T * 12) % 3;
-      for (const y of [68, 156]) {
-        pen.stamp(`exhaust|${flick}`, 0, y, [0, 0, 32, 16], (at) => {
-          at.rect(6 - flick * 3, 0, 22 + flick * 3, 16, p.yellow);
-          at.rect(12 - flick * 2, 4, 12 + flick * 2, 8, p.orange);
-          at.rect(24, 4, 8, 8, p.flame);
+      const length = 10 + st * 2 + flick * 3;
+      const engines =
+        st >= 5 ? [36, 80, 124, 168] : st >= 2 ? [54, 104, 154] : [70, 150];
+      for (const y of engines) {
+        pen.stamp(`exhaust|${length}`, 0, y, [-4, 0, 32, 16], (at) => {
+          at.rect(28 - length, 0, length, 16, p.yellow);
+          at.rect(28 - length * 0.7, 4, length * 0.7, 8, p.orange);
+          at.rect(20, 4, 8, 8, p.flame);
         });
       }
     },
     front(pen) {
       const p = pen.palette;
-      // Hull in stepped pixels, nose to the right.
-      pen.rect(xl - 4, top - 4, xr - xl + 8, bottom - top + 8, p.pale);
+      // Hull in stepped pixels, nose to the right; gilded at the end.
+      const edge = st === CREW_TOP ? p.brass : p.pale;
+      pen.rect(xl - 4, top - 4, xr - xl + 8, bottom - top + 8, edge);
       for (const [inset, ht] of NOSE) {
-        pen.rect(
-          xr + inset,
-          top + ht - 4,
-          20,
-          bottom - top - ht * 2 + 8,
-          p.pale,
-        );
+        pen.rect(xr + inset, top + ht - 4, 20, bottom - top - ht * 2 + 8, edge);
       }
       pen.rect(xl, top, xr - xl, bottom - top, p.hull);
       for (const [inset, ht] of NOSE) {
@@ -805,9 +1206,9 @@ function ship(W: number): CrewScene {
       pen.rect(xl, UP + 4, xr - xl, 12, p.deckTop);
       pen.rect(xl, LO, xr - xl, 18, p.deck);
       pen.rect(xl, LO + 4, xr - xl, 14, p.deckTop);
-      pen.rect(ladder - 26, 60, 4, LO - 60, p.slate);
-      pen.rect(ladder + 22, 60, 4, LO - 60, p.slate);
-      for (let y = 64; y < LO; y += 14)
+      pen.rect(ladder - 26, 62, 4, LO - 62, p.slate);
+      pen.rect(ladder + 22, 62, 4, LO - 62, p.slate);
+      for (let y = 66; y < LO; y += 14)
         pen.rect(ladder - 26, y, 52, 3, p.slate);
       pen.rect(ladder - 30, UP, 60, 16, p.hull);
       for (let y = UP; y < UP + 16; y += 14)
@@ -827,10 +1228,37 @@ function ship(W: number): CrewScene {
         [-7, 9, 14, 7, p.console],
         [-6, 10, 12, 5, p.screen],
       ]);
-      // Observation window.
+      // Window frame.
       const wx = R.search[0];
-      pen.rect(wx - 2, 18, 84, 56, p.slate);
-      pen.rect(wx + 2, 22, 76, 48, p.bg);
+      pen.rect(wx - 26, 22, 132, 60, p.slate);
+      // Stripes go on the hull and cargo piles up in the hold as the day
+      // goes on.
+      if (st >= 3) {
+        pen.rect(xl, top + 2, xr - xl, 4, st === CREW_TOP ? p.yellow : p.blue);
+        note(Math.round(470 * k), top + 4, 3);
+      }
+      if (st >= 5) {
+        pen.rect(xl, top + 8, xr - xl, 2, p.red);
+        note(Math.round(620 * k), top + 8, 5);
+      }
+      for (let n = 0; n < st * 3; n += 1) {
+        const cx = hold + (n % 7) * 20;
+        const cy = LO - 16 * (1 + Math.floor(n / 7));
+        pen.rect(cx, cy, 18, 15, n % 2 ? p.box : p.crate);
+        pen.rect(cx, cy + 6, 18, 2, p.wood);
+        if (n >= (st - 1) * 3) note(cx + 9, cy, st);
+      }
+      for (let x = hold - 6; x < xr - 4; x += 16) {
+        pen.rect(x, LO - 2, 8, 2, p.yellow);
+        pen.rect(x + 8, LO - 2, 8, 2, p.console);
+      }
+      // Telescope stand.
+      pen.rects(wx, UP, [
+        [-4, 0, 1, 3, p.steel],
+        [3, 0, 1, 3, p.steel],
+        [-3, 3, 7, 1, p.steel],
+        [0, 4, 1, 4, p.steel],
+      ]);
       // Transmitter.
       const tx = R.write[0];
       pen.rects(tx, UP, [
@@ -839,29 +1267,21 @@ function ship(W: number): CrewScene {
         [-7, 10, 14, 2, p.console],
         [-1, 12, 2, 8, p.slateLight],
       ]);
-      pen.rect(tx - 4, 0, 8, 8, p.slateLight);
-      // Archive cabinet.
-      pen.rects(R.read[0], LO, [[-9, 0, 18, 20, p.panel]]);
-      // Engine pipes.
+      pen.rect(tx - 4, 14, 8, 8, p.slateLight);
+      // Archive cabinet, engine pipes, star map table.
+      pen.rects(R.read[0], LO, [[-9, 0, 18, 16, p.panel]]);
       pen.rects(R.edit[0], LO, [
         [-12, 3, 24, 3, p.slateLight],
         [-12, 11, 24, 3, p.slateLight],
         [-3, 6, 6, 5, p.slate],
         [8, 0, 3, 14, p.steel],
       ]);
-      // Star map table.
       pen.rects(R.think[0], LO, [
         [-7, 0, 14, 5, p.slate],
         [-9, 5, 18, 1, p.steel],
       ]);
-      // Sleep pods.
-      pen.rects(R.wait[0], LO, [
-        [-12, 0, 24, 3, p.slate],
-        [-12, 3, 24, 6, p.pale],
-        [-10, 4, 20, 4, p.glass],
-      ]);
     },
-    props(pen, crew, labels) {
+    props(pen, crew, labels, words) {
       const p = pen.palette;
       const T = pen.T;
       const bashOn = Boolean(busy(crew, "bash"));
@@ -880,30 +1300,33 @@ function ship(W: number): CrewScene {
             at.rects(0, 0, [[-7 + n * 4, 3, 2, 2, lit[n] ? color : p.lampOff]]),
           ),
       );
-      // The telescope points out at the stars passing.
+      // The observation window shows how far the ship has got; the
+      // telescope points out at the stars passing.
       const scopeOn = Boolean(busy(crew, "search"));
       const wx = R.search[0];
-      pen.clip(wx + 2, 22, 76, 48, () => {
+      pen.rect(wx - 22, 26, 124, 52, p.bg);
+      pen.clip(wx - 22, 26, 124, 52, () => {
         starsOf(
           pen,
           stars
-            .filter((_, n) => n % 4 === 0)
+            .filter((_, n) => n % 3 === 0)
             .map((star) => [
-              wx + 2 + (star.x % 76),
-              22 + (star.y % 48),
+              wx - 22 + (star.x % 124),
+              26 + (star.y % 52),
               star.s,
               star.o + 0.2,
             ]),
         );
-        if (scopeOn) pixStar(pen, wx + 40 + Math.sin(T) * 18, 42, 3, p.yellow);
+        pen.stamp(
+          `planet|${st}`,
+          wx + 40 - 32 + Math.round(Math.sin(T * 0.2) * 6),
+          28,
+          [0, 0, 64, 48],
+          (at) => paintPlanet(at, st),
+        );
+        if (scopeOn) pixStar(pen, wx + 40 + Math.sin(T) * 34, 40, 3, p.yellow);
       });
       pen.stamp("telescope", wx, UP, [-20, -64, 32, 0], (at) => {
-        at.rects(0, 0, [
-          [-4, 0, 1, 3, p.steel],
-          [3, 0, 1, 3, p.steel],
-          [-3, 3, 7, 1, p.steel],
-          [0, 4, 1, 4, p.steel],
-        ]);
         for (let n = 0; n < 5; n += 1) {
           at.rects(0, 0, [
             [-3 + n * 2, 7 + n, 3, 3, n < 2 ? p.console : p.slate],
@@ -933,9 +1356,9 @@ function ship(W: number): CrewScene {
       }
       // Drawers open in the archive.
       const readOn = Boolean(busy(crew, "read"));
-      const opened = readOn ? Math.floor(T * 1.4) % 12 : -1;
-      pen.stamp(`drawers|${opened}`, R.read[0], LO, [-36, -84, 44, 0], (at) => {
-        for (let r = 0; r < 4; r += 1) {
+      const opened = readOn ? Math.floor(T * 1.4) % 9 : -1;
+      pen.stamp(`drawers|${opened}`, R.read[0], LO, [-36, -68, 44, 0], (at) => {
+        for (let r = 0; r < 3; r += 1) {
           for (let n = 0; n < 3; n += 1) {
             const open = opened === r * 3 + n;
             at.rects(0, 0, [
@@ -958,7 +1381,7 @@ function ship(W: number): CrewScene {
       if (editOn && pen.chance(rand, 5 / 60)) {
         steam.push({
           x: R.edit[0] + 28 + rand() * 10,
-          y: LO - 72,
+          y: LO - 62,
           vx: (rand() - 0.5) * 14,
           vy: -22,
           t: 0,
@@ -982,13 +1405,22 @@ function ship(W: number): CrewScene {
           rgba(p.blue, glow * (0.5 + 0.5 * Math.sin(a))),
         );
       }
-      pen.rect(mx - 28, LO - 76, 56, 52, rgba(p.blue, glow * 0.25));
-      label(pen, labels.bash, R.bash[0], 22, bashOn);
-      label(pen, labels.search, wx + 40, 14, scopeOn);
-      label(pen, labels.write, tx + 34, 22, Boolean(writer));
-      label(pen, labels.read, R.read[0], 122, readOn);
-      label(pen, labels.edit, R.edit[0], 130, editOn);
-      label(pen, labels.think, mx, 126, mapOn);
+      pen.rect(mx - 28, LO - 72, 56, 48, rgba(p.blue, glow * 0.25));
+      label(pen, labels.bash, R.bash[0], 32, bashOn);
+      pen.text(
+        `${labels.search} · ${words.planets[st] ?? ""}`,
+        wx - 32,
+        40,
+        10.5,
+        rgba(p.muted, scopeOn ? 1 : 0.75),
+        600,
+        "right",
+      );
+      label(pen, labels.write, tx + 34, 30, Boolean(writer));
+      label(pen, labels.read, R.read[0], 136, readOn);
+      label(pen, labels.edit, R.edit[0], 136, editOn);
+      label(pen, labels.think, mx, 136, mapOn);
+      label(pen, words.hold, hold + 66, 136, false);
     },
     step(crew, dt) {
       // Writing fast speeds the ship up.
@@ -1023,32 +1455,41 @@ function ship(W: number): CrewScene {
 
 // ---------- construction site ----------
 
+/** Floors of the tower next to the crane when today's tokens top out. */
+const MAX_FLOORS = 12;
+
 function site(W: number): CrewScene {
-  const FLOOR = 190;
+  const FLOOR = 186;
   const H = CREW_HEIGHT;
   const X = spread(
     {
       bash: 95,
       read: 262,
-      edit: 400,
-      write: 560,
-      search: 705,
-      think: 820,
-      wait: 930,
+      edit: 375,
+      write: 545,
+      search: 730,
+      think: 835,
+      wait: 935,
     },
     W,
   );
   const k = W / DEMO_WIDTH;
+  const at = (x: number) => Math.round(x * k);
   const rand = seeded(14);
   const fx: Pixel[] = [];
+  const fresh: Fresh = [];
+  let st = 0;
+  let floors = 0;
   let courses = 3;
   let bricks = 0;
   let dirt = 4;
   let nails = 0;
   let crane = 0;
   let cargo = 0;
-  const cx = Math.round(478 * k);
+  const cx = at(478);
   const jib = 44;
+  const BX = at(622);
+  const BW = 64;
   const driver = (crew: Crew) =>
     crew.members.find(
       (member) =>
@@ -1060,6 +1501,7 @@ function site(W: number): CrewScene {
   return {
     id: "site",
     H,
+    fresh,
     layout: {
       floors: [FLOOR],
       door: -40,
@@ -1093,23 +1535,76 @@ function site(W: number): CrewScene {
         else if (act === "write") carryBrick(pen, ch, member);
       },
     },
+    grow(growth) {
+      st = growth.stage;
+      // Today's tokens put the tower up a floor at a time.
+      floors = Math.round(
+        (Math.min(growth.level, CREW_TOP) / CREW_TOP) * MAX_FLOORS,
+      );
+      return `${floors}/${st}`;
+    },
     back(pen) {
       const p = pen.palette;
+      fresh.length = 0;
       pen.rect(0, 0, W, H, p.bg);
       sparkle(pen, seeded(57), Math.round(44 * k), FLOOR - 70);
-      for (let n = 0; 40 + n * 130 < W; n += 1) {
-        const x = 40 + n * 130;
+      // The neighbourhood fills in behind the site.
+      [20, 880, 150, 760, 290, 960, 420].slice(0, 1 + st).forEach((x0, n) => {
+        const x = at(x0);
         const h = 28 + ((n * 37) % 42);
         pen.rect(x, FLOOR - h, 60, h, p.hills);
         for (let y = FLOOR - h + 6; y < FLOOR - 6; y += 12) {
           for (let q = x + 6; q < x + 54; q += 14)
             pen.rect(q, y, 6, 6, p.windows);
         }
+        if (n === st) note(x + 30, FLOOR - h, st);
+      });
+      // The tower: finished floors light up, the top two are still in
+      // scaffolding.
+      if (!floors) {
+        pen.rect(BX - 8, FLOOR - 6, BW + 16, 6, p.footing);
+        for (let x = BX - 8; x <= BX + BW + 4; x += 18)
+          pen.rect(x, FLOOR - 16, 4, 16, p.plankEdge);
+        pen.rect(BX - 8, FLOOR - 14, BW + 16, 2, p.plank);
+      }
+      for (let n = 0; n < floors; n += 1) {
+        const y = FLOOR - (n + 1) * 11;
+        const raw = n >= floors - 2 && floors < MAX_FLOORS;
+        pen.rect(
+          BX,
+          y,
+          BW,
+          10,
+          raw ? p.towerRaw : n % 2 ? p.tower : p.towerLight,
+        );
+        pen.rect(BX, y + 10, BW, 1, p.panel);
+        for (let q = 0; q < 4; q += 1) {
+          const window = raw
+            ? p.towerRawWindow
+            : (n * 3 + q * 5) % 7
+              ? p.gold
+              : p.slateLight;
+          pen.rect(BX + 5 + q * 15, y + 3, 9, 5, window);
+        }
+        if (raw) {
+          pen.rect(BX - 4, y, 2, 11, p.craneDark);
+          pen.rect(BX + BW + 2, y, 2, 11, p.craneDark);
+          pen.rect(BX - 4, y + 5, BW + 8, 1, p.craneDark);
+        }
+      }
+      if (floors) note(BX + BW / 2, FLOOR - floors * 11, st);
+      if (floors >= MAX_FLOORS) {
+        // Topped out: a roof, a flag and bunting.
+        const y = FLOOR - floors * 11;
+        pen.rect(BX - 2, y - 4, BW + 4, 4, p.panel);
+        pen.rect(BX + BW - 6, y - 24, 2, 20, p.steel);
+        pen.rect(BX + BW - 4, y - 24, 14, 9, p.red);
+        bunting(pen, BX - 30, BX + BW / 2, y + 2, 8, 0);
       }
       pen.rect(0, FLOOR, W, 4, p.siteLine);
       pen.rect(0, FLOOR + 4, W, H - FLOOR - 4, p.siteGround);
       const r = seeded(9);
-      const cells = Math.floor(W / 4);
+      const cells = Math.round((252 * W) / DEMO_WIDTH);
       for (let n = 0; n < Math.round(90 * k); n += 1) {
         const color = rgba(p.speck, 0.1 + r() * 0.16);
         pen.rect(
@@ -1208,7 +1703,7 @@ function site(W: number): CrewScene {
           ...figureOf(dig, undefined, true),
           x: X0 - 26,
           fy: FLOOR - 19,
-          u: 2,
+          u: smallU(dig.u),
           face: 1,
           dx: undefined,
         };
@@ -1353,6 +1848,10 @@ function site(W: number): CrewScene {
         3,
       );
     }
+  }
+
+  function note(x: number, y: number, min: number) {
+    if (min === st) fresh.push([x, y]);
   }
 }
 

@@ -1,3 +1,4 @@
+import { crownOf, smallU, spriteOf } from "./live-crew-sprites";
 import {
   busyUntil,
   laneAction,
@@ -47,8 +48,15 @@ export const CREW_LIMIT = 6;
 export const CLONE_LIMIT = 2;
 /** Steps waiting behind the current one; a burst keeps only the newest. */
 export const QUEUE_LIMIT = 2;
-/** Today's tokens celebrate each time they pass a multiple of this. */
-export const MILESTONE_STEP = 10_000_000;
+/**
+ * Today's tokens set how far each scene has come: round numbers on a log
+ * scale, from nothing to a billion.
+ */
+export const CREW_STAGES = [
+  0, 100_000, 500_000, 2_000_000, 10_000_000, 50_000_000, 200_000_000,
+  1_000_000_000,
+] as const;
+export const CREW_TOP = CREW_STAGES.length - 1;
 
 const WEB = new Set(["web", "fetch", "browse", "browser", "url", "http"]);
 const SHELL = new Set([
@@ -146,6 +154,8 @@ export interface CrewMemberReading {
   tool: string;
   /** Output tokens per second over the last minute. */
   rate: number;
+  /** The model its latest call ran with; empty when none is known. */
+  model: string;
   /** Subagents in progress, oldest first. */
   clones: CrewCloneReading[];
   /** Calls that failed over to another provider, by call. */
@@ -239,6 +249,7 @@ export function readCrew(activity: RequestActivity): CrewReading {
       client: tree.calls.at(-1)?.client_type ?? "unknown",
       ...ownAction(own),
       rate: outputThroughput(tree.calls, now),
+      model: latestModel(own),
       clones,
       failovers: tree.calls
         .filter((call) => call.failed_service_id)
@@ -253,20 +264,46 @@ export function readCrew(activity: RequestActivity): CrewReading {
   return { members, rate: outputThroughput(activity.calls, now) };
 }
 
+/** The model of a conversation's latest call that names one. */
+function latestModel(calls: readonly RequestActivityCall[]): string {
+  for (let n = calls.length - 1; n >= 0; n -= 1) {
+    const model = calls[n].model;
+    if (model) return model;
+  }
+  return "";
+}
+
 /**
- * The multiple of `step` today's tokens just passed, or null. The first read
- * of a page has nothing to compare with and passes nothing.
+ * How far today's tokens have come: the stage reached, and `level`, the stage
+ * plus how far it is on its way to the next one on a log scale.
  */
-export function milestonePassed(
+export interface CrewGrowth {
+  stage: number;
+  level: number;
+}
+
+export function crewGrowth(tokens: number | null): CrewGrowth {
+  const value = Math.max(0, tokens ?? 0);
+  let stage = 0;
+  while (stage < CREW_TOP && value >= CREW_STAGES[stage + 1]) stage += 1;
+  if (stage === CREW_TOP) return { stage, level: CREW_TOP };
+  const low = CREW_STAGES[stage] || 10_000;
+  const high = CREW_STAGES[stage + 1];
+  const part = Math.log(Math.max(value, low) / low) / Math.log(high / low);
+  return { stage, level: stage + clamp(part) };
+}
+
+/**
+ * The stage today's tokens just reached, or null. The first read of a page
+ * has nothing to compare with and passes nothing.
+ */
+export function stagePassed(
   previous: number | null,
   next: number | null,
-  step: number = MILESTONE_STEP,
 ): number | null {
   if (previous === null || next === null) return null;
-  const reached = Math.floor(next / step);
-  return reached > Math.floor(previous / step) && reached > 0
-    ? reached * step
-    : null;
+  const reached = crewGrowth(next).stage;
+  return reached > crewGrowth(previous).stage ? reached : null;
 }
 
 /** Where a character stands: a floor, a place on it, and the way it faces. */
@@ -316,7 +353,7 @@ export interface CrewWalker {
   t: number;
   move: Move | null;
   climb: boolean;
-  /** Pixel size: 4 for characters, 2 for clones. */
+  /** Art pixel size: its sprite's, halved for clones. */
   u: number;
 }
 
@@ -342,9 +379,30 @@ export interface CrewClone extends CrewWalker {
   slot: number;
 }
 
+/** The winged orb that shows a character's model. */
+export interface CrewOrb {
+  x: number;
+  y: number;
+  /** Fade-in after a model change, 0 → 1. */
+  in: number;
+  /** Sparks owed while the model writes. */
+  spark: number;
+  /** The model it shows. */
+  model: string;
+  flap: boolean;
+  glow: boolean;
+  dim: boolean;
+}
+
 export interface CrewMember extends CrewWalker {
   id: string;
   client: ClientType;
+  /** The model its conversation runs on now; empty when none is known. */
+  model: string;
+  /** Its model's orb, once drawn; null without a model. */
+  orb: CrewOrb | null;
+  /** When it joined, among everyone so far: sets apart its motions. */
+  order: number;
   act: CrewAct | "leave";
   tool: string;
   count: number;
@@ -407,6 +465,8 @@ export interface Crew {
   /** Logical scene size, for confetti. */
   width: number;
   height: number;
+  /** Characters that joined so far. */
+  joined: number;
 }
 
 /** A small seeded generator, so a test or a frame sequence repeats. */
@@ -434,6 +494,7 @@ export function createCrew(rand: () => number = seededRandom(5)): Crew {
     primed: false,
     width: 1006,
     height: 240,
+    joined: 0,
   };
 }
 
@@ -561,7 +622,7 @@ function rest(crew: Crew, member: CrewMember, layout: CrewLayout) {
 function pop(crew: Crew, member: CrewMember) {
   crew.pops.push({
     x: member.x,
-    y: member.fy - 62,
+    y: crownOf(member, member.client) - 18,
     t: 0,
     client: member.client,
   });
@@ -603,14 +664,24 @@ function walker(x: number, level: number, fy: number, u: number): CrewWalker {
 }
 
 function joinMember(
+  crew: Crew,
   reading: CrewMemberReading,
   layout: CrewLayout,
 ): CrewMember {
   const level = layout.doorLevel ?? 0;
+  crew.joined += 1;
   return {
-    ...walker(layout.door, level, layout.floors[level], 4),
+    ...walker(
+      layout.door,
+      level,
+      layout.floors[level],
+      spriteOf(reading.client).u,
+    ),
     id: reading.id,
     client: reading.client,
+    model: reading.model,
+    orb: null,
+    order: crew.joined,
     act: "wait",
     tool: "",
     count: 1,
@@ -697,7 +768,12 @@ function syncClones(
     if (member.clones.some((clone) => clone.id === reading.id)) continue;
     const slot = member.clones.length;
     member.clones.push({
-      ...walker(member.x + (slot ? 20 : -20), member.level, member.fy, 2),
+      ...walker(
+        member.x + (slot ? 20 : -20),
+        member.level,
+        member.fy,
+        smallU(member.u),
+      ),
       id: reading.id,
       act: reading.act,
       tool: reading.tool,
@@ -744,7 +820,7 @@ export function syncCrew(crew: Crew, reading: CrewReading, layout: CrewLayout) {
   for (const next of reading.members) {
     if (crew.members.some((member) => member.id === next.id)) continue;
     if (active >= CREW_LIMIT) continue;
-    crew.members.push(joinMember(next, layout));
+    crew.members.push(joinMember(crew, next, layout));
     active += 1;
   }
   const shown = new Set(crew.members.map((member) => member.id));
@@ -754,7 +830,11 @@ export function syncCrew(crew: Crew, reading: CrewReading, layout: CrewLayout) {
   for (const member of crew.members) {
     const next = live.get(member.id);
     if (!next || member.leaving) continue;
-    member.client = next.client;
+    if (member.client !== next.client) {
+      member.client = next.client;
+      member.u = spriteOf(next.client).u;
+    }
+    member.model = next.model;
     enqueue(member, next);
     // Resting when it first shows up: it comes in and rests by the door.
     if (!member.spot && member.act === "wait" && member.queue.length === 0) {
@@ -929,6 +1009,7 @@ export function rescaleCrew(crew: Crew, ratio: number) {
   for (const member of crew.members) {
     member.x *= ratio;
     member.move = null;
+    if (member.orb) member.orb.x *= ratio;
     if (member.spot) member.spot = { ...member.spot, x: member.spot.x * ratio };
     for (const clone of member.clones) {
       clone.x *= ratio;

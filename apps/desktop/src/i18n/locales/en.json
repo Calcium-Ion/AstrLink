@@ -794,7 +794,18 @@
         }
       },
       "failover": "Switching route",
-      "milestone": "{{amount}} tokens today!"
+      "milestone": "{{amount}} tokens today!",
+      "hold": "Cargo hold",
+      "planets": {
+        "earth": "Earth",
+        "moon": "Moon",
+        "mars": "Mars",
+        "jupiter": "Jupiter",
+        "saturn": "Saturn",
+        "neptune": "Neptune",
+        "nebula": "Nebula",
+        "core": "Galactic core"
+      }
     },
     "sky": "Today's requests",
     "skyToday": "Today's requests",

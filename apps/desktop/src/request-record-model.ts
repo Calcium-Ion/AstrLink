@@ -750,6 +750,11 @@ export interface RequestActivityCall {
   parent_session_id?: string;
   /** Original inbound client; absent on historical records. */
   client_type?: ClientType;
+  /**
+   * The model the call ran with, as usage counts it: served, else a
+   * redirect's target, else the client's; absent when none is known.
+   */
+  model?: string;
   started_at: string;
   completed_at: string | null;
   status: RequestStatus;
@@ -2205,6 +2210,9 @@ export function parseRequestActivity(value: unknown): RequestActivity {
         session_id: stringAt(call.session_id, `${path}.session_id`),
         ...optionalParentSession(call.parent_session_id, path),
         ...optionalClientType(call.client_type),
+        ...(call.model == null
+          ? {}
+          : { model: stringAt(call.model, `${path}.model`) }),
         started_at: stringAt(call.started_at, `${path}.started_at`),
         completed_at: nullableStringAt(
           call.completed_at,

@@ -9,8 +9,10 @@ import {
 } from "react";
 
 import { clientTypeName } from "@/components/ClientTypeIcon";
+import { Brain } from "@/components/icons";
 import { SegmentedControl } from "@/components/SegmentedControl";
 import { StatusDot } from "@/components/StatusDot";
+import { vendorMarks, type Vendor } from "@/components/vendor-marks";
 import { useDevicePixelRatio } from "@/lib/use-device-pixel-ratio";
 import { useMediaQuery } from "@/lib/use-media-query";
 import { useOnScreen, usePageVisible } from "@/lib/use-on-screen";
@@ -18,11 +20,15 @@ import { useOnScreen, usePageVisible } from "@/lib/use-on-screen";
 import { formatCompactNumber } from "./format-compact-number";
 import { useT } from "./i18n";
 import {
+  BRAIN_MARK,
   clamp,
   DEMO_WIDTH,
   drawCrew,
+  markOf,
   Pen,
   readCrewPalette,
+  spawn,
+  stepOrb,
   U,
   type CrewPalette,
   type CrewWords,
@@ -31,10 +37,12 @@ import {
   celebrate,
   createCrew,
   CREW_ACTS,
-  milestonePassed,
+  CREW_STAGES,
+  crewGrowth,
   readCrew,
   rescaleCrew,
   settleCrew,
+  stagePassed,
   stepCrew,
   syncCrew,
   type Crew,
@@ -62,6 +70,17 @@ const STEP_S = 1 / 30;
 const SETTLE_S = 1;
 /** How long the milestone banner stays up without motion. */
 const STILL_BANNER_MS = 3500;
+/** The places the ship's window passes, a stage each. */
+const PLANETS = [
+  "earth",
+  "moon",
+  "mars",
+  "jupiter",
+  "saturn",
+  "neptune",
+  "nebula",
+  "core",
+] as const;
 
 function readSceneChoice(): CrewSceneId {
   try {
@@ -126,7 +145,12 @@ export class CrewEngine {
   private front: HTMLCanvasElement | null = null;
   private reading: CrewReading = { members: [], rate: 0 };
   private seen = "";
-  private words: CrewWords = { failover: "", name: clientTypeName };
+  private words: CrewWords = {
+    failover: "",
+    name: clientTypeName,
+    hold: "",
+    planets: [],
+  };
   private labels: Record<CrewSceneId, Record<CrewStation, string>> | null =
     null;
   private running = false;
@@ -135,6 +159,15 @@ export class CrewEngine {
   private last = 0;
   private settled = 0;
   private bannerTimer = 0;
+  private tokens: number | null = null;
+  /** What the cached layers show of today's growth. */
+  private grown = "";
+  /** The next bake sparkles what it adds. */
+  private burst = false;
+  private markSvgs: ReadonlyMap<string, string> = new Map();
+  private marks = new Map<string, HTMLImageElement>();
+  private loading = new Set<string>();
+  private markInk = "";
 
   constructor(sceneId: CrewSceneId) {
     this.sceneId = sceneId;
@@ -170,7 +203,58 @@ export class CrewEngine {
     if (!this.canvas) return;
     this.palette = readCrewPalette(this.canvas);
     this.invalidate();
+    this.loadMarks();
     this.redraw();
+  }
+
+  /** Today's tokens: the scene grows a stage at a time. */
+  setTokens(tokens: number | null) {
+    // The first read only sets where the day is; growing while watching
+    // sparkles.
+    const watching = this.tokens !== null;
+    this.tokens = tokens;
+    const scene = this.scene;
+    if (!scene) return;
+    const grown = scene.grow(crewGrowth(tokens));
+    if (grown === this.grown) return;
+    this.grown = grown;
+    this.back = null;
+    this.front = null;
+    this.burst = watching && !this.still;
+    this.redraw();
+    this.wake();
+  }
+
+  /** The vendor marks the crew wears, as SVG; each is rasterised once. */
+  setMarks(svgs: ReadonlyMap<string, string>) {
+    this.markSvgs = svgs;
+    this.loadMarks();
+  }
+
+  private loadMarks() {
+    const ink = this.palette?.ink;
+    if (!ink) return;
+    if (ink !== this.markInk) {
+      // Mono marks take the crew's ink, so a new theme loads them again.
+      this.markInk = ink;
+      this.marks = new Map();
+      this.loading.clear();
+    }
+    for (const [mark, svg] of this.markSvgs) {
+      if (this.marks.has(mark) || this.loading.has(mark)) continue;
+      this.loading.add(mark);
+      const image = new Image();
+      image.onload = () => {
+        if (this.markInk !== ink) return;
+        this.loading.delete(mark);
+        this.marks.set(mark, image);
+        this.redraw();
+      };
+      image.onerror = () => this.loading.delete(mark);
+      image.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(
+        svg.replaceAll("currentColor", ink),
+      )}`;
+    }
   }
 
   resize(cssWidth: number, dpr: number) {
@@ -248,6 +332,8 @@ export class CrewEngine {
     this.canvas.style.height = `${fit.cssHeight}px`;
     if (this.g) this.g.imageSmoothingEnabled = false;
     this.scene = createScene(this.sceneId, fit.W);
+    this.grown = this.scene.grow(crewGrowth(this.tokens));
+    this.burst = false;
     if (anew || !previous) {
       // Another scene: everyone is already at work in it.
       this.crew = createCrew();
@@ -279,8 +365,11 @@ export class CrewEngine {
   }
 
   private settle() {
-    if (!this.scene) return;
-    settleCrew(this.crew, this.scene.layout);
+    const scene = this.scene;
+    if (!scene) return;
+    settleCrew(this.crew, scene.layout);
+    for (const member of this.crew.members)
+      stepOrb(member, this.crew.time, 0, scene.stage.fx, this.crew.rand, true);
     this.draw(0);
   }
 
@@ -327,6 +416,8 @@ export class CrewEngine {
     for (let left = dt; left > 1e-6; left -= STEP_S) {
       const step = Math.min(STEP_S, left);
       stepCrew(this.crew, scene.layout, step);
+      for (const member of this.crew.members)
+        stepOrb(member, this.crew.time, step, scene.stage.fx, this.crew.rand);
       scene.step(this.crew, step);
     }
     this.draw(dt);
@@ -367,6 +458,16 @@ export class CrewEngine {
     if (!this.back) {
       this.back = this.layer((pen) => scene.back(pen));
       this.front = scene.front ? this.layer((pen) => scene.front!(pen)) : null;
+      // Whatever the scene just grew gets a burst of sparkles.
+      if (this.burst) {
+        const fx = scene.stage.fx;
+        const rand = this.crew.rand;
+        for (const [x, y] of scene.fresh) {
+          spawn(fx, rand, x, y, 14, "yellow", 120, 70, 0.9, 4);
+          spawn(fx, rand, x, y, 6, "paper", 90, 50, 0.7, 4);
+        }
+      }
+      this.burst = false;
     }
     this.pen ??= this.penFor(g);
     const pen = this.pen;
@@ -376,8 +477,8 @@ export class CrewEngine {
     if (this.back) g.drawImage(this.back, 0, 0);
     scene.movers?.(pen);
     if (this.front) g.drawImage(this.front, 0, 0);
-    scene.props(pen, this.crew, labels[scene.id]);
-    drawCrew(pen, this.crew, scene.stage, this.words);
+    scene.props(pen, this.crew, labels[scene.id], this.words);
+    drawCrew(pen, this.crew, scene.stage, this.words, this.marks);
   }
 }
 
@@ -391,14 +492,23 @@ function CrewFeed({
   coreSessionKey: string | null;
   enabled: boolean;
   engine: CrewEngine;
-  onRead: (count: number, rate: number) => void;
+  onRead: (count: number, rate: number, marks: string) => void;
 }) {
   const activity = useRequestActivityPoll(coreSessionKey, enabled);
   useEffect(() => {
     if (!activity) return;
     const reading = readCrew(activity);
     engine.setReading(reading);
-    onRead(reading.members.length, Math.round(reading.rate));
+    const marks = new Set(
+      reading.members.flatMap((member) =>
+        member.model ? [markOf(member.model)] : [],
+      ),
+    );
+    onRead(
+      reading.members.length,
+      Math.round(reading.rate),
+      [...marks].sort().join(" "),
+    );
   }, [activity, engine, onRead]);
   return null;
 }
@@ -425,19 +535,22 @@ export const LiveCrew = memo(function LiveCrew({
   const [sceneId, setSceneId] = useState(readSceneChoice);
   const [engine] = useState(() => new CrewEngine(sceneId));
   const [header, setHeader] = useState({ count: 0, rate: 0 });
+  const [marks, setMarks] = useState("");
   const sectionRef = useRef<HTMLElement>(null);
   const boxRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const marksRef = useRef<HTMLDivElement>(null);
   const onScreen = useOnScreen(sectionRef);
   const pageVisible = usePageVisible();
   const running = onScreen && pageVisible;
 
-  const onRead = useCallback((count: number, rate: number) => {
+  const onRead = useCallback((count: number, rate: number, marks: string) => {
     setHeader((current) =>
       current.count === count && current.rate === rate
         ? current
         : { count, rate },
     );
+    setMarks(marks);
   }, []);
 
   useLayoutEffect(() => {
@@ -479,7 +592,12 @@ export const LiveCrew = memo(function LiveCrew({
         ]),
       ) as Record<CrewStation, string>;
     engine.setWords(
-      { failover: t("overview.liveCrew.failover"), name: clientTypeName },
+      {
+        failover: t("overview.liveCrew.failover"),
+        name: clientTypeName,
+        hold: t("overview.liveCrew.hold"),
+        planets: PLANETS.map((key) => t(`overview.liveCrew.planets.${key}`)),
+      },
       Object.fromEntries(CREW_SCENES.map((id) => [id, stations(id)])) as Record<
         CrewSceneId,
         Record<CrewStation, string>
@@ -487,19 +605,34 @@ export const LiveCrew = memo(function LiveCrew({
     );
   }, [engine, t]);
 
-  // Only a milestone passed while watching counts; the first read sets the mark.
+  // Only a stage passed while watching counts; the first read sets the mark.
   const lastTokens = useRef<number | null>(null);
   useEffect(() => {
-    const passed = milestonePassed(lastTokens.current, todayTokens);
+    const passed = stagePassed(lastTokens.current, todayTokens);
     lastTokens.current = todayTokens;
+    engine.setTokens(todayTokens);
     if (passed !== null) {
       engine.celebrate(
         t("overview.liveCrew.milestone", {
-          amount: formatCompactNumber(passed),
+          amount: formatCompactNumber(CREW_STAGES[passed]),
         }),
       );
     }
   }, [engine, t, todayTokens]);
+
+  // Each mark is drawn once by its icon component and read back as SVG.
+  useLayoutEffect(() => {
+    const box = marksRef.current;
+    if (!box) return;
+    const serializer = new XMLSerializer();
+    const svgs = new Map<string, string>();
+    for (const span of box.querySelectorAll<HTMLElement>("[data-mark]")) {
+      const svg = span.querySelector("svg");
+      if (svg && span.dataset.mark)
+        svgs.set(span.dataset.mark, serializer.serializeToString(svg));
+    }
+    engine.setMarks(svgs);
+  }, [engine, marks]);
 
   const choose = useCallback((next: CrewSceneId) => {
     setSceneId(next);
@@ -553,6 +686,19 @@ export const LiveCrew = memo(function LiveCrew({
           data-slot="live-crew-canvas"
           ref={canvasRef}
         />
+      </div>
+      <div hidden ref={marksRef}>
+        {marks
+          ? marks.split(" ").map((mark) => {
+              const Mark =
+                mark === BRAIN_MARK ? Brain : vendorMarks[mark as Vendor];
+              return (
+                <span data-mark={mark} key={mark}>
+                  <Mark size={24} />
+                </span>
+              );
+            })
+          : null}
       </div>
       <CrewFeed
         coreSessionKey={coreSessionKey}

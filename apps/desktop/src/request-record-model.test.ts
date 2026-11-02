@@ -1067,6 +1067,27 @@ describe("request activity", () => {
       ).toThrow();
     }
   });
+
+  it("reads the model each call ran with", () => {
+    const call = {
+      session_id: "session_a",
+      started_at: "2026-10-24T10:00:00Z",
+      completed_at: null,
+      status: "pending",
+    };
+    const activity = parseRequestActivity({
+      now: "2026-10-24T10:01:00Z",
+      calls: [{ ...call, model: "kimi-k3" }, call],
+    });
+    expect(activity.calls[0].model).toBe("kimi-k3");
+    expect(activity.calls[1]).not.toHaveProperty("model");
+    expect(() =>
+      parseRequestActivity({
+        now: "2026-10-24T10:01:00Z",
+        calls: [{ ...call, model: 7 }],
+      }),
+    ).toThrow();
+  });
 });
 
 describe("client attribution", () => {

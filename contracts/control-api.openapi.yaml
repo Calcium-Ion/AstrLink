@@ -7741,6 +7741,14 @@ components:
           description: Set on a subagent's calls; the conversation that started it.
         client_type:
           $ref: "#/components/schemas/ClientType"
+        model:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: >-
+            Model the call ran with, as usage counts it: the one the provider
+            served, else a routing redirect's target, else the client's.
+            Absent when none is known.
         started_at:
           type: string
           format: date-time

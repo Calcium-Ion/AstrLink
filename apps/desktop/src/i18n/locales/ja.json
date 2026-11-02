@@ -794,7 +794,18 @@
         }
       },
       "failover": "経路を切替",
-      "milestone": "今日 {{amount}} トークン達成！"
+      "milestone": "今日 {{amount}} トークン達成！",
+      "hold": "貨物室",
+      "planets": {
+        "earth": "地球",
+        "moon": "月",
+        "mars": "火星",
+        "jupiter": "木星",
+        "saturn": "土星",
+        "neptune": "海王星",
+        "nebula": "星雲",
+        "core": "銀河中心"
+      }
     },
     "sky": "今日のリクエスト",
     "skyToday": "今日のリクエスト",
