@@ -51,8 +51,8 @@ type usageScanner struct {
 	// stream moved it on and cleared once it was stored.
 	output        contract.OutputActivity
 	outputChanged bool
-	// spawns, when set, collects the subagent tool calls of an OpenAI Chat
-	// response; see watchSpawns.
+	// spawns, when set, collects the subagent tool calls of the response;
+	// see watchSpawns.
 	spawns *spawnCalls
 }
 
@@ -71,18 +71,23 @@ func (scanner *usageScanner) reset(protocol contract.ProtocolID, streaming bool)
 	if scanner == nil {
 		return
 	}
-	watching := scanner.spawns != nil
+	watching, deepSeek := scanner.spawns != nil, scanner.spawns != nil && scanner.spawns.deepSeek
 	*scanner = *newUsageScanner(protocol, streaming)
 	if watching {
-		scanner.watchSpawns()
+		scanner.watchSpawns(deepSeek)
 	}
 }
 
 // watchSpawns makes the scanner collect the subagent tool calls the response
-// makes, for a client whose subagents carry no thread ids.
-func (scanner *usageScanner) watchSpawns() {
-	if scanner != nil && scanner.protocol == contract.ProtocolOpenAIChat {
-		scanner.spawns = &spawnCalls{}
+// makes, for subagents that carry no thread ids: Paseo create_agent calls
+// and, when deepSeek is set, DeepSeek Harness subagent calls.
+func (scanner *usageScanner) watchSpawns(deepSeek bool) {
+	if scanner == nil {
+		return
+	}
+	switch scanner.protocol {
+	case contract.ProtocolOpenAIChat, contract.ProtocolOpenAIResponses, contract.ProtocolAnthropicMessages:
+		scanner.spawns = &spawnCalls{protocol: scanner.protocol, deepSeek: deepSeek}
 	}
 }
 
