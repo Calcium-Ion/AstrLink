@@ -119,7 +119,7 @@ export function QuotaSummary({
 }: {
   tone: QuotaBarTone;
   status: ReactNode;
-  /** A short figure at the end of the status line; the status gives way. */
+  /** A short note at the end of the status line; the status gives way. */
   statusEnd?: ReactNode;
   bar: ReactNode;
   captionStart?: ReactNode;

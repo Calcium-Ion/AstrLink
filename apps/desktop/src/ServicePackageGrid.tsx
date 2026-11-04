@@ -12,6 +12,7 @@ import {
   ChevronUp,
   Ellipsis,
   Flask,
+  RotateCcw,
   ShieldCheck,
 } from "@/components/icons";
 import { EmptyState } from "@/components/EmptyState";
@@ -86,10 +87,13 @@ import {
 import type { SubscriptionProvider } from "./subscription-model";
 import {
   formatQuotaUSD,
+  formatResetClock,
   formatResetCountdown,
   planTypeLabel,
+  resetCreditExpiryWarning,
   windowLabel,
 } from "./subscription-usage-model";
+import { useResetCredits } from "./use-reset-credits";
 import type {
   ServicePerformance,
   UsageRangePreset,
@@ -106,7 +110,9 @@ export interface ServiceCardActions {
   risk: (service: Service) => ReactNode;
   /** The line under a single card's name: its address or account. */
   detail: (service: Service) => string;
-  edit: (service: Service, tab?: "models") => void;
+  edit: (service: Service) => void;
+  /** Asks to spend one of a subscription's quota resets. */
+  reset: (service: Service) => void;
   test: (service: Service) => void;
   toggle: (service: Service) => void;
   login: (service: Service) => void;
@@ -194,6 +200,15 @@ function columnsFor(width: number) {
 
 function joined(...parts: (string | null | undefined | false)[]) {
   return parts.filter(Boolean).join(" · ");
+}
+
+/** "2 天后重置" for a reset time, or null when it is unknown. */
+function resetWhen(at: number | null, now: Date) {
+  if (at === null) return null;
+  return formatResetCountdown(
+    { used_percent: 0, reset_at: new Date(at).toISOString() },
+    now,
+  );
 }
 
 /** "2 小时后" for a reset time, or null when it is unknown. */
@@ -300,7 +315,7 @@ function windowEstimateHint(
   return [...lines, t("packages.estimateBasis")].join("\n");
 }
 
-/** "还剩约 $29", or what was used in the used display mode. */
+/** "还剩约 $29", or what was used in the used display mode, for a hint. */
 function moneyText(left: number, total: number, env: CardEnv) {
   const { t, mode } = env;
   return mode === "remaining"
@@ -308,7 +323,7 @@ function moneyText(left: number, total: number, env: CardEnv) {
     : t("packages.moneyUsed", { amount: formatEstimateUSD(total - left) });
 }
 
-/** The status line's "共约 $41", explained on hover. */
+/** The caption's "预估总额 $41" under the bar's end, explained on hover. */
 function estimateTotal(total: number, hint: string, env: CardEnv) {
   return (
     <span data-testid="quota-estimate" title={hint}>
@@ -434,23 +449,10 @@ function quotaView(
       };
     case "windows": {
       const { binding, primary, secondary } = quota;
-      const tone = remainingTone(binding.remaining, binding.exhausted);
       const totals = env.totals[services[0]!.id] ?? {};
-      // A used-up or paused account needs the status for when and why.
-      const money =
-        binding.exhausted || blocked ? null : windowMoney(quota, totals);
-      const status = binding.exhausted
-        ? joined(
-            t("packages.usedUp"),
-            resetIn(binding.resetAt, now) &&
-              t("packages.backAt", { time: resetIn(binding.resetAt, now) }),
-          )
-        : joined(
-            blocked,
-            money
-              ? moneyText(money.left, money.total, env)
-              : percentLabel(binding.remaining),
-          );
+      const money = windowMoney(quota, totals);
+      const usedUp = (window: QuotaWindow, kind: "primary" | "secondary") =>
+        window.remaining <= 0 || (binding.exhausted && binding.window === kind);
       const part = (window: QuotaWindow | null) =>
         window
           ? {
@@ -465,59 +467,105 @@ function quotaView(
         primary && windowText(primary, false, env, false),
         secondary && windowText(secondary, true, env, false),
       );
-      // A reset time shows only on a window running low; the used-up
-      // window's return is in the status. Hovering shows every reset.
-      const caption = (window: QuotaWindow | null, secondary: boolean) => {
-        if (!window) return undefined;
-        const kind = secondary ? "secondary" : "primary";
-        const reset =
-          window.remaining <= 20 &&
-          !(binding.exhausted && binding.window === kind);
-        return (
-          <span title={windowText(window, secondary, env, true)}>
-            {windowText(window, secondary, env, reset)}
-          </span>
+      // Hovering shows every window with its reset.
+      const every = [
+        primary && windowText(primary, false, env, true),
+        secondary && windowText(secondary, true, env, true),
+      ]
+        .filter(Boolean)
+        .join("\n");
+      const total =
+        money &&
+        estimateTotal(
+          money.total,
+          windowEstimateHint(totals, { primary, secondary }, env),
+          env,
         );
-      };
-      return {
-        tone: services[0]?.enabled === false ? "neutral" : tone,
-        status,
-        statusEnd: money
-          ? estimateTotal(
-              money.total,
-              windowEstimateHint(totals, { primary, secondary }, env),
-              env,
-            )
-          : undefined,
-        bar:
-          primary && secondary ? (
+      const off = services[0]?.enabled === false;
+      if (primary && secondary) {
+        // Like the widget: the status line is the 5-hour window and the
+        // caption the week, each with the clock time it resets, as the bar
+        // draws the 5 hours inside the week.
+        const named = (window: QuotaWindow, kind: "primary" | "secondary") =>
+          usedUp(window, kind)
+            ? t("packages.windowUsedUp", {
+                window: windowLabel(window.seconds, kind === "secondary"),
+              })
+            : windowText(window, kind === "secondary", env, false);
+        const clock = (window: QuotaWindow) =>
+          window.resetAt === null
+            ? null
+            : formatResetClock(window.resetAt, now);
+        const weekUsedUp = usedUp(secondary, "secondary");
+        const weekTone = remainingTone(secondary.remaining, weekUsedUp);
+        return {
+          // The week running out stops the account whatever the 5 hours say.
+          tone: off
+            ? "neutral"
+            : weekUsedUp
+              ? "critical"
+              : remainingTone(primary.remaining, usedUp(primary, "primary")),
+          status: joined(blocked, named(primary, "primary")),
+          statusEnd: clock(primary),
+          bar: (
             <QuotaBar
               inner={part(primary)}
               kind="nested"
               label={label}
               outer={part(secondary)}
             />
-          ) : (
-            <QuotaBar
-              kind="flat"
-              label={label}
-              percent={part(primary ?? secondary)!.percent}
-              tone={tone}
-            />
           ),
-        captionStart: primary
-          ? caption(primary, false)
-          : caption(secondary, true),
-        captionEnd: primary && secondary ? caption(secondary, true) : undefined,
+          captionStart: (
+            <span title={every}>
+              <span
+                className={cn(
+                  weekTone === "critical" &&
+                    "font-semibold text-danger-foreground",
+                  weekTone === "warning" &&
+                    "font-semibold text-warning-foreground",
+                )}
+              >
+                {named(secondary, "secondary")}
+              </span>
+              {clock(secondary) ? ` · ${clock(secondary)}` : null}
+            </span>
+          ),
+          captionEnd: total,
+        };
+      }
+      // One window: the status gives its share and the caption when it
+      // resets, so neither repeats the other.
+      const window = (primary ?? secondary)!;
+      return {
+        tone: off
+          ? "neutral"
+          : remainingTone(binding.remaining, binding.exhausted),
+        status: binding.exhausted
+          ? t("packages.usedUp")
+          : joined(blocked, percentLabel(binding.remaining)),
+        bar: (
+          <QuotaBar
+            kind="flat"
+            label={label}
+            percent={part(window)!.percent}
+            tone={remainingTone(binding.remaining, binding.exhausted)}
+          />
+        ),
+        captionStart: (
+          <span title={every}>{resetWhen(binding.resetAt, now) ?? label}</span>
+        ),
+        captionEnd: total,
       };
     }
     case "accounts": {
       const tone = remainingTone(quota.average, quota.live === 0);
       const first = quota.exhausted[0];
-      const money =
-        quota.live === 0
-          ? null
-          : packageMoney(services, env.usage, env.totals, now.getTime());
+      const money = packageMoney(
+        services,
+        env.usage,
+        env.totals,
+        now.getTime(),
+      );
       const status =
         quota.live === 0
           ? joined(
@@ -526,14 +574,12 @@ function quotaView(
                 resetIn(first.resetAt, now) &&
                 t("packages.backAt", { time: resetIn(first.resetAt, now) }),
             )
-          : money
-            ? moneyText(money.left, money.total, env)
-            : t(
-                mode === "remaining"
-                  ? "packages.liveAverageLeft"
-                  : "packages.liveAverageUsed",
-                { count: quota.live, percent: shown(quota.average) },
-              );
+          : t(
+              mode === "remaining"
+                ? "packages.liveAverageLeft"
+                : "packages.liveAverageUsed",
+              { count: quota.live, percent: shown(quota.average) },
+            );
       const lowReset = quota.low && resetIn(quota.low.resetAt, now);
       const firstReset = first && resetIn(first.resetAt, now);
       const note = quota.exhausted.length
@@ -556,24 +602,26 @@ function quotaView(
               : quota.pending
                 ? t("packages.someReading", { count: quota.pending })
                 : t("packages.allPlenty");
+      const disabled = quota.disabled
+        ? t("packages.disabledCount", { count: quota.disabled })
+        : undefined;
       return {
         tone,
         status,
-        statusEnd: money
+        bar: flat(quota.average, tone),
+        // The estimate takes the caption's end; a disabled count moves in.
+        captionStart: money ? joined(note, disabled) : note,
+        captionEnd: money
           ? estimateTotal(
               money.total,
               [
+                moneyText(money.left, money.total, env),
                 t("packages.estimateAccounts", { count: money.accounts }),
                 t("packages.estimateBasis"),
               ].join("\n"),
               env,
             )
-          : undefined,
-        bar: flat(quota.average, tone),
-        captionStart: note,
-        captionEnd: quota.disabled
-          ? t("packages.disabledCount", { count: quota.disabled })
-          : undefined,
+          : disabled,
       };
     }
     case "key": {
@@ -831,12 +879,88 @@ function ServiceSubline({ service, env }: { service: Service; env: CardEnv }) {
   );
 }
 
+/** Whether two times fall on the same local day. */
+function sameDay(a: Date, b: Date) {
+  return a.toDateString() === b.toDateString();
+}
+
+/**
+ * A subscription's quota resets as a footer button that asks to spend one.
+ * It stands out while the quota runs low, and names resets that expire within
+ * three days, in red within a day.
+ */
+function ResetButton({
+  service,
+  quota,
+  env,
+}: {
+  service: Service;
+  quota: CardQuota;
+  env: CardEnv;
+}) {
+  const { t, actions, ready, actingID } = env;
+  const count =
+    env.usage[service.id]?.usage?.rate_limit_reset_credits?.available_count ??
+    0;
+  const { state, now } = useResetCredits(
+    count > 0 ? service.id : undefined,
+    count,
+  );
+  if (count <= 0) return null;
+  const expiring =
+    state.status === "ready"
+      ? resetCreditExpiryWarning(state.details, now)
+      : null;
+  const low =
+    quota.kind === "windows" &&
+    (quota.binding.exhausted || quota.binding.remaining <= 20);
+  const label = t("packages.resetQuota", { count });
+  let text: string = String(count);
+  let tone = low
+    ? "bg-accent font-semibold text-primary"
+    : "text-muted-foreground";
+  let name = label;
+  if (expiring) {
+    const at = new Date(expiring.expiresAt);
+    const tomorrow = new Date(now);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    text = t(
+      sameDay(at, new Date(now))
+        ? "packages.resetExpiresToday"
+        : sameDay(at, tomorrow)
+          ? "packages.resetExpiresTomorrow"
+          : "packages.resetExpiresSoon",
+      { count: expiring.count },
+    );
+    tone = expiring.urgent
+      ? "bg-danger-wash font-semibold text-danger-foreground"
+      : "bg-warning-wash font-semibold text-warning-foreground";
+    name = t("packages.resetExpiringLabel", { reset: label, expiring: text });
+  }
+  return (
+    <IconButton
+      className={cn("tabular-nums", tone)}
+      data-testid="subscription-usage-reset"
+      disabled={!ready || actingID === service.id}
+      label={name}
+      onClick={() => actions.reset(service)}
+      size="xs"
+      type="button"
+    >
+      <RotateCcw aria-hidden="true" />
+      {text}
+    </IconButton>
+  );
+}
+
 function ServiceFooter({
   service,
+  quota,
   env,
   periodLabel,
 }: {
   service: Service;
+  quota: CardQuota;
   env: CardEnv;
   periodLabel: string;
 }) {
@@ -844,28 +968,18 @@ function ServiceFooter({
   return (
     <>
       <CardCost env={env} periodLabel={periodLabel} services={[service]} />
-      <span className="flex min-w-0 items-center gap-1 text-muted-foreground">
-        <span className="truncate">{periodLabel}</span>
-        <span aria-hidden="true">·</span>
-        <Button
-          aria-label={t("services.openModels", { name: service.name })}
-          className="h-auto shrink-0 p-0 text-xs font-normal text-muted-foreground tabular-nums"
-          disabled={actingID === service.id}
-          onClick={() => actions.edit(service, "models")}
-          type="button"
-          variant="link"
-        >
-          {t("services.modelCount", { count: service.models.length })}
-        </Button>
+      <span className="ml-auto flex shrink-0 items-center gap-1.5">
+        {hasPlanUsage(service) ? (
+          <ResetButton env={env} quota={quota} service={service} />
+        ) : null}
+        <Switch
+          aria-label={t("services.enableNamed", { name: service.name })}
+          checked={service.enabled}
+          disabled={!ready || actingID === service.id}
+          onCheckedChange={() => actions.toggle(service)}
+          size="sm"
+        />
       </span>
-      <Switch
-        aria-label={t("services.enableNamed", { name: service.name })}
-        checked={service.enabled}
-        className="ml-auto"
-        disabled={!ready || actingID === service.id}
-        onCheckedChange={() => actions.toggle(service)}
-        size="sm"
-      />
     </>
   );
 }
@@ -886,6 +1000,7 @@ function ServiceCard({
   compact?: boolean;
   packageID?: string;
 }) {
+  const quota = serviceQuota(env.usage[service.id], env.now.getTime());
   return (
     <PackageCardShell
       actions={
@@ -899,7 +1014,12 @@ function ServiceCard({
       disabled={!service.enabled}
       dragging={handle?.dragging}
       footer={
-        <ServiceFooter env={env} periodLabel={periodLabel} service={service} />
+        <ServiceFooter
+          env={env}
+          periodLabel={periodLabel}
+          quota={quota}
+          service={service}
+        />
       }
       header={
         <>
@@ -916,7 +1036,7 @@ function ServiceCard({
       <QuotaArea
         env={env}
         hasUsage={hasPlanUsage(service)}
-        quota={serviceQuota(env.usage[service.id], env.now.getTime())}
+        quota={quota}
         services={[service]}
       />
     </PackageCardShell>
@@ -931,10 +1051,6 @@ function memberName(services: Service[]) {
     unique
       ? service.name
       : (service.subscription?.account_hint ?? service.name);
-}
-
-function modelCount(services: Service[]) {
-  return new Set(services.flatMap((service) => service.models)).size;
 }
 
 /** Several accounts of one plan, stacked; the tray below lists them. */
@@ -975,13 +1091,6 @@ function PackageStackCard({
             periodLabel={periodLabel}
             services={services}
           />
-          <span className="flex min-w-0 items-center gap-1 text-muted-foreground">
-            <span className="truncate">{periodLabel}</span>
-            <span aria-hidden="true">·</span>
-            <span className="shrink-0 tabular-nums">
-              {t("services.modelCount", { count: modelCount(services) })}
-            </span>
-          </span>
           <Button
             aria-controls={expanded ? trayID : undefined}
             aria-expanded={expanded}

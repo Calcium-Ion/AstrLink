@@ -546,6 +546,32 @@ export function formatResetCountdown(
   return i18n.t(key("resetInDays"), { count: days });
 }
 
+/**
+ * A reset as a clock time, for cards that show two windows: "17:18 重置"
+ * today, "周三 09:00 重置" within a week, the date after that.
+ */
+export function formatResetClock(at: number, now: Date): string {
+  const target = new Date(at);
+  const midnight = (date: Date) =>
+    new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  const days = Math.round((midnight(target) - midnight(now)) / 86_400_000);
+  const time = target.toLocaleTimeString(i18n.language, {
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  });
+  const when =
+    days <= 0
+      ? time
+      : days < 7
+        ? `${target.toLocaleDateString(i18n.language, { weekday: "short" })} ${time}`
+        : target.toLocaleDateString(i18n.language, {
+            month: "short",
+            day: "numeric",
+          });
+  return i18n.t("usage.resetsAt", { time: when });
+}
+
 export function formatQuotaExpiry(quota: UsageQuota, now: Date): string | null {
   if (!quota.expires_at) return null;
   const deltaMs = Date.parse(quota.expires_at) - now.getTime();

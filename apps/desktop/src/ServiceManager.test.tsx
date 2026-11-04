@@ -145,6 +145,9 @@ const backupGatewayService: Service = {
 };
 
 /** An ISO time `hours` from now; quota reset times in the past roll over. */
+/** A 5-hour reset as a clock time: today, or a weekday after midnight. */
+const fiveHourReset = /^(\S+ )?\d{2}:\d{2} 重置$/;
+
 function hoursFromNow(hours: number): string {
   return new Date(Date.now() + hours * 3_600_000 + 60_000).toISOString();
 }
@@ -402,11 +405,14 @@ describe("ServiceManager", () => {
     );
     if (!summary) throw new Error("Missing quota summary");
     const bar = summary.querySelector<HTMLElement>('[data-slot="quota-bar"]');
+    const status = summary.querySelector('[data-slot="quota-status"]')!;
     return {
-      status: summary.querySelector('[data-slot="quota-status"]')!.textContent,
-      tone: summary
-        .querySelector('[data-slot="quota-status"]')!
-        .getAttribute("data-tone"),
+      // The dot, the status, then a reset time on two-window cards.
+      status: status.children[1]?.textContent,
+      statusEnd:
+        status.querySelector('[data-slot="quota-status-end"]')?.textContent ??
+        undefined,
+      tone: status.getAttribute("data-tone"),
       bar: bar?.dataset.bar,
       barLabel: bar?.getAttribute("aria-label") ?? null,
       caption: [
@@ -534,7 +540,7 @@ describe("ServiceManager", () => {
         },
       ],
     });
-    await chooseOption("缓存与 TPS 统计区间", "近 30 天");
+    await chooseOption("统计区间", "近 30 天");
     expect(bridgeMocks.getUsageSummary).toHaveBeenLastCalledWith(
       expect.objectContaining({ preset: "30d" }),
     );
@@ -1116,7 +1122,10 @@ describe("ServiceManager", () => {
         caption: ["1 个号用完 · 最早 2 小时后恢复"],
         busy: false,
       });
-      expect(stack.textContent).toContain("2 个模型");
+      // The footer keeps the cost and the tray toggle; the page header
+      // already names the period.
+      expect(stack.textContent).not.toContain("个模型");
+      expect(stack.textContent).not.toContain("近 7 天");
       expect(stack.querySelector('[role="switch"]')).toBeNull();
       expect(tray()).toBeNull();
 
@@ -1144,11 +1153,18 @@ describe("ServiceManager", () => {
               ?.textContent,
         ),
       ).toEqual(["Plus", "Plus"]);
-      expect(quotaOf(packageCard("Codex A")).status).toBe("剩余 70%");
+      // Two windows: the status is the 5 hours, the caption the week.
+      expect(quotaOf(packageCard("Codex A"))).toMatchObject({
+        status: "5 小时 剩 70%",
+        statusEnd: expect.stringMatching(fiveHourReset),
+      });
       expect(quotaOf(packageCard("Codex B"))).toMatchObject({
-        status: "已用完 · 2 小时后恢复",
+        status: "5 小时 已用完",
         tone: "critical",
         bar: "nested",
+        caption: [
+          expect.stringMatching(/^每周 剩 60% · \S+ \d{2}:\d{2} 重置$/),
+        ],
       });
       expect(
         packageCard("Codex B")
@@ -1212,28 +1228,44 @@ describe("ServiceManager", () => {
       const basis = "按官方 API 价格估算：近 7 天的调用花费 ÷ 已用比例";
       const estimate = (card: HTMLElement) =>
         card.querySelector<HTMLElement>('[data-testid="quota-estimate"]');
-      // Codex B is used up: it adds its whole window and nothing left.
+      // Codex B is used up: it adds its whole window and nothing left. The
+      // status keeps the share; the estimate takes the caption's end, so the
+      // disabled count moves in.
       const stack = packageCard("Codex Plus");
-      expect(quotaOf(stack).status).toBe("还剩约 $28共约 $80");
+      expect(quotaOf(stack).status).toBe("1 个号有额度，平均剩 35%");
+      expect(quotaOf(stack).caption).toEqual([
+        "1 个号用完 · 最早 2 小时后恢复 · 1 个停用",
+        "预估总额 $80",
+      ]);
       expect(estimate(stack)?.title).toBe(
-        `2 个账户合计，各按最先用完的窗口\n${basis}`,
+        `还剩约 $28\n2 个账户合计，各按最先用完的窗口\n${basis}`,
       );
       // Only Claude's weekly window has an estimate: what is left is unknown.
       const single = packageCard("Claude personal");
-      expect(quotaOf(single).status).toBe("剩余 50%");
+      expect(quotaOf(single).status).toBe("5 小时 剩 80%");
       expect(estimate(single)).toBeNull();
 
       await act(async () => expandButton("Codex Plus").click());
       const own = packageCard("Codex A");
-      expect(quotaOf(own).status).toBe("还剩约 $28共约 $40");
+      expect(quotaOf(own).status).toBe("5 小时 剩 70%");
+      // The caption is the week beside the estimate; hovering lists every
+      // window.
+      expect(quotaOf(own).caption).toEqual([
+        expect.stringMatching(/^每周 剩 90% · \S+ \d{2}:\d{2} 重置$/),
+        "预估总额 $40",
+      ]);
+      expect(
+        own.querySelector<HTMLElement>('[data-slot="quota-caption"] [title]')
+          ?.title,
+      ).toBe("5 小时 剩 70% · 3 小时后\n每周 剩 90% · 4 天后");
       expect(estimate(own)?.title).toBe(
-        `5 小时共约 $40，剩约 $28\n每周共约 $300，剩约 $270\n${basis}`,
+        `5 小时预估总额 $40，剩约 $28\n每周预估总额 $300，剩约 $270\n${basis}`,
       );
-      // Its status needs the room for when it is back.
-      expect(quotaOf(packageCard("Codex B")).status).toBe(
-        "已用完 · 2 小时后恢复",
+      // A used-up account still shows what its window holds.
+      expect(quotaOf(packageCard("Codex B")).status).toBe("5 小时 已用完");
+      expect(estimate(packageCard("Codex B"))?.textContent).toBe(
+        "预估总额 $40",
       );
-      expect(estimate(packageCard("Codex B"))).toBeNull();
     });
 
     it("saves the tray's strategy and rolls back a failed save", async () => {
@@ -3375,11 +3407,12 @@ describe("ServiceManager", () => {
       ),
     ).not.toBeNull();
     expect(quotaOf(packageCard("Kimi Coding"))).toEqual({
-      status: "剩余 75%",
+      status: "5 小时 剩 75%",
+      statusEnd: expect.stringMatching(fiveHourReset),
       tone: "positive",
       bar: "nested",
       barLabel: "5 小时 剩 75% · 每周 剩 90%",
-      caption: ["5 小时 剩 75%", "每周 剩 90%"],
+      caption: [expect.stringMatching(/^每周 剩 90% · \S+ \d{2}:\d{2} 重置$/)],
       busy: false,
     });
     expect(quotaOf(packageCard("new-api"))).toEqual({
@@ -3528,7 +3561,7 @@ describe("ServiceManager", () => {
     },
   );
 
-  it("shows rolling quota on a connected Codex card and reset in its menu", async () => {
+  it("shows rolling quota on a connected Codex card and its resets in the footer", async () => {
     const connected: Service = {
       ...codexService,
       enabled: false,
@@ -3611,11 +3644,12 @@ describe("ServiceManager", () => {
     ).toBe("Plus");
     // The account is turned off, so its dot is grey while the numbers stay.
     expect(quotaOf(card)).toEqual({
-      status: "剩余 66%",
+      status: "5 小时 剩 66%",
+      statusEnd: expect.stringMatching(fiveHourReset),
       tone: "neutral",
       bar: "nested",
       barLabel: "5 小时 剩 66% · 每周 剩 88%",
-      caption: ["5 小时 剩 66%", "每周 剩 88%"],
+      caption: [expect.stringMatching(/^每周 剩 88% · \S+ \d{2}:\d{2} 重置$/)],
       busy: false,
     });
     expect(
@@ -3624,15 +3658,17 @@ describe("ServiceManager", () => {
     // Extra per-model limits stay in the editor, not on the card.
     expect(card.textContent).not.toContain("GPT-5.3-Codex-Spark");
     expect(card.textContent).not.toContain("gpt-reserve");
-    expect(container.textContent).not.toContain("重置额度");
+    // The footer offers the resets; the menu no longer does.
+    const reset = card.querySelector<HTMLButtonElement>(
+      '[data-testid="subscription-usage-reset"]',
+    );
+    expect(reset?.textContent).toBe("2");
+    expect(reset?.getAttribute("aria-label")).toBe("重置额度（剩 2 次）");
     await openServiceOverflow("Codex personal");
-    expect(
-      document.querySelector('[data-testid="subscription-usage-reset"]')
-        ?.textContent,
-    ).toBe("重置额度（剩 2 次）");
+    expect(document.body.textContent).not.toContain("重置额度");
   });
 
-  it("confirms a manual reset from the card menu", async () => {
+  it("confirms a manual reset from the card footer", async () => {
     const connected: Service = {
       ...codexService,
       subscription: {
@@ -3686,9 +3722,13 @@ describe("ServiceManager", () => {
       await Promise.resolve();
     });
 
-    await openServiceOverflow("Codex personal");
-    await chooseMenuItem("重置额度（剩 1 次）");
-    await settleClosedLayer();
+    const reset = packageCard(
+      "Codex personal",
+    ).querySelector<HTMLButtonElement>(
+      '[data-testid="subscription-usage-reset"]',
+    );
+    if (!reset) throw new Error("missing reset button");
+    await act(async () => reset.click());
     expect(bridgeMocks.resetServiceUsage).not.toHaveBeenCalled();
     expect(document.body.textContent).toContain("重置这个账户的额度？");
     expect(document.body.textContent).toContain("将消耗 1 次官方额度重置");
@@ -3705,6 +3745,86 @@ describe("ServiceManager", () => {
       fresh: true,
     });
     expect(notifyMocks.success).toHaveBeenCalledWith("额度已重置。");
+  });
+
+  it("names resets about to expire on the footer button", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(2026, 10, 3, 12, 0));
+    try {
+      const today: Service = {
+        ...codexService,
+        subscription: { provider: "openai_codex", status: "connected" },
+      };
+      const soon: Service = {
+        ...today,
+        id: "service_codex_soon",
+        name: "Codex soon",
+      };
+      bridgeMocks.getServiceUsage.mockImplementation(async (id: string) => ({
+        service_id: id,
+        fetched_at: new Date().toISOString(),
+        plan_type: "pro",
+        secondary: {
+          used_percent: 17,
+          limit_window_seconds: 604_800,
+          reset_at: hoursFromNow(100),
+        },
+        rate_limit_reset_credits: { available_count: 3 },
+      }));
+      const at = (day: number, hour: number) =>
+        new Date(2026, 10, day, hour, 0).toISOString();
+      bridgeMocks.getServiceResetCredits.mockImplementation(
+        async (id: string) => ({
+          available_count: 3,
+          credits:
+            id === today.id
+              ? // Two within three days; the first goes tonight.
+                [
+                  { expires_at: at(5, 9) },
+                  { expires_at: at(3, 18) },
+                  { expires_at: at(20, 9) },
+                ]
+              : // Tomorrow evening is more than a day away.
+                [{ expires_at: at(4, 18) }, {}, {}],
+        }),
+      );
+
+      await act(async () => {
+        root.render(
+          <ServiceManager
+            catalogError={null}
+            catalogStatus="ready"
+            isReady
+            onDirtyChange={() => {}}
+            onRefresh={() => {}}
+            onServiceRemoved={() => {}}
+            onServiceSaved={() => {}}
+            onViewChange={() => {}}
+            protocols={[]}
+            services={[today, soon]}
+            view={{ kind: "list" }}
+          />,
+        );
+      });
+      for (let i = 0; i < 4; i++)
+        await act(async () => {
+          await Promise.resolve();
+        });
+
+      const reset = (name: string) =>
+        packageCard(name).querySelector<HTMLButtonElement>(
+          '[data-testid="subscription-usage-reset"]',
+        );
+      expect(reset("Codex personal")?.textContent).toBe("2 次今天到期");
+      expect(reset("Codex personal")?.className).toContain("bg-danger-wash");
+      expect(reset("Codex personal")?.getAttribute("aria-label")).toBe(
+        "重置额度（剩 3 次），2 次今天到期",
+      );
+      expect(reset("Codex soon")?.textContent).toBe("1 次明天到期");
+      expect(reset("Codex soon")?.className).toContain("bg-warning-wash");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("logs and shows the usage failure instead of swallowing it", async () => {
@@ -6392,7 +6512,7 @@ describe("ServiceManager", () => {
     }
   });
 
-  it("opens the provider's model list straight from the model count", async () => {
+  it("lands the editor on the models tab when the view asks for it", async () => {
     bridgeMocks.getService.mockResolvedValue({ service: gatewayService, etag });
     const changed = vi.fn();
     const props = {
@@ -6407,23 +6527,6 @@ describe("ServiceManager", () => {
       protocols: [],
       services: [gatewayService],
     };
-    await act(async () => {
-      root.render(<ServiceManager {...props} view={{ kind: "list" }} />);
-    });
-    const count = container.querySelector<HTMLButtonElement>(
-      `button[aria-label="打开 ${gatewayService.name} 的模型列表"]`,
-    );
-    expect(count?.textContent).toBe(`${gatewayService.models.length} 个模型`);
-    await act(async () => {
-      count?.click();
-    });
-    expect(changed).toHaveBeenCalledWith({
-      kind: "edit",
-      serviceId: gatewayService.id,
-      tab: "models",
-    });
-
-    // The host routes that view back in; the editor lands on the models tab.
     await act(async () => {
       root.render(
         <ServiceManager
@@ -6445,7 +6548,7 @@ describe("ServiceManager", () => {
     ).toBe("inactive");
   });
 
-  it("opens a card's model list from its footer count", async () => {
+  it("keeps a card's footer to its cost and switch", async () => {
     const changed = vi.fn();
     await act(async () => {
       root.render(
@@ -6465,21 +6568,22 @@ describe("ServiceManager", () => {
       );
     });
     const card = packageCard(gatewayService.name);
-    const models = card.querySelector<HTMLButtonElement>(
-      `button[aria-label="打开 ${gatewayService.name} 的模型列表"]`,
-    );
-    expect(models?.textContent).toBe(`${gatewayService.models.length} 个模型`);
+    // The page header names the period; the editor lists the models.
+    expect(card.textContent).not.toContain("个模型");
+    expect(card.textContent).not.toContain("近 7 天");
+    expect(
+      card.querySelector('[data-testid="package-cost"]')?.textContent,
+    ).toBe("$0.00");
     expect(
       card.querySelector(
         `[role="switch"][aria-label="启用 ${gatewayService.name}"]`,
       ),
     ).not.toBeNull();
-    await act(async () => models!.click());
-    expect(changed).toHaveBeenCalledWith({
-      kind: "edit",
-      serviceId: gatewayService.id,
-      tab: "models",
-    });
+    // A relay has no quota resets.
+    expect(
+      card.querySelector('[data-testid="subscription-usage-reset"]'),
+    ).toBeNull();
+    expect(changed).not.toHaveBeenCalled();
   });
 
   it("toggles a service from the list without opening the editor", async () => {

@@ -2241,9 +2241,6 @@ export function ServiceManager({
     const serviceMenu = (service: Service) => {
       const subscription = service.subscription;
       const acting = actionID === service.id;
-      const resets =
-        usageByService[service.id]?.usage?.rate_limit_reset_credits
-          ?.available_count ?? 0;
       return (
         <>
           <DropdownMenuItem
@@ -2289,17 +2286,6 @@ export function ServiceManager({
               {t("services.signOut")}
             </DropdownMenuItem>
           ) : null}
-          {hasPlanUsage(service) && resets > 0 ? (
-            <DropdownMenuItem
-              data-testid="subscription-usage-reset"
-              disabled={acting}
-              onSelect={() =>
-                setConfirmAction({ kind: "reset-usage", service })
-              }
-            >
-              {t("packages.resetQuota", { count: resets })}
-            </DropdownMenuItem>
-          ) : null}
           {isWebEdition ? null : (
             <DropdownMenuItem
               disabled={acting || !isReady || !inferenceURL}
@@ -2335,8 +2321,8 @@ export function ServiceManager({
         ) : null;
       },
       detail: serviceCardDetail,
-      edit: (service, tab) =>
-        onViewChange({ kind: "edit", serviceId: service.id, tab }),
+      edit: (service) => onViewChange({ kind: "edit", serviceId: service.id }),
+      reset: (service) => setConfirmAction({ kind: "reset-usage", service }),
       test: setTestingService,
       toggle: (service) => void toggleEnabled(service),
       login: startLogin,

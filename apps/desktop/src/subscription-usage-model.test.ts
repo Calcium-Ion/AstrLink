@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   formatQuotaExpiry,
   formatQuotaUSD,
+  formatResetClock,
   formatResetCountdown,
   formatSubscriptionUsageError,
   parseSubscriptionUsage,
@@ -253,6 +254,17 @@ describe("subscription usage contract", () => {
         { short: true },
       ),
     ).toBe("4 天后");
+  });
+
+  it("formats a reset as a clock time, by weekday within a week", () => {
+    // Tuesday noon, local time.
+    const now = new Date(2026, 10, 3, 12, 0);
+    const at = (day: number, hour: number, minute = 0) =>
+      new Date(2026, 10, day, hour, minute).getTime();
+    expect(formatResetClock(at(3, 17, 18), now)).toBe("17:18 重置");
+    expect(formatResetClock(at(4, 0, 5), now)).toBe("周三 00:05 重置");
+    expect(formatResetClock(at(9, 9), now)).toBe("周一 09:00 重置");
+    expect(formatResetClock(at(10, 9), now)).toBe("11月10日 重置");
   });
 
   it("extracts the control error from a sidecar failure", () => {
