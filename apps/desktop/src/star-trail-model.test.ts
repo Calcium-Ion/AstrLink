@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   clientSeriesColor,
-  modelSeriesColor,
+  modelSeriesColors,
   MUTED_SERIES_COLOR,
 } from "./series-colors";
 import {
@@ -39,24 +39,50 @@ function bucket(
 }
 
 describe("series colors", () => {
-  it("follows the model family and the client, not their rank", () => {
-    expect(modelSeriesColor("claude-opus-5-5")).toBe(
-      modelSeriesColor("claude-sonnet-5"),
-    );
-    expect(modelSeriesColor("gpt-5.5")).not.toBe(
-      modelSeriesColor("claude-opus-5-5"),
-    );
-    expect(modelSeriesColor("my-local-model")).toBe(
-      modelSeriesColor("My-Local-Model"),
-    );
-    expect(modelSeriesColor("my-local-model")).toMatch(/^var\(--series-\d\)$/);
-    expect(modelSeriesColor(null)).toBe(MUTED_SERIES_COLOR);
-    expect(modelSeriesColor("  ")).toBe(MUTED_SERIES_COLOR);
-    expect(clientSeriesColor("claude_code")).toBe(
-      modelSeriesColor("claude-opus-5-5"),
-    );
+  it("gives a model its family's color and the client its own", () => {
+    const [opus, sonnet, gpt, local, localUpper] = modelSeriesColors([
+      "claude-opus-5-5",
+      "claude-sonnet-5",
+      "gpt-5.5",
+      "my-local-model",
+      "My-Local-Model",
+    ]);
+    expect(opus).toBe("var(--model-series-1)");
+    expect(sonnet).toBe(opus);
+    expect(gpt).toBe("var(--model-series-2)");
+    expect(local).toMatch(/^var\(--model-series-\d\)$/);
+    expect(localUpper).toBe(local);
     expect(clientSeriesColor("unknown")).toBe(MUTED_SERIES_COLOR);
     expect(clientSeriesColor(null)).toBe(MUTED_SERIES_COLOR);
+  });
+
+  it("never gives two families on one chart the same color", () => {
+    const colors = modelSeriesColors([
+      "claude-opus-5-5",
+      "deepseek-v4",
+      "grok-4.7",
+      "gpt-6.1-sol",
+      "gemini-3.1-pro",
+    ]);
+    expect(new Set(colors).size).toBe(5);
+    // Grok's mark has no hue; it takes gold, not Claude's orange.
+    expect(colors[2]).toBe("var(--model-series-5)");
+    // GLM asks for DeepSeek's blue and takes the next free color.
+    expect(modelSeriesColors(["deepseek-v4", "glm-5"])).toEqual([
+      "var(--model-series-3)",
+      "var(--model-series-4)",
+    ]);
+  });
+
+  it("moves a family into a free color, not a quieter family's own", () => {
+    // Mistral asks for Claude's orange; GPT, though quieter, keeps green.
+    expect(
+      modelSeriesColors(["claude-opus-5-5", "mistral-large-3", "gpt-5.5"]),
+    ).toEqual([
+      "var(--model-series-1)",
+      "var(--model-series-3)",
+      "var(--model-series-2)",
+    ]);
   });
 
   it("keeps Codex, DeepSeek Harness and Cursor apart", () => {
@@ -86,7 +112,13 @@ describe("star trail model", () => {
       "kimi-k3",
     ]);
     expect(legend.rows.map((row) => row.bar)).toEqual([100, 50, 13, 8, 4]);
-    expect(legend.rows[0].color).toBe(modelSeriesColor("gpt-5.5"));
+    expect(legend.rows.map((row) => row.color)).toEqual([
+      "var(--model-series-2)",
+      "var(--model-series-1)",
+      "var(--model-series-3)",
+      "var(--model-series-4)",
+      "var(--model-series-5)",
+    ]);
     expect(legend.rest).toMatchObject({
       id: null,
       total_tokens: 304,
@@ -185,7 +217,7 @@ describe("star trail model", () => {
       total_tokens: 50,
       color: MUTED_SERIES_COLOR,
     });
-    expect(claude.color).toBe(modelSeriesColor("claude-opus-5-5"));
+    expect(claude.color).toBe("var(--model-series-1)");
     // Brightness follows tokens, not calls.
     expect(busiest.brightness).toBe(1);
     expect(claude.brightness).toBe(300 / 800);

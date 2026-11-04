@@ -319,7 +319,7 @@
   --violet-foreground: #1f5cc4;
   --violet-wash: #eaf2fc;
 
-  /* Categorical series in a fixed order, for models and clients in charts */
+  /* Categorical series in a fixed order, for clients and providers in charts */
   --series-1: #2a78d6;
   --series-2: #eb6834;
   --series-3: #1baf7a;
@@ -328,6 +328,12 @@
   --series-6: #008300;
   --series-7: #6250d6;
   --series-8: #e34948;
+  /* Model colors, any two far apart: orange, green, blue, magenta, gold */
+  --model-series-1: #eb6834;
+  --model-series-2: #1baf7a;
+  --model-series-3: #2a78d6;
+  --model-series-4: #d6409a;
+  --model-series-5: #e5b000;
 
   /* The request sky: a star chart on paper in the light theme */
   --sky-bg: #f7f9fc;
@@ -564,6 +570,11 @@
   --series-6: #3f9b3f;
   --series-7: #8a80d8;
   --series-8: #d26464;
+  --model-series-1: #d27148;
+  --model-series-2: #2fa57e;
+  --model-series-3: #5b8fd6;
+  --model-series-4: #c93496;
+  --model-series-5: #e3c45a;
   /* The request sky at night: pastel entities on a deep blue */
   --sky-bg: radial-gradient(
     70% 70% at 50% 50%,
