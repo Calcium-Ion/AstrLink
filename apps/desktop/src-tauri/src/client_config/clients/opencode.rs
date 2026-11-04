@@ -283,7 +283,7 @@ mod tests {
     #[test]
     fn opencode_writes_the_file_it_reads_first_and_keeps_to_it() {
         let home = unique_home("opencode");
-        let dir = home.join(".config/opencode");
+        let dir = home.join(".config").join("opencode");
         fs::create_dir_all(&dir).unwrap();
         let local = Home::local(&home);
         assert_eq!(opencode_file(local, None), dir.join("opencode.jsonc"));

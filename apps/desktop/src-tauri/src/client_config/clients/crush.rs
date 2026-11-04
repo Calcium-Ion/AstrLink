@@ -345,7 +345,7 @@ mod tests {
     fn writes_a_provider_per_protocol_and_the_large_and_small_models() {
         let home = unique_home("crush");
         let local = Home::local(&home);
-        fs::create_dir_all(home.join(".local/share/crush")).unwrap();
+        fs::create_dir_all(super::data_file(local).parent().unwrap()).unwrap();
         let models = vec![("model", "claude-sonnet-5".to_string())];
         let list = strings(&["claude-sonnet-5", "deepseek-v4"]);
         let protocols = BTreeMap::from([("claude-sonnet-5".to_string(), "anthropic.messages")]);
@@ -388,7 +388,7 @@ mod tests {
         assert!(status.notes.is_empty());
 
         fs::write(
-            home.join(".local/share/crush/crush.json"),
+            super::data_file(local),
             r#"{"models": {"large": {"provider": "anthropic", "model": "claude-opus-5"}}}"#,
         )
         .unwrap();
