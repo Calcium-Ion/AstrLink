@@ -4,13 +4,13 @@ import (
 	"bufio"
 	"context"
 	"crypto/tls"
-	"encoding/base64"
 	"errors"
 	"net"
 	"net/http"
 	"net/url"
 	"time"
 
+	"github.com/MoeForge/moego/base64"
 	"github.com/gorilla/websocket"
 	xproxy "golang.org/x/net/proxy"
 )

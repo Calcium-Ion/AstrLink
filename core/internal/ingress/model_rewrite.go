@@ -10,9 +10,9 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/jsonedit"
-	"github.com/tidwall/gjson"
 )
 
 // rewriteRequestModel replaces only the model the upstream reads: the Gemini
@@ -60,8 +60,8 @@ func rewriteGeminiBatchModels(request *http.Request, upstreamModel string, repla
 		return nil, err
 	}
 	model := "models/" + upstreamModel
-	for index, item := range gjson.GetBytes(contents, "requests").Array() {
-		if item.Get("model").Type != gjson.String {
+	for index, item := range ojson.GetBytes(contents, "requests").Array() {
+		if item.Get("model").Type != ojson.String {
 			continue
 		}
 		if contents, err = jsonedit.Set(contents, "requests."+strconv.Itoa(index)+".model", model); err != nil {

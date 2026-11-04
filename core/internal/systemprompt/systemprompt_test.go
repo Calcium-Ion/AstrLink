@@ -4,9 +4,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/providerapi"
-	"github.com/tidwall/gjson"
 )
 
 const (
@@ -243,7 +243,7 @@ func TestClientPromptBytesSurvive(t *testing.T) {
 			if start < 0 || end < start || !strings.Contains(got[start:end], prompt) {
 				t.Fatalf("client prompt bytes changed or moved:\n%s", got)
 			}
-			if !gjson.Valid(got) {
+			if !ojson.Valid(got) {
 				t.Fatalf("invalid JSON: %s", got)
 			}
 		})

@@ -8,8 +8,7 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/tidwall/gjson"
-	"github.com/tidwall/sjson"
+	"github.com/MoeForge/moego/ojson"
 )
 
 const copilotMaxBody = 32 << 20
@@ -80,14 +79,14 @@ func CopilotRequest(req *http.Request) error {
 	if len(body) > copilotMaxBody {
 		return fmt.Errorf("GitHub Copilot request exceeds size limit")
 	}
-	if !gjson.ValidBytes(body) || !gjson.ParseBytes(body).IsObject() {
+	if !ojson.ValidBytes(body) || !ojson.ParseBytes(body).IsObject() {
 		return fmt.Errorf("invalid GitHub Copilot request body")
 	}
-	turns := gjson.GetBytes(body, "messages")
+	turns := ojson.GetBytes(body, "messages")
 	if surface == "responses" {
-		turns = gjson.GetBytes(body, "input")
-		if turns.Type == gjson.String {
-			turns = gjson.Parse(`[{"role":"user","content":` + turns.Raw + `}]`)
+		turns = ojson.GetBytes(body, "input")
+		if turns.Type == ojson.String {
+			turns = ojson.Parse(`[{"role":"user","content":` + turns.Raw + `}]`)
 		}
 	}
 	if surface == "messages" {
@@ -112,10 +111,10 @@ func CopilotRequest(req *http.Request) error {
 	return nil
 }
 
-func lastArrayItem(items gjson.Result) gjson.Result {
+func lastArrayItem(items ojson.Result) ojson.Result {
 	array := items.Array()
 	if len(array) == 0 {
-		return gjson.Result{}
+		return ojson.Result{}
 	}
 	return array[len(array)-1]
 }
@@ -126,7 +125,7 @@ func lastArrayItem(items gjson.Result) gjson.Result {
 // role or a Responses function output item without a role; Anthropic ones as
 // tool_result blocks, which make the message a loop iteration even beside
 // text such as system reminders. An empty conversation counts as a prompt.
-func copilotUserPrompt(message gjson.Result) bool {
+func copilotUserPrompt(message ojson.Result) bool {
 	if !message.Exists() {
 		return true
 	}
@@ -134,7 +133,7 @@ func copilotUserPrompt(message gjson.Result) bool {
 		return false
 	}
 	toolResult := false
-	message.Get("content").ForEach(func(_, part gjson.Result) bool {
+	message.Get("content").ForEach(func(_, part ojson.Result) bool {
 		toolResult = part.Get("type").String() == "tool_result"
 		return !toolResult
 	})
@@ -143,11 +142,11 @@ func copilotUserPrompt(message gjson.Result) bool {
 
 // copilotHasImage reports any image part: OpenAI image_url and input_image,
 // Anthropic image blocks, and images nested in an Anthropic tool_result.
-func copilotHasImage(turns gjson.Result) bool {
+func copilotHasImage(turns ojson.Result) bool {
 	found := false
-	var visit func(parts gjson.Result)
-	visit = func(parts gjson.Result) {
-		parts.ForEach(func(_, part gjson.Result) bool {
+	var visit func(parts ojson.Result)
+	visit = func(parts ojson.Result) {
+		parts.ForEach(func(_, part ojson.Result) bool {
 			switch part.Get("type").String() {
 			case "image", "image_url", "input_image":
 				found = true
@@ -157,7 +156,7 @@ func copilotHasImage(turns gjson.Result) bool {
 			return !found
 		})
 	}
-	turns.ForEach(func(_, message gjson.Result) bool {
+	turns.ForEach(func(_, message ojson.Result) bool {
 		visit(message.Get("content"))
 		return !found
 	})
@@ -172,7 +171,7 @@ const copilotBase62 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstu
 // conversation; the account credential salts the hash so the same prompt on
 // two accounts never shares an id. cache_control markers move between
 // requests and are left out.
-func copilotInteractionID(salt string, turns gjson.Result) string {
+func copilotInteractionID(salt string, turns ojson.Result) string {
 	sum := conversationDigest(salt, turns)
 	id := make([]byte, 0, 30)
 	id = append(id, "ses_"...)
@@ -186,9 +185,9 @@ func copilotInteractionID(salt string, turns gjson.Result) string {
 // conversationDigest hashes a conversation's first non-system message, with
 // cache_control markers removed since they move between requests, salted by
 // the account credential.
-func conversationDigest(salt string, turns gjson.Result) []byte {
+func conversationDigest(salt string, turns ojson.Result) []byte {
 	first := ""
-	turns.ForEach(func(_, message gjson.Result) bool {
+	turns.ForEach(func(_, message ojson.Result) bool {
 		if role := message.Get("role").String(); role == "system" || role == "developer" {
 			return true
 		}
@@ -206,23 +205,23 @@ func conversationDigest(salt string, turns gjson.Result) []byte {
 }
 
 func deleteCacheControl(message []byte) ([]byte, error) {
-	if !gjson.ValidBytes(message) {
+	if !ojson.ValidBytes(message) {
 		return message, nil
 	}
 	var err error
-	message, err = sjson.DeleteBytes(message, "cache_control")
+	message, err = ojson.DeleteBytes(message, "cache_control")
 	if err != nil {
 		return nil, err
 	}
 	var paths []string
-	gjson.GetBytes(message, "content").ForEach(func(index, part gjson.Result) bool {
+	ojson.GetBytes(message, "content").ForEach(func(index, part ojson.Result) bool {
 		if part.Get("cache_control").Exists() {
 			paths = append(paths, "content."+index.String()+".cache_control")
 		}
 		return true
 	})
 	for index := len(paths) - 1; index >= 0; index-- {
-		if message, err = sjson.DeleteBytes(message, paths[index]); err != nil {
+		if message, err = ojson.DeleteBytes(message, paths[index]); err != nil {
 			return nil, err
 		}
 	}
@@ -237,16 +236,16 @@ func deleteCacheControl(message []byte) ([]byte, error) {
 // own input schema.
 func stripCopilotMessagesFields(body []byte) ([]byte, error) {
 	paths := []string{"safeguards"}
-	scope := func(prefix string, block gjson.Result) {
+	scope := func(prefix string, block ojson.Result) {
 		if block.Get("cache_control.scope").Exists() {
 			paths = append(paths, prefix+".cache_control.scope")
 		}
 	}
-	gjson.GetBytes(body, "system").ForEach(func(index, block gjson.Result) bool {
+	ojson.GetBytes(body, "system").ForEach(func(index, block ojson.Result) bool {
 		scope("system."+index.String(), block)
 		return true
 	})
-	gjson.GetBytes(body, "tools").ForEach(func(index, tool gjson.Result) bool {
+	ojson.GetBytes(body, "tools").ForEach(func(index, tool ojson.Result) bool {
 		prefix := "tools." + index.String()
 		scope(prefix, tool)
 		if tool.Get("eager_input_streaming").Exists() {
@@ -254,15 +253,15 @@ func stripCopilotMessagesFields(body []byte) ([]byte, error) {
 		}
 		return true
 	})
-	gjson.GetBytes(body, "messages").ForEach(func(index, message gjson.Result) bool {
+	ojson.GetBytes(body, "messages").ForEach(func(index, message ojson.Result) bool {
 		prefix := "messages." + index.String()
 		if message.Get("output_config").Exists() {
 			paths = append(paths, prefix+".output_config")
 		}
-		message.Get("content").ForEach(func(part, block gjson.Result) bool {
+		message.Get("content").ForEach(func(part, block ojson.Result) bool {
 			blockPrefix := prefix + ".content." + part.String()
 			scope(blockPrefix, block)
-			block.Get("content").ForEach(func(nested, inner gjson.Result) bool {
+			block.Get("content").ForEach(func(nested, inner ojson.Result) bool {
 				scope(blockPrefix+".content."+nested.String(), inner)
 				return true
 			})
@@ -273,10 +272,10 @@ func stripCopilotMessagesFields(body []byte) ([]byte, error) {
 	var err error
 	// Later paths first, so deleting one never shifts the index of another.
 	for index := len(paths) - 1; index >= 0; index-- {
-		if !gjson.GetBytes(body, paths[index]).Exists() {
+		if !ojson.GetBytes(body, paths[index]).Exists() {
 			continue
 		}
-		if body, err = sjson.DeleteBytes(body, paths[index]); err != nil {
+		if body, err = ojson.DeleteBytes(body, paths[index]); err != nil {
 			return nil, err
 		}
 	}

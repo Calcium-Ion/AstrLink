@@ -3,7 +3,6 @@ package ingress
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,9 +10,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/MoeForge/moego/base64"
+	"github.com/MoeForge/moego/ojson"
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/imagecompress"
-	"github.com/tidwall/gjson"
 )
 
 // maxImageNesting bounds the walk; request images sit a few levels deep, also
@@ -94,8 +94,8 @@ func (handler *Handler) applyImageCompression(
 // requestImage is one inline image in a request body: its base64 string,
 // either a data URL or bare base64 with its media type in a sibling field.
 type requestImage struct {
-	data      gjson.Result
-	mediaType gjson.Result
+	data      ojson.Result
+	mediaType ojson.Result
 	dataURL   bool
 }
 
@@ -125,11 +125,11 @@ func compressRequestImages(
 ) ([]byte, imageCompressionResult) {
 	result := imageCompressionResult{mode: compression.mode, quality: compression.options.Quality}
 	if !slices.ContainsFunc(imageMarkers(protocol), func(marker string) bool { return bytes.Contains(body, []byte(marker)) }) ||
-		!gjson.ValidBytes(body) {
+		!ojson.ValidBytes(body) {
 		return body, result
 	}
 	var images []requestImage
-	collectRequestImages(protocol, gjson.ParseBytes(body), 0, &images)
+	collectRequestImages(protocol, ojson.ParseBytes(body), 0, &images)
 	type splice struct {
 		start, end int
 		text       string
@@ -186,12 +186,12 @@ func compressRequestImages(
 
 // spanMatches checks that a value's offset points at its raw text, so a
 // splice never lands anywhere else.
-func spanMatches(body []byte, value gjson.Result) bool {
+func spanMatches(body []byte, value ojson.Result) bool {
 	end := value.Index + len(value.Raw)
-	return value.Index > 0 && value.Type == gjson.String && end <= len(body) && string(body[value.Index:end]) == value.Raw
+	return value.Index > 0 && value.Type == ojson.String && end <= len(body) && string(body[value.Index:end]) == value.Raw
 }
 
-func collectRequestImages(protocol contract.ProtocolID, value gjson.Result, depth int, images *[]requestImage) {
+func collectRequestImages(protocol contract.ProtocolID, value ojson.Result, depth int, images *[]requestImage) {
 	if depth > maxImageNesting || (!value.IsObject() && !value.IsArray()) {
 		return
 	}
@@ -201,7 +201,7 @@ func collectRequestImages(protocol contract.ProtocolID, value gjson.Result, dept
 			return
 		}
 	}
-	value.ForEach(func(_, child gjson.Result) bool {
+	value.ForEach(func(_, child ojson.Result) bool {
 		collectRequestImages(protocol, child, depth+1, images)
 		return true
 	})
@@ -211,7 +211,7 @@ func collectRequestImages(protocol contract.ProtocolID, value gjson.Result, dept
 // a Chat image_url part, a Responses input_image or computer screenshot, an
 // Anthropic base64 image block or a Gemini inline-data part. Image URLs and
 // uploaded file IDs are not inline images.
-func requestImageIn(protocol contract.ProtocolID, object gjson.Result) (requestImage, bool) {
+func requestImageIn(protocol contract.ProtocolID, object ojson.Result) (requestImage, bool) {
 	kind := object.Get("type").Str
 	switch protocol {
 	case contract.ProtocolOpenAIChat:
@@ -244,8 +244,8 @@ func requestImageIn(protocol contract.ProtocolID, object gjson.Result) (requestI
 	return requestImage{}, false
 }
 
-func dataURLImage(url gjson.Result) (requestImage, bool) {
-	if url.Type != gjson.String {
+func dataURLImage(url ojson.Result) (requestImage, bool) {
+	if url.Type != ojson.String {
 		return requestImage{}, false
 	}
 	if _, ok := imageDataURLPayload(url.Str); !ok {
@@ -254,8 +254,8 @@ func dataURLImage(url gjson.Result) (requestImage, bool) {
 	return requestImage{data: url, dataURL: true}, true
 }
 
-func base64Image(data, mediaType gjson.Result) (requestImage, bool) {
-	if data.Type != gjson.String || mediaType.Type != gjson.String || !strings.HasPrefix(strings.ToLower(mediaType.Str), "image/") {
+func base64Image(data, mediaType ojson.Result) (requestImage, bool) {
+	if data.Type != ojson.String || mediaType.Type != ojson.String || !strings.HasPrefix(strings.ToLower(mediaType.Str), "image/") {
 		return requestImage{}, false
 	}
 	return requestImage{data: data, mediaType: mediaType}, true

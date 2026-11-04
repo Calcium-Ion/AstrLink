@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/QuantumNous/astrlink/core/contract"
-	"github.com/tidwall/gjson"
 )
 
 func TestResponsesToolIdentitiesDoNotTriggerPrivacyActions(t *testing.T) {
@@ -56,7 +56,7 @@ func TestResponsesToolNamespaceProtectionKeepsPayloadsInspectable(t *testing.T) 
 				t.Fatalf("payload inspection: decision=%s findings=%v err=%v", result.Decision, result.Findings, err)
 			}
 			for _, path := range []string{"input.0.namespace", "input.2.namespace", "tools.0.name"} {
-				if got := gjson.GetBytes(result.Body, path).Str; got != namespace {
+				if got := ojson.GetBytes(result.Body, path).Str; got != namespace {
 					t.Errorf("%s = %q, want %q", path, got, namespace)
 				}
 			}

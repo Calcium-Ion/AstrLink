@@ -3,10 +3,11 @@ package console
 import (
 	"crypto/rand"
 	"crypto/sha256"
-	"encoding/base64"
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/MoeForge/moego/base64"
 )
 
 const (

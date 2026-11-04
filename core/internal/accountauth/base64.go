@@ -1,9 +1,10 @@
 package accountauth
 
 import (
-	"encoding/base64"
 	"fmt"
 	"strings"
+
+	"github.com/MoeForge/moego/base64"
 )
 
 func decodeRawURLBase64(value string) ([]byte, error) {

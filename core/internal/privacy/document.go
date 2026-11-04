@@ -7,9 +7,9 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/jsonedit"
-	"github.com/tidwall/gjson"
 )
 
 const maxJSONDepth = 128
@@ -295,11 +295,11 @@ func (document *jsonDocument) replaceStrings(replacements map[string]stringRepla
 	}
 	edits := make([]edit, 0, len(replacements))
 	failed := false
-	var walk func(pointer string, container gjson.Result)
-	walk = func(pointer string, container gjson.Result) {
-		container.ForEach(func(key, child gjson.Result) bool {
+	var walk func(pointer string, container ojson.Result)
+	walk = func(pointer string, container ojson.Result) {
+		container.ForEach(func(key, child ojson.Result) bool {
 			childPointer := pointer + "/"
-			if key.Type == gjson.String {
+			if key.Type == ojson.String {
 				childPointer += escapeJSONPointer(key.Str)
 			} else {
 				childPointer += jsonIndex(int(key.Num))
@@ -308,7 +308,7 @@ func (document *jsonDocument) replaceStrings(replacements map[string]stringRepla
 				return true
 			}
 			if replacement, ok := replacements[childPointer]; ok {
-				if child.Type != gjson.String || child.Str != replacement.original {
+				if child.Type != ojson.String || child.Str != replacement.original {
 					failed = true
 					return false
 				}
@@ -322,7 +322,7 @@ func (document *jsonDocument) replaceStrings(replacements map[string]stringRepla
 			return !failed
 		})
 	}
-	walk("", gjson.ParseBytes(trimmed))
+	walk("", ojson.ParseBytes(trimmed))
 	if failed || len(edits) != len(replacements) {
 		return ErrUnsafeRewrite
 	}
