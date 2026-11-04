@@ -1,5 +1,5 @@
-# Keep SHA-pinned workflow actions and relaykit current. Other dependencies are
-# covered by the vulnerability scans in CI instead.
+# Keep SHA-pinned workflow actions, relaykit and moego current. Other
+# dependencies are covered by the vulnerability scans in CI instead.
 version: 2
 updates:
   - package-ecosystem: github-actions
@@ -28,6 +28,13 @@ updates:
     allow:
       - dependency-name: github.com/QuantumNous/new-api/relaykit
         dependency-type: all
+      - dependency-name: github.com/MoeForge/moego
+        dependency-type: all
+    groups:
+      relaykit-moego:
+        patterns:
+          - github.com/QuantumNous/new-api/relaykit
+          - github.com/MoeForge/moego
     open-pull-requests-limit: 1
     commit-message:
       prefix: chore(deps)
