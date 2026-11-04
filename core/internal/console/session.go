@@ -4,10 +4,13 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"errors"
 	"net/http"
 	"sync"
 	"time"
 )
+
+var errSessionGenerationChanged = errors.New("console password changed during sign-in")
 
 const (
 	// A session ends after sessionIdleTimeout without a request, and
@@ -28,15 +31,24 @@ type session struct {
 // SHA-256 of their token, so the token itself is not kept. The control API
 // shares them to end the other sessions after a password change.
 type Sessions struct {
-	mu       sync.Mutex
-	sessions map[[sha256.Size]byte]*session
+	mu         sync.Mutex
+	generation uint64
+	sessions   map[[sha256.Size]byte]*session
 }
 
 func NewSessions() *Sessions {
 	return &Sessions{sessions: make(map[[sha256.Size]byte]*session)}
 }
 
-func (store *Sessions) create(now time.Time) (string, error) {
+// currentGeneration is captured before checking a password. Revocation also
+// invalidates those in-flight checks, so they cannot create a session later.
+func (store *Sessions) currentGeneration() uint64 {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	return store.generation
+}
+
+func (store *Sessions) create(now time.Time, generation uint64) (string, error) {
 	var raw [32]byte
 	if _, err := rand.Read(raw[:]); err != nil {
 		return "", err
@@ -44,6 +56,9 @@ func (store *Sessions) create(now time.Time) (string, error) {
 	token := base64.RawURLEncoding.EncodeToString(raw[:])
 	store.mu.Lock()
 	defer store.mu.Unlock()
+	if generation != store.generation {
+		return "", errSessionGenerationChanged
+	}
 	var oldest [sha256.Size]byte
 	var oldestSeen time.Time
 	for key, existing := range store.sessions {
@@ -89,7 +104,8 @@ func (store *Sessions) remove(token string) {
 	delete(store.sessions, key)
 }
 
-// EndOtherSessions implements controlapi.ConsoleSessions.
+// EndOtherSessions implements controlapi.ConsoleSessions. Advancing the
+// generation under the same lock as create rejects pending old-password logins.
 func (store *Sessions) EndOtherSessions(request *http.Request) {
 	var keep [sha256.Size]byte
 	cookie, err := request.Cookie(SessionCookie)
@@ -98,6 +114,7 @@ func (store *Sessions) EndOtherSessions(request *http.Request) {
 	}
 	store.mu.Lock()
 	defer store.mu.Unlock()
+	store.generation++
 	for key := range store.sessions {
 		if key != keep {
 			delete(store.sessions, key)
