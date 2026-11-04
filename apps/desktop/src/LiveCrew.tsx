@@ -36,7 +36,6 @@ import {
 import {
   celebrate,
   createCrew,
-  CREW_ACTS,
   CREW_STAGES,
   crewGrowth,
   readCrew,
@@ -47,7 +46,6 @@ import {
   syncCrew,
   type Crew,
   type CrewReading,
-  type CrewStation,
 } from "./live-crew-model";
 import {
   createScene,
@@ -70,17 +68,6 @@ const STEP_S = 1 / 30;
 const SETTLE_S = 1;
 /** How long the milestone banner stays up without motion. */
 const STILL_BANNER_MS = 3500;
-/** The places the ship's window passes, a stage each. */
-const PLANETS = [
-  "earth",
-  "moon",
-  "mars",
-  "jupiter",
-  "saturn",
-  "neptune",
-  "nebula",
-  "core",
-] as const;
 
 function readSceneChoice(): CrewSceneId {
   try {
@@ -145,14 +132,7 @@ export class CrewEngine {
   private front: HTMLCanvasElement | null = null;
   private reading: CrewReading = { members: [], rate: 0 };
   private seen = "";
-  private words: CrewWords = {
-    failover: "",
-    name: clientTypeName,
-    hold: "",
-    planets: [],
-  };
-  private labels: Record<CrewSceneId, Record<CrewStation, string>> | null =
-    null;
+  private words: CrewWords = { failover: "", name: clientTypeName };
   private running = false;
   private still = false;
   private frame = 0;
@@ -189,12 +169,8 @@ export class CrewEngine {
     this.g = null;
   }
 
-  setWords(
-    words: CrewWords,
-    labels: Record<CrewSceneId, Record<CrewStation, string>>,
-  ) {
+  setWords(words: CrewWords) {
     this.words = words;
-    this.labels = labels;
     this.redraw();
   }
 
@@ -453,8 +429,8 @@ export class CrewEngine {
   }
 
   private draw(dt: number) {
-    const { g, scene, fit, palette, labels } = this;
-    if (!g || !scene || !fit || !palette || !labels) return;
+    const { g, scene, fit, palette } = this;
+    if (!g || !scene || !fit || !palette) return;
     if (!this.back) {
       this.back = this.layer((pen) => scene.back(pen));
       this.front = scene.front ? this.layer((pen) => scene.front!(pen)) : null;
@@ -477,7 +453,7 @@ export class CrewEngine {
     if (this.back) g.drawImage(this.back, 0, 0);
     scene.movers?.(pen);
     if (this.front) g.drawImage(this.front, 0, 0);
-    scene.props(pen, this.crew, labels[scene.id], this.words);
+    scene.props(pen, this.crew);
     drawCrew(pen, this.crew, scene.stage, this.words, this.marks);
   }
 }
@@ -584,25 +560,10 @@ export const LiveCrew = memo(function LiveCrew({
   useEffect(() => engine.setStill(still), [engine, still]);
   useEffect(() => engine.setRunning(running), [engine, running]);
   useEffect(() => {
-    const stations = (scene: CrewSceneId) =>
-      Object.fromEntries(
-        CREW_ACTS.filter((act) => act !== "wait").map((act) => [
-          act,
-          t(`overview.liveCrew.stations.${scene}.${act}`),
-        ]),
-      ) as Record<CrewStation, string>;
-    engine.setWords(
-      {
-        failover: t("overview.liveCrew.failover"),
-        name: clientTypeName,
-        hold: t("overview.liveCrew.hold"),
-        planets: PLANETS.map((key) => t(`overview.liveCrew.planets.${key}`)),
-      },
-      Object.fromEntries(CREW_SCENES.map((id) => [id, stations(id)])) as Record<
-        CrewSceneId,
-        Record<CrewStation, string>
-      >,
-    );
+    engine.setWords({
+      failover: t("overview.liveCrew.failover"),
+      name: clientTypeName,
+    });
   }, [engine, t]);
 
   // Only a stage passed while watching counts; the first read sets the mark.

@@ -759,53 +759,8 @@
         "ship": "星际飞船",
         "site": "工地"
       },
-      "stations": {
-        "camp": {
-          "bash": "笔记本",
-          "read": "书堆",
-          "edit": "工作台",
-          "search": "望远镜",
-          "write": "打字机",
-          "think": "篝火"
-        },
-        "office": {
-          "bash": "工位",
-          "read": "书架",
-          "edit": "审稿",
-          "search": "查资料",
-          "write": "打印机",
-          "think": "白板"
-        },
-        "ship": {
-          "bash": "指挥台",
-          "read": "资料舱",
-          "edit": "维修舱",
-          "search": "观测窗",
-          "write": "发报机",
-          "think": "星图"
-        },
-        "site": {
-          "bash": "挖掘机",
-          "read": "图纸",
-          "edit": "钉木梁",
-          "search": "测量",
-          "write": "砌墙",
-          "think": "盒饭"
-        }
-      },
       "failover": "切换线路",
-      "milestone": "今日破 {{amount}} Token！",
-      "hold": "货舱",
-      "planets": {
-        "earth": "地球",
-        "moon": "月球",
-        "mars": "火星",
-        "jupiter": "木星",
-        "saturn": "土星",
-        "neptune": "海王星",
-        "nebula": "星云",
-        "core": "银河中心"
-      }
+      "milestone": "今日破 {{amount}} Token！"
     },
     "sky": "今天的请求",
     "skyToday": "今天的请求",

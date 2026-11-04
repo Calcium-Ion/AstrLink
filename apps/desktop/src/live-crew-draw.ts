@@ -1490,9 +1490,6 @@ function drawOrb(pen: Pen, member: CrewMember, marks: CrewMarks) {
 export interface CrewWords {
   failover: string;
   name(client: ClientType): string;
-  /** The ship's cargo hold, and the places its window passes by stage. */
-  hold: string;
-  planets: readonly string[];
 }
 
 /** How a scene draws a character at its station, and its hats. */

@@ -759,53 +759,8 @@
         "ship": "宇宙船",
         "site": "工事現場"
       },
-      "stations": {
-        "camp": {
-          "bash": "ノート PC",
-          "read": "本の山",
-          "edit": "作業台",
-          "search": "望遠鏡",
-          "write": "タイプライター",
-          "think": "たき火"
-        },
-        "office": {
-          "bash": "デスク",
-          "read": "本棚",
-          "edit": "校正",
-          "search": "調べもの",
-          "write": "プリンター",
-          "think": "ホワイトボード"
-        },
-        "ship": {
-          "bash": "艦橋",
-          "read": "資料室",
-          "edit": "修理室",
-          "search": "観測窓",
-          "write": "送信機",
-          "think": "星図"
-        },
-        "site": {
-          "bash": "ショベルカー",
-          "read": "図面",
-          "edit": "梁打ち",
-          "search": "測量",
-          "write": "レンガ積み",
-          "think": "お弁当"
-        }
-      },
       "failover": "経路を切替",
-      "milestone": "今日 {{amount}} トークン達成！",
-      "hold": "貨物室",
-      "planets": {
-        "earth": "地球",
-        "moon": "月",
-        "mars": "火星",
-        "jupiter": "木星",
-        "saturn": "土星",
-        "neptune": "海王星",
-        "nebula": "星雲",
-        "core": "銀河中心"
-      }
+      "milestone": "今日 {{amount}} トークン達成！"
     },
     "sky": "今日のリクエスト",
     "skyToday": "今日のリクエスト",

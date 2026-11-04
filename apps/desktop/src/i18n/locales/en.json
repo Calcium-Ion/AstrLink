@@ -759,53 +759,8 @@
         "ship": "Starship",
         "site": "Site"
       },
-      "stations": {
-        "camp": {
-          "bash": "Laptop",
-          "read": "Books",
-          "edit": "Workbench",
-          "search": "Telescope",
-          "write": "Typewriter",
-          "think": "Campfire"
-        },
-        "office": {
-          "bash": "Desk",
-          "read": "Bookshelf",
-          "edit": "Review",
-          "search": "Research",
-          "write": "Printer",
-          "think": "Whiteboard"
-        },
-        "ship": {
-          "bash": "Bridge",
-          "read": "Archive",
-          "edit": "Repair bay",
-          "search": "Viewport",
-          "write": "Transmitter",
-          "think": "Star map"
-        },
-        "site": {
-          "bash": "Excavator",
-          "read": "Blueprints",
-          "edit": "Beams",
-          "search": "Survey",
-          "write": "Brick wall",
-          "think": "Lunch"
-        }
-      },
       "failover": "Switching route",
-      "milestone": "{{amount}} tokens today!",
-      "hold": "Cargo hold",
-      "planets": {
-        "earth": "Earth",
-        "moon": "Moon",
-        "mars": "Mars",
-        "jupiter": "Jupiter",
-        "saturn": "Saturn",
-        "neptune": "Neptune",
-        "nebula": "Nebula",
-        "core": "Galactic core"
-      }
+      "milestone": "{{amount}} tokens today!"
     },
     "sky": "Today's requests",
     "skyToday": "Today's requests",

@@ -493,7 +493,7 @@ export function createCrew(rand: () => number = seededRandom(5)): Crew {
     failovers: new Set(),
     primed: false,
     width: 1006,
-    height: 240,
+    height: 280,
     joined: 0,
   };
 }
