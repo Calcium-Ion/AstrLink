@@ -1,32 +1,68 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" fill="none">
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="512"
+  height="512"
+  viewBox="0 0 512 512"
+  fill="none"
+>
   <title>AstrLink Dev</title>
-  <desc>字母 A 与渐变环带前后穿插，下方延伸轻盈尾迹，右上方点缀星芒，象征流畅的智能连接。</desc>
+  <desc>圆润的蓝色 A 与细渐变星环前后穿插，右上两颗星芒，下方两段短尾迹。</desc>
   <defs>
-    <linearGradient id="star-trail-color" x1="108" y1="318" x2="403" y2="224" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#20BBC7"/>
-      <stop offset=".56" stop-color="#7F8FE8"/>
-      <stop offset="1" stop-color="#DA7BAF"/>
+    <linearGradient
+      id="astrlink-orbit-color"
+      x1="214"
+      y1="730"
+      x2="1032"
+      y2="600"
+      gradientUnits="userSpaceOnUse"
+    >
+      <stop stop-color="#00E8F1" />
+      <stop offset=".25" stop-color="#79D8FA" />
+      <stop offset=".49" stop-color="#AFA8FE" />
+      <stop offset=".73" stop-color="#E38FEA" />
+      <stop offset="1" stop-color="#FE71BD" />
     </linearGradient>
-    <filter id="star-trail-shadow" x="24" y="28" width="464" height="468" filterUnits="userSpaceOnUse">
-      <feDropShadow dx="0" dy="8" stdDeviation="9" flood-color="#26345E" flood-opacity=".14"/>
-    </filter>
-    <path id="star-trail-ring" d="M111 286C130 254 190 258 247 251C315 243 368 196 397 211C430 236 377 278 295 307C224 333 136 353 112 327C103 317 101 303 111 286Z M134 292C131 301 130 308 136 311C158 325 220 312 287 288C349 266 391 239 383 229C374 220 312 264 252 271C193 278 150 276 134 292Z" fill-rule="evenodd" transform="translate(256 0) scale(1.1 1) translate(-256 0)"/>
-    <path id="star-trail-front" d="M111 286C101 303 103 317 112 327C136 353 224 333 295 307C377 278 430 236 397 211L383 229C391 239 349 266 287 288C220 312 158 325 136 311C130 308 131 301 134 292Z" transform="translate(256 0) scale(1.1 1) translate(-256 0)"/>
-    <mask id="star-trail-crossing" x="88" y="104" width="340" height="306" maskUnits="userSpaceOnUse">
-      <rect x="88" y="104" width="340" height="306" fill="#FFFFFF"/>
-      <use href="#star-trail-front" fill="#000000" stroke="#000000" stroke-width="14" stroke-linejoin="round"/>
-    </mask>
+    <linearGradient
+      id="astrlink-trail-color"
+      x1="472"
+      y1="849"
+      x2="674"
+      y2="826"
+      gradientUnits="userSpaceOnUse"
+    >
+      <stop stop-color="#8DA8FE" />
+      <stop offset="1" stop-color="#873CF6" />
+    </linearGradient>
+    <path
+      id="astrlink-a"
+      d="M563 350C589 326 646 324 674 349C689 364 699 380 708 397L932 817C948 848 939 875 913 888C883 906 850 895 834 865L745 689C665 692 581 691 502 689L428 865C415 892 385 903 357 893C327 883 313 854 325 823L527 400C539 374 550 361 563 350ZM604 461Q620 437 636 461L714 613C657 617 595 617 536 615Z"
+      fill-rule="evenodd"
+    />
+    <path
+      id="astrlink-orbit"
+      d="M432 587C315 624 224 671 210 716C198 762 262 793 373 804C509 819 688 791 822 745C958 700 1049 638 1038 595C1034 555 931 534 802 537Q797 537 797 541Q797 546 802 546C920 554 994 573 997 602C1006 634 948 671 815 716C697 759 539 788 400 773C307 766 245 745 248 716C250 686 323 638 432 599Z"
+      fill-rule="evenodd"
+    />
+    <path
+      id="astrlink-orbit-front"
+      d="M210 716C198 762 262 793 373 804C509 819 688 791 822 745C958 700 1049 638 1038 595L997 602C1006 634 948 671 815 716C697 759 539 788 400 773C307 766 245 745 248 716Z"
+    />
+    <path
+      id="astrlink-stars"
+      d="M829 353Q832 345 835 353C843 384 849 391 878 397Q887 400 878 403C849 411 843 418 835 449Q832 457 829 449C821 418 815 411 786 403Q778 400 786 397C815 389 821 382 829 353ZM914 432Q916 425 918 432C923 445 928 451 941 455Q949 458 941 461C928 465 923 471 918 485Q916 492 914 485C909 471 904 465 890 461Q883 458 890 455C904 451 909 445 914 432Z"
+    />
   </defs>
-  <rect x="52" y="52" width="408" height="408" rx="92" fill="#F9FAFE" filter="url(#star-trail-shadow)"/>
-  <g id="star-trail-mark">
-    <g stroke-linecap="round">
-      <path d="M103 350C119 381 185 371 249 349" stroke="url(#star-trail-color)" stroke-width="7"/>
-      <circle cx="269" cy="341" r="5" fill="#9290DF"/>
-      <circle cx="286" cy="333" r="3.5" fill="#B185CA"/>
-    </g>
-    <use href="#star-trail-ring" fill="url(#star-trail-color)"/>
-    <path d="M150 365L236 155Q256 117 276 155L362 365" stroke="#304074" stroke-width="44" stroke-linecap="round" stroke-linejoin="round" mask="url(#star-trail-crossing)"/>
-    <use href="#star-trail-front" fill="url(#star-trail-color)"/>
-    <path d="M359 140C363 157 369 163 386 167C369 171 363 177 359 194C355 177 349 171 332 167C349 163 355 157 359 140Z" fill="#8B88DD"/>
+  <rect x="52" y="52" width="408" height="408" rx="98" fill="#FFFFFF" />
+  <g id="star-trail-mark" transform="matrix(.425 0 0 .425 -10.9 -17.7)">
+    <use href="#astrlink-orbit" fill="url(#astrlink-orbit-color)" />
+    <use href="#astrlink-a" fill="#1F3C7D" />
+    <use href="#astrlink-orbit-front" fill="url(#astrlink-orbit-color)" />
+    <use href="#astrlink-stars" fill="#8049F3" />
+    <path
+      d="M472 849C521 849 567 845 606 838M654 830L674 826"
+      stroke="url(#astrlink-trail-color)"
+      stroke-width="12"
+      stroke-linecap="round"
+    />
   </g>
 <rect x="152" y="384" width="208" height="68" rx="22" fill="#FFB454"/><path d="M203 401H214C234 401 234 435 214 435H203Z M267 401H247V435H267 M247 418H264 M283 401L296 435L309 401" fill="none" stroke="#182444" stroke-width="9" stroke-linecap="square" stroke-linejoin="round"/></svg>
