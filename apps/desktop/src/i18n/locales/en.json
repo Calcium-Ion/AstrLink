@@ -217,7 +217,8 @@
   },
   "copy": {
     "copiedNamed": "{{label}} copied",
-    "manualSelect": "Could not copy automatically. Select the text manually."
+    "manualSelect": "Could not copy automatically. Select the text manually.",
+    "copyNamed": "Copy {{label}}"
   },
   "bridge": {
     "restartDesktopOnly": "Restarting the gateway is only available in the AstrLink desktop app.",
@@ -694,11 +695,12 @@
     "return": "Return to setup",
     "manualClient": "Client",
     "otherTools": "Other tools",
-    "snippetHint": "Merge the following into {{path}}. The copied text includes the full token.",
+    "snippetHint": "Merge each block into the file named above it. The copied text includes the full token.",
     "copyConfig": "Copy config",
     "configCopied": "Copied the config.",
     "snippetFailed": "Unable to generate the config.",
-    "snippetNeedsModel": "Codex needs a Responses entry. For Chat-only providers, enable conversion in Entry protocols."
+    "snippetNeedsModel": "{{client}} needs a model with a {{protocol}} entry. For providers without it, enable conversion in Entry protocols.",
+    "copyFile": "Copy config: {{file}}"
   },
   "overview": {
     "title": "Overview",
@@ -3747,11 +3749,9 @@
   },
   "clientSetup": {
     "title": "Configure a client",
-    "description": "Write the connection to the client’s config file, then start the client as usual.",
+    "description": "Check the clients that use this token and write their config files at once.",
     "client": "Client",
-    "token": "Access token",
-    "model": "Model",
-    "modelHint": "Search compatible models or enter a model name.",
+    "token": "Token",
     "modelPlaceholder": "Search or enter a model",
     "contextWindow": "Context limit (tokens)",
     "maxTokens": "Output limit per reply (tokens)",
@@ -3760,73 +3760,57 @@
     "limitInvalid": "Enter a whole number from 1 to 100000000, or leave it blank.",
     "modelsLoading": "Loading models…",
     "modelsFailed": "Some models could not be loaded. You can enter a model ID.",
-    "defaultModel": "Default / multimodal (optional)",
-    "haikuModel": "Haiku (optional)",
-    "sonnetModel": "Sonnet (optional)",
-    "opusModel": "Opus (optional)",
-    "fableModel": "Fable (optional)",
-    "claudeModelHint": "All model fields are optional. Empty fields are not written.",
-    "fableNotImported": "CC Switch imports do not include Fable.",
+    "defaultModel": "Default model",
+    "haikuModel": "Haiku",
+    "sonnetModel": "Sonnet",
+    "opusModel": "Opus",
+    "fableModel": "Fable",
     "statusLoading": "Checking clients…",
     "statusFailed": "Unable to read the clients’ config status. Try again later.",
     "notInstalled": "Not installed",
     "notInstalledHint": "No {{client}} user config folder was found. Install and run {{client}} once, then configure it here.",
-    "unsupported": "Not supported yet",
-    "unsupportedHint": "Gemini CLI, OpenCode, and OpenClaw cannot be configured directly yet. Install CC Switch to import them through it.",
-    "ccSwitchOnly": "Via CC Switch",
-    "ccSwitchOnlyHint": "AstrLink cannot configure {{client}} directly yet. You will confirm the import in CC Switch.",
     "state": {
       "configured": "Configured",
       "outdated": "Port update pending",
       "elsewhere": "Other instance",
       "modified": "Changed elsewhere",
-      "cc_switch": "Via CC Switch",
       "invalid": "Unreadable config",
-      "other_token": "Other token"
+      "other_token": "Other token",
+      "model_missing_one": "{{count}} model disabled",
+      "model_missing_other": "{{count}} models disabled",
+      "needs_paste": "One step left"
     },
     "usesToken": "{{client}} currently uses “{{name}}”. Using this token switches it to “{{current}}”.",
     "usesOtherToken": "{{client}} currently uses another token. Using this token switches it to “{{current}}”.",
     "modifiedHint": "This config changed after AstrLink wrote it, so port changes no longer update it. Write it again to restore it.",
-    "ccSwitchManagedHint": "CC Switch now manages {{client}}. If the gateway port changes, update the address in CC Switch. To let AstrLink manage it again, choose Write config.",
     "elsewhereHint": "{{client}} is connected to another AstrLink on this computer. Using this token connects it to this one instead.",
     "invalidHint": "The config file has a format error, so AstrLink leaves it alone. Fix it, then write again.",
-    "configFile": "Config file",
-    "place": "Location",
     "placeLocal": "This computer",
     "placeClient": "{{client}} ({{place}})",
     "wslUnchecked": "Clients in stopped WSL distributions weren’t checked: {{names}}. Start one, then reopen this dialog.",
     "wslNetwork": "By default, clients in WSL can’t reach {{url}} on this computer. Add networkingMode=mirrored under [wsl2] in %UserProfile%\\.wslconfig, run wsl --shutdown, and reopen WSL.",
     "write": "Write config",
-    "update": "Update config",
-    "useThisToken": "Use this token",
     "writing": "Writing…",
-    "written": "Wrote the {{client}} config. Reopen {{client}} to use it.",
     "writeFailed": "Unable to write the config.",
     "replaceTitle": "Replace existing settings?",
-    "replaceBody": "AstrLink did not write these {{client}} settings. Continuing replaces or removes them, and removing AstrLink’s config later will not bring them back.",
+    "replaceBody": "AstrLink did not write the following settings. Continuing replaces them; removing AstrLink’s config later restores their current values.",
     "replaceConfirm": "Replace and write",
-    "switchTitle": "Connect to this AstrLink instead?",
-    "switchBody": "{{client}} is connected to another AstrLink at {{url}}. Continuing connects it to this AstrLink, and the other one stops receiving {{client}}’s requests.",
-    "switchConfirm": "Switch and write",
-    "remove": "Remove config",
+    "remove": "Remove",
     "removing": "Removing…",
     "removeTitle": "Remove the {{client}} config?",
-    "removeBody": "Only settings AstrLink wrote and nobody changed are removed. {{client}} goes back to its default connection; settings replaced earlier are not restored.",
+    "removeBody": "Removes only the settings AstrLink wrote that nobody changed since, and restores the settings the write replaced.",
     "removed": "Removed the {{client}} config. Reopen {{client}} to apply.",
     "removeFailed": "Unable to remove the config.",
-    "ccSwitchImport": "Import with CC Switch instead",
-    "ccSwitchOpening": "Opening CC Switch…",
-    "ccSwitchOpened": "Requested CC Switch to open. Confirm the import there, enable the provider, then reopen the client. While CC Switch starts up, it may miss this import and stay on its main screen. If so, keep it open and import again.",
-    "ccSwitchFailed": "Unable to open CC Switch. Check that it is installed with the ccswitch:// protocol registered and that the gateway and token are still available, then retry.",
     "ccSwitchOverwrites": "Switching providers in CC Switch overwrites the config written here.",
     "codexTools": "After writing, Codex shows its own image generation and web search tools. When Codex calls them, the gateway first uses the settings under Routing → Redirects → Responses tool mapping. A tool turned off there goes to the API provider serving the conversation. Codex subscriptions and New API providers handle both tools. OpenAI API and OpenAI compatible providers handle image generation. Otherwise Codex is told how to turn the tool on.",
-    "codexToolsCCSwitch": "A config imported with CC Switch lacks this setting, so Codex does not show these two tools.",
-    "ccSwitchElsewhere": "Importing with CC Switch writes to {{client}} ({{target}}). To write to {{client}} ({{place}}), set {{client}} Configuration Directory to {{dir}} under Configuration Directory Override (Advanced) in CC Switch Settings, then reopen this dialog.",
     "limitsTitle": "Limitations",
     "limits": {
       "claude": "Only the user-level ~/.claude/settings.json is written. A project’s .claude/settings.json or .claude/settings.local.json wins when it sets the same environment variables. With CLAUDE_CONFIG_DIR set, Claude Code reads another folder; configure it manually instead.",
       "codex": "Only the user-level ~/.codex/config.toml is written; sign-in details are left alone. With --profile or CODEX_HOME, Codex reads another config; configure it manually instead.",
-      "pi": "Only the user-level ~/.pi/agent/models.json and ~/.pi/agent/settings.json are written; sign-in details are left alone. A project’s .pi/settings.json wins when it sets another default model. With PI_CODING_AGENT_DIR set, Pi reads another folder; configure it manually instead."
+      "pi": "Only the user-level ~/.pi/agent/models.json and ~/.pi/agent/settings.json are written; sign-in details are left alone. A project’s .pi/settings.json wins when it sets another default model. With PI_CODING_AGENT_DIR set, Pi reads another folder; configure it manually instead.",
+      "gemini": "Writes only the user-level ~/.gemini/.env and ~/.gemini/settings.json. When the current or a parent folder has a .env file, Gemini CLI reads that one instead; variables set in the terminal take precedence.",
+      "opencode": "Writes only the user-level config in ~/.config/opencode: the file already there, or a new opencode.jsonc. A project opencode.json or the file OPENCODE_CONFIG names wins where it sets the same keys.",
+      "openclaw": "Writes only the user-level ~/.openclaw/openclaw.json. When OpenClaw starts with another state folder or config file, set it up manually."
     },
     "proxy": {
       "blocked": "The system proxy {{proxy}} stops Codex requests before they reach AstrLink, so Codex shows a 502 error. Add localhost, 127.0.0.1, and ::1 to the proxy app’s bypass (exception) list, or set the environment variable NO_PROXY=localhost,127.0.0.1,::1 yourself, then restart Codex. AstrLink does not change these settings.",
@@ -3837,7 +3821,232 @@
     "configuredIn": "Configured in {{clients}}",
     "entryRequired": "Entry required",
     "entryWillEnable": "{{service}} has no {{protocol}} entry yet. Writing the configuration will enable it automatically, converting to {{target}}.",
-    "entryEnableFailed": "Could not enable the {{protocol}} entry for {{service}}"
+    "entryEnableFailed": "Could not enable the {{protocol}} entry for {{service}}",
+    "subagentModel": "Subagents",
+    "models": "Models",
+    "autoFill": "Fill in by name",
+    "blankSkipped": "Leave blank to skip",
+    "blankFollowsDefault": "Blank follows the default model",
+    "modelsListed_one": "Lists the {{count}} model the gateway serves over {{protocol}}.",
+    "modelsListed_other": "Lists the {{count}} models the gateway serves over {{protocol}}.",
+    "modelCount_one": "{{count}} model",
+    "modelCount_other": "{{count}} models",
+    "switchable": "Models to switch between in {{client}}",
+    "switchHint": {
+      "opencode": "Switch with /models",
+      "openclaw": "Switch with /model"
+    },
+    "defaultTag": "Default",
+    "reasoningEffort": "Reasoning effort",
+    "effortDefault": "Codex default",
+    "removeManyTitle_one": "Remove the config from {{count}} client?",
+    "removeManyTitle_other": "Remove the config from {{count}} clients?",
+    "writeAndRemoveConfirm": "Write and remove",
+    "deliver": "Write the {{client}} config",
+    "checkAll": "Select all",
+    "checkNone": "Select none",
+    "view": "View",
+    "settingsTab": "Settings",
+    "changesTab": "Changes",
+    "newFile": "(new)",
+    "notConfigured": "Not set up",
+    "willWrite": "Not set up · will write {{what}}",
+    "notFoundLocal": "{{dir}} not found on this computer",
+    "notFound": "{{dir}} not found",
+    "usingToken": "Uses “{{name}}”",
+    "usingOtherToken": "Uses another token",
+    "willRemove": "Config will be removed",
+    "modelMissingHint_one": "{{models}} is no longer available and is left out of the write.",
+    "modelMissingHint_other": "{{models}} are no longer available and are left out of the write.",
+    "changesUnchecked": "Check {{client}} to see the changes a write makes.",
+    "changesNeedModel": "Finish the settings to see the changes a write makes.",
+    "changesLoading": "Working out the changes…",
+    "changesFailed": "Unable to list the changes.",
+    "changesNone": "{{client}} already has this config; a write changes no files.",
+    "changeCreated": "New file",
+    "changeDeleted": "Deleted",
+    "changedLines_one": "{{count}} line changed",
+    "changedLines_other": "{{count}} lines changed",
+    "changedKeys_one": "{{count}} key changed",
+    "changedKeys_other": "{{count}} keys changed",
+    "replacedNote_one": "AstrLink did not write the {{count}} item in red; the write asks you first. Removing AstrLink’s config later restores its current value.",
+    "replacedNote_other": "AstrLink did not write the {{count}} items in red; the write asks you first. Removing AstrLink’s config later restores their current values.",
+    "restoredNote_one": "The {{count}} item in green goes back to its value from before AstrLink wrote it.",
+    "restoredNote_other": "The {{count}} items in green go back to their values from before AstrLink wrote them.",
+    "needsModel": "Finish the settings for {{names}}",
+    "willWriteNames": "Will write {{names}}",
+    "willRemoveNames": "Will remove the config from {{names}}",
+    "willWriteAndRemove": "Will write {{written}} and remove the config from {{removed}}",
+    "nothingChecked": "Check the clients to write",
+    "writeCount_one": "Write {{count}} client",
+    "writeCount_other": "Write {{count}} clients",
+    "removeCount_one": "Remove from {{count}} client",
+    "removeCount_other": "Remove from {{count}} clients",
+    "retryOne": "Write {{client}} again",
+    "retryCount_one": "Write {{count}} client again",
+    "retryCount_other": "Write {{count}} clients again",
+    "done": "Done",
+    "confirm": {
+      "remove": "Remove the config AstrLink wrote",
+      "token": "Switch to “{{current}}”; “{{previous}}” is no longer used for {{client}}",
+      "unknownToken": "Switch to “{{current}}”; the previous token is no longer used for {{client}}",
+      "gateway": "Connect to this AstrLink; {{url}} stops receiving {{client}}’s requests",
+      "key": "{{key}} in {{file}}",
+      "keyWithValue": "{{key}} in {{file}} (now {{current}})"
+    },
+    "result": {
+      "ok": "Done",
+      "failed": "Failed",
+      "updated": "Updated",
+      "portUpdated": "Port updated",
+      "written": "Written",
+      "writtenWith": "Written · {{what}}",
+      "removed": "Removed",
+      "notWritten": "Not written",
+      "notRemoved": "Not removed",
+      "fileInvalid": "{{file}} is malformed",
+      "lineError": "line {{line}} is malformed. {{untouched}} Fix it, then choose “{{action}}”.",
+      "untouchedAll": "Neither file was changed.",
+      "untouchedOne": "The file was not changed.",
+      "writtenCount_one": "Wrote {{count}} client; reopen it to apply.",
+      "writtenCount_other": "Wrote {{count}} clients; reopen them to apply.",
+      "removedCount_one": "Removed the config from {{count}} client; reopen it to apply.",
+      "removedCount_other": "Removed the config from {{count}} clients; reopen them to apply.",
+      "writtenAndRemoved": "Wrote {{written}} and removed {{removed}} client configs; reopen them to apply.",
+      "notWrittenNames": "{{names}} not written.",
+      "notRemovedNames": "{{names}} not removed.",
+      "both": "{{done}} {{failed}}",
+      "needsPaste": "{{names}} still need the token pasted."
+    },
+    "marksTitle_one": "“{{name}}” is set up in {{count}} client",
+    "marksTitle_other": "“{{name}}” is set up in {{count}} clients",
+    "search": "Search clients",
+    "searchEmpty": "No matching clients",
+    "group": {
+      "installed": "Installed",
+      "missing": "Not installed",
+      "guide": "Fill in by hand",
+      "unsupported": "Can't reach the local gateway"
+    },
+    "targets": "Write to",
+    "targetLine": "{{state}} · {{targets}}",
+    "target": {
+      "workbuddy": {
+        "cn": "China",
+        "intl": "International"
+      },
+      "deepseek_harness": {
+        "web": "Web",
+        "desktop": "Desktop"
+      },
+      "vscode_copilot": {
+        "stable": "VS Code",
+        "insiders": "VS Code Insiders"
+      }
+    },
+    "importIn": "Import in {{client}}",
+    "reason": {
+      "trae": "TRAE keeps custom models on its servers",
+      "roo_code": "Its settings live in VS Code's database",
+      "lobehub": "Its providers live in LobeHub's database",
+      "chatwise": "Its settings live in ChatWise's database",
+      "lobsterai": "Its settings live in LobsterAI's database",
+      "cursor": "Requests are sent from Cursor's servers",
+      "warp": "Requests are sent from Warp's servers",
+      "amp": "Requests are sent from Amp's servers",
+      "trae_plugin": "The personal edition takes no custom address",
+      "comate": "The personal edition takes no custom address",
+      "qoder": "Only its built-in providers can be chosen"
+    },
+    "note": {
+      "workbuddy": "WorkBuddy uses custom models only after you sign in. Changes apply without a restart.",
+      "vscode_copilot": "In the Copilot Chat model picker, choose a model under AstrLink."
+    },
+    "guideWhere": "In {{client}}'s settings, add a custom provider with these values:",
+    "guide": {
+      "trae": {
+        "where": "In TRAE, open Settings → Models → Add Model → Custom Model and fill in:"
+      },
+      "roo_code": {
+        "type": {
+          "anthropic_messages": "Anthropic",
+          "openai_chat": "OpenAI Compatible",
+          "google_generate_content": "Google Gemini"
+        }
+      }
+    },
+    "guideModel": "Model",
+    "guideType": {
+      "anthropic_messages": "Anthropic compatible",
+      "openai_responses": "OpenAI Responses compatible",
+      "openai_chat": "OpenAI compatible",
+      "google_generate_content": "Gemini"
+    },
+    "guideField": {
+      "type": "Provider",
+      "url": "Base URL",
+      "key": "API key",
+      "model": "Model ID",
+      "context": "Context"
+    },
+    "guideNote": "{{reason}}, so AstrLink can't change them. If the port or token changes, come back and fill them in again.",
+    "guideRefill": "If the port or token changes, come back and fill them in again.",
+    "unsupportedPane": "{{reason}}, so it can't reach AstrLink on this computer.",
+    "link": {
+      "protocol": "Protocol",
+      "models": "Model IDs",
+      "notDetected": "{{client}} wasn't found. If it's installed, open {{client}} once before importing.",
+      "failed": "Couldn't open {{client}}",
+      "cherry_studio": {
+        "step1": "Click “Import in {{client}}” and confirm in the window {{client}} opens.",
+        "step2": "Turn on “{{provider}}” in the provider list.",
+        "step3": "Click “Manage” to add models, or copy model IDs from below.",
+        "again": "Importing again adds the new token after the old one, and the two are used in turn. Before changing tokens, delete the old one in {{client}}."
+      },
+      "aionui": {
+        "step1": "Click “Import in {{client}}”. {{client}} opens its add-model window with the address and token filled in. If it doesn't appear, switch to another page and click again.",
+        "step2": "Pick the model to use under the model name and click Confirm.",
+        "step3": "Choose this model when you start a new chat.",
+        "again": "Importing again creates a new provider instead of updating the old one. If the port or token changes, edit or delete the old one in {{client}}."
+      }
+    },
+    "notes": {
+      "overridden": "Another {{client}} settings file overrides the models written here.",
+      "running": "{{client}} is open and overwrites this file with its own settings when it quits. Quit {{client}} before writing or removing.",
+      "deepseek_harness": {
+        "overridden": "Model settings in ~/.dsh/cordis.patch.yml override the ones written here."
+      },
+      "droid": {
+        "overridden": "Model settings in ~/.factory/settings.local.json override the ones written here."
+      },
+      "cline": {
+        "legacy": "The Cline extension still has older provider settings, which override this config. Choose the provider and model again in Cline, then reload the window."
+      },
+      "zed": {
+        "overridden": "A release-channel or platform section in settings.json overrides the models written here."
+      },
+      "crush": {
+        "overridden": "A model picked in Crush is kept in ~/.local/share/crush/crush.json and overrides the one written here."
+      },
+      "qoder_cli": {
+        "account": "Qoder CLI uses the models written here only when signed in with an account that allows custom models."
+      }
+    },
+    "paste": {
+      "waiting": "paste the token",
+      "copy": "Copy token",
+      "copied": "Token copied",
+      "clears": "“One step left” clears once {{client}} sends a request with this token.",
+      "zed": "Zed reads the token only from the keychain. Copy the token, then in Zed paste it into {{providers}} under Settings → AI → LLM Providers.",
+      "goose": "Goose reads the token only from the keychain. Copy the token, then in Goose paste it into {{providers}} under Settings → Models → Configure providers. In the CLI, run goose configure."
+    }
+  },
+  "modelChecklist": {
+    "selectAll": "Select all shown models",
+    "search": "Search models",
+    "count": "{{selected}} / {{total}} selected",
+    "empty": "No models to choose from",
+    "noMatch": "No matching models"
   },
   "providerImport": {
     "title": "Add API provider",

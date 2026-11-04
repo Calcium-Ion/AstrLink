@@ -5,6 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const bridgeMocks = vi.hoisted(() => ({
+  getClientCatalog: vi.fn(),
   getClientConfigStatus: vi.fn(),
   listTerminalApps: vi.fn(),
   openServiceTerminal: vi.fn(),
@@ -13,7 +14,10 @@ const bridgeMocks = vi.hoisted(() => ({
 
 vi.mock("./bridge", () => bridgeMocks);
 
-import type { ClientConfigOverview } from "./client-config-model";
+import {
+  clientConfigClients,
+  type ClientConfigOverview,
+} from "./client-config-model";
 import { settleClosedLayer } from "./lib/test-layer-settle";
 import { notify } from "./notify";
 import type { Service } from "./service-model";
@@ -48,18 +52,25 @@ function service(overrides: Partial<Service> = {}): Service {
 
 function installed(...clients: string[]): ClientConfigOverview {
   return {
-    clients: ["claude", "codex", "pi"].map((client) => ({
-      client: client as "claude" | "codex" | "pi",
+    clients: clientConfigClients.map((client) => ({
+      client,
       wsl: null,
+      target: null,
       detected: clients.includes(client),
-      paths: [],
+      home: "/Users/me",
+      dir: `/Users/me/.${client}`,
+      paths: [`/Users/me/.${client}/config`],
+      exists: [false],
       state: "not_configured" as const,
       token_id: null,
       models: {},
+      notes: [],
+      paste_since_unix: null,
+      paste_into: [],
     })),
     wsl_unchecked: [],
     wsl_localhost: false,
-    cc_switch_wsl: { claude: null, codex: null },
+    installed: [],
   };
 }
 
@@ -157,6 +168,7 @@ describe("ServiceTerminalDialog", () => {
       { id: "terminal", name: "Terminal" },
       { id: "warp", name: "Warp" },
     ]);
+    bridgeMocks.getClientCatalog.mockResolvedValue({ clients: [] });
     bridgeMocks.getClientConfigStatus.mockResolvedValue(
       installed("claude", "codex"),
     );

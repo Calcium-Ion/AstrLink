@@ -9,11 +9,11 @@ const bridgeMocks = vi.hoisted(() => ({
   deleteAccessToken: vi.fn(),
   listAccessTokenUsage: vi.fn(),
   copyAccessToken: vi.fn(),
+  getClientCatalog: vi.fn(),
   getClientConfigStatus: vi.fn(),
   removeClientConfig: vi.fn(),
-  applyClientConfig: vi.fn(),
+  applyClientConfigs: vi.fn(),
   isCCSwitchInstalled: vi.fn(),
-  openCCSwitchImport: vi.fn(),
   listServices: vi.fn(),
   getRoutingSettings: vi.fn(),
 }));
@@ -26,6 +26,7 @@ import {
 } from "./AccessTokenManager";
 import type { AccessTokenSummary } from "./access-token-model";
 import type {
+  ClientCatalog,
   ClientConfigOverview,
   ClientConfigStatus,
 } from "./client-config-model";
@@ -52,6 +53,27 @@ const secondToken: AccessTokenSummary = {
 
 const firstSecret = `astr_${"A".repeat(43)}`;
 
+const clientCatalog: ClientCatalog = {
+  clients: [
+    {
+      id: "claude",
+      name: "Claude Code",
+      kind: "file",
+      targets: [],
+      protocols: ["anthropic.messages"],
+      list: false,
+    },
+    {
+      id: "codex",
+      name: "Codex",
+      kind: "file",
+      targets: [],
+      protocols: ["openai.responses"],
+      list: false,
+    },
+  ],
+};
+
 function clientStatuses(
   claudeToken: string | null,
   codexToken: string | null = null,
@@ -61,27 +83,41 @@ function clientStatuses(
     {
       client: "claude",
       wsl: null,
+      target: null,
       detected: true,
+      home: "/Users/me",
+      dir: "/Users/me/.claude",
       paths: ["/Users/me/.claude/settings.json"],
+      exists: [true],
       state: claudeToken ? "configured" : "not_configured",
       token_id: claudeToken,
       models: {},
+      notes: [],
+      paste_since_unix: null,
+      paste_into: [],
     },
     {
       client: "codex",
       wsl: null,
+      target: null,
       detected: true,
+      home: "/Users/me",
+      dir: "/Users/me/.codex",
       paths: ["/Users/me/.codex/config.toml"],
+      exists: [true],
       state: codexToken ? "modified" : "not_configured",
       token_id: codexToken,
       models: {},
+      notes: [],
+      paste_since_unix: null,
+      paste_into: [],
     },
   ];
   return {
     clients: [...clients, ...wsl],
     wsl_unchecked: [],
     wsl_localhost: false,
-    cc_switch_wsl: { claude: null, codex: null },
+    installed: [],
   };
 }
 
@@ -145,6 +181,7 @@ describe("AccessTokenManager", () => {
       value: { writeText: vi.fn().mockResolvedValue(undefined) },
     });
     bridgeMocks.listAccessTokenUsage.mockResolvedValue({ items: [] });
+    bridgeMocks.getClientCatalog.mockResolvedValue(clientCatalog);
     bridgeMocks.getClientConfigStatus.mockResolvedValue(clientStatuses(null));
     bridgeMocks.isCCSwitchInstalled.mockResolvedValue(false);
     bridgeMocks.listServices.mockResolvedValue({ items: [] });
@@ -235,6 +272,7 @@ describe("AccessTokenManager", () => {
     expect(dialog?.textContent).not.toContain(firstSecret);
     expect(bridgeMocks.getClientConfigStatus).toHaveBeenCalledWith(
       "http://127.0.0.1:8317",
+      clientCatalog,
     );
     expect(bridgeMocks.copyAccessToken).not.toHaveBeenCalled();
   });
@@ -261,6 +299,17 @@ describe("AccessTokenManager", () => {
         .querySelector('[role="img"]')
         ?.getAttribute("aria-label"),
     ).toBe("已配置到 Codex");
+    // A config edited since AstrLink wrote it carries a dot; a fine one none.
+    expect(
+      row(secondToken.name)
+        .querySelector('[data-client="codex"]')
+        ?.getAttribute("data-attention"),
+    ).toBe("true");
+    expect(
+      row(firstToken.name)
+        .querySelector('[data-client="claude"]')
+        ?.hasAttribute("data-attention"),
+    ).toBe(false);
 
     bridgeMocks.getClientConfigStatus.mockRejectedValue(new Error("failed"));
     await act(async () => {
@@ -276,11 +325,18 @@ describe("AccessTokenManager", () => {
         {
           client: "claude",
           wsl: "Ubuntu",
+          target: null,
           detected: true,
+          home: String.raw`\\wsl$\Ubuntu\home\me`,
+          dir: String.raw`\\wsl$\Ubuntu\home\me\.claude`,
           paths: [String.raw`\\wsl$\Ubuntu\home\me\.claude\settings.json`],
+          exists: [true],
           state: "configured",
           token_id: firstToken.id,
           models: {},
+          notes: [],
+          paste_since_unix: null,
+          paste_into: [],
         },
       ]),
     );
@@ -308,9 +364,9 @@ describe("AccessTokenManager", () => {
     });
     expect(bridgeMocks.deleteAccessToken).toHaveBeenCalledWith(firstToken.id);
     expect(bridgeMocks.removeClientConfig.mock.calls).toEqual([
-      ["claude", null],
-      ["codex", null],
-      ["claude", "Ubuntu"],
+      ["claude", null, null],
+      ["codex", null, null],
+      ["claude", "Ubuntu", null],
     ]);
 
     bridgeMocks.removeClientConfig.mockClear();
@@ -350,7 +406,7 @@ describe("AccessTokenManager", () => {
     );
     expect(document.querySelector('[role="dialog"]')).toBeNull();
     expect(button("配置客户端", row(firstToken.name)).disabled).toBe(true);
-    expect(bridgeMocks.applyClientConfig).not.toHaveBeenCalled();
+    expect(bridgeMocks.applyClientConfigs).not.toHaveBeenCalled();
   });
 
   it("ignores a copy response from an old Core session", async () => {

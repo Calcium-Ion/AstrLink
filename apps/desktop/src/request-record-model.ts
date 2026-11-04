@@ -26,6 +26,7 @@ export const CLIENT_TYPES = [
   "mistral_vibe",
   "zed",
   "cherry_studio",
+  "goose",
 ] as const;
 
 export type ClientType = (typeof CLIENT_TYPES)[number];
@@ -817,6 +818,8 @@ export interface RequestRecordListQuery {
   /** Roots asking for, redirected to, or served by any of these models. */
   models?: string[];
   status?: RequestStatus;
+  /** Records sent by this kind of client. */
+  client_type?: ClientType;
 }
 
 export type AuditPartExposure = "shareable" | "raw";

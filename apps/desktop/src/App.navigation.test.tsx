@@ -39,9 +39,10 @@ const bridgeMocks = vi.hoisted(() => ({
     clients: [],
     wsl_unchecked: [],
     wsl_localhost: false,
-    cc_switch_wsl: { claude: null, codex: null },
   }),
-  previewClientConfigSnippet: vi.fn().mockResolvedValue("{}"),
+  previewClientConfigSnippet: vi
+    .fn()
+    .mockResolvedValue([{ path: "~/.claude/settings.json", contents: "{}" }]),
   copyClientConfigSnippet: vi.fn(),
   uninstallAgentDebug: vi.fn(),
   getService: vi.fn(),
@@ -1076,8 +1077,27 @@ describe("App workspace navigation", () => {
     bridgeMocks.previewClientConfigSnippet.mockImplementation(
       async ({ client }: { client: string }) =>
         client === "codex"
-          ? 'model_provider = "astrlink"\n'
-          : '{ "env": { "ANTHROPIC_AUTH_TOKEN": "astr_…abcd" } }',
+          ? [
+              {
+                path: "~/.codex/config.toml",
+                contents: 'model_provider = "astrlink"\n',
+              },
+            ]
+          : client === "pi"
+            ? [
+                { path: "~/.pi/agent/models.json", contents: "{}\n" },
+                {
+                  path: "~/.pi/agent/settings.json",
+                  contents: '{ "defaultProvider": "astrlink" }\n',
+                },
+              ]
+            : [
+                {
+                  path: "~/.claude/settings.json",
+                  contents:
+                    '{ "env": { "ANTHROPIC_AUTH_TOKEN": "astr_…abcd" } }',
+                },
+              ],
     );
     bridgeMocks.copyClientConfigSnippet.mockResolvedValue(true);
     await renderApp();
@@ -1091,14 +1111,26 @@ describe("App workspace navigation", () => {
       models: { model: "gpt-5" },
       inferenceUrl: "http://localhost:8317",
     });
-    await act(async () => button("复制配置").click());
+    await act(async () => button("复制配置：~/.codex/config.toml").click());
     expect(bridgeMocks.copyClientConfigSnippet).toHaveBeenCalledExactlyOnceWith(
       {
         tokenId: "token_01",
         client: "codex",
         models: { model: "gpt-5" },
         inferenceUrl: "http://localhost:8317",
+        file: 0,
       },
+    );
+
+    // A client with two files gets a block and a copy button for each.
+    await act(async () => button("Pi").click());
+    expect(container.textContent).toContain("~/.pi/agent/models.json");
+    expect(container.textContent).toContain('"defaultProvider": "astrlink"');
+    await act(async () =>
+      button("复制配置：~/.pi/agent/settings.json").click(),
+    );
+    expect(bridgeMocks.copyClientConfigSnippet).toHaveBeenLastCalledWith(
+      expect.objectContaining({ client: "pi", file: 1 }),
     );
   });
 

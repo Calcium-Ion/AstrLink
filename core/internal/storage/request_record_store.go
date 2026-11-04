@@ -22,6 +22,9 @@ type RequestRecordListOptions struct {
 	// Query matches root records whose input preview contains it as a
 	// literal, ASCII case-insensitive substring. Empty means no text filter.
 	Query string
+	// ClientType keeps roots recognized as this client. Nil means any;
+	// historical roots recorded before recognition never match.
+	ClientType *contract.ClientType
 }
 
 type RequestRecordPage struct {

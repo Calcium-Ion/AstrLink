@@ -2332,23 +2332,29 @@ async fn copy_access_token(
     }
 }
 
+/// Opens a client's import link for a token, so the token never reaches
+/// the webview. The link carries it, so neither it nor the opener's error
+/// is logged.
+#[tauri::command]
+async fn open_client_import_link(
+    token_id: String,
+    client: String,
+    protocol: String,
+    inference_url: String,
+    manager: State<'_, Arc<CoreManager>>,
+) -> Result<(), String> {
+    let origin = client_config::local_origin(&inference_url)?;
+    let token = client_config::reveal_access_token(&manager, &token_id, &inference_url).await?;
+    let link = client_config::import_link(&client, &protocol, &origin, &token)?;
+    tauri_plugin_opener::open_url(link, None::<&str>)
+        .map_err(|_| format!("unable to open the {client} import link"))
+}
+
 #[tauri::command]
 async fn cc_switch_installed() -> Result<bool, String> {
     tauri::async_runtime::spawn_blocking(cc_switch::installed)
         .await
         .map_err(|error| error.to_string())
-}
-
-#[tauri::command]
-async fn open_cc_switch_import(
-    token_id: String,
-    client: client_config::Client,
-    models: client_config::Models,
-    inference_url: String,
-    manager: State<'_, Arc<CoreManager>>,
-) -> Result<(), String> {
-    let home = control_session::user_home()?;
-    cc_switch::open_import(&manager, home, &token_id, client, &models, &inference_url).await
 }
 
 /// Read-only: reports whether the system proxy keeps Codex from reaching
@@ -2387,18 +2393,11 @@ async fn client_config_status(
                 }
             }
         }
-        let dirs = cc_switch::config_dirs(&homes.host);
         Ok(client_config::ClientOverview {
             clients,
             wsl_unchecked,
             wsl_localhost: wsl::localhost_shared(&homes.host),
-            cc_switch_wsl: client_config::CcSwitchWsl {
-                claude: cc_switch::managed_distribution(
-                    dirs.clone(),
-                    client_config::Client::Claude,
-                ),
-                codex: cc_switch::managed_distribution(dirs, client_config::Client::Codex),
-            },
+            installed: client_config::installed(),
         })
     })
     .await
@@ -2418,25 +2417,59 @@ fn client_home(wsl: Option<String>) -> Result<agent_home::OwnedHome, String> {
         })
 }
 
+/// The desktop user's home and the named WSL homes, started if stopped.
+async fn named_homes(names: Vec<String>) -> Result<agent_home::Homes, String> {
+    home_task(move || {
+        agent_home::Homes::find(control_session::user_home()?, wsl::Reach::Named(&names))
+    })
+    .await
+}
+
+/// Writes and removes several clients' configs with one token. Without
+/// `confirmed`, nothing is written while any of them needs confirmation.
 #[tauri::command]
-async fn apply_client_config(
-    token_id: String,
-    client: client_config::Client,
-    models: client_config::Models,
+async fn apply_client_configs(
+    token_id: Option<String>,
     inference_url: String,
-    replace: bool,
-    wsl: Option<String>,
+    items: Vec<client_config::ApplyItem>,
+    confirmed: bool,
     manager: State<'_, Arc<CoreManager>>,
-) -> Result<client_config::ApplyOutcome, String> {
-    let target = home_task(move || client_home(wsl)).await?;
-    client_config::apply(
+) -> Result<client_config::BatchOutcome, String> {
+    let mut names = items
+        .iter()
+        .filter_map(|item| item.wsl.clone())
+        .collect::<Vec<_>>();
+    names.sort();
+    names.dedup();
+    let homes = named_homes(names).await?;
+    client_config::apply(&manager, homes, token_id, inference_url, items, confirmed).await
+}
+
+/// What writing or removing one client's config would change, with the
+/// token shown as its hint.
+#[allow(clippy::too_many_arguments)]
+#[tauri::command]
+async fn preview_client_config_changes(
+    token_id: Option<String>,
+    client: client_config::Client,
+    target: Option<String>,
+    wsl: Option<String>,
+    action: client_config::Action,
+    models: Option<client_config::Models>,
+    inference_url: String,
+    manager: State<'_, Arc<CoreManager>>,
+) -> Result<client_config::Preview, String> {
+    let place = client_config::Place::new(client, target.as_deref())?;
+    let homes = named_homes(wsl.iter().cloned().collect()).await?;
+    client_config::preview(
         &manager,
-        target,
+        homes,
         token_id,
-        client,
-        &models,
+        place,
+        wsl,
+        action,
+        models,
         inference_url,
-        replace,
     )
     .await
 }
@@ -2444,13 +2477,22 @@ async fn apply_client_config(
 #[tauri::command]
 async fn remove_client_config(
     client: client_config::Client,
+    target: Option<String>,
     wsl: Option<String>,
 ) -> Result<(), String> {
-    home_task(move || client_config::remove(client_home(wsl)?.home(), client)).await
+    let place = client_config::Place::new(client, target.as_deref())?;
+    home_task(move || Ok(client_config::remove(client_home(wsl)?.home(), place)?)).await
 }
 
-/// The config `apply_client_config` would write to a fresh file, with the
-/// token shown as its hint.
+/// Every client the dialog lists, in its order: the ones AstrLink writes,
+/// then the ones it explains.
+#[tauri::command]
+fn client_catalog() -> client_config::ClientCatalog {
+    client_config::catalog()
+}
+
+/// The files `apply_client_configs` would write for a client that has
+/// none, with the token shown as its hint.
 #[tauri::command]
 async fn preview_client_config_snippet(
     token_id: String,
@@ -2458,22 +2500,11 @@ async fn preview_client_config_snippet(
     models: client_config::Models,
     inference_url: String,
     manager: State<'_, Arc<CoreManager>>,
-) -> Result<String, String> {
-    let origin = client_config::local_origin(&inference_url)?;
-    let models = models.fields(client)?;
-    let (_, hint) = client_config::token_summary(&manager, &token_id).await?;
-    client_config::snippet(
-        client,
-        &client_config::Connection {
-            token_id: &token_id,
-            token: &hint,
-            origin: &origin,
-            models: &models,
-        },
-    )
+) -> Result<Vec<client_config::SnippetFile>, String> {
+    client_config::snippet_files(&manager, &token_id, client, &models, &inference_url, false).await
 }
 
-/// Copies the real snippet straight to the clipboard, like
+/// Copies one file of the real snippet straight to the clipboard, like
 /// `copy_access_token`. `false` means the clipboard refused it.
 #[tauri::command]
 async fn copy_client_config_snippet(
@@ -2482,21 +2513,16 @@ async fn copy_client_config_snippet(
     client: client_config::Client,
     models: client_config::Models,
     inference_url: String,
+    file: usize,
     manager: State<'_, Arc<CoreManager>>,
 ) -> Result<bool, String> {
-    let origin = client_config::local_origin(&inference_url)?;
-    let models = models.fields(client)?;
-    let token = client_config::reveal_access_token(&manager, &token_id, &inference_url).await?;
-    let snippet = client_config::snippet(
-        client,
-        &client_config::Connection {
-            token_id: &token_id,
-            token: &token,
-            origin: &origin,
-            models: &models,
-        },
-    )?;
-    match app.clipboard().write_text(snippet) {
+    let mut files =
+        client_config::snippet_files(&manager, &token_id, client, &models, &inference_url, true)
+            .await?;
+    if file >= files.len() {
+        return Err("invalid snippet file".into());
+    }
+    match app.clipboard().write_text(files.swap_remove(file).contents) {
         Ok(()) => Ok(true),
         Err(error) => {
             eprintln!("unable to copy the client config: {error}");
@@ -2826,11 +2852,13 @@ pub fn run() {
             get_privacy_summary,
             create_access_token,
             copy_access_token,
+            open_client_import_link,
             cc_switch_installed,
-            open_cc_switch_import,
+            client_catalog,
             client_config_status,
             check_client_proxy,
-            apply_client_config,
+            apply_client_configs,
+            preview_client_config_changes,
             remove_client_config,
             preview_client_config_snippet,
             copy_client_config_snippet,

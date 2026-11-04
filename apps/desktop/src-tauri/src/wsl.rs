@@ -94,6 +94,9 @@ pub fn split_dirs(dirs: ToolDirs) -> (ToolDirs, Vec<WslDirs>) {
     place(dirs.claude, |dirs| &mut dirs.claude);
     place(dirs.codex, |dirs| &mut dirs.codex);
     place(dirs.grok, |dirs| &mut dirs.grok);
+    place(dirs.gemini, |dirs| &mut dirs.gemini);
+    place(dirs.opencode, |dirs| &mut dirs.opencode);
+    place(dirs.openclaw, |dirs| &mut dirs.openclaw);
     place(dirs.pi, |dirs| &mut dirs.pi);
     (local, wsl)
 }
@@ -598,6 +601,7 @@ mod tests {
             codex: Some(PathBuf::from(r"\\wsl$\ubuntu-26.04\opt\codex")),
             grok: Some(PathBuf::from(r"D:\grok")),
             pi: Some(PathBuf::from(r"\\?\UNC\wsl$\Debian\root\.pi\agent")),
+            ..Default::default()
         });
         assert_eq!(
             local,

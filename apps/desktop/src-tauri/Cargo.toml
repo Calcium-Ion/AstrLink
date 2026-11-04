@@ -34,6 +34,10 @@ serde_json = "=1.0.145"
 sha2 = "=0.10.9"
 sys-locale = "=0.3.2"
 toml_edit = "=0.22.22"
+# YAML client configs: yaml-edit edits in place, keeping comments and layout;
+# yaml_serde re-reads every result to check it before a write.
+yaml-edit = { version = "=0.3.6", default-features = false }
+yaml_serde = "=0.10.7"
 # macos-private-api: the tray popover is a transparent window with its own
 # rounded panel; macOS only allows a transparent NSWindow through this flag.
 tauri = { version = "=2.11.5", features = ["macos-private-api", "tray-icon"] }

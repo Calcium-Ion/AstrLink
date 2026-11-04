@@ -217,7 +217,8 @@
   },
   "copy": {
     "copiedNamed": "{{label}} をコピーしました",
-    "manualSelect": "自動でコピーできませんでした。テキストを手動で選択してください。"
+    "manualSelect": "自動でコピーできませんでした。テキストを手動で選択してください。",
+    "copyNamed": "{{label}} をコピー"
   },
   "bridge": {
     "restartDesktopOnly": "ゲートウェイの再起動は、AstrLink デスクトップアプリでのみ行えます。",
@@ -694,11 +695,12 @@
     "return": "セットアップに戻る",
     "manualClient": "クライアント",
     "otherTools": "その他のツール",
-    "snippetHint": "次の内容を {{path}} にマージしてください。コピーしたテキストには、アクセストークンの全文が含まれます。",
+    "snippetHint": "各ブロックを、その上に示したファイルにマージしてください。コピーしたテキストには、アクセストークンの全文が含まれます。",
     "copyConfig": "設定をコピー",
     "configCopied": "設定をコピーしました。",
     "snippetFailed": "設定を生成できませんでした。",
-    "snippetNeedsModel": "CodexにはResponsesの入口が必要です。ChatのみのAPIプロバイダーでは、入口プロトコルで変換を有効にしてください。"
+    "snippetNeedsModel": "{{client}}には {{protocol}} の入口を持つモデルが必要です。このプロトコルに対応していないAPIプロバイダーでは、入口プロトコルで変換を有効にしてください。",
+    "copyFile": "設定をコピー：{{file}}"
   },
   "overview": {
     "title": "概要",
@@ -3747,11 +3749,9 @@
   },
   "clientSetup": {
     "title": "クライアントを設定",
-    "description": "接続情報をクライアントの設定ファイルに書き込み、その後はいつもどおりクライアントを起動します。",
+    "description": "このトークンを使うクライアントを選び、設定ファイルをまとめて書き込みます。",
     "client": "クライアント",
-    "token": "アクセストークン",
-    "model": "モデル",
-    "modelHint": "互換のあるモデルを検索するか、モデル名を入力します。",
+    "token": "トークン",
     "modelPlaceholder": "モデルを検索または入力",
     "contextWindow": "コンテキスト上限（トークン）",
     "maxTokens": "1 回の出力上限（トークン）",
@@ -3760,73 +3760,57 @@
     "limitInvalid": "1 から 100000000 までの整数を入力するか、空欄にしてください。",
     "modelsLoading": "モデルを読み込んでいます…",
     "modelsFailed": "一部のモデルを読み込めませんでした。モデル ID は入力できます。",
-    "defaultModel": "既定 / マルチモーダル（任意）",
-    "haikuModel": "Haiku（任意）",
-    "sonnetModel": "Sonnet（任意）",
-    "opusModel": "Opus（任意）",
-    "fableModel": "Fable（任意）",
-    "claudeModelHint": "モデルの項目はすべて任意です。空の項目は書き込まれません。",
-    "fableNotImported": "CC Switch からのインポートには Fable は含まれません。",
+    "defaultModel": "既定のモデル",
+    "haikuModel": "Haiku",
+    "sonnetModel": "Sonnet",
+    "opusModel": "Opus",
+    "fableModel": "Fable",
     "statusLoading": "クライアントを確認しています…",
     "statusFailed": "クライアントの設定状態を読み取れません。後でもう一度お試しください。",
     "notInstalled": "未インストール",
     "notInstalledHint": "{{client}} のユーザー設定フォルダが見つかりません。{{client}} をインストールして一度起動してから、ここで設定してください。",
-    "unsupported": "未対応",
-    "unsupportedHint": "Gemini CLI、OpenCode、OpenClaw は、まだ直接は設定できません。CC Switch をインストールすると、そこからインポートできます。",
-    "ccSwitchOnly": "CC Switch 経由",
-    "ccSwitchOnlyHint": "AstrLink はまだ {{client}} を直接設定できません。インポートの確認は CC Switch で行います。",
     "state": {
       "configured": "設定済み",
       "outdated": "ポートの更新待ち",
       "elsewhere": "別のインスタンス",
       "modified": "外部で変更済み",
-      "cc_switch": "CC Switch 経由",
       "invalid": "設定を読み取れない",
-      "other_token": "別のトークン"
+      "other_token": "別のトークン",
+      "model_missing_one": "{{count}} 個のモデルが無効",
+      "model_missing_other": "{{count}} 個のモデルが無効",
+      "needs_paste": "あと一歩"
     },
     "usesToken": "{{client}} は現在「{{name}}」を使っています。切り替えると「{{current}}」を使います。",
     "usesOtherToken": "{{client}} は現在、別のアクセストークンを使っています。切り替えると「{{current}}」を使います。",
     "modifiedHint": "この設定は AstrLink が書き込んだ後に変更されたため、ポートが変わっても更新されなくなりました。もう一度書き込むと元に戻ります。",
-    "ccSwitchManagedHint": "{{client}} は現在 CC Switch が管理しています。ゲートウェイのポートが変わったら、CC Switch でアドレスを更新してください。AstrLink に再び管理させるには、「設定を書き込む」を選んでください。",
     "elsewhereHint": "{{client}} は、このコンピューター上の別の AstrLink に接続しています。切り替えると、代わりにこちらへ接続します。",
     "invalidHint": "設定ファイルの形式に誤りがあるため、AstrLink は変更しません。直してから、もう一度書き込んでください。",
-    "configFile": "設定ファイル",
-    "place": "場所",
     "placeLocal": "このコンピューター",
     "placeClient": "{{client}}（{{place}}）",
     "wslUnchecked": "停止中の WSL ディストリビューション {{names}} のクライアントは確認していません。いずれかを起動してから、このダイアログを開き直してください。",
     "wslNetwork": "既定では、WSL 内のクライアントはこのコンピューターの {{url}} に到達できません。%UserProfile%\\.wslconfig の [wsl2] に networkingMode=mirrored を追加し、wsl --shutdown を実行してから WSL を開き直してください。",
     "write": "設定を書き込む",
-    "update": "設定を更新",
-    "useThisToken": "このトークンに切り替える",
     "writing": "書き込んでいます…",
-    "written": "{{client}} の設定を書き込みました。使うには {{client}} を開き直してください。",
     "writeFailed": "設定を書き込めませんでした。",
     "replaceTitle": "既存の設定を置き換えますか？",
-    "replaceBody": "これらの {{client}} の設定は AstrLink が書き込んだものではありません。続行すると置き換えるか削除され、後で AstrLink の設定を取り除いても元には戻りません。",
+    "replaceBody": "以下の設定は AstrLink が書き込んだものではありません。続行すると置き換えます。AstrLink の設定を取り除くと、今の値に戻ります。",
     "replaceConfirm": "置き換えて書き込む",
-    "switchTitle": "この AstrLink に接続し直しますか？",
-    "switchBody": "{{client}} は {{url}} の別の AstrLink に接続しています。続行するとこの AstrLink に接続し、もう一方は {{client}} のリクエストを受け取らなくなります。",
-    "switchConfirm": "切り替えて書き込む",
-    "remove": "設定を取り除く",
+    "remove": "取り除く",
     "removing": "取り除いています…",
     "removeTitle": "{{client}} の設定を取り除きますか？",
-    "removeBody": "取り除かれるのは、AstrLink が書き込み、その後変更されていない設定だけです。{{client}} は既定の接続に戻ります。以前置き換えた設定は復元されません。",
+    "removeBody": "AstrLink が書き込み、その後変更されていない設定だけを取り除き、書き込み時に置き換えた設定を元の値に戻します。",
     "removed": "{{client}} の設定を取り除きました。適用するには {{client}} を開き直してください。",
     "removeFailed": "設定を取り除けませんでした。",
-    "ccSwitchImport": "代わりに CC Switch でインポート",
-    "ccSwitchOpening": "CC Switch を開いています…",
-    "ccSwitchOpened": "CC Switch を開くよう要求しました。そこでインポートを確認し、APIプロバイダーを有効にしてから、クライアントを開き直してください。CC Switch の起動中は、このインポートを取りこぼしてメイン画面のままになることがあります。そのときは開いたまま、もう一度インポートしてください。",
-    "ccSwitchFailed": "CC Switch を開けません。ccswitch:// プロトコルを登録した状態でインストールされていること、およびゲートウェイとアクセストークンがまだ使えることを確認してから、再試行してください。",
     "ccSwitchOverwrites": "CC Switch で APIプロバイダーを切り替えると、ここに書き込んだ設定は上書きされます。",
     "codexTools": "書き込み後、Codex は独自の画像生成とウェブ検索のツールを表示します。Codex がそれらを呼び出すと、ゲートウェイはまず「ルーティング → リダイレクト → Responses ツールマッピング」の設定を使います。そこでオフのツールは、その会話を担当する APIプロバイダーに渡されます。Codex のサブスクリプションと New API の APIプロバイダーは、両方のツールを処理します。OpenAI API と OpenAI 互換の APIプロバイダーは、画像生成を処理します。それ以外のときは、Codex にツールをオンにする方法が伝えられます。",
-    "codexToolsCCSwitch": "CC Switch でインポートした設定にはこの項目がないため、Codex ではこの 2 つのツールは表示されません。",
-    "ccSwitchElsewhere": "CC Switch でインポートすると、{{client}}（{{target}}）に書き込まれます。{{client}}（{{place}}）へ書き込むには、CC Switch の設定にある「設定ディレクトリの上書き（詳細）」で「{{client}} の設定ディレクトリ」を {{dir}} にしてから、このダイアログを開き直してください。",
     "limitsTitle": "制限",
     "limits": {
       "claude": "書き込まれるのは、ユーザーレベルの ~/.claude/settings.json だけです。プロジェクトの .claude/settings.json または .claude/settings.local.json が同じ環境変数を設定しているときは、プロジェクト側が優先されます。CLAUDE_CONFIG_DIR が設定されていると、Claude Code は別のフォルダを読みます。その場合は手動で設定してください。",
       "codex": "書き込まれるのは、ユーザーレベルの ~/.codex/config.toml だけで、サインイン情報は変更しません。--profile で起動した場合、または CODEX_HOME が設定されている場合、Codex は別の設定を読みます。その場合は手動で設定してください。",
-      "pi": "書き込まれるのは、ユーザーレベルの ~/.pi/agent/models.json と ~/.pi/agent/settings.json だけで、サインイン情報は変更しません。プロジェクトの .pi/settings.json が別の既定モデルを設定しているときは、プロジェクト側が優先されます。PI_CODING_AGENT_DIR が設定されていると、Pi は別のフォルダを読みます。その場合は手動で設定してください。"
+      "pi": "書き込まれるのは、ユーザーレベルの ~/.pi/agent/models.json と ~/.pi/agent/settings.json だけで、サインイン情報は変更しません。プロジェクトの .pi/settings.json が別の既定モデルを設定しているときは、プロジェクト側が優先されます。PI_CODING_AGENT_DIR が設定されていると、Pi は別のフォルダを読みます。その場合は手動で設定してください。",
+      "gemini": "ユーザーレベルの ~/.gemini/.env と ~/.gemini/settings.json にだけ書き込みます。現在のフォルダーか上位のフォルダーに .env ファイルがあると、Gemini CLI はそちらを読みます。ターミナルで設定した同名の環境変数が優先されます。",
+      "opencode": "ユーザーレベルの ~/.config/opencode の設定にだけ書き込みます。既存のファイルがあればそこに、なければ opencode.jsonc を作ります。プロジェクトの opencode.json や OPENCODE_CONFIG で指定したファイルが同じ項目を設定していると、そちらが優先されます。",
+      "openclaw": "ユーザーレベルの ~/.openclaw/openclaw.json にだけ書き込みます。OpenClaw を別の状態フォルダーや設定ファイルで起動する場合は、手動で設定してください。"
     },
     "proxy": {
       "blocked": "システムプロキシ {{proxy}} は、Codex のリクエストが AstrLink に届く前に止めるため、Codex には 502 エラーが表示されます。プロキシアプリのバイパス（例外）リストに localhost、127.0.0.1、::1 を追加するか、環境変数 NO_PROXY=localhost,127.0.0.1,::1 を自分で設定してから、Codex を再起動してください。AstrLink はこれらの設定を変更しません。",
@@ -3837,7 +3821,232 @@
     "configuredIn": "{{clients}} に設定済み",
     "entryRequired": "入口が必要",
     "entryWillEnable": "{{service}} には、まだ {{protocol}} の入口がありません。設定を書き込むと自動で有効になり、{{target}} へ変換されます。",
-    "entryEnableFailed": "{{service}} の {{protocol}} 入口を有効にできませんでした。"
+    "entryEnableFailed": "{{service}} の {{protocol}} 入口を有効にできませんでした。",
+    "subagentModel": "サブエージェント",
+    "models": "モデル",
+    "autoFill": "名前から自動入力",
+    "blankSkipped": "空欄なら書き込みません",
+    "blankFollowsDefault": "空欄なら既定のモデルに従います",
+    "modelsListed_one": "ゲートウェイで {{protocol}} プロトコルから呼び出せるモデル {{count}} 件を表示しています。",
+    "modelsListed_other": "ゲートウェイで {{protocol}} プロトコルから呼び出せるモデル {{count}} 件を表示しています。",
+    "modelCount_one": "{{count}} 個のモデル",
+    "modelCount_other": "{{count}} 個のモデル",
+    "switchable": "{{client}} で切り替えられるモデル",
+    "switchHint": {
+      "opencode": "/models で切り替え",
+      "openclaw": "/model で切り替え"
+    },
+    "defaultTag": "既定",
+    "reasoningEffort": "推論の強さ",
+    "effortDefault": "Codex の既定",
+    "removeManyTitle_one": "{{count}} 個のクライアントから設定を取り除きますか？",
+    "removeManyTitle_other": "{{count}} 個のクライアントから設定を取り除きますか？",
+    "writeAndRemoveConfirm": "書き込んで取り除く",
+    "deliver": "{{client}} の設定を書き込む",
+    "checkAll": "すべて選択",
+    "checkNone": "すべて解除",
+    "view": "表示",
+    "settingsTab": "設定",
+    "changesTab": "変更",
+    "newFile": "（新規）",
+    "notConfigured": "未設定",
+    "willWrite": "未設定 · {{what}} を書き込みます",
+    "notFoundLocal": "このコンピューターに {{dir}} がありません",
+    "notFound": "{{dir}} がありません",
+    "usingToken": "「{{name}}」を使用中",
+    "usingOtherToken": "別のトークンを使用中",
+    "willRemove": "設定を取り除きます",
+    "modelMissingHint_one": "{{models}} は使えなくなったため、書き込みでは使いません。",
+    "modelMissingHint_other": "{{models}} は使えなくなったため、書き込みでは使いません。",
+    "changesUnchecked": "{{client}} にチェックを入れると、書き込みによる変更がここに表示されます。",
+    "changesNeedModel": "設定を入力すると、書き込みによる変更がここに表示されます。",
+    "changesLoading": "変更を確認しています…",
+    "changesFailed": "変更を表示できません。",
+    "changesNone": "{{client}} はすでにこの設定です。書き込んでもファイルは変わりません。",
+    "changeCreated": "新規ファイル",
+    "changeDeleted": "ファイルを削除",
+    "changedLines_one": "{{count}} 行を変更",
+    "changedLines_other": "{{count}} 行を変更",
+    "changedKeys_one": "{{count}} 項目を変更",
+    "changedKeys_other": "{{count}} 項目を変更",
+    "replacedNote_one": "赤い {{count}} 項目は AstrLink が書き込んだものではないため、書き込む前に確認します。AstrLink の設定を取り除くと、今の値に戻ります。",
+    "replacedNote_other": "赤い {{count}} 項目は AstrLink が書き込んだものではないため、書き込む前に確認します。AstrLink の設定を取り除くと、今の値に戻ります。",
+    "restoredNote_one": "緑の {{count}} 項目は AstrLink が書き込む前の値に戻ります。",
+    "restoredNote_other": "緑の {{count}} 項目は AstrLink が書き込む前の値に戻ります。",
+    "needsModel": "{{names}} の設定を入力してください",
+    "willWriteNames": "{{names}} に書き込みます",
+    "willRemoveNames": "{{names}} の設定を取り除きます",
+    "willWriteAndRemove": "{{written}} に書き込み、{{removed}} の設定を取り除きます",
+    "nothingChecked": "書き込むクライアントを選んでください",
+    "writeCount_one": "{{count}} 個のクライアントに書き込む",
+    "writeCount_other": "{{count}} 個のクライアントに書き込む",
+    "removeCount_one": "{{count}} 個のクライアントから取り除く",
+    "removeCount_other": "{{count}} 個のクライアントから取り除く",
+    "retryOne": "{{client}} に再度書き込む",
+    "retryCount_one": "{{count}} 個のクライアントに再度書き込む",
+    "retryCount_other": "{{count}} 個のクライアントに再度書き込む",
+    "done": "完了",
+    "confirm": {
+      "remove": "AstrLink が書き込んだ設定を取り除く",
+      "token": "「{{current}}」に切り替え、「{{previous}}」は {{client}} で使われなくなります",
+      "unknownToken": "「{{current}}」に切り替え、以前のトークンは {{client}} で使われなくなります",
+      "gateway": "この AstrLink に接続し、{{url}} は {{client}} のリクエストを受け取らなくなります",
+      "key": "{{file}} の {{key}}",
+      "keyWithValue": "{{file}} の {{key}}（現在は {{current}}）"
+    },
+    "result": {
+      "ok": "完了",
+      "failed": "失敗",
+      "updated": "更新しました",
+      "portUpdated": "ポートを更新しました",
+      "written": "書き込みました",
+      "writtenWith": "書き込み済み · {{what}}",
+      "removed": "取り除きました",
+      "notWritten": "未書き込み",
+      "notRemoved": "未削除",
+      "fileInvalid": "{{file}} の形式が正しくありません",
+      "lineError": "{{line}} 行目の形式が正しくありません。{{untouched}}修正してから「{{action}}」を選んでください。",
+      "untouchedAll": "どちらのファイルも変更していません。",
+      "untouchedOne": "ファイルは変更していません。",
+      "writtenCount_one": "{{count}} 個のクライアントに書き込みました。開き直すと反映されます。",
+      "writtenCount_other": "{{count}} 個のクライアントに書き込みました。開き直すと反映されます。",
+      "removedCount_one": "{{count}} 個のクライアントから設定を取り除きました。開き直すと反映されます。",
+      "removedCount_other": "{{count}} 個のクライアントから設定を取り除きました。開き直すと反映されます。",
+      "writtenAndRemoved": "{{written}} 個に書き込み、{{removed}} 個から設定を取り除きました。開き直すと反映されます。",
+      "notWrittenNames": "{{names}} には書き込めませんでした。",
+      "notRemovedNames": "{{names}} からは取り除けませんでした。",
+      "both": "{{done}}{{failed}}",
+      "needsPaste": "{{names}} はまだトークンの貼り付けが必要です。"
+    },
+    "marksTitle_one": "「{{name}}」は {{count}} 個のクライアントに設定済み",
+    "marksTitle_other": "「{{name}}」は {{count}} 個のクライアントに設定済み",
+    "search": "クライアントを検索",
+    "searchEmpty": "一致するクライアントはありません",
+    "group": {
+      "installed": "インストール済み",
+      "missing": "未インストール",
+      "guide": "クライアントで入力",
+      "unsupported": "ローカルのゲートウェイに接続できない"
+    },
+    "targets": "書き込み先",
+    "targetLine": "{{state}} · {{targets}}",
+    "target": {
+      "workbuddy": {
+        "cn": "中国版",
+        "intl": "国際版"
+      },
+      "deepseek_harness": {
+        "web": "Web 版",
+        "desktop": "デスクトップ版"
+      },
+      "vscode_copilot": {
+        "stable": "VS Code",
+        "insiders": "VS Code Insiders"
+      }
+    },
+    "importIn": "{{client}} でインポート",
+    "reason": {
+      "trae": "カスタムモデルは TRAE のサーバーに保存されます",
+      "roo_code": "設定は VS Code のデータベースに保存されます",
+      "lobehub": "プロバイダーは LobeHub のデータベースに保存されます",
+      "chatwise": "設定は ChatWise のデータベースに保存されます",
+      "lobsterai": "設定は LobsterAI のデータベースに保存されます",
+      "cursor": "リクエストは Cursor のサーバーから送信されます",
+      "warp": "リクエストは Warp のサーバーから送信されます",
+      "amp": "リクエストは Amp のサーバーから送信されます",
+      "trae_plugin": "個人版ではカスタムアドレスを入力できません",
+      "comate": "個人版ではカスタムアドレスを入力できません",
+      "qoder": "内蔵のプロバイダーしか選べません"
+    },
+    "note": {
+      "workbuddy": "WorkBuddy はサインイン後にカスタムモデルを使えます。変更は再起動せずに反映されます。",
+      "vscode_copilot": "Copilot Chat のモデル選択で、AstrLink の下からモデルを選んでください。"
+    },
+    "guideWhere": "{{client}} の設定でカスタムプロバイダーを追加し、次の値を入力します：",
+    "guide": {
+      "trae": {
+        "where": "TRAE の「設定 → モデル → モデルを追加 → カスタムモデル」で入力します："
+      },
+      "roo_code": {
+        "type": {
+          "anthropic_messages": "Anthropic",
+          "openai_chat": "OpenAI Compatible",
+          "google_generate_content": "Google Gemini"
+        }
+      }
+    },
+    "guideModel": "モデル",
+    "guideType": {
+      "anthropic_messages": "Anthropic 互換",
+      "openai_responses": "OpenAI Responses 互換",
+      "openai_chat": "OpenAI 互換",
+      "google_generate_content": "Gemini"
+    },
+    "guideField": {
+      "type": "プロバイダー",
+      "url": "リクエスト URL",
+      "key": "API キー",
+      "model": "モデル ID",
+      "context": "コンテキスト"
+    },
+    "guideNote": "{{reason}}。AstrLink からは変更できません。ポートやトークンが変わったら、ここに戻って入力し直してください。",
+    "guideRefill": "ポートやトークンが変わったら、ここに戻って入力し直してください。",
+    "unsupportedPane": "{{reason}}。このコンピューターの AstrLink には接続できません。",
+    "link": {
+      "protocol": "プロトコル",
+      "models": "モデル ID",
+      "notDetected": "{{client}} が見つかりません。インストール済みなら、一度 {{client}} を開いてからインポートします。",
+      "failed": "{{client}} を開けませんでした",
+      "cherry_studio": {
+        "step1": "「{{client}} でインポート」をクリックし、{{client}} に表示されるウィンドウで確定します。",
+        "step2": "プロバイダー一覧で「{{provider}}」をオンにします。",
+        "step3": "「管理」からモデルを追加します。下のモデル ID をコピーしても追加できます。",
+        "again": "もう一度インポートすると新しいトークンが古いトークンの後ろに追加され、交互に使われます。トークンを替える前に {{client}} で古いものを削除します。"
+      },
+      "aionui": {
+        "step1": "「{{client}} でインポート」をクリックすると、{{client}} のモデル追加ウィンドウがアドレスとトークン入力済みで開きます。開かないときは別のページに切り替えてからもう一度クリックします。",
+        "step2": "モデル名で使うモデルを選び、確定します。",
+        "step3": "新しいチャットでこのモデルを選びます。",
+        "again": "もう一度インポートすると、古いプロバイダーは更新されず新しく追加されます。ポートやトークンが変わったら、{{client}} で古いものを編集するか削除します。"
+      }
+    },
+    "notes": {
+      "overridden": "{{client}} の別の設定ファイルが、ここで書き込むモデルより優先されます。",
+      "running": "{{client}} は起動中で、終了時に自分の設定でこのファイルを上書きします。書き込みや削除の前に {{client}} を終了してください。",
+      "deepseek_harness": {
+        "overridden": "~/.dsh/cordis.patch.yml のモデル設定が、ここで書き込む設定より優先されます。"
+      },
+      "droid": {
+        "overridden": "~/.factory/settings.local.json のモデル設定が、ここで書き込む設定より優先されます。"
+      },
+      "cline": {
+        "legacy": "Cline 拡張機能に古いプロバイダー設定が残っていて、この設定より優先されます。Cline でプロバイダーとモデルを選び直し、ウィンドウを再読み込みしてください。"
+      },
+      "zed": {
+        "overridden": "settings.json のリリースチャンネル別・OS 別の設定が、ここで書き込むモデルより優先されます。"
+      },
+      "crush": {
+        "overridden": "Crush で選んだモデルは ~/.local/share/crush/crush.json に記録され、ここで書き込むモデルより優先されます。"
+      },
+      "qoder_cli": {
+        "account": "Qoder CLI は、カスタムモデルを使えるアカウントでログインしているときだけ、ここで書き込むモデルを使います。"
+      }
+    },
+    "paste": {
+      "waiting": "トークンの貼り付け待ち",
+      "copy": "トークンをコピー",
+      "copied": "トークンをコピーしました",
+      "clears": "{{client}} がこのトークンでリクエストを送ると、「あと一歩」は自動で消えます。",
+      "zed": "Zed はトークンをキーチェーンからだけ読みます。トークンをコピーし、Zed の「Settings → AI → LLM Providers」で {{providers}} に貼り付けてください。",
+      "goose": "Goose はトークンをキーチェーンからだけ読みます。トークンをコピーし、Goose の「Settings → Models → Configure providers」で {{providers}} に貼り付けてください。CLI では goose configure を使います。"
+    }
+  },
+  "modelChecklist": {
+    "selectAll": "表示中のモデルをすべて選択",
+    "search": "モデルを検索",
+    "count": "{{selected}} / {{total}} を選択",
+    "empty": "選べるモデルがありません",
+    "noMatch": "一致するモデルがありません"
   },
   "providerImport": {
     "title": "APIプロバイダーを追加",

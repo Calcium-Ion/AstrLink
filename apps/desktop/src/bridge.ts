@@ -182,17 +182,23 @@ import {
 import { parseTrayState, type TrayAction, type TrayState } from "./tray-model";
 import { downloadTextFile } from "./download-text-file";
 import {
+  parseClientCatalog,
   parseClientConfigApplyOutcome,
   parseClientConfigCopied,
+  parseClientConfigPreview,
   parseClientConfigSnippet,
   parseClientConfigOverview,
   parseClientProxyCheck,
+  type ClientCatalog,
+  type ClientConfigAction,
   type ClientConfigApplyOutcome,
   type ClientConfigClient,
+  type ClientConfigItem,
   type ClientConfigModels,
   type ClientConfigOverview,
+  type ClientConfigPreview,
+  type ClientConfigSnippetFile,
   type ClientProxyCheck,
-  type DirectClient,
 } from "./client-config-model";
 import {
   parseAgentInstallReceipt,
@@ -779,6 +785,9 @@ function compactQuery(
     compact.models = query.models;
   }
   if (query.status !== undefined) compact.status = query.status;
+  if (query.client_type !== undefined) {
+    compact.client_type = query.client_type;
+  }
   return compact;
 }
 
@@ -1157,27 +1166,38 @@ export async function deleteAccessToken(tokenId: string): Promise<void> {
 
 export interface ClientConfigTarget {
   tokenId: string;
-  client: DirectClient;
+  client: ClientConfigClient;
   models: ClientConfigModels;
   inferenceUrl: string;
 }
 
 /**
- * What AstrLink wrote to Claude Code, Codex, and Pi, on this computer and in
+ * Every client the setup dialog lists and how AstrLink reaches each. Outside
+ * the desktop there are no local clients.
+ */
+export async function getClientCatalog(): Promise<ClientCatalog> {
+  if (!hasNativeBridge()) return { clients: [] };
+  return parseClientCatalog(await invoke<unknown>("client_catalog"));
+}
+
+/**
+ * What AstrLink wrote to each client of `catalog`, on this computer and in
  * running WSL distributions. Outside the desktop there are no local clients.
  */
 export async function getClientConfigStatus(
   inferenceUrl: string | null,
+  catalog: ClientCatalog,
 ): Promise<ClientConfigOverview> {
   if (!hasNativeBridge())
     return {
       clients: [],
       wsl_unchecked: [],
       wsl_localhost: false,
-      cc_switch_wsl: { claude: null, codex: null },
+      installed: [],
     };
   return parseClientConfigOverview(
     await invoke<unknown>("client_config_status", { inferenceUrl }),
+    catalog,
   );
 }
 
@@ -1195,30 +1215,72 @@ export async function checkClientProxy(
 }
 
 /**
- * Writes the connection, or names the keys that need `replace` first. `wsl`
- * names the WSL distribution to write in; `null` is this computer.
+ * What writing or removing one client's config would change, file by file.
+ * The token stays in the host; the diff shows its hint.
  */
-export async function applyClientConfig(
-  input: ClientConfigTarget & { replace: boolean; wsl: string | null },
-): Promise<ClientConfigApplyOutcome> {
+export async function previewClientConfigChanges(input: {
+  tokenId: string;
+  client: ClientConfigClient;
+  /** The WSL distribution to write in; `null` is this computer. */
+  wsl: string | null;
+  /** The write target of a client with several; `null` otherwise. */
+  target: string | null;
+  action: ClientConfigAction;
+  models: ClientConfigModels;
+  inferenceUrl: string;
+}): Promise<ClientConfigPreview> {
   requireNativeBridge();
-  return parseClientConfigApplyOutcome(
-    await invoke<unknown>("apply_client_config", { ...input }),
+  return parseClientConfigPreview(
+    await invoke<unknown>("preview_client_config_changes", { ...input }),
   );
 }
 
-export async function removeClientConfig(
-  client: DirectClient,
-  wsl: string | null,
-): Promise<void> {
+/**
+ * Writes or removes several clients' configs. Unless `confirmed`, nothing is
+ * written while any item replaces settings AstrLink did not write, switches
+ * tokens or gateways, or removes a config; those come back to confirm.
+ */
+export async function applyClientConfigs(input: {
+  tokenId: string | null;
+  inferenceUrl: string;
+  items: ClientConfigItem[];
+  confirmed: boolean;
+}): Promise<ClientConfigApplyOutcome> {
   requireNativeBridge();
-  await invoke("remove_client_config", { client, wsl });
+  return parseClientConfigApplyOutcome(
+    await invoke<unknown>("apply_client_configs", { ...input }),
+    input.items,
+  );
 }
 
-/** The config for a fresh setup, with the token shown as its hint. */
+/**
+ * Opens a client's import link for a token. The host builds the link, so
+ * the token never reaches the webview.
+ */
+export async function openClientImportLink(input: {
+  tokenId: string;
+  client: ClientConfigClient;
+  protocol: string;
+  inferenceUrl: string;
+}): Promise<void> {
+  requireNativeBridge();
+  await invoke("open_client_import_link", { ...input });
+}
+
+/** Removes AstrLink's config and restores the values it replaced. */
+export async function removeClientConfig(
+  client: ClientConfigClient,
+  wsl: string | null,
+  target: string | null,
+): Promise<void> {
+  requireNativeBridge();
+  await invoke("remove_client_config", { client, wsl, target });
+}
+
+/** The config for a fresh setup, file by file, with the token's hint. */
 export async function previewClientConfigSnippet(
   input: ClientConfigTarget,
-): Promise<string> {
+): Promise<ClientConfigSnippetFile[]> {
   requireNativeBridge();
   return parseClientConfigSnippet(
     await invoke<unknown>("preview_client_config_snippet", { ...input }),
@@ -1226,11 +1288,12 @@ export async function previewClientConfigSnippet(
 }
 
 /**
- * Has the host copy the config with the real token to the clipboard. False
- * when the clipboard refused it.
+ * Has the host copy one file of the config, `file` indexing the preview's
+ * files, with the real token to the clipboard. False when the clipboard
+ * refused it.
  */
 export async function copyClientConfigSnippet(
-  input: ClientConfigTarget,
+  input: ClientConfigTarget & { file: number },
 ): Promise<boolean> {
   requireNativeBridge();
   return parseClientConfigCopied(
@@ -1261,21 +1324,10 @@ export async function openServiceTerminal(
   await invoke("open_service_terminal", { request });
 }
 
-/** Whether the OS has an app registered for CC Switch's import links. */
+/** Whether the OS has an app registered for CC Switch's links. */
 export async function isCCSwitchInstalled(): Promise<boolean> {
   if (!hasNativeBridge()) return false;
   return (await invoke<unknown>("cc_switch_installed")) === true;
-}
-
-/** CC Switch names the provider after the token. */
-export async function openCCSwitchImport(input: {
-  tokenId: string;
-  client: ClientConfigClient;
-  models: ClientConfigModels;
-  inferenceUrl: string;
-}): Promise<void> {
-  requireNativeBridge();
-  await invoke("open_cc_switch_import", input);
 }
 
 /** The provider link waiting for confirmation, e.g. the one that launched the app. */

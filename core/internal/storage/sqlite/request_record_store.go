@@ -430,6 +430,10 @@ FROM request_records WHERE parent_request_id IS NULL`)
 		query.WriteString(` AND input_preview LIKE ? ESCAPE '\'`)
 		args = append(args, "%"+escapeLikePattern(options.Query)+"%")
 	}
+	if options.ClientType != nil {
+		query.WriteString(` AND client_type = ?`)
+		args = append(args, string(*options.ClientType))
+	}
 	if options.Protocol != nil || options.ServiceID != nil || options.Status != nil {
 		query.WriteString(` AND (`)
 		directParts := make([]string, 0, 3)

@@ -1115,6 +1115,7 @@ describe("client attribution", () => {
     "mistral_vibe",
     "zed",
     "cherry_studio",
+    "goose",
     "unknown",
   ])("keeps %s on records and summaries", (client_type) => {
     expect(parseRequestRecord({ ...fullRecord, client_type }).client_type).toBe(

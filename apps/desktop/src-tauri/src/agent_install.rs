@@ -4130,6 +4130,7 @@ mod tests {
                 codex: Some(codex.clone()),
                 grok: Some(home.join("missing-grok")),
                 pi: Some(pi),
+                ..Default::default()
             },
             wsl: Vec::new(),
         };

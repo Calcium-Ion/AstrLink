@@ -93,7 +93,7 @@ import {
   formatExactNumber,
 } from "./format-compact-number";
 import type { CopyState } from "./copy-feedback";
-import { clientsUsing, useClientConfigs } from "./use-client-configs";
+import { useClientConfigs } from "./use-client-configs";
 import type { RecordsTarget } from "./request-live-model";
 import { statusLabel, type RequestStatus } from "./request-record-model";
 import { currentLocale, i18n, useT } from "./i18n";
@@ -1125,7 +1125,8 @@ function TokenUsagePanel({
 }) {
   const t = i18n.t.bind(i18n);
   useDisplayCurrency();
-  const { configs: clientConfigs } = useClientConfigs(inferenceURL);
+  const { configs: clientConfigs, available: clientModels } =
+    useClientConfigs(inferenceURL);
   const rows = useMemo(
     () => mergeTokenUsageRows(tokenCatalog, usage, billingSummary),
     [billingSummary, tokenCatalog, usage],
@@ -1279,8 +1280,11 @@ function TokenUsagePanel({
                         {row.name}
                       </span>
                       <TokenClientMarks
+                        available={clientModels}
                         className="pointer-events-auto"
-                        clients={clientsUsing(clientConfigs, row.id)}
+                        configs={clientConfigs}
+                        tokenId={row.id}
+                        tokenName={row.name}
                       />
                     </span>
                     <span className="pointer-events-none relative text-right text-sm font-semibold tabular-nums">

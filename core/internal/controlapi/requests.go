@@ -132,6 +132,9 @@ func parseRequestSessionListOptions(request *http.Request) (storage.RequestSessi
 	if query.Has("q") {
 		return storage.RequestSessionListOptions{}, fmt.Errorf("q is only supported on request records")
 	}
+	if query.Has("client_type") {
+		return storage.RequestSessionListOptions{}, fmt.Errorf("client_type is only supported on request records")
+	}
 	recordOptions, err := parseRequestRecordQuery(query)
 	if err != nil {
 		return storage.RequestSessionListOptions{}, err
@@ -778,7 +781,7 @@ func parseRequestRecordListOptions(request *http.Request) (storage.RequestRecord
 func parseRequestRecordQuery(query url.Values) (storage.RequestRecordListOptions, error) {
 	for name, values := range query {
 		switch name {
-		case "limit", "cursor", "from", "to", "protocol", "service_id", "status", "q":
+		case "limit", "cursor", "from", "to", "protocol", "service_id", "status", "q", "client_type":
 			if len(values) != 1 {
 				return storage.RequestRecordListOptions{}, fmt.Errorf("query parameter must occur once")
 			}
@@ -883,6 +886,13 @@ func parseRequestRecordQuery(query url.Values) (storage.RequestRecordListOptions
 			return options, fmt.Errorf("invalid q filter")
 		}
 		options.Query = text
+	}
+	if value := query.Get("client_type"); value != "" {
+		client := contract.ClientType(value)
+		if !client.Valid() {
+			return options, fmt.Errorf("invalid client_type filter")
+		}
+		options.ClientType = &client
 	}
 	return options, nil
 }

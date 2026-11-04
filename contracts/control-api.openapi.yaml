@@ -2719,6 +2719,13 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+        - name: client_type
+          in: query
+          description: |
+            Restrict to root records recognized as this client. Historical records
+            without a client label never match. Not supported on request sessions.
+          schema:
+            $ref: "#/components/schemas/ClientType"
       responses:
         "200":
           description: Request-record page.
@@ -7153,6 +7160,7 @@ components:
           mistral_vibe,
           zed,
           cherry_studio,
+          goose,
         ]
       description: Best-effort client label from original inbound headers, before upstream identity rewriting. Display metadata only; never an authenticated identity. Unknown means no recognized signature. Historical records omit this field.
     RequestRecord:

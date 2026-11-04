@@ -2380,32 +2380,6 @@ impl CoreManager {
         serde_json::from_slice(&body).map_err(|_| "pricing returned invalid JSON".into())
     }
 
-    /// The reasoning levels of the official model a gateway model reaches,
-    /// or `None` when LLM Metadata does not list it as reasoning.
-    pub async fn official_reasoning(&self, model: &str) -> Result<Option<Vec<String>>, String> {
-        #[derive(Deserialize)]
-        struct ModelMetadata {
-            reasoning: bool,
-            reasoning_levels: Vec<String>,
-        }
-        let path = format!(
-            "/control/v1/model-metadata?model={}",
-            percent_encode_query(model)
-        );
-        let (status, body) = self
-            .authenticated_control_status(Method::GET, &path, None, None)
-            .await?;
-        if status == reqwest::StatusCode::NOT_FOUND {
-            return Ok(None);
-        }
-        if !status.is_success() {
-            return Err(control_status_error(&Method::GET, &path, status, &body));
-        }
-        serde_json::from_slice::<ModelMetadata>(&body)
-            .map(|model| model.reasoning.then_some(model.reasoning_levels))
-            .map_err(|_| "model metadata returned invalid JSON".into())
-    }
-
     /// Configuration sync. `configure` stores the settings, `passphrase` sets
     /// the package passphrase, `forget` clears it, `run` syncs now, and
     /// `status`/`config` read the stored state.
@@ -5375,6 +5349,18 @@ fn percent_encode_query(value: &str) -> String {
     encoded
 }
 
+/// A lowercase snake_case id such as a protocol or client type; Core checks
+/// the value against its own list.
+fn query_id_ok(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 64
+        && value.bytes().enumerate().all(|(index, byte)| match byte {
+            b'a'..=b'z' => true,
+            b'0'..=b'9' | b'_' => index > 0,
+            _ => false,
+        })
+}
+
 fn timestamp_query_charset_ok(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 64
@@ -5391,6 +5377,10 @@ fn build_request_session_query(query: &serde_json::Value) -> Result<String, Stri
     let kind = record_query
         .as_object_mut()
         .and_then(|object| object.remove("kind"));
+    // Core filters records by client type, not sessions.
+    if query.get("client_type").is_some() {
+        return Err("request session query contains unknown key client_type".to_string());
+    }
     let mut qs = build_request_record_query(&record_query)?;
     if let Some(kind) = kind {
         let kind = kind
@@ -5530,6 +5520,7 @@ fn build_request_record_query(query: &serde_json::Value) -> Result<String, Strin
     let mut local_access_token_ids: Vec<&str> = Vec::new();
     let mut models: Vec<&str> = Vec::new();
     let mut status: Option<&str> = None;
+    let mut client_type: Option<&str> = None;
 
     for (key, value) in object {
         match key.as_str() {
@@ -5579,14 +5570,7 @@ fn build_request_record_query(query: &serde_json::Value) -> Result<String, Strin
                 let text = value
                     .as_str()
                     .ok_or_else(|| "request record query protocol must be a string".to_string())?;
-                if text.is_empty()
-                    || text.len() > 64
-                    || !text.bytes().enumerate().all(|(index, byte)| match byte {
-                        b'a'..=b'z' => true,
-                        b'0'..=b'9' | b'_' => index > 0,
-                        _ => false,
-                    })
-                {
+                if !query_id_ok(text) {
                     return Err("request record query protocol is invalid".to_string());
                 }
                 protocol = Some(text);
@@ -5643,6 +5627,15 @@ fn build_request_record_query(query: &serde_json::Value) -> Result<String, Strin
                     _ => return Err("request record query status is invalid".to_string()),
                 }
             }
+            "client_type" => {
+                let text = value.as_str().ok_or_else(|| {
+                    "request record query client_type must be a string".to_string()
+                })?;
+                if !query_id_ok(text) {
+                    return Err("request record query client_type is invalid".to_string());
+                }
+                client_type = Some(text);
+            }
             other => {
                 return Err(format!("request record query contains unknown key {other}"));
             }
@@ -5679,6 +5672,9 @@ fn build_request_record_query(query: &serde_json::Value) -> Result<String, Strin
     }
     if let Some(value) = status {
         pairs.push(format!("status={}", percent_encode_query(value)));
+    }
+    if let Some(value) = client_type {
+        pairs.push(format!("client_type={}", percent_encode_query(value)));
     }
     if pairs.is_empty() {
         return Ok(String::new());
@@ -6996,6 +6992,7 @@ mod tests {
             assert!(build_request_session_query(&serde_json::json!({"kind": kind})).is_err());
         }
         assert!(build_request_record_query(&serde_json::json!({"kind": "inference"})).is_err());
+        assert!(build_request_session_query(&serde_json::json!({"client_type": "zed"})).is_err());
     }
 
     #[test]
@@ -7006,6 +7003,7 @@ mod tests {
         );
         assert_eq!(
             build_request_record_query(&serde_json::json!({
+                "client_type": "zed",
                 "status": "succeeded",
                 "service_id": "service_01",
                 "local_access_token_ids": ["token_01", "token_02"],
@@ -7016,7 +7014,7 @@ mod tests {
                 "limit": 50
             }))
             .unwrap(),
-            "?limit=50&cursor=a%2Bb%3Dc%26d%2Fe&from=2026-07-24T00%3A00%3A00Z&to=2026-07-25T12%3A00%3A00Z&protocol=openai_responses&service_id=service_01&local_access_token_id=token_01&local_access_token_id=token_02&status=succeeded"
+            "?limit=50&cursor=a%2Bb%3Dc%26d%2Fe&from=2026-07-24T00%3A00%3A00Z&to=2026-07-25T12%3A00%3A00Z&protocol=openai_responses&service_id=service_01&local_access_token_id=token_01&local_access_token_id=token_02&status=succeeded&client_type=zed"
         );
         assert!(
             build_request_record_query(&serde_json::json!({"unknown": 1}))
@@ -7040,6 +7038,18 @@ mod tests {
         assert!(build_request_record_query(&serde_json::json!({"limit": 201})).is_err());
         assert!(build_request_record_query(&serde_json::json!({"status": "ok"})).is_err());
         assert!(build_request_record_query(&serde_json::json!({"protocol": "OpenAI"})).is_err());
+        for client_type in [
+            serde_json::json!("Zed"),
+            serde_json::json!("_goose"),
+            serde_json::json!("zed&x=1"),
+            serde_json::json!(""),
+            serde_json::json!(["zed"]),
+        ] {
+            assert!(build_request_record_query(&serde_json::json!({
+                "client_type": client_type
+            }))
+            .is_err());
+        }
         assert!(build_request_record_query(&serde_json::json!({
             "cursor": "x".repeat(513)
         }))

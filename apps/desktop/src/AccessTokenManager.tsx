@@ -57,7 +57,7 @@ import {
   removeClientConfig,
 } from "./bridge";
 import type { AccessTokenSummary } from "./access-token-model";
-import type { DirectClient } from "./client-config-model";
+import type { ClientConfigClient } from "./client-config-model";
 import { controlErrorCode } from "./control-error";
 import { currentLocale, i18n } from "./i18n";
 import { notify } from "./notify";
@@ -187,8 +187,11 @@ export function AccessTokenManager({
   const [copyingID, setCopyingID] = useState<string | null>(null);
   const [copiedID, setCopiedID] = useState<string | null>(null);
   const [setupToken, setSetupToken] = useState<AccessTokenSummary | null>(null);
-  const { configs: clientConfigs, refresh: refreshClientConfigs } =
-    useClientConfigs(inferenceURL);
+  const {
+    configs: clientConfigs,
+    available: clientModels,
+    refresh: refreshClientConfigs,
+  } = useClientConfigs(inferenceURL);
   const [removeConfigs, setRemoveConfigs] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [usageByToken, setUsageByToken] = useWorkspaceSnapshot<
@@ -223,7 +226,7 @@ export function AccessTokenManager({
   // A client may hold the token on this computer and in WSL distributions.
   const configsUsing = (tokenId: string | undefined) =>
     configsUsingToken(clientConfigs, tokenId);
-  const clientsUsing = (tokenId: string | undefined): DirectClient[] =>
+  const clientsUsing = (tokenId: string | undefined): ClientConfigClient[] =>
     clientsUsingToken(clientConfigs, tokenId);
 
   const refreshTokenUsage = useCallback(async () => {
@@ -411,10 +414,10 @@ export function AccessTokenManager({
       onTokenDeleted(token.id);
       setPendingDelete(null);
       notify.success(i18n.t("tokens.deleted", { name: token.name }));
-      const failed = new Set<DirectClient>();
+      const failed = new Set<ClientConfigClient>();
       for (const config of configured) {
         try {
-          await removeClientConfig(config.client, config.wsl);
+          await removeClientConfig(config.client, config.wsl, config.target);
         } catch {
           failed.add(config.client);
         }
@@ -627,7 +630,6 @@ export function AccessTokenManager({
               const incomplete =
                 slice?.billing &&
                 slice.billing.unpriced + slice.billing.pending > 0;
-              const usedBy = clientsUsing(token.id);
               return (
                 <DataRow
                   asChild
@@ -647,7 +649,12 @@ export function AccessTokenManager({
                           >
                             {token.name}
                           </strong>
-                          <TokenClientMarks clients={usedBy} />
+                          <TokenClientMarks
+                            available={clientModels}
+                            configs={clientConfigs}
+                            tokenId={token.id}
+                            tokenName={token.name}
+                          />
                         </span>
                         <code
                           className="truncate font-mono text-xs text-muted-foreground"
@@ -897,6 +904,7 @@ export function AccessTokenManager({
             token={setupToken}
             tokens={catalog.items}
             inferenceURL={inferenceURL}
+            attentionFirst
             onClose={() => setSetupToken(null)}
             onChanged={refreshClientConfigs}
           />
