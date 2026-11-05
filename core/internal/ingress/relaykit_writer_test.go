@@ -3,19 +3,116 @@ package ingress
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/relaykitbridge"
 	"github.com/QuantumNous/astrlink/core/internal/transport"
 )
+
+func TestRelayKitResponseFramingAfterConversion(t *testing.T) {
+	const message = `{"id":"msg_1","type":"message","role":"assistant","model":"upstream-model","content":[{"type":"text","text":"hello"}],"stop_reason":"end_turn","usage":{"input_tokens":3,"output_tokens":1}}`
+	const stream = "event: message_start\ndata: " + `{"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"upstream-model","content":[],"usage":{"input_tokens":3,"output_tokens":0}}}` + "\n\n" +
+		"event: content_block_start\ndata: " + `{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}` + "\n\n" +
+		"event: content_block_delta\ndata: " + `{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hello"}}` + "\n\n" +
+		"event: content_block_stop\ndata: " + `{"type":"content_block_stop","index":0}` + "\n\n" +
+		"event: message_delta\ndata: " + `{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}` + "\n\n" +
+		"event: message_stop\ndata: " + `{"type":"message_stop"}` + "\n\n"
+	for _, test := range []struct {
+		name      string
+		body      string
+		status    int
+		streaming bool
+	}{
+		{name: "larger JSON", body: message, status: http.StatusOK},
+		{name: "smaller JSON", body: message + strings.Repeat(" ", 4096), status: http.StatusOK},
+		{name: "stream", body: stream, status: http.StatusOK, streaming: true},
+		{name: "error passthrough", body: `{"error":{"type":"rate_limit_error","message":"try later"}}`, status: http.StatusTooManyRequests},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			done := make(chan error, 1)
+			server := httptest.NewServer(http.HandlerFunc(func(destination http.ResponseWriter, _ *http.Request) {
+				writer, err := newRelayKitResponseWriter(destination, relaykitbridge.NewEngine(), contract.ExecutionPlan{
+					Type: contract.PlanTypeRelayKit, Streaming: test.streaming,
+					InputProtocol: contract.ProtocolOpenAIChat, UpstreamProtocol: contract.ProtocolAnthropicMessages,
+				}, "public-model", "upstream-model", relaykitbridge.ConversionState{})
+				if err == nil {
+					defer func() { _ = writer.streamClose() }()
+					contentType := "application/json"
+					if test.streaming {
+						contentType = "text/event-stream"
+					}
+					err = transport.WriteResponse(writer, &http.Response{
+						StatusCode: test.status,
+						Header: http.Header{
+							"Content-Type":   {contentType},
+							"Content-Length": {strconv.Itoa(len(test.body))},
+						},
+						Body: io.NopCloser(strings.NewReader(test.body)),
+					})
+					if err == nil {
+						err = writer.Finish()
+					}
+				}
+				done <- err
+			}))
+			defer server.Close()
+			client := server.Client()
+			client.Timeout = 5 * time.Second
+			response, err := client.Get(server.URL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer response.Body.Close()
+			body, readErr := io.ReadAll(response.Body)
+			select {
+			case err := <-done:
+				if err != nil {
+					t.Fatalf("forward converted response: %v (client read: %v)", err, readErr)
+				}
+			case <-t.Context().Done():
+				t.Fatal("response handler did not finish")
+			}
+			if readErr != nil {
+				t.Fatalf("read response: %v (declared=%d, received=%d)", readErr, response.ContentLength, len(body))
+			}
+			if response.StatusCode != test.status {
+				t.Fatalf("status=%d, want %d", response.StatusCode, test.status)
+			}
+			if response.ContentLength >= 0 && response.ContentLength != int64(len(body)) {
+				t.Fatalf("Content-Length=%d, actual=%d", response.ContentLength, len(body))
+			}
+			if test.status >= 400 {
+				if string(body) != test.body || response.ContentLength != int64(len(test.body)) {
+					t.Fatalf("upstream error changed: length=%d body=%q", response.ContentLength, body)
+				}
+			} else if test.streaming {
+				if response.Header.Get("Content-Length") != "" || !strings.Contains(string(body), `"content":"hello"`) || !strings.Contains(string(body), "data: [DONE]") {
+					t.Fatalf("incomplete converted stream: length=%d body=%s", response.ContentLength, body)
+				}
+			} else {
+				var converted struct {
+					Choices []struct {
+						Message struct{ Content string }
+					}
+				}
+				if err := json.Unmarshal(body, &converted); err != nil || len(converted.Choices) != 1 || converted.Choices[0].Message.Content != "hello" {
+					t.Fatalf("invalid Chat response: %s (error=%v)", body, err)
+				}
+			}
+		})
+	}
+}
 
 func TestRelayKitStreamFlushesConvertedOutput(t *testing.T) {
 	destination := httptest.NewRecorder()
