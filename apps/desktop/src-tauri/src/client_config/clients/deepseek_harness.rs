@@ -5,6 +5,9 @@
 //! `agent-default-model` row. The token goes to the credentials file every
 //! profile shares, under a name of the profile's own.
 //!
+//! AstrLink owns the `ROUTE_FIELDS` of its routes. Whatever else the user
+//! adds to one, like `compat`, stays through every write and sync.
+//!
 //! The `deepseek-official` route stays as it is: it uploads session logs.
 
 use std::path::PathBuf;
@@ -51,6 +54,8 @@ const ROUTES: [(&str, &str, &str, &str); 3] = [
         "AstrLink (Responses)",
     ),
 ];
+/// The properties of a route AstrLink writes, in the order it writes them.
+const ROUTE_FIELDS: [&str; 5] = ["displayName", "apiKeyEnv", "api", "baseURL", "models"];
 const MODELS_ROW: &str = "llm-pi-ai";
 const MODELS_PACKAGE: &str = "@deepseek-ai/dsh-llm-pi-ai";
 const DEFAULT_ROW: &str = "agent-default-model";
@@ -170,6 +175,21 @@ fn path_of<'k>(document: &YamlDocument, key: &'k str) -> Option<Vec<Step<'k>>> {
     Some(vec![Step::Index(at), Step::Key("config")])
 }
 
+/// AstrLink's part of a route: its `ROUTE_FIELDS`, in that order. A route
+/// that is not a mapping is all AstrLink's to replace.
+fn route_part(route: &Value) -> Option<Json> {
+    let Some(route) = route.as_mapping() else {
+        return serde_json::to_value(route).ok();
+    };
+    let mut part = serde_json::Map::new();
+    for name in ROUTE_FIELDS {
+        if let Some(value) = route.get(name) {
+            part.insert(name.into(), serde_json::to_value(value).ok()?);
+        }
+    }
+    Some(Json::Object(part))
+}
+
 /// `cordis.patch.yml` of one profile.
 struct PatchFile;
 
@@ -198,17 +218,56 @@ impl PatchFile {
             Some(_) => return Err(format!("has a {MODELS_ROW} config that is not a mapping")),
         }
         let config = [Step::Index(at), Step::Key("config")];
-        match document.get(&[Step::Index(at), Step::Key("config"), Step::Key("providers")]) {
+        let providers = [Step::Index(at), Step::Key("config"), Step::Key("providers")];
+        match document.get(&providers) {
             None | Some(Value::Null) => {
                 let providers = serde_json::json!({ route: value });
                 document.set(&config, "providers", &providers, rank)
             }
             Some(Value::Mapping(_)) => {
-                let providers = [Step::Index(at), Step::Key("config"), Step::Key("providers")];
-                document.set(&providers, route, value, rank)
+                let path = [
+                    Step::Index(at),
+                    Step::Key("config"),
+                    Step::Key("providers"),
+                    Step::Key(route),
+                ];
+                match (document.get(&path), value) {
+                    (Some(Value::Mapping(_)), Json::Object(fields)) => {
+                        Self::merge_route(document, &path, fields)
+                    }
+                    _ => document.set(&providers, route, value, rank),
+                }
             }
             Some(_) => Err(format!("has {MODELS_ROW} providers that are not a mapping")),
         }
+    }
+
+    /// Writes `fields` into the route at `path` one property at a time, so
+    /// the user's own properties and comments around them stay. A property
+    /// AstrLink owns and `fields` lacks goes.
+    fn merge_route(
+        document: &mut YamlDocument,
+        path: &[Step],
+        fields: &serde_json::Map<String, Json>,
+    ) -> Result<(), String> {
+        let at = |name| {
+            let mut at = path.to_vec();
+            at.push(Step::Key(name));
+            at
+        };
+        for name in ROUTE_FIELDS {
+            if !fields.contains_key(name) {
+                document.remove(&at(name))?;
+            }
+        }
+        for (name, value) in fields {
+            // Unchanged properties keep their text.
+            let now = document.get_json(&at(name)).map(|now| now.to_string());
+            if now.as_deref() != Some(value.to_string().as_str()) {
+                document.set(path, name, value, rank)?;
+            }
+        }
+        Ok(())
     }
 
     fn set_default(document: &mut YamlDocument, value: &Json) -> Result<(), String> {
@@ -264,7 +323,12 @@ impl ConfigFile for PatchFile {
         let Document::Yaml(yaml) = document else {
             return None;
         };
-        let value = yaml.get_json(&path_of(yaml, key)?)?;
+        let path = path_of(yaml, key)?;
+        let value = if key.starts_with(ROUTE_PREFIX) {
+            route_part(yaml.get(&path)?)?
+        } else {
+            yaml.get_json(&path)?
+        };
         Some(Some(value.to_string()))
     }
 
@@ -805,6 +869,193 @@ records:
         assert_eq!(
             fs::read_to_string(credentials(&home)).unwrap(),
             USER_CREDENTIALS
+        );
+        fs::remove_dir_all(home).unwrap();
+    }
+
+    /// What a user adds to AstrLink's chat route by hand.
+    const TUNED: &str = "        # 网关不认 developer 角色
+        compat:
+          supportsDeveloperRole: false
+        timeoutMs: 600000
+";
+
+    fn chat_route(text: &str) -> yaml_serde::Value {
+        yaml(text)[0]["config"]["providers"]["astrlink-chat"].clone()
+    }
+
+    fn tuned_kept(text: &str) {
+        assert!(text.contains(TUNED), "{text}");
+        let route = chat_route(text);
+        assert_eq!(route["compat"], yaml("{supportsDeveloperRole: false}"));
+        assert_eq!(route["timeoutMs"], 600000);
+    }
+
+    #[test]
+    fn keeps_what_the_user_added_to_an_astrlink_route() {
+        let home = unique_home("dsh-tuned");
+        let local = Home::local(&home);
+        let web = Place::new(DEEPSEEK_HARNESS, Some("web")).unwrap();
+        fs::create_dir_all(home.join(".dsh/profiles/web")).unwrap();
+        fs::write(patch(&home, "web"), USER_PATCH).unwrap();
+        fs::write(credentials(&home), USER_CREDENTIALS).unwrap();
+        let both = Tokens(BTreeSet::from([
+            "token_01".to_string(),
+            "token_02".to_string(),
+        ]));
+        let models = vec![("model", "deepseek-v4-pro".to_string())];
+        let list = strings(&["deepseek-v4-pro", "claude-sonnet-5"]);
+        let protocols = protocols();
+        let first = Connection {
+            target: Some("web"),
+            list: &list,
+            protocols: &protocols,
+            ..connection(&models)
+        };
+        write(local, web, &first, &tokens(), true).unwrap();
+        let written = fs::read_to_string(patch(&home, "web")).unwrap();
+        let tuned = written.replacen(
+            "      astrlink-chat:\n",
+            &format!("      astrlink-chat:\n{TUNED}"),
+            1,
+        );
+        assert_ne!(tuned, written);
+        fs::write(patch(&home, "web"), &tuned).unwrap();
+        tuned_kept(&tuned);
+        let status =
+            &status_of(local, [DEEPSEEK_HARNESS], Some(ORIGIN), Some(&tokens())).unwrap()[0];
+        assert_eq!(status.state, ClientState::Configured);
+
+        // The same setup again asks nothing and changes nothing.
+        assert_eq!(asked(write(local, web, &first, &tokens(), false).unwrap()), None);
+        assert_eq!(fs::read_to_string(patch(&home, "web")).unwrap(), tuned);
+
+        // Another model list rewrites the models, and the route of a
+        // protocol no longer used goes.
+        let switched_models = vec![("model", "deepseek-v4-flash".to_string())];
+        let switched_list = strings(&["deepseek-v4-flash", "deepseek-v4-pro"]);
+        let switched = Connection {
+            target: Some("web"),
+            list: &switched_list,
+            protocols: &protocols,
+            ..connection(&switched_models)
+        };
+        assert_eq!(
+            asked(write(local, web, &switched, &tokens(), false).unwrap()),
+            None
+        );
+        let written = fs::read_to_string(patch(&home, "web")).unwrap();
+        tuned_kept(&written);
+        let value = yaml(&written);
+        let providers = &value[0]["config"]["providers"];
+        assert_eq!(
+            providers["astrlink-chat"]["models"],
+            yaml("[{id: deepseek-v4-flash}, {id: deepseek-v4-pro}]")
+        );
+        assert!(providers.get("astrlink-anthropic").is_none());
+        assert_eq!(
+            providers["gw"],
+            yaml(USER_PATCH)[0]["config"]["providers"]["gw"]
+        );
+        assert_eq!(
+            value[1]["config"],
+            yaml("{provider: astrlink-chat, model: deepseek-v4-flash}")
+        );
+        for kept in [
+            "# 自建网关（手写）",
+            "# 路由 id 创建后不可改名",
+            "!!js process.env.DSH_TOOLS_MODE",
+        ] {
+            assert!(written.contains(kept), "{written}");
+        }
+
+        // Another token goes to the credentials; the route names the same
+        // credential.
+        let other = Connection {
+            token_id: "token_02",
+            token: OTHER_TOKEN,
+            ..switched
+        };
+        assert_eq!(
+            asked(write(local, web, &other, &both, false).unwrap()),
+            Some((Vec::new(), None))
+        );
+        write(local, web, &other, &both, true).unwrap();
+        assert_eq!(fs::read_to_string(patch(&home, "web")).unwrap(), written);
+        let shared = yaml(&fs::read_to_string(credentials(&home)).unwrap());
+        assert_eq!(shared["refs"]["ASTRLINK_WEB_API_KEY"], OTHER_TOKEN);
+
+        // A new gateway port moves the address alone.
+        sync(local, "http://127.0.0.1:9000/", &both).unwrap();
+        let synced = fs::read_to_string(patch(&home, "web")).unwrap();
+        tuned_kept(&synced);
+        assert_eq!(chat_route(&synced)["baseURL"], "http://127.0.0.1:9000/v1");
+        let status = &status_of(
+            local,
+            [DEEPSEEK_HARNESS],
+            Some("http://127.0.0.1:9000"),
+            Some(&both),
+        )
+        .unwrap()[0];
+        assert_eq!(status.state, ClientState::Configured);
+
+        // Removal takes AstrLink's routes whole: dsh rejects a route
+        // without models.
+        remove(local, web).unwrap();
+        assert_eq!(fs::read_to_string(patch(&home, "web")).unwrap(), USER_PATCH);
+        assert_eq!(
+            fs::read_to_string(credentials(&home)).unwrap(),
+            USER_CREDENTIALS
+        );
+        fs::remove_dir_all(home).unwrap();
+    }
+
+    /// A route the user wrote under the name AstrLink uses.
+    const OWN_CHAT_ROUTE: &str = "- id: llm-pi-ai
+  config:
+    providers:
+      astrlink-chat:
+        displayName: Gateway
+        apiKeyEnv: GW_API_KEY
+        api: openai-completions
+        baseURL: http://127.0.0.1:9/v1
+        # 网关不认 developer 角色
+        compat:
+          supportsDeveloperRole: false
+        models:
+          - id: deepseek-v4-pro
+";
+
+    #[test]
+    fn a_route_taken_over_keeps_the_users_properties() {
+        let home = unique_home("dsh-taken");
+        let local = Home::local(&home);
+        let web = Place::new(DEEPSEEK_HARNESS, Some("web")).unwrap();
+        fs::create_dir_all(home.join(".dsh/profiles/web")).unwrap();
+        fs::write(patch(&home, "web"), OWN_CHAT_ROUTE).unwrap();
+        let models = vec![("model", "deepseek-v4-flash".to_string())];
+        let chosen = Connection {
+            target: Some("web"),
+            ..connection(&models)
+        };
+        assert_eq!(
+            asked(write(local, web, &chosen, &tokens(), false).unwrap()),
+            Some((strings(&["llm-pi-ai.providers.astrlink-chat"]), None))
+        );
+        write(local, web, &chosen, &tokens(), true).unwrap();
+        let written = fs::read_to_string(patch(&home, "web")).unwrap();
+        assert!(written.contains("# 网关不认 developer 角色"), "{written}");
+        let route = chat_route(&written);
+        assert_eq!(route["compat"], yaml("{supportsDeveloperRole: false}"));
+        assert_eq!(route["apiKeyEnv"], "ASTRLINK_WEB_API_KEY");
+        assert_eq!(route["baseURL"], format!("{ORIGIN}/v1"));
+        assert_eq!(route["models"], yaml("[{id: deepseek-v4-flash}]"));
+
+        // Removal puts the user's values back around their own property.
+        remove(local, web).unwrap();
+        assert_eq!(
+            fs::read_to_string(patch(&home, "web")).unwrap(),
+            OWN_CHAT_ROUTE
         );
         fs::remove_dir_all(home).unwrap();
     }
