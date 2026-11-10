@@ -782,6 +782,66 @@ func TestPurgeRequestSessionsDeletesWholeConversations(t *testing.T) {
 	}
 }
 
+// A purge that fails after deleting audit parts and cursors leaves every one
+// of them in place: the whole purge is one transaction.
+func TestPurgeRequestRecordsFailingMidwayKeepsEverything(t *testing.T) {
+	store := openTestStore(t, filepath.Join(t.TempDir(), "purge-atomic.db"))
+	defer store.Close()
+	ctx := context.Background()
+	key, err := store.GetOrCreateAuditKey(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := time.Date(2026, 11, 10, 9, 0, 0, 0, time.UTC)
+	session := contract.SessionID("session_atomic")
+	record := contract.RequestRecord{
+		ID: "request_atomic", SessionID: &session, StartedAt: start, CompletedAt: ptrTime(start.Add(time.Second)),
+		Status: contract.RequestStatusSucceeded, InputProtocol: contract.ProtocolOpenAIResponses,
+		Audit:   contract.NotCapturedAuditSummary(),
+		Cursors: []contract.SessionCursor{{Kind: contract.SessionCursorEchoID, Direction: contract.SessionCursorOut, Value: "call_atomic_cursor"}},
+	}
+	if err := store.InsertRequestRecord(ctx, record); err != nil {
+		t.Fatal(err)
+	}
+	nonce, ciphertext, err := storagecontract.SealAuditBlob(key, []byte(`{"input":"hello"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.InsertAuditBlob(ctx, storagecontract.AuditBlob{
+		RequestID: record.ID, Direction: storagecontract.AuditDirectionRequest,
+		MediaType: "application/json", Nonce: nonce, Ciphertext: ciphertext, CapturedBytes: 17,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// The record rows go last, after the audit parts and cursors.
+	if _, err := store.db.Exec(`CREATE TRIGGER purge_fails_on_records BEFORE DELETE ON request_records
+BEGIN SELECT RAISE(ABORT, 'purge failed midway'); END`); err != nil {
+		t.Fatal(err)
+	}
+	before := start.Add(time.Hour)
+	for _, request := range []contract.PurgeRequest{
+		{Scope: contract.PurgeScopeAll, Confirm: true},
+		{Scope: contract.PurgeScopeBefore, Before: &before, Confirm: true},
+		{Scope: contract.PurgeScopeSessions, SessionIDs: []contract.SessionID{session}, Confirm: true},
+	} {
+		if _, err := store.PurgeRequestRecords(ctx, request); err == nil {
+			t.Fatalf("purge %s succeeded through the failing trigger", request.Scope)
+		}
+		if _, err := store.GetRequestRecord(ctx, record.ID); err != nil {
+			t.Fatalf("record after failed %s purge: %v", request.Scope, err)
+		}
+		var cursors, blobs int
+		if err := store.db.QueryRow(`SELECT
+    (SELECT COUNT(*) FROM request_record_cursors WHERE request_id = ?1),
+    (SELECT COUNT(*) FROM audit_blobs WHERE request_id = ?1)`, record.ID).Scan(&cursors, &blobs); err != nil {
+			t.Fatal(err)
+		}
+		if cursors != 1 || blobs != 1 {
+			t.Fatalf("after failed %s purge: cursors=%d audit parts=%d, want 1 and 1", request.Scope, cursors, blobs)
+		}
+	}
+}
+
 func TestSessionTurnCountGroupsByTurnIndex(t *testing.T) {
 	store := openTestStore(t, filepath.Join(t.TempDir(), "turns.db"))
 	defer store.Close()

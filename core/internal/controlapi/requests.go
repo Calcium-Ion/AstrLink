@@ -1,6 +1,7 @@
 package controlapi
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -766,7 +767,12 @@ func (handler *Handler) purgeRequestRecords(writer http.ResponseWriter, request 
 		writeError(writer, http.StatusBadRequest, "invalid_purge_request", err.Error())
 		return
 	}
-	result, err := handler.requestRecords.PurgeRequestRecords(request.Context(), input)
+	// One transaction deletes everything chosen or nothing. A large history
+	// takes a minute or more, longer than a client may wait, so a purge that
+	// started finishes even when the caller disconnects; rolling it back would
+	// leave such a history impossible to clear. A Core that stops before the
+	// commit still leaves every record in place.
+	result, err := handler.requestRecords.PurgeRequestRecords(context.WithoutCancel(request.Context()), input)
 	if err != nil {
 		handler.writeRequestRecordStoreError(writer, err)
 		return

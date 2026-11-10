@@ -2,6 +2,7 @@ package controlapi
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/astrlink/core/contract"
+	"github.com/QuantumNous/astrlink/core/internal/storage"
 )
 
 func TestParseRequestRecordQueryAllowsOnlyRepeatedTokenFilters(t *testing.T) {
@@ -297,6 +299,46 @@ func TestRequestSessionControlAPI(t *testing.T) {
 	decode(t, response, &page)
 	if len(page.Items) != 1 || page.Items[0].ID != "request_discovery_google" {
 		t.Fatalf("sessions after purge=%#v", page)
+	}
+}
+
+// A large purge outlasts the desktop's wait. Once started it finishes, so a
+// caller that gave up does not throw away the work it asked for.
+func TestRequestPurgeFinishesAfterCallerLeaves(t *testing.T) {
+	store, err := openControlTestStore(t, context.Background(), filepath.Join(t.TempDir(), "astrlink.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	handler, err := NewWithDependencies(contract.VersionResponse{
+		CoreVersion: "0.0.0-test", ControlAPIVersion: "v1", ProtocolContractVersion: "v1",
+	}, Dependencies{ServiceStore: store, RequestRecords: store, ControlToken: "control-token-123456"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := time.Date(2026, 11, 10, 9, 0, 0, 0, time.UTC)
+	completed := start.Add(time.Second)
+	if err := store.InsertRequestRecord(context.Background(), contract.RequestRecord{
+		ID: "request_purge_left", StartedAt: start, CompletedAt: &completed,
+		Status: contract.RequestStatusSucceeded, InputProtocol: contract.ProtocolOpenAIResponses,
+		Audit: contract.NotCapturedAuditSummary(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	gone, cancel := context.WithCancel(context.Background())
+	cancel()
+	request := httptest.NewRequestWithContext(gone, http.MethodPost, RequestsPurgePath,
+		strings.NewReader(`{"scope":"all","confirm":true}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer control-token-123456")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("purge status=%d body=%s", response.Code, response.Body.String())
+	}
+	if _, err := store.GetRequestRecord(context.Background(), "request_purge_left"); !errors.Is(err, storage.ErrNotFound) {
+		t.Fatalf("record after purge: err=%v, want not found", err)
 	}
 }
 
