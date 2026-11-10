@@ -2407,6 +2407,8 @@
     "deleteFailed": "无法删除请求记录。",
     "purged": "已删除 {{records}} 条记录、{{blobs}} 个加密内容块。",
     "purgeFailed": "无法清理请求记录。",
+    "purgeStillRunning": "记录较多，仍在后台删除。请稍后刷新列表查看。",
+    "purgeNoAnswer": "没有收到删除结果。请刷新列表，确认记录是否已删除后再决定是否重试。",
     "auditSaved": "审计设置已保存，新请求立即生效。",
     "auditSaveFailed": "无法保存审计设置。",
     "auditNotReady": "审计设置尚未加载完成。",

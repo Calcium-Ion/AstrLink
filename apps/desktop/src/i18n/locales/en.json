@@ -2407,6 +2407,8 @@
     "deleteFailed": "Unable to delete the request record.",
     "purged": "Deleted {{records}} records and {{blobs}} encrypted content blocks.",
     "purgeFailed": "Unable to purge request records.",
+    "purgeStillRunning": "There are many records, so deletion is still running in the background. Refresh the list later to see the result.",
+    "purgeNoAnswer": "No result came back from the deletion. Refresh the list to check whether the records were deleted before trying again.",
     "auditSaved": "Audit settings saved. Applies to new requests right away.",
     "auditSaveFailed": "Unable to save audit settings.",
     "auditNotReady": "Audit settings have not finished loading.",

@@ -210,6 +210,9 @@ const PAGE_LIMIT = 50;
 const POLL_INTERVAL_MS = 1000;
 // Core's contract.MaxPurgeSessionIDs: one sessions purge names at most this many.
 const MAX_PURGE_SESSIONS = 1000;
+// The desktop host's REQUEST_PURGE_STILL_RUNNING: it stopped waiting for a
+// purge that Core keeps running.
+const PURGE_STILL_RUNNING = "request_purge_still_running";
 const AUDIT_CACHE_MAX_RECORDS = 5;
 const AUDIT_CACHE_MAX_BYTES = 32 * 1024 * 1024;
 const STATUSES: SessionStatus[] = [
@@ -1457,7 +1460,9 @@ export function RequestRecords({
       else exitSelection();
       notify.success(i18n.t("records.sessionsDeleted", { count: deleted }));
     } catch (requestError: unknown) {
-      const message = messageOf(requestError, i18n.t("records.deleteFailed"));
+      const message =
+        unansweredPurgeMessage(requestError) ??
+        messageOf(requestError, i18n.t("records.deleteFailed"));
       if (fromDetail) notify.error(message);
       else setError(message);
     } finally {
@@ -1545,7 +1550,12 @@ export function RequestRecords({
       });
       setOverlaySessions({});
     } catch (requestError: unknown) {
-      setError(messageOf(requestError, i18n.t("records.purgeFailed")));
+      const unanswered = unansweredPurgeMessage(requestError);
+      // Nothing is left for the dialog to do; the page says what happened.
+      if (unanswered) setPurgeOpen(false);
+      setError(
+        unanswered ?? messageOf(requestError, i18n.t("records.purgeFailed")),
+      );
     } finally {
       setPurgeBusy(false);
     }
@@ -4750,6 +4760,16 @@ function isControlTransportError(error: unknown): boolean {
   return /error sending request|timed out|timeout|connection reset|connection refused|connection closed/i.test(
     message,
   );
+}
+
+// Each purge request finishes whole or changes nothing, so a missing answer
+// never leaves part of one deleted.
+function unansweredPurgeMessage(error: unknown): string | null {
+  if (error instanceof Error && error.message === PURGE_STILL_RUNNING) {
+    return i18n.t("records.purgeStillRunning");
+  }
+  if (isControlTransportError(error)) return i18n.t("records.purgeNoAnswer");
+  return null;
 }
 
 function listErrorMessage(error: unknown): string {

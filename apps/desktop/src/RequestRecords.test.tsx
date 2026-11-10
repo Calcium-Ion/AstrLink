@@ -6295,6 +6295,44 @@ describe("RequestRecords", () => {
     return actions;
   };
 
+  it("says a purge is still running when the desktop stops waiting", async () => {
+    await renderRecords();
+    bridgeMocks.purgeRequestRecords.mockRejectedValueOnce(
+      new Error("request_purge_still_running"),
+    );
+    await act(async () =>
+      (await menuItem("更多清理方式", "清空全部记录及加密内容")).click(),
+    );
+    await act(async () => {
+      exactButton("确定清理").click();
+      await Promise.resolve();
+    });
+    await act(async () => await Promise.resolve());
+
+    expect(container.textContent).toContain(
+      "记录较多，仍在后台删除。请稍后刷新列表查看。",
+    );
+    expect(container.textContent).not.toContain("request_purge_still_running");
+  });
+
+  it("says no answer came back when a delete loses its connection", async () => {
+    await renderRecords();
+    bridgeMocks.purgeRequestRecords.mockRejectedValueOnce(
+      new Error(
+        "POST /control/v1/requests/purge failed: error sending request for url (http://127.0.0.1:54576/control/v1/requests/purge)",
+      ),
+    );
+    await act(async () => exactButton("清理").click());
+    await act(async () => sessionRow(secondRecord.id).click());
+    await act(async () => exactButton("删除", selectionActions()).click());
+    await confirmDelete();
+
+    expect(container.textContent).toContain(
+      "没有收到删除结果。请刷新列表，确认记录是否已删除后再决定是否重试。",
+    );
+    expect(container.textContent).not.toContain("error sending request");
+  });
+
   it("selects sessions to delete from the purge button", async () => {
     await renderRecords();
     const purge = exactButton("清理");
