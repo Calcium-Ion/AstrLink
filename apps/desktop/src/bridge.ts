@@ -74,9 +74,12 @@ import {
   parseAccessTokenCreateResult,
   parseAccessTokenCopied,
   parseAccessTokenPage,
+  parseAccessTokenSummary,
   parseAccessTokenUsageResponse,
   type AccessTokenCreateResult,
   type AccessTokenPage,
+  type AccessTokenServices,
+  type AccessTokenSummary,
   type AccessTokenUsageResponse,
 } from "./access-token-model";
 import {
@@ -1141,10 +1144,32 @@ export async function getPrivacySummary(
 
 export async function createAccessToken(
   name: string,
+  services?: AccessTokenServices,
 ): Promise<AccessTokenCreateResult> {
   requireNativeBridge();
   return parseAccessTokenCreateResult(
-    await invoke<unknown>("create_access_token", { name }),
+    await invoke<unknown>("create_access_token", {
+      name,
+      serviceScope: services?.service_scope ?? null,
+      serviceIds: services?.service_ids ?? null,
+    }),
+  );
+}
+
+/** Renames a token and replaces the providers it may use. */
+export async function updateAccessToken(
+  tokenId: string,
+  name: string,
+  services: AccessTokenServices,
+): Promise<AccessTokenSummary> {
+  requireNativeBridge();
+  return parseAccessTokenSummary(
+    await invoke<unknown>("update_access_token", {
+      tokenId,
+      name,
+      serviceScope: services.service_scope,
+      serviceIds: services.service_ids,
+    }),
   );
 }
 

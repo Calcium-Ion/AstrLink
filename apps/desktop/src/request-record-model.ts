@@ -216,7 +216,8 @@ export type RoutingSkipReason =
   | "circuit_open"
   | "rate_limited"
   | "websocket_disabled"
-  | "websocket_unsupported";
+  | "websocket_unsupported"
+  | "access_token_scope";
 
 export interface RoutingSkip {
   service_id: string;
@@ -1390,6 +1391,7 @@ const routingSkipReasons = new Set<RoutingSkipReason>([
   "rate_limited",
   "websocket_disabled",
   "websocket_unsupported",
+  "access_token_scope",
 ]);
 
 function optionalRoutingDecision(

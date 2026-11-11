@@ -116,7 +116,8 @@ type CodingPlanUsage interface {
 
 type AccessTokenManager interface {
 	List(context.Context) ([]accesstoken.Token, error)
-	Create(context.Context, string) (accesstoken.CreatedToken, error)
+	Create(context.Context, string, ...contract.AccessTokenServices) (accesstoken.CreatedToken, error)
+	Update(context.Context, contract.AccessTokenID, string, contract.AccessTokenServices) (accesstoken.Token, error)
 	Reveal(context.Context, contract.AccessTokenID) (string, error)
 	Delete(context.Context, contract.AccessTokenID) error
 }

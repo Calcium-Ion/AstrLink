@@ -2304,9 +2304,27 @@ async fn list_access_token_usage(
 #[tauri::command]
 async fn create_access_token(
     name: String,
+    service_scope: Option<String>,
+    service_ids: Option<Vec<String>>,
     manager: State<'_, Arc<CoreManager>>,
 ) -> Result<serde_json::Value, String> {
-    manager.create_access_token(&name).await
+    manager
+        .create_access_token(&name, service_scope.as_deref(), service_ids)
+        .await
+}
+
+/// Renames a token and replaces the API providers it may use.
+#[tauri::command]
+async fn update_access_token(
+    token_id: String,
+    name: String,
+    service_scope: String,
+    service_ids: Vec<String>,
+    manager: State<'_, Arc<CoreManager>>,
+) -> Result<serde_json::Value, String> {
+    manager
+        .update_access_token(&token_id, &name, &service_scope, service_ids)
+        .await
 }
 
 /// Copies an access token from Core straight to the clipboard: the token
@@ -2863,6 +2881,7 @@ pub fn run() {
             preview_client_config_snippet,
             copy_client_config_snippet,
             delete_access_token,
+            update_access_token,
             list_privacy_policies,
             get_privacy_policy,
             update_privacy_policy,

@@ -19,24 +19,38 @@ import (
 )
 
 type fakeAccessTokenManager struct {
-	tokens       []accesstoken.Token
-	created      accesstoken.CreatedToken
-	revealed     map[contract.AccessTokenID]string
-	deleted      []contract.AccessTokenID
-	listErr      error
-	createErr    error
-	revealErr    error
-	deleteErr    error
-	receivedName string
+	tokens        []accesstoken.Token
+	created       accesstoken.CreatedToken
+	revealed      map[contract.AccessTokenID]string
+	deleted       []contract.AccessTokenID
+	listErr       error
+	createErr     error
+	revealErr     error
+	deleteErr     error
+	receivedName  string
+	receivedScope []contract.AccessTokenServices
+	updatedID     contract.AccessTokenID
+	updateErr     error
 }
 
 func (manager *fakeAccessTokenManager) List(context.Context) ([]accesstoken.Token, error) {
 	return manager.tokens, manager.listErr
 }
 
-func (manager *fakeAccessTokenManager) Create(_ context.Context, name string) (accesstoken.CreatedToken, error) {
+func (manager *fakeAccessTokenManager) Create(_ context.Context, name string, services ...contract.AccessTokenServices) (accesstoken.CreatedToken, error) {
 	manager.receivedName = name
+	manager.receivedScope = services
 	return manager.created, manager.createErr
+}
+
+func (manager *fakeAccessTokenManager) Update(_ context.Context, id contract.AccessTokenID, name string, services contract.AccessTokenServices) (accesstoken.Token, error) {
+	manager.updatedID = id
+	manager.receivedName = name
+	manager.receivedScope = []contract.AccessTokenServices{services}
+	if manager.updateErr != nil {
+		return accesstoken.Token{}, manager.updateErr
+	}
+	return accesstoken.Token{ID: id, Name: name, Hint: "astr_…abcdef", Source: storage.AccessTokenSourceUser, Services: services}, nil
 }
 
 func (manager *fakeAccessTokenManager) Reveal(_ context.Context, id contract.AccessTokenID) (string, error) {
@@ -159,7 +173,7 @@ func TestAccessTokenControlAPIRequiresAuthenticationAndStrictContracts(t *testin
 		{name: "create media type", method: http.MethodPost, path: AccessTokensPath, contentType: "text/plain", body: `{}`, status: http.StatusUnsupportedMediaType},
 		{name: "create unknown field", method: http.MethodPost, path: AccessTokensPath, contentType: "application/json", body: `{"name":"x","secret":"forbidden"}`, status: http.StatusBadRequest},
 		{name: "unexpected query", method: http.MethodGet, path: AccessTokensPath + "?limit=1", status: http.StatusBadRequest},
-		{name: "item method", method: http.MethodGet, path: AccessTokensPath + "/token_primary", status: http.StatusMethodNotAllowed, allow: http.MethodDelete},
+		{name: "item method", method: http.MethodGet, path: AccessTokensPath + "/token_primary", status: http.StatusMethodNotAllowed, allow: http.MethodPatch + ", " + http.MethodDelete},
 		{name: "secret method", method: http.MethodDelete, path: AccessTokensPath + "/token_primary/secret", status: http.StatusMethodNotAllowed, allow: http.MethodGet},
 		{name: "invalid id", method: http.MethodDelete, path: AccessTokensPath + "/!", status: http.StatusBadRequest},
 		{name: "extra path", method: http.MethodGet, path: AccessTokensPath + "/token_primary/secret/extra", status: http.StatusNotFound},
@@ -247,4 +261,49 @@ func accessTokenRequest(
 		t.Fatalf("Cache-Control=%q", response.Header().Get("Cache-Control"))
 	}
 	return response
+}
+
+func TestAccessTokenScopeCreateAndUpdate(t *testing.T) {
+	manager := &fakeAccessTokenManager{created: accesstoken.CreatedToken{Token: accesstoken.Token{
+		ID: "token_primary", Name: "张三", Hint: "astr_…abcdef", Source: storage.AccessTokenSourceUser,
+	}, Value: "astr_value"}}
+	handler := newAccessTokenHandler(t, manager)
+
+	// Without a scope the token may use every provider, as clients that
+	// predate scopes expect.
+	response := accessTokenRequest(t, handler, http.MethodPost, AccessTokensPath, "application/json", `{"name":"默认"}`)
+	if response.Code != http.StatusCreated || len(manager.receivedScope) != 0 {
+		t.Fatalf("plain create: %d %s scope=%v", response.Code, response.Body, manager.receivedScope)
+	}
+	if !strings.Contains(response.Body.String(), `"service_scope":"all"`) {
+		t.Fatalf("create response lacks the scope: %s", response.Body)
+	}
+
+	for _, test := range []struct {
+		name, body string
+	}{
+		{"empty selection", `{"name":"张三","service_scope":"selected","service_ids":[]}`},
+		{"unknown provider", `{"name":"张三","service_scope":"selected","service_ids":["service_gone"]}`},
+		{"ids without scope", `{"name":"张三","service_ids":["service_gone"]}`},
+		{"unknown scope", `{"name":"张三","service_scope":"some"}`},
+	} {
+		response := accessTokenRequest(t, handler, http.MethodPost, AccessTokensPath, "application/json", test.body)
+		if response.Code != http.StatusUnprocessableEntity || !strings.Contains(response.Body.String(), "invalid_access_token_services") {
+			t.Fatalf("%s: %d %s", test.name, response.Code, response.Body)
+		}
+	}
+
+	response = accessTokenRequest(t, handler, http.MethodPatch, AccessTokensPath+"/token_primary", "application/json", `{"name":"张三","service_scope":"all","service_ids":[]}`)
+	if response.Code != http.StatusOK || manager.updatedID != "token_primary" || manager.receivedScope[0].Restricted() {
+		t.Fatalf("update: %d %s", response.Code, response.Body)
+	}
+	response = accessTokenRequest(t, handler, http.MethodPatch, AccessTokensPath+"/token_primary", "application/json", `{"name":"张三","service_scope":"selected","service_ids":["service_gone"]}`)
+	if response.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("update with an unknown provider: %d %s", response.Code, response.Body)
+	}
+	manager.updateErr = storage.ErrNotFound
+	response = accessTokenRequest(t, handler, http.MethodPatch, AccessTokensPath+"/token_missing", "application/json", `{"name":"张三","service_scope":"all","service_ids":[]}`)
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("update of a missing token: %d %s", response.Code, response.Body)
+	}
 }

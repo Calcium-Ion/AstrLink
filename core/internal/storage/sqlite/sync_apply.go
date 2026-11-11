@@ -569,8 +569,19 @@ func (store *Store) SyncWriteAccessToken(ctx context.Context, localID string, do
 	if createdAt.IsZero() {
 		createdAt = store.now().UTC()
 	}
+	services := normalAccessTokenServices(contract.AccessTokenServices{
+		Scope:      contract.AccessTokenServiceScope(synced.ServiceScope),
+		ServiceIDs: synced.ServiceIDs,
+	})
+	if err := services.Validate(); err != nil {
+		return fmt.Errorf("%w: access token providers: %v", storage.ErrInvalidArgument, err)
+	}
+	scope, serviceIDs, err := encodeAccessTokenServices(services)
+	if err != nil {
+		return err
+	}
 	hash := sha256.Sum256(value)
-	unchanged, err := store.accessTokenUnchanged(ctx, id, name, source, createdAt, value, hash)
+	unchanged, err := store.accessTokenUnchanged(ctx, id, name, source, createdAt, scope, serviceIDs, value, hash)
 	if err != nil {
 		return err
 	}
@@ -595,13 +606,14 @@ func (store *Store) SyncWriteAccessToken(ctx context.Context, localID string, do
 		return fmt.Errorf("drop duplicate access token: %w", err)
 	}
 	if _, err = transaction.ExecContext(ctx, `INSERT INTO local_access_tokens
-    (id, name, name_key, token_hash, token_hint, source, created_at)
-VALUES (?, ?, ?, ?, ?, ?, ?)
+    (id, name, name_key, token_hash, token_hint, source, created_at, service_scope, service_ids_json)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET
     name = excluded.name, name_key = excluded.name_key, token_hash = excluded.token_hash,
-    token_hint = excluded.token_hint, source = excluded.source, created_at = excluded.created_at`,
+    token_hint = excluded.token_hint, source = excluded.source, created_at = excluded.created_at,
+    service_scope = excluded.service_scope, service_ids_json = excluded.service_ids_json`,
 		id, name, nameKey, hash[:], accessTokenHint(string(value)), string(source),
-		createdAt.Format(time.RFC3339Nano),
+		createdAt.Format(time.RFC3339Nano), scope, serviceIDs,
 	); err != nil {
 		return fmt.Errorf("write synced access token: %w", err)
 	}
@@ -631,20 +643,22 @@ func (store *Store) accessTokenUnchanged(
 	name string,
 	source storage.AccessTokenSource,
 	createdAt time.Time,
+	scope, serviceIDs string,
 	value []byte,
 	hash [sha256.Size]byte,
 ) (bool, error) {
-	var storedName, storedSource, storedCreatedAt string
+	var storedName, storedSource, storedCreatedAt, storedScope, storedServiceIDs string
 	var storedHash []byte
-	err := store.db.QueryRowContext(ctx, `SELECT name, source, created_at, token_hash
-FROM local_access_tokens WHERE id = ?`, id).Scan(&storedName, &storedSource, &storedCreatedAt, &storedHash)
+	err := store.db.QueryRowContext(ctx, `SELECT name, source, created_at, token_hash, service_scope, service_ids_json
+FROM local_access_tokens WHERE id = ?`, id).Scan(&storedName, &storedSource, &storedCreatedAt, &storedHash, &storedScope, &storedServiceIDs)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
 	if err != nil {
 		return false, fmt.Errorf("read stored access token: %w", err)
 	}
-	if storedName != name || storedSource != string(source) || !bytes.Equal(storedHash, hash[:]) {
+	if storedName != name || storedSource != string(source) || !bytes.Equal(storedHash, hash[:]) ||
+		storedScope != scope || storedServiceIDs != serviceIDs {
 		return false, nil
 	}
 	storedAt, err := time.Parse(time.RFC3339Nano, storedCreatedAt)

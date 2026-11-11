@@ -6732,6 +6732,63 @@ describe("ServiceManager", () => {
     expect(removed).toHaveBeenCalledWith(gatewayService.id);
   });
 
+  it("warns before deleting the last provider a limited token may use", async () => {
+    const token = {
+      id: "token_zhang",
+      name: "张三",
+      hint: "astr_…K8Q2",
+      source: "user" as const,
+      created_at: "2026-11-10T00:00:00Z",
+    };
+    await act(async () => {
+      root.render(
+        <ServiceManager
+          accessTokens={[
+            {
+              ...token,
+              service_scope: "selected",
+              service_ids: [gatewayService.id],
+            },
+            {
+              ...token,
+              id: "token_team",
+              name: "研发组",
+              service_scope: "selected",
+              service_ids: [gatewayService.id, "svc_other"],
+            },
+            {
+              ...token,
+              id: "token_all",
+              name: "默认令牌",
+              service_scope: "all",
+              service_ids: [],
+            },
+          ]}
+          catalogError={null}
+          catalogStatus="ready"
+          isReady
+          onDirtyChange={() => {}}
+          onRefresh={() => {}}
+          onServiceRemoved={() => {}}
+          onServiceSaved={() => {}}
+          onViewChange={() => {}}
+          protocols={[]}
+          services={[
+            gatewayService,
+            { ...gatewayService, id: "svc_other", name: "Other" },
+          ]}
+          view={{ kind: "list" }}
+        />,
+      );
+    });
+    await openServiceOverflow(gatewayService.name);
+    await chooseMenuItem("删除");
+    const text = document.querySelector('[role="alertdialog"]')?.textContent;
+    expect(text).toContain("令牌“张三”没有可用的提供商");
+    expect(text).not.toContain("研发组");
+    expect(text).not.toContain("默认令牌");
+  });
+
   it("configures local conversion instead of native versus delegated", async () => {
     bridgeMocks.getService.mockResolvedValue({ service: gatewayService, etag });
     await act(async () => {

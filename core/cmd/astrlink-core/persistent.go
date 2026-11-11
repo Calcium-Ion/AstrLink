@@ -261,9 +261,10 @@ func openPersistentCore(ctx context.Context, options persistentOptions) (*persis
 		Resolver:         resolver,
 		Authorizer: endpoint.NewServiceAuthorizer(store, subscriptionManager, subscriptionManager.Provider().IdentityPolicy()).
 			WithRoutingSettings(store).WithIdentities(identities).WithVertexTokens(vertexTokens),
-		AccessTokenAuthenticator: ingress.AccessTokenAuthenticatorFunc(
-			func(ctx context.Context, raw string) (contract.AccessTokenID, error) {
-				return accessTokenManager.Authenticate(ctx, raw)
+		AccessTokenAuthenticator: ingress.ScopedAccessTokenAuthenticatorFunc(
+			func(ctx context.Context, raw string) (contract.AccessTokenID, contract.AccessTokenServices, error) {
+				token, err := accessTokenManager.AuthenticateToken(ctx, raw)
+				return token.ID, token.Services, err
 			},
 		),
 		PrivacyFilter: privacyFilter,

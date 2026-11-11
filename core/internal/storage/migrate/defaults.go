@@ -1309,6 +1309,16 @@ END`,
           FROM context_sets sets WHERE sets.project = OLD.project AND sets.client_type = OLD.client_type));
 END`,
 		}},
+		// A token limited to selected API providers keeps the list here. The
+		// update trigger on local_access_tokens already logs both columns for
+		// sync. A provider deleted later stays listed and matches nothing, so
+		// the token never widens to every provider.
+		{Version: 58, Name: "access_token_service_scope", Statements: []string{
+			`ALTER TABLE local_access_tokens ADD COLUMN service_scope TEXT NOT NULL DEFAULT 'all'
+    CHECK(service_scope IN ('all', 'selected'))`,
+			`ALTER TABLE local_access_tokens ADD COLUMN service_ids_json TEXT NOT NULL DEFAULT '[]'
+    CHECK(json_valid(service_ids_json) AND json_type(service_ids_json) = 'array')`,
+		}},
 	}
 }
 

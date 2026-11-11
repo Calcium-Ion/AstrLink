@@ -173,6 +173,8 @@ const readyTokens: AccessTokenCatalog = {
       hint: "astr_…K8Q2",
       source: "user",
       created_at: "2026-07-24T10:30:00Z",
+      service_scope: "all",
+      service_ids: [],
     },
   ],
   error: null,
@@ -1018,6 +1020,8 @@ describe("Overview", () => {
           hint: "astr_…T2",
           source: "user",
           created_at: "2026-07-25T10:30:00Z",
+          service_scope: "all",
+          service_ids: [],
         },
         {
           id: "token_03",
@@ -1025,6 +1029,8 @@ describe("Overview", () => {
           hint: "astr_…C3",
           source: "user",
           created_at: "2026-07-26T10:30:00Z",
+          service_scope: "all",
+          service_ids: [],
         },
       ],
     };

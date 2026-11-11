@@ -808,6 +808,16 @@ export default function App() {
     if (!isWebEdition && onboarding.active) setPage({ kind: "overview" });
   };
 
+  const handleTokenUpdated = (token: AccessTokenSummary) => {
+    tokenCatalogGeneration.current += 1;
+    setTokenCatalog((current) => ({
+      status: "ready",
+      items: current.items.map((item) => (item.id === token.id ? token : item)),
+      error: null,
+      stale: false,
+    }));
+  };
+
   const handleTokenDeleted = (tokenId: string) => {
     tokenCatalogGeneration.current += 1;
     setTokenCatalog((current) => ({
@@ -1132,6 +1142,9 @@ export default function App() {
                 onRefresh={() => void refreshAccessTokens()}
                 onTokenCreated={handleTokenCreated}
                 onTokenDeleted={handleTokenDeleted}
+                onTokenUpdated={handleTokenUpdated}
+                services={catalog.items}
+                servicesReady={catalog.status === "ready" && !catalog.stale}
               />
             ) : page.kind === "safety" ? (
               <SafetyPolicy
@@ -1199,6 +1212,7 @@ export default function App() {
                 onRefresh={() => void refreshServices()}
                 onServiceRemoved={handleServiceRemoved}
                 onServiceSaved={handleServiceSaved}
+                accessTokens={tokenCatalog.items}
                 onViewChange={(next) => navigate(next)}
                 onLocalImport={startLocalImport}
                 protocols={protocols}

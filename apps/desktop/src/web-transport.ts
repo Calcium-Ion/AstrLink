@@ -409,9 +409,24 @@ const commands: Record<string, Command> = {
     (a) =>
       `/privacy-summary${query({ from: a.from, to: a.to, time_zone: a.timeZone, bucket: a.bucket })}`,
   ),
-  create_access_token: route("/access-tokens", "POST", (a) => ({
-    name: a.name,
-  })),
+  create_access_token: route("/access-tokens", "POST", (a) =>
+    a.serviceScope
+      ? {
+          name: a.name,
+          service_scope: a.serviceScope,
+          service_ids: a.serviceIds ?? [],
+        }
+      : { name: a.name },
+  ),
+  update_access_token: route(
+    (a) => `/access-tokens/${id(a, "tokenId")}`,
+    "PATCH",
+    (a) => ({
+      name: a.name,
+      service_scope: a.serviceScope,
+      service_ids: a.serviceIds ?? [],
+    }),
+  ),
   copy_access_token: async (a) => {
     const { value } = await consoleRequest(
       `/control/v1/access-tokens/${id(a, "tokenId")}/secret`,

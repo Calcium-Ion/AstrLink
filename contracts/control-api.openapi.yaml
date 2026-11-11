@@ -93,6 +93,7 @@ x-astrlink-implementation:
     - GET /control/v1/privacy-summary
     - POST /control/v1/access-tokens
     - GET /control/v1/access-tokens/{token_id}/secret
+    - PATCH /control/v1/access-tokens/{token_id}
     - DELETE /control/v1/access-tokens/{token_id}
     - GET /control/v1/policies
     - GET /control/v1/policies/{policy_id}
@@ -1547,6 +1548,40 @@ paths:
     x-astrlink-implementation-status: implemented
     parameters:
       - $ref: "#/components/parameters/AccessTokenId"
+    patch:
+      x-astrlink-role: operator
+      tags: [Access Tokens]
+      operationId: updateAccessToken
+      summary: Rename a local inference access token and replace the API providers it may use.
+      description: |
+        The token value stays the same, so clients keep working. A changed
+        provider scope applies to the next request made with the token.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AccessTokenUpdate"
+      responses:
+        "200":
+          description: The updated token metadata.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccessToken"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
     delete:
       x-astrlink-role: operator
       tags: [Access Tokens]
@@ -4705,7 +4740,7 @@ components:
                 $ref: "#/components/schemas/ServicePerformance"
     AccessToken:
       type: object
-      required: [id, name, hint, source, created_at]
+      required: [id, name, hint, source, created_at, service_scope, service_ids]
       properties:
         id:
           $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
@@ -4727,7 +4762,26 @@ components:
         created_at:
           type: string
           format: date-time
+        service_scope:
+          $ref: "#/components/schemas/AccessTokenServiceScope"
+        service_ids:
+          type: array
+          maxItems: 200
+          uniqueItems: true
+          items:
+            $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+          description: |
+            The API providers a selected token may use; empty for all. It may
+            list providers deleted since, which match nothing.
       additionalProperties: false
+    AccessTokenServiceScope:
+      type: string
+      enum: [all, selected]
+      description: |
+        all: the token may use every enabled API provider, including ones
+        added later. selected: only the providers in service_ids. A request
+        outside the scope fails with HTTP 403 and error code
+        access_token_scope.
     AccessTokenCreate:
       type: object
       required: [name]
@@ -4736,6 +4790,33 @@ components:
           type: string
           minLength: 1
           maxLength: 64
+        service_scope:
+          $ref: "#/components/schemas/AccessTokenServiceScope"
+        service_ids:
+          type: array
+          maxItems: 200
+          uniqueItems: true
+          items:
+            $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+          description: Required and non-empty when service_scope is selected; every ID must name an existing API provider.
+      additionalProperties: false
+    AccessTokenUpdate:
+      type: object
+      required: [name, service_scope, service_ids]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 64
+        service_scope:
+          $ref: "#/components/schemas/AccessTokenServiceScope"
+        service_ids:
+          type: array
+          maxItems: 200
+          uniqueItems: true
+          items:
+            $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+          description: Empty for all; non-empty for selected, naming existing API providers.
       additionalProperties: false
     AccessTokenSecret:
       type: object
@@ -7651,6 +7732,7 @@ components:
           rate_limited,
           websocket_disabled,
           websocket_unsupported,
+          access_token_scope,
         ]
       description: |
         disabled: the provider is turned off.
@@ -7664,6 +7746,7 @@ components:
         rate_limited: the upstream answered HTTP 429 for this model and its retry delay has not passed.
         websocket_disabled: Responses WebSocket is turned off for the provider.
         websocket_unsupported: the provider cannot serve this model over a native Responses WebSocket.
+        access_token_scope: the request's access token may not use the provider.
     RequestEvent:
       type: object
       required: [kind, started_at, ended_at, status, summary, attempt_index]

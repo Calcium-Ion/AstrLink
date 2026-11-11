@@ -353,10 +353,25 @@ function DesktopClientSetupDialog({
   const [statusRead, setStatusRead] = useState(0);
   // Switching providers in CC Switch overwrites what AstrLink writes.
   const [ccSwitch, setCCSwitch] = useState(false);
-  const [catalog, setCatalog] = useState<ModelCatalog>({
+  const [fullCatalog, setCatalog] = useState<ModelCatalog>({
     services: [],
     redirects: [],
   });
+  // A limited token only reaches its providers' models; offer no others.
+  const scopeKey =
+    currentToken.service_scope === "selected"
+      ? currentToken.service_ids.join("\n")
+      : null;
+  const catalog = useMemo<ModelCatalog>(() => {
+    if (scopeKey === null) return fullCatalog;
+    const allowed = new Set(scopeKey.split("\n"));
+    return {
+      ...fullCatalog,
+      services: fullCatalog.services.filter((service) =>
+        allowed.has(service.id),
+      ),
+    };
+  }, [fullCatalog, scopeKey]);
   const [catalogStatus, setCatalogStatus] = useState<
     "loading" | "ready" | "error"
   >("loading");

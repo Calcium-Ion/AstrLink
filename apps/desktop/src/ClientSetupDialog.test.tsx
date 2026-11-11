@@ -50,6 +50,8 @@ const token: AccessTokenSummary = {
   hint: "astr_…K8Q2",
   source: "user",
   created_at: "2026-07-24T10:30:00Z",
+  service_scope: "all",
+  service_ids: [],
 };
 
 const otherToken: AccessTokenSummary = {
@@ -58,6 +60,8 @@ const otherToken: AccessTokenSummary = {
   hint: "astr_…7HT4",
   source: "user",
   created_at: "2026-07-24T10:31:00Z",
+  service_scope: "all",
+  service_ids: [],
 };
 
 /** The six clients as the host lists them, in rail order. */
@@ -908,6 +912,43 @@ describe("ClientSetupDialog", () => {
     );
     expect(options).not.toContain("vendor/glm-5");
     expect(options).toContain("gpt-5.6");
+  });
+
+  it("offers a limited token only its providers' models", async () => {
+    const scoped: Service = {
+      ...gateway,
+      id: "service_scoped",
+      name: "张三的 new-api",
+      models: ["scoped-model"],
+    };
+    bridgeMocks.listServices.mockResolvedValue({ items: [gateway, scoped] });
+    const limited: AccessTokenSummary = {
+      ...token,
+      service_scope: "selected",
+      service_ids: [scoped.id],
+    };
+    await act(async () => {
+      reactRoot.render(
+        <ClientSetupDialog
+          inferenceURL="http://127.0.0.1:8317"
+          onChanged={onChanged}
+          onClose={onClose}
+          token={limited}
+          tokens={[limited, otherToken]}
+        />,
+      );
+      await Promise.resolve();
+    });
+    await open("gemini");
+    const input = document.querySelector<HTMLInputElement>(
+      "#client-setup-model",
+    )!;
+    await act(async () => input.click());
+    const options = [...document.querySelectorAll('[role="option"]')].map(
+      (option) => option.getAttribute("aria-label"),
+    );
+    expect(options).toContain("scoped-model");
+    expect(options).not.toContain("gpt-5.6");
   });
 
   it("shows a place's changes before writing", async () => {

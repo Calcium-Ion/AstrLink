@@ -131,7 +131,8 @@ import {
   updateService,
 } from "./bridge";
 import { copyButtonLabel, useCopyFeedback } from "./copy-feedback";
-import { i18n, useT } from "./i18n";
+import { currentLocale, i18n, useT } from "./i18n";
+import type { AccessTokenSummary } from "./access-token-model";
 import type { ConversionEngineCapability } from "./core-model";
 import {
   conversionQualityLabels,
@@ -256,6 +257,23 @@ export interface ServiceManagerProps {
   inferenceURL?: string;
   /** Opens the import from agent tool configs; omitted where none is readable. */
   onLocalImport?: () => void;
+  /** Access tokens, so deleting a provider can warn the ones it strands. */
+  accessTokens?: AccessTokenSummary[];
+}
+
+/** Limited tokens that would have no provider left once `serviceID` is gone. */
+function tokensStrandedBy(
+  serviceID: string,
+  tokens: AccessTokenSummary[],
+  services: Service[],
+): AccessTokenSummary[] {
+  const live = new Set(services.map((service) => service.id));
+  return tokens.filter(
+    (token) =>
+      token.service_scope === "selected" &&
+      token.service_ids.includes(serviceID) &&
+      !token.service_ids.some((id) => id !== serviceID && live.has(id)),
+  );
 }
 
 type Draft = {
@@ -1109,6 +1127,7 @@ export function ServiceManager({
   onDirtyChange,
   inferenceURL = "",
   onLocalImport,
+  accessTokens = [],
 }: ServiceManagerProps) {
   const routingDefaults = useRoutingDefaults(isReady);
   const gatewayTimeout = useGatewayResponseTimeout();
@@ -1137,6 +1156,10 @@ export function ServiceManager({
   const [actionID, setActionID] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirmAction, setConfirmAction] = useState<ConfirmAction>(null);
+  const strandedTokens =
+    confirmAction?.kind === "delete"
+      ? tokensStrandedBy(confirmAction.service.id, accessTokens, services)
+      : [];
   const [loginChoice, setLoginChoice] = useState<Service | null>(null);
   const [riskStart, setRiskStart] = useState<RiskStart>(null);
   const [loginChoiceFlow, setLoginChoiceFlow] =
@@ -2585,19 +2608,32 @@ export function ServiceManager({
               : t("common.confirm")
           }
           description={
-            <p>
-              {confirmAction?.kind === "delete"
-                ? t("services.deleteBody", {
-                    name: confirmAction.service.name,
-                  })
-                : confirmAction?.kind === "clear-risk"
-                  ? t("services.riskRestoreBody", {
+            <>
+              <p>
+                {confirmAction?.kind === "delete"
+                  ? t("services.deleteBody", {
                       name: confirmAction.service.name,
                     })
-                  : t("services.logoutBody", {
-                      name: confirmAction?.service.name ?? "",
-                    })}
-            </p>
+                  : confirmAction?.kind === "clear-risk"
+                    ? t("services.riskRestoreBody", {
+                        name: confirmAction.service.name,
+                      })
+                    : t("services.logoutBody", {
+                        name: confirmAction?.service.name ?? "",
+                      })}
+              </p>
+              {confirmAction?.kind === "delete" && strandedTokens.length > 0 ? (
+                <p className="text-danger-foreground">
+                  {t("services.deleteScopeWarning", {
+                    count: strandedTokens.length,
+                    name: confirmAction.service.name,
+                    tokens: new Intl.ListFormat(currentLocale()).format(
+                      strandedTokens.map((token) => `“${token.name}”`),
+                    ),
+                  })}
+                </p>
+              ) : null}
+            </>
           }
           destructive={confirmAction?.kind !== "clear-risk"}
           onCancel={() => setConfirmAction(null)}
