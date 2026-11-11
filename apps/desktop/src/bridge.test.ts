@@ -40,6 +40,7 @@ import {
   getPrivacyPolicy,
   getService,
   getServiceOrder,
+  updateAccessToken,
   updateServiceOrder,
   getServicePackages,
   updateServicePackageStrategy,
@@ -891,6 +892,8 @@ describe("desktop bridge contract", () => {
       hint: "astr_…K8Q2",
       source: "user",
       created_at: "2026-07-24T10:30:00Z",
+      service_scope: "all",
+      service_ids: [],
     };
 
     invokeMock.mockResolvedValueOnce({
@@ -930,6 +933,40 @@ describe("desktop bridge contract", () => {
     });
     expect(invokeMock).toHaveBeenLastCalledWith("create_access_token", {
       name: "VS Code",
+      serviceScope: null,
+      serviceIds: null,
+    });
+
+    const limited = {
+      ...token,
+      service_scope: "selected",
+      service_ids: ["service_openai"],
+    };
+    invokeMock.mockResolvedValueOnce({ token: limited, access_token: secret });
+    await expect(
+      createAccessToken("VS Code", {
+        service_scope: "selected",
+        service_ids: ["service_openai"],
+      }),
+    ).resolves.toEqual({ token: limited, access_token: secret });
+    expect(invokeMock).toHaveBeenLastCalledWith("create_access_token", {
+      name: "VS Code",
+      serviceScope: "selected",
+      serviceIds: ["service_openai"],
+    });
+
+    invokeMock.mockResolvedValueOnce({ ...limited, name: "Cursor" });
+    await expect(
+      updateAccessToken("token_01", "Cursor", {
+        service_scope: "selected",
+        service_ids: ["service_openai"],
+      }),
+    ).resolves.toEqual({ ...limited, name: "Cursor" });
+    expect(invokeMock).toHaveBeenLastCalledWith("update_access_token", {
+      tokenId: "token_01",
+      name: "Cursor",
+      serviceScope: "selected",
+      serviceIds: ["service_openai"],
     });
 
     invokeMock.mockResolvedValueOnce(true);

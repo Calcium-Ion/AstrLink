@@ -13,6 +13,7 @@ import { ServiceKindIcon } from "@/components/ServiceKindIcon";
 import { BadgeAlert, Server } from "@/components/icons";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
 import { RadioGroup } from "@/components/ui/radio-group";
 import { cn } from "@/lib/utils";
 
@@ -171,9 +172,9 @@ export function AccessTokenServicesField({
                 const checkboxID = `${id}-${service.id}`;
                 return (
                   <li className="border-b last:border-b-0" key={service.id}>
-                    <label
+                    <Label
                       className={cn(
-                        "flex cursor-pointer items-center gap-2.5 px-2.5 py-2 hover:bg-muted/50",
+                        "cursor-pointer gap-2.5 px-2.5 py-2 text-sm leading-normal font-normal select-auto hover:bg-muted/50",
                         disabled && "cursor-not-allowed opacity-60",
                       )}
                       htmlFor={checkboxID}
@@ -201,7 +202,7 @@ export function AccessTokenServicesField({
                             : ` · ${t("tokens.scopeServiceOff")}`}
                         </span>
                       </span>
-                    </label>
+                    </Label>
                   </li>
                 );
               })
