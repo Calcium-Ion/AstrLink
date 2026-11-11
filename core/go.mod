@@ -1,6 +1,6 @@
 module github.com/QuantumNous/astrlink/core
 
-go 1.26.10
+go 1.26.11
 
 require (
 	github.com/MoeForge/moego v0.1.0-alpha.1
