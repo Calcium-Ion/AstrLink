@@ -557,6 +557,8 @@
     "notifyInstalled": "安装完成。新开一个 Agent 会话即可使用。",
     "notifyRemoved": "已卸载 Agent Skill 与工具。新开一个 Agent 会话后生效。",
     "notDetected": "未检测到",
+    "undetectedTools": "未检测到的工具（{{count}}）",
+    "undetectedHint": "装好并启动一次后，点「重新检测」就能选择。",
     "detected": "已检测到",
     "installed": "已安装",
     "notInstalled": "未安装",

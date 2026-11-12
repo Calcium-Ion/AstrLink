@@ -557,6 +557,8 @@
     "notifyInstalled": "インストールが完了しました。始めるには、新しい Agent のセッションを開いてください。",
     "notifyRemoved": "Agent の Skill とツールをアンインストールしました。適用するには、新しい Agent のセッションを開いてください。",
     "notDetected": "未検出",
+    "undetectedTools": "未検出のツール（{{count}}）",
+    "undetectedHint": "ツールをインストールして一度起動したら、「再確認」を選ぶと選択できます。",
     "detected": "検出済み",
     "installed": "インストール済み",
     "notInstalled": "未インストール",

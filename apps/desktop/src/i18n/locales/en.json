@@ -557,6 +557,8 @@
     "notifyInstalled": "Installation complete. Open a new agent session to get started.",
     "notifyRemoved": "Agent skills and tools uninstalled. Open a new agent session to apply.",
     "notDetected": "Not detected",
+    "undetectedTools": "Not detected ({{count}})",
+    "undetectedHint": "Install and launch the tool once, then choose Check again to select it.",
     "detected": "Detected",
     "installed": "Installed",
     "notInstalled": "Not installed",
