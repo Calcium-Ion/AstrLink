@@ -1174,10 +1174,12 @@ function DesktopClientSetupDialog({
   const otherTokenName = (status: ClientConfigStatus) =>
     tokenChoices.find((item) => item.id === status.token_id)?.name;
   // Another token's config is removed from that token's dialog. A token this
-  // gateway lacks has no dialog, so its config can be removed from any.
+  // gateway lacks has no dialog, so its config can be removed from any. A
+  // config set up by hand has no record of what AstrLink would put back.
   const removable = (status: ClientConfigStatus) =>
     status.token_id !== null &&
     status.state !== "invalid" &&
+    status.state !== "manual" &&
     (status.token_id === tokenId || !otherTokenName(status));
 
   const listCount = (status: ClientConfigStatus) =>
@@ -1243,7 +1245,7 @@ function DesktopClientSetupDialog({
     if (
       status.token_id !== null &&
       status.token_id !== tokenId &&
-      ["configured", "outdated", "modified"].includes(status.state)
+      ["configured", "outdated", "modified", "manual"].includes(status.state)
     ) {
       const name = otherTokenName(status);
       return name
@@ -1621,6 +1623,12 @@ function DesktopClientSetupDialog({
       items.push(
         <FormMessage key="state" tone="warning">
           {t("clientSetup.modifiedHint")}
+        </FormMessage>,
+      );
+    } else if (own && status.state === "manual") {
+      items.push(
+        <FormMessage key="state" tone="notice">
+          {t("clientSetup.manualHint")}
         </FormMessage>,
       );
     }
@@ -2397,6 +2405,20 @@ function DesktopClientSetupDialog({
 
   const confirmItems = confirmation?.items ?? [];
   const replacing = confirmItems.some((item) => !item.remove);
+  // A token or gateway switch rewrites settings AstrLink wrote; only listed
+  // keys are someone else's.
+  const writeItems = confirmItems.filter((item) => !item.remove);
+  const replacesKeys = writeItems.some((item) => item.keys.length > 0);
+  const switches = writeItems.some(
+    (item) => item.token_id !== null || item.gateway !== null,
+  );
+  const replaceKind = !replacing
+    ? null
+    : !replacesKeys
+      ? "switch"
+      : switches
+        ? "switchAndReplace"
+        : "replace";
   const confirmWrites =
     confirmation?.plan.some((item) => item.action === "write") ?? false;
   const homeDirOf = (item: PlaceRef) =>
@@ -2592,21 +2614,27 @@ function DesktopClientSetupDialog({
       </DialogContent>
       <ConfirmDialog
         confirmLabel={t(
-          replacing
-            ? "clientSetup.replaceConfirm"
-            : confirmWrites
-              ? "clientSetup.writeAndRemoveConfirm"
-              : "clientSetup.remove",
+          replaceKind === "switch"
+            ? "clientSetup.switchConfirm"
+            : replacing
+              ? "clientSetup.replaceConfirm"
+              : confirmWrites
+                ? "clientSetup.writeAndRemoveConfirm"
+                : "clientSetup.remove",
         )}
         description={
           <>
-            <p>
-              {t(
-                replacing
-                  ? "clientSetup.replaceBody"
-                  : "clientSetup.removeBody",
-              )}
-            </p>
+            {replaceKind === "switch" ? null : (
+              <p>
+                {t(
+                  replaceKind === "switchAndReplace"
+                    ? "clientSetup.switchAndReplaceBody"
+                    : replacing
+                      ? "clientSetup.replaceBody"
+                      : "clientSetup.removeBody",
+                )}
+              </p>
+            )}
             <div className="grid max-h-[min(22rem,50dvh)] gap-2 overflow-y-auto text-left">
               {confirmItems.map((item) => {
                 const client = labelOf(item);
@@ -2693,9 +2721,17 @@ function DesktopClientSetupDialog({
         }}
         open={confirmation !== null}
         title={
-          replacing
-            ? t("clientSetup.replaceTitle")
-            : t("clientSetup.removeManyTitle", { count: confirmItems.length })
+          replaceKind === "switch"
+            ? t("clientSetup.switchTitle", { current: currentToken.name })
+            : replaceKind === "switchAndReplace"
+              ? t("clientSetup.switchAndReplaceTitle", {
+                  current: currentToken.name,
+                })
+              : replacing
+                ? t("clientSetup.replaceTitle")
+                : t("clientSetup.removeManyTitle", {
+                    count: confirmItems.length,
+                  })
         }
       />
       <ConfirmDialog

@@ -899,9 +899,9 @@ records:
         fs::create_dir_all(home.join(".dsh/profiles/web")).unwrap();
         fs::write(patch(&home, "web"), USER_PATCH).unwrap();
         fs::write(credentials(&home), USER_CREDENTIALS).unwrap();
-        let both = Tokens(BTreeSet::from([
-            "token_01".to_string(),
-            "token_02".to_string(),
+        let both = Tokens(BTreeMap::from([
+            ("token_01".to_string(), hint(TOKEN)),
+            ("token_02".to_string(), hint(OTHER_TOKEN)),
         ]));
         let models = vec![("model", "deepseek-v4-pro".to_string())];
         let list = strings(&["deepseek-v4-pro", "claude-sonnet-5"]);
@@ -927,7 +927,10 @@ records:
         assert_eq!(status.state, ClientState::Configured);
 
         // The same setup again asks nothing and changes nothing.
-        assert_eq!(asked(write(local, web, &first, &tokens(), false).unwrap()), None);
+        assert_eq!(
+            asked(write(local, web, &first, &tokens(), false).unwrap()),
+            None
+        );
         assert_eq!(fs::read_to_string(patch(&home, "web")).unwrap(), tuned);
 
         // Another model list rewrites the models, and the route of a

@@ -2,7 +2,7 @@
 //! the ones the gateway wrote pointed at its current port.
 
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
 };
 
@@ -266,7 +266,7 @@ pub(crate) fn run(
                     job.place(),
                     &selection.connection(job.target, &secret.id, &secret.token, origin),
                     &job.details,
-                    tokens.unwrap_or(&Tokens(BTreeSet::new())),
+                    tokens.unwrap_or(&Tokens(BTreeMap::new())),
                     confirmed,
                 )
                 .and_then(|outcome| match outcome {
@@ -725,7 +725,10 @@ mod tests {
         let home = unique_home("elsewhere");
         let config = home.join(".codex/config.toml");
         let models = codex_models();
-        let other = Tokens(BTreeSet::from(["token_02".to_string()]));
+        let other = Tokens(BTreeMap::from([(
+            "token_02".to_string(),
+            hint(OTHER_TOKEN),
+        )]));
         let theirs = Connection {
             token_id: "token_02",
             token: OTHER_TOKEN,

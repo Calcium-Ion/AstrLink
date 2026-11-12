@@ -191,7 +191,7 @@ export function configBadge(
   if (status.state === "not_configured") return null;
   const otherToken =
     status.token_id !== tokenId &&
-    ["configured", "outdated", "modified"].includes(status.state);
+    ["configured", "outdated", "modified", "manual"].includes(status.state);
   if (otherToken) {
     return { tone: "neutral", label: t("clientSetup.state.other_token") };
   }
@@ -213,6 +213,7 @@ export function configBadge(
     elsewhere: "neutral",
     modified: "pending",
     invalid: "negative",
+    manual: "positive",
   };
   return {
     tone: tones[status.state],

@@ -640,11 +640,14 @@ describe("ClientSetupDialog", () => {
     await click(box("Pi"));
     await click(button("写入 3 个客户端"));
 
+    // Gemini's keys are someone else's; Pi only moves from another token
+    // and gateway, which AstrLink wrote.
     const prompt = confirmation();
-    expect(prompt?.textContent).toContain("替换现有设置？");
+    expect(prompt?.textContent).toContain("改用「工作机」并替换现有设置？");
     expect(prompt?.textContent).toContain(
-      "以下设置不是 AstrLink 写入的。继续会替换它们；移除 AstrLink 的配置时，会恢复成现在的值。",
+      "以下带文件名的设置不是 AstrLink 写入的。继续会替换它们；移除 AstrLink 的配置时，会恢复成现在的值。",
     );
+    expect(prompt?.textContent).not.toContain("以下设置不是 AstrLink 写入的");
     const groups = prompt?.querySelectorAll(
       '[data-slot="client-confirmation"]',
     );
@@ -670,6 +673,49 @@ describe("ClientSetupDialog", () => {
       items: bridgeMocks.applyClientConfigs.mock.calls[0][0].items,
     });
     expect(dialog().textContent).toContain("已写入 3 个客户端");
+  });
+
+  it("names a move to this token without calling AstrLink's settings someone else's", async () => {
+    bridgeMocks.getClientConfigStatus.mockResolvedValue(
+      overview({
+        codex: { detected: false },
+        gemini: { detected: false },
+        opencode: { detected: false },
+        openclaw: { detected: false },
+        pi: { detected: false },
+        claude: { state: "configured", token_id: otherToken.id },
+      }),
+    );
+    bridgeMocks.applyClientConfigs.mockResolvedValueOnce({
+      status: "needs_confirmation",
+      items: [
+        {
+          client: "claude",
+          wsl: null,
+          dir: "/Users/me/.claude",
+          remove: false,
+          keys: [],
+          gateway: null,
+          token_id: otherToken.id,
+        },
+      ],
+    });
+    await renderDialog();
+    await click(box("Claude Code"));
+    await click(button("写入 1 个客户端"));
+
+    const prompt = confirmation();
+    expect(prompt?.textContent).toContain("改用「工作机」？");
+    expect(prompt?.textContent).toContain(
+      "改用「工作机」，「家里」不再用于 Claude Code",
+    );
+    expect(prompt?.textContent).not.toContain("不是 AstrLink 写入的");
+    expect(prompt?.textContent).not.toContain("替换现有设置");
+    await click(button("改用并写入", prompt!));
+    await settleClosedLayer();
+    expect(bridgeMocks.applyClientConfigs.mock.lastCall?.[0]).toMatchObject({
+      confirmed: true,
+    });
   });
 
   it("writes nothing when the confirmation is cancelled", async () => {
@@ -1058,6 +1104,29 @@ describe("ClientSetupDialog", () => {
     expect(pane().textContent).toContain("1 到 100000000");
     expect(button("写入 6 个客户端").disabled).toBe(true);
     expect(dialog().textContent).toContain("先填好 Pi 的设置");
+  });
+
+  it("names a config set up by hand without offering to remove it", async () => {
+    bridgeMocks.getClientConfigStatus.mockResolvedValue(
+      overview({
+        claude: { state: "manual", token_id: token.id },
+        pi: { state: "manual", token_id: otherToken.id },
+      }),
+    );
+    await renderDialog();
+    expect(row("claude").textContent).toContain("手动配置");
+    expect(row("pi").textContent).toContain("正在使用「家里」");
+    expect(row("pi").textContent).toContain("其他令牌");
+    // What the user pasted stays theirs until they choose to write it.
+    expect(checked("Claude Code")).toBe("false");
+    await open("claude");
+    expect(pane().textContent).toContain("手动配置");
+    expect(pane().textContent).toContain(
+      "这份配置是手动粘贴的，不是 AstrLink 写入的，所以这里不能移除。",
+    );
+    expect(() => button("移除", pane())).toThrow("Missing button");
+    await open("pi");
+    expect(() => button("移除", pane())).toThrow("Missing button");
   });
 
   it("removes one place's config from the pane after confirmation", async () => {

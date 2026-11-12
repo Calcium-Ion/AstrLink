@@ -182,7 +182,12 @@ export type ClientConfigState =
   /** A connection setting changed since AstrLink wrote it. */
   | "modified"
   /** The config file cannot be read as its format. */
-  | "invalid";
+  | "invalid"
+  /**
+   * The user set it up from AstrLink's manual setup with one of this
+   * gateway's tokens; AstrLink did not write it, so it cannot remove it.
+   */
+  | "manual";
 
 export interface ClientConfigStatus {
   client: ClientConfigClient;
@@ -329,6 +334,7 @@ const states: readonly ClientConfigState[] = [
   "elsewhere",
   "modified",
   "invalid",
+  "manual",
 ];
 const resourceIDPattern = /^[a-z][a-z0-9_-]{2,95}$/;
 const accessTokenPattern = /astr_[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]/;
@@ -590,8 +596,9 @@ function parseStatus(
   }
   const state = status.state as ClientConfigState;
   const tokenID = tokenIDAt(status.token_id, `${path}.token_id`);
-  // Only a config AstrLink wrote names its token. An unreadable file may or
-  // may not have been written by AstrLink.
+  // Only a config AstrLink wrote or the user set up from its manual setup
+  // names its token. An unreadable file may or may not have been written by
+  // AstrLink.
   const written = state !== "not_configured";
   if (state !== "invalid" && written !== (tokenID !== null)) {
     invalid(`${path}.token_id`, "does not match the state");

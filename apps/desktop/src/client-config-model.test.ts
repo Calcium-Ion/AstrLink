@@ -186,6 +186,7 @@ describe("client-config status parsing", () => {
     ["an unknown state", { state: "stale" }],
     ["a malformed token ID", { state: "configured", token_id: "X" }],
     ["a configured client without a token", { state: "modified" }],
+    ["a config set up by hand without a token", { state: "manual" }],
     ["an unconfigured client with a token", { token_id: "token_01" }],
     ["a state CC Switch once had", { state: "cc_switch" }],
     ["models that are not an object", { models: ["gpt-5"] }],
@@ -742,6 +743,20 @@ describe("missing models", () => {
     // Unknown until the catalog loads; another token's config is not ours.
     expect(configAttention(config, "token_01", null)).toBeNull();
     expect(configAttention(config, "token_02", available)).toBeNull();
+  });
+
+  it("reads a config set up by hand with its token, which needs nothing", () => {
+    const [claude] = parseStatuses(
+      statuses({
+        claude: {
+          state: "manual",
+          token_id: "token_01",
+          models: { model: "gone" },
+        },
+      }),
+    ) as ClientConfigStatus[];
+    expect(claude).toMatchObject({ state: "manual", token_id: "token_01" });
+    expect(configAttention(claude, "token_01", new Set())).toBeNull();
   });
 
   it("ranks what a config needs", () => {

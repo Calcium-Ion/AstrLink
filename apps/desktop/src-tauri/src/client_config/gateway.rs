@@ -1,6 +1,6 @@
 //! The gateway a client is written for: its local address and its tokens.
 
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 
 use reqwest::Url;
 
@@ -70,13 +70,13 @@ pub(crate) async fn token_summary(
         .ok_or_else(|| "access token not found".to_string())
 }
 
-/// The ids of the gateway's access tokens. Every AstrLink on this computer
-/// writes the same client configs, and one written with a token the gateway
-/// lacks belongs to another AstrLink, such as the instance `make dev` runs
-/// beside an installed one. Token ids are random, so no two gateways share
-/// one.
+/// The gateway's access tokens: each id with its non-secret hint. Every
+/// AstrLink on this computer writes the same client configs, and one written
+/// with a token the gateway lacks belongs to another AstrLink, such as the
+/// instance `make dev` runs beside an installed one. Token ids are random,
+/// so no two gateways share one.
 #[derive(Debug)]
-pub struct Tokens(pub(crate) BTreeSet<String>);
+pub struct Tokens(pub(crate) BTreeMap<String, String>);
 
 impl Tokens {
     pub async fn of(manager: &CoreManager) -> Result<Self, String> {
@@ -87,14 +87,26 @@ impl Tokens {
         Ok(Self(
             items
                 .iter()
-                .filter_map(|item| item["id"].as_str())
-                .map(str::to_string)
+                .filter_map(|item| {
+                    let id = item["id"].as_str()?;
+                    let hint = item["hint"].as_str().unwrap_or_default();
+                    Some((id.to_string(), hint.to_string()))
+                })
                 .collect(),
         ))
     }
 
     pub(crate) fn own(&self, record: &ClientRecord) -> bool {
-        self.0.contains(&record.token_id)
+        self.0.contains_key(&record.token_id)
+    }
+
+    /// The token whose hint ends in the last characters of `token`, when
+    /// exactly one does.
+    pub(crate) fn matching(&self, token: &str) -> Option<&str> {
+        let hint = format!("astr_…{}", token.get(token.len().checked_sub(6)?..)?);
+        let mut found = self.0.iter().filter(|(_, known)| **known == hint);
+        let (id, _) = found.next()?;
+        found.next().is_none().then_some(id.as_str())
     }
 }
 

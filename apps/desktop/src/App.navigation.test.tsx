@@ -145,15 +145,23 @@ import { defaultFailurePolicy } from "./failure-policy-model";
 import { defaultPrivacyKindRules } from "./privacy-policy-model";
 import { ONBOARDING_STORAGE_KEY } from "./use-onboarding";
 import { settleClosedLayer } from "./lib/test-layer-settle";
-import type {
-  ClientConfigItem,
-  ClientConfigOverview,
-  ClientConfigStatus,
+import {
+  parseClientConfigOverview,
+  type ClientCatalog,
+  type ClientConfigItem,
+  type ClientConfigOverview,
+  type ClientConfigStatus,
 } from "./client-config-model";
 import { notify } from "./notify";
 
-/** Claude Code, the one client this computer has, set up by `tokenId`. */
-function claudeOverview(tokenId: string | null): ClientConfigOverview {
+/**
+ * Claude Code, the one client this computer has, set up by `tokenId`:
+ * written by AstrLink, or pasted by hand from its manual setup.
+ */
+function claudeOverview(
+  tokenId: string | null,
+  setUp: "configured" | "manual" = "configured",
+): ClientConfigOverview {
   const claude: ClientConfigStatus = {
     client: "claude",
     wsl: null,
@@ -163,7 +171,7 @@ function claudeOverview(tokenId: string | null): ClientConfigOverview {
     dir: "/Users/me/.claude",
     paths: ["/Users/me/.claude/settings.json"],
     exists: [tokenId !== null],
-    state: tokenId === null ? "not_configured" : "configured",
+    state: tokenId === null ? "not_configured" : setUp,
     token_id: tokenId,
     models: {},
     notes: [],
@@ -1203,6 +1211,45 @@ describe("App workspace navigation", () => {
     } finally {
       window.removeEventListener("focus", focus);
     }
+  });
+
+  it("finishes the guide once a config pasted from the manual setup appears", async () => {
+    localStorage.setItem(ONBOARDING_STORAGE_KEY, "active");
+    bridgeMocks.listAccessTokens.mockResolvedValue({
+      items: [defaultToken, laptopToken],
+      next_cursor: null,
+    });
+    bridgeMocks.getClientConfigStatus.mockResolvedValue(claudeOverview(null));
+    const success = vi.spyOn(notify, "success");
+    await renderApp();
+    await settle();
+    expect(container.textContent).toContain("已完成 2 / 3 步");
+
+    // The user pastes the snippet into Claude Code and comes back. The
+    // host's answer goes through the same check as a real one.
+    bridgeMocks.getClientConfigStatus.mockImplementation(
+      async (_url: string | null, catalog: ClientCatalog) =>
+        parseClientConfigOverview(
+          claudeOverview(defaultToken.id, "manual"),
+          catalog,
+        ),
+    );
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    await settle();
+    expect(localStorage.getItem(ONBOARDING_STORAGE_KEY)).toBe("complete");
+    expect(workspaceHeading().textContent).toBe("运行概览");
+    expect(success).toHaveBeenCalledWith("首次接入已完成");
+
+    await act(async () => button("令牌").click());
+    await settle();
+    expect(
+      tokenRow("默认令牌").querySelector('[aria-label="已配置到 Claude Code"]'),
+    ).not.toBeNull();
+    expect(
+      tokenRow("Work laptop").querySelector('[aria-label^="已配置到"]'),
+    ).toBeNull();
   });
 
   it("closes a guide left open by an earlier run once its steps are done", async () => {

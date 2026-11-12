@@ -107,7 +107,12 @@ pub(crate) fn pi_current(model: &str) -> CurrentModels {
 
 /// The tokens of the gateway `connection` writes for.
 pub(crate) fn tokens() -> Tokens {
-    Tokens(BTreeSet::from(["token_01".to_string()]))
+    Tokens(BTreeMap::from([("token_01".to_string(), hint(TOKEN))]))
+}
+
+/// The hint the gateway lists for `token`.
+pub(crate) fn hint(token: &str) -> String {
+    format!("astr_…{}", &token[token.len() - 6..])
 }
 
 pub(crate) fn codex_models() -> Vec<(&'static str, String)> {
