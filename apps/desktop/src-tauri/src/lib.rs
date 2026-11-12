@@ -2310,6 +2310,13 @@ async fn get_privacy_summary(
 }
 
 #[tauri::command]
+async fn get_image_compression_totals(
+    manager: State<'_, Arc<CoreManager>>,
+) -> Result<serde_json::Value, String> {
+    manager.get_image_compression_totals().await
+}
+
+#[tauri::command]
 async fn list_access_token_usage(
     today_from: String,
     manager: State<'_, Arc<CoreManager>>,
@@ -2885,6 +2892,7 @@ pub fn run() {
             list_access_token_usage,
             get_usage_summary,
             get_privacy_summary,
+            get_image_compression_totals,
             create_access_token,
             copy_access_token,
             open_client_import_link,

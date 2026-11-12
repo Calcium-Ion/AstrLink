@@ -2002,6 +2002,20 @@ impl CoreManager {
             .map_err(|error| format!("privacy summary returned invalid JSON: {error}"))
     }
 
+    /// What request image compression has saved since counting began.
+    pub async fn get_image_compression_totals(&self) -> Result<serde_json::Value, String> {
+        let (_, body) = self
+            .authenticated_control(
+                Method::GET,
+                "/control/v1/image-compression-totals",
+                None,
+                None,
+            )
+            .await?;
+        serde_json::from_slice(&body)
+            .map_err(|error| format!("image compression totals returned invalid JSON: {error}"))
+    }
+
     pub async fn list_access_token_usage(
         &self,
         today_from: &str,

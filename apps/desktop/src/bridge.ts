@@ -43,6 +43,10 @@ import {
   type PrivacySummary,
 } from "./privacy-summary-model";
 import {
+  parseImageCompressionTotals,
+  type ImageCompressionTotals,
+} from "./image-compression-totals-model";
+import {
   hourlyUsageWindow,
   type UsageSummary,
   type UsageWindow,
@@ -1156,6 +1160,14 @@ export async function getPrivacySummary(
       bucket: hourlyUsageWindow(window) ? "hour" : "day",
     }),
     window,
+  );
+}
+
+/** What request image compression has saved since counting began. */
+export async function getImageCompressionTotals(): Promise<ImageCompressionTotals> {
+  requireNativeBridge();
+  return parseImageCompressionTotals(
+    await invoke<unknown>("get_image_compression_totals"),
   );
 }
 

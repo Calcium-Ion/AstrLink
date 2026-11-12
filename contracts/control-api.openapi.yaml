@@ -91,6 +91,7 @@ x-astrlink-implementation:
     - GET /control/v1/access-token-usage
     - GET /control/v1/usage-summary
     - GET /control/v1/privacy-summary
+    - GET /control/v1/image-compression-totals
     - POST /control/v1/access-tokens
     - GET /control/v1/access-tokens/{token_id}/secret
     - PATCH /control/v1/access-tokens/{token_id}
@@ -1419,6 +1420,37 @@ paths:
                 $ref: "#/components/schemas/PrivacySummary"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+  /control/v1/image-compression-totals:
+    x-astrlink-implementation-status: implemented
+    get:
+      x-astrlink-role: observer
+      tags: [Requests]
+      operationId: getImageCompressionTotals
+      summary: Read what request image compression has saved since counting began.
+      description: >-
+        Adds up the inline images of every inference request an upstream
+        received with image compression on. A request counts once, from the
+        first attempt an upstream answered; its retries and failovers add
+        nothing. Requests rejected before they left, requests that reached no
+        upstream, and requests without inline images are not counted. Each
+        model call of a built-in tool loop is a request of its own and counts
+        separately. Sizes are decoded image bytes. An image sent as it was,
+        because its WebP was not smaller, adds the same size to
+        original_bytes and sent_bytes. The totals are kept apart from request
+        records: deleting, purging or expiring records does not lower them.
+        Counting began at `since`, the upgrade that added it or the install;
+        earlier requests are not counted.
+      responses:
+        "200":
+          description: The image compression totals.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImageCompressionTotals"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "500":
@@ -4697,6 +4729,41 @@ components:
       properties:
         kind: { type: string }
         count: { type: integer, minimum: 1 }
+    ImageCompressionTotals:
+      type: object
+      additionalProperties: false
+      required:
+        [since, requests, images, compressed, original_bytes, sent_bytes]
+      properties:
+        since:
+          type: string
+          format: date-time
+          description: When counting began.
+        requests:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Requests that went upstream with at least one inline image.
+        images:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Inline images in those requests.
+        compressed:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Images sent as a smaller WebP.
+        original_bytes:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Decoded size of every image as the client sent it.
+        sent_bytes:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Decoded size of every image as it went upstream; original_bytes minus sent_bytes is what compression saved.
     PrivacySummary:
       type: object
       additionalProperties: false

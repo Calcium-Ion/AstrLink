@@ -38,6 +38,7 @@ type requestRecordPageResponse struct {
 func (handler *Handler) registerRequestRecordRoutes() {
 	handler.mux.HandleFunc(UsageSummaryPath, handler.authenticated(handler.getUsageSummary, RoleObserver))
 	handler.mux.HandleFunc(PrivacySummaryPath, handler.authenticated(handler.getPrivacySummary, RoleObserver))
+	handler.mux.HandleFunc(ImageCompressionTotalsPath, handler.authenticated(handler.getImageCompressionTotals, RoleObserver))
 	handler.mux.HandleFunc(AccessTokenUsagePath, handler.authenticated(handler.listAccessTokenUsage, RoleObserver))
 	handler.mux.HandleFunc(RequestsPurgePath, handler.authenticated(handler.purgeRequestRecords, RoleOperator))
 	handler.mux.HandleFunc(RequestSessionsPath, handler.authenticated(handler.requestSessionCollection, RoleObserver))

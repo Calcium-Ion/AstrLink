@@ -409,6 +409,7 @@ const commands: Record<string, Command> = {
     (a) =>
       `/privacy-summary${query({ from: a.from, to: a.to, time_zone: a.timeZone, bucket: a.bucket })}`,
   ),
+  get_image_compression_totals: route("/image-compression-totals"),
   create_access_token: route("/access-tokens", "POST", (a) =>
     a.serviceScope
       ? {

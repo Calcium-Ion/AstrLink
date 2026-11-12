@@ -4312,6 +4312,23 @@
       "balanced": "Balanced",
       "sharp": "Sharp",
       "fine": "Finest"
+    },
+    "totals": {
+      "helpTotals": "Only requests sent upstream count, and a request retried or resent to another provider counts once. The totals are kept separately, so deleting or clearing request records does not lower them.",
+      "saved": "Bandwidth saved",
+      "savedHint": "The difference in image size before and after compression, in decoded bytes. Images whose WebP was not smaller are sent as they are and save nothing.",
+      "savedShare": "{{percent}}% smaller",
+      "compressed": "Images compressed",
+      "compressedValue_one": "{{count}} image",
+      "compressedValue_other": "{{count}} images",
+      "imagesOf_one": "of {{count}} image",
+      "imagesOf_other": "of {{count}} images",
+      "original": "Before",
+      "requests_one": "{{count}} request",
+      "requests_other": "{{count}} requests",
+      "sent": "Sent",
+      "since": "Counting since {{date}}",
+      "sinceEmpty": "Counting since {{date}}. No request with images has been compressed yet."
     }
   },
   "about": {

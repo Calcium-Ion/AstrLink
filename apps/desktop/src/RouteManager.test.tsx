@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vitest";
 const bridge = vi.hoisted(() => ({
   builtinToolAction: vi.fn().mockResolvedValue({ configured: false }),
+  getImageCompressionTotals: vi.fn().mockRejectedValue(new Error("offline")),
   getRoutingSettings: vi.fn(),
   updateRoutingSettings: vi.fn(),
 }));

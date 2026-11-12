@@ -54,6 +54,7 @@ import {
   listRequestRecords,
   listAccessTokens,
   listAccessTokenUsage,
+  getImageCompressionTotals,
   getPrivacySummary,
   getUsageSummary,
   listPrivacyModelInstallations,
@@ -460,6 +461,21 @@ describe("desktop bridge contract", () => {
     });
     expect(result.by_day).toHaveLength(7);
     expect(result.by_kind).toEqual([{ kind: "email", count: 2 }]);
+  });
+  it("reads the image compression totals and rejects malformed ones", async () => {
+    const totals = {
+      since: "2026-11-12T08:00:00Z",
+      requests: 1,
+      images: 2,
+      compressed: 1,
+      original_bytes: 9000,
+      sent_bytes: 6000,
+    };
+    invokeMock.mockResolvedValueOnce(totals);
+    await expect(getImageCompressionTotals()).resolves.toEqual(totals);
+    expect(invokeMock).toHaveBeenCalledWith("get_image_compression_totals");
+    invokeMock.mockResolvedValueOnce({ ...totals, sent_bytes: 9001 });
+    await expect(getImageCompressionTotals()).rejects.toThrow();
   });
   it("roundtrips ordered service IDs and rejects malformed order responses", async () => {
     const record = {
