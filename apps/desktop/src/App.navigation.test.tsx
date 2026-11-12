@@ -22,6 +22,8 @@ const bridgeMocks = vi.hoisted(() => ({
   getAgentDebugStatus: vi.fn(),
   getAuditSettings: vi.fn(),
   getCoreStatus: vi.fn(),
+  // A browser test has no native window to fit to the overview.
+  hasNativeBridge: () => false,
   getLocalDataStatus: vi.fn(),
   getPreferences: vi.fn(),
   getTrayState: vi
