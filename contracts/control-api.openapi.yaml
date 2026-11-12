@@ -8464,23 +8464,33 @@ components:
       additionalProperties: false
     MemoryToolbox:
       type: object
-      description: The skills and MCP tools the newest main call carried, and those the calls used in the last 30 days.
-      required: [skills, mcp, idle_tokens]
+      description: >-
+        The skills and MCP tools the client's calls carried or used in the last 30 days. Every call of those days
+        counts, so within the same days the lists only grow and no count drops; a call leaves them when its day
+        does, each midnight of day_start.
+      required: [since, skills, mcp, idle_tokens]
       properties:
+        since:
+          type: string
+          format: date-time
+          description: When those days began, 29 days before day_start.
         skills:
           type: array
-          description: The skills used, the most used first, then those not used in catalog order.
+          description: The skills, the most used first, then by name.
           items:
             $ref: "#/components/schemas/ToolboxSkill"
         mcp:
           type: array
-          description: The MCP servers, in the order the calls carried them.
+          description: The MCP servers the calls carried, by name, then those only used.
           items:
             $ref: "#/components/schemas/ToolboxServer"
         idle_tokens:
           type: integer
           minimum: 0
-          description: Estimated tokens the skills and MCP tools not used add to each call.
+          description: >-
+            Estimated tokens the skills and MCP tools not used add to each call. Each the newest main call still
+            carries adds its share of what that call's catalog and MCP tools carry; one it no longer carries adds
+            nothing.
       additionalProperties: false
     ToolboxSkill:
       type: object
@@ -8493,14 +8503,14 @@ components:
         description:
           type: string
           maxLength: 80
-          description: The catalog's, cleaned like input_preview. Absent when no record may show the client's text.
+          description: The newest catalog's, cleaned like input_preview. Absent when no record may show the client's text.
         uses:
           type: integer
           minimum: 0
           description: Turns that loaded the skill.
         carried:
           type: boolean
-          description: True when the newest main call's catalog lists it.
+          description: True when a call of those days listed it.
       additionalProperties: false
     ToolboxServer:
       type: object
@@ -8512,6 +8522,7 @@ components:
           maxLength: 64
         tools:
           type: array
+          description: The tools, the most used first, then by name.
           items:
             $ref: "#/components/schemas/ToolboxTool"
       additionalProperties: false
@@ -8529,6 +8540,7 @@ components:
           description: Calls that made it.
         carried:
           type: boolean
+          description: True when a call of those days carried it.
       additionalProperties: false
     MemoryEntryDetail:
       type: object

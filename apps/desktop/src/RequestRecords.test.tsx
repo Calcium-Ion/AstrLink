@@ -1148,7 +1148,12 @@ describe("RequestRecords", () => {
       rules: [
         { name: "AGENTS.md", path: "~/proj/AGENTS.md", scope: "project" },
       ],
-      toolbox: { skills: [], mcp: [], idle_tokens: 0 },
+      toolbox: {
+        since: firstRecord.started_at,
+        skills: [],
+        mcp: [],
+        idle_tokens: 0,
+      },
       has_memory: true,
       has_rules: true,
     });

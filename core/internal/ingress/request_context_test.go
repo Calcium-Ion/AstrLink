@@ -171,6 +171,47 @@ func TestObserveClaudeCodeContext(t *testing.T) {
 	}
 }
 
+// Claude Code lists its skills once, then lists again only the skills added
+// or changed since. The catalog of a call is every skill its listings name.
+func TestObserveClaudeCodeSkillListingsAddUp(t *testing.T) {
+	changed := "The following skills are available for use with the Skill tool:\n\n" +
+		"- deploy: Ship the build to staging.\n- redaction-placeholders: Handle placeholders.\n- astrlink-debug: Debug requests.\n\n"
+	added := "The following skills are also available for use with the Skill tool. " +
+		"This list adds to the skills listed earlier in this conversation and is not the full list:\n\n- dataviz: Draw charts.\n\n"
+	script := "The following skills are also available; a script loads one with `await tools.Skill({skill: \"name\"})`, " +
+		"and its instructions arrive as a message right after the script's result. " +
+		"This list adds to the skills listed earlier in this conversation and is not the full list:\n\n- notebook: Edit notebooks.\n\n"
+	body := claudeCodeContextBody(t, "abc",
+		message("user", textBlock(claudeCodeContextReminder), textBlock("Fix the failing test")),
+		message("system", textBlock(claudeCodeSkillsMessage)),
+		message("assistant", textBlock("Done.")),
+		message("user", textBlock("Ship it")),
+		message("system", textBlock(changed)),
+		message("system", textBlock(added)),
+		message("system", textBlock(script)),
+	)
+	observation := observeRequestContext(contract.ProtocolAnthropicMessages, body)
+	if observation == nil {
+		t.Fatal("no observation")
+	}
+	skills := observedItemsByKind(observation)[contract.ContextItemSkills]
+	want := []string{"humanizer", "smartcmd:review", "deploy", "redaction-placeholders", "astrlink-debug", "dataviz", "notebook"}
+	if len(skills) != 1 || skills[0].count != len(want) || !slices.Equal(skills[0].names, want) {
+		t.Fatalf("skills = %#v", skills)
+	}
+	if deploy := slices.Index(skills[0].names, "deploy"); skills[0].descriptions[deploy] != "Ship the build to staging." {
+		t.Fatalf("descriptions = %q, want the newest of deploy", skills[0].descriptions)
+	}
+	single := observeRequestContext(contract.ProtocolAnthropicMessages, claudeCodeContextBody(t, "abc",
+		message("user", textBlock(claudeCodeContextReminder), textBlock("Fix the failing test")),
+		message("system", textBlock(claudeCodeSkillsMessage)),
+	))
+	first := observedItemsByKind(single)[contract.ContextItemSkills]
+	if len(first) != 1 || skills[0].tokens <= first[0].tokens || bytes.Equal(skills[0].digest, first[0].digest) {
+		t.Fatalf("listings carried %d tokens, digest %x; the first alone %#v", skills[0].tokens, skills[0].digest, first)
+	}
+}
+
 func TestObserveFailedRepeatsNeedsTheSameFailingCall(t *testing.T) {
 	bash := map[string]any{"command": "go test ./..."}
 	calls := func(results ...map[string]any) []any {
