@@ -281,8 +281,18 @@ export interface ClientConfigConfirmation {
   dir: string;
   /** A removal, for a client the user unchecked. */
   remove: boolean;
-  /** Values AstrLink did not write; `current` only for non-secret values. */
-  keys: { path: string; key: string; current: string | null }[];
+  /**
+   * Values AstrLink did not write, now and after the write, a credential
+   * by its ends only; null for a value that is not one line of text.
+   * `removed` when the write takes the key out.
+   */
+  keys: {
+    path: string;
+    key: string;
+    current: string | null;
+    next: string | null;
+    removed: boolean;
+  }[];
   /** The config connects to another AstrLink at this base URL now. */
   gateway: string | null;
   /** The config uses this other token of this gateway now. */
@@ -777,12 +787,16 @@ function parseConfirmation(
   const keys = arrayAt(item.keys, `${path}.keys`).map((entry, index) => {
     const at = `${path}.keys[${index}]`;
     const key = objectAt(entry, at);
-    exactKeys(key, ["path", "key", "current"], at);
+    exactKeys(key, ["path", "key", "current", "next", "removed"], at);
+    const removed = booleanAt(key.removed, `${at}.removed`);
+    if (removed && key.next !== null) invalid(`${at}.next`, "removed");
     return {
       path: lineAt(key.path, `${at}.path`, 4096),
       key: lineAt(key.key, `${at}.key`, 512),
       current:
         key.current === null ? null : lineAt(key.current, `${at}.current`, 512),
+      next: key.next === null ? null : lineAt(key.next, `${at}.next`, 512),
+      removed,
     };
   });
   const remove = booleanAt(item.remove, `${path}.remove`);

@@ -3939,7 +3939,10 @@
       "unknownToken": "Switch to “{{current}}”; the previous token is no longer used for {{client}}",
       "gateway": "Connect to this AstrLink; {{url}} stops receiving {{client}}’s requests",
       "setting": "Setting",
-      "now": "Current value",
+      "now": "Now",
+      "next": "After writing",
+      "removed": "Removed",
+      "notShown": "Not shown",
       "more": "Show {{count}} more"
     },
     "result": {

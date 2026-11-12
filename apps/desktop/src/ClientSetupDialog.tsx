@@ -246,6 +246,27 @@ const linkProviderNames: Record<string, string> = {
 /** Rows a place's confirmation shows before the rest folds away. */
 const confirmRowsShown = 4;
 
+/** A setting, its value now and after the write, one row each. */
+const confirmColumns =
+  "grid grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1fr)] gap-3 px-2.5 text-muted-foreground";
+
+/** One value in the confirmation: a line that truncates, whole on hover. */
+function ConfirmValue({
+  className,
+  value,
+}: {
+  className?: string;
+  value: string | null;
+}) {
+  return value === null ? (
+    <span aria-label={i18n.t("clientSetup.confirm.notShown")}>—</span>
+  ) : (
+    <code className={cn("block truncate font-mono", className)} title={value}>
+      {value}
+    </code>
+  );
+}
+
 /**
  * One place in the write confirmation: the client and where its config
  * lives, what the write changes, and the settings AstrLink did not write,
@@ -267,10 +288,14 @@ function ConfirmationPlace({
   pathOf: (path: string) => string;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const paths = [...new Set(item.keys.map((key) => key.path))];
+  // What the write sets comes before what it only takes out.
+  const ordered = [...item.keys].sort(
+    (a, b) => Number(a.removed) - Number(b.removed),
+  );
+  const paths = [...new Set(ordered.map((key) => key.path))];
   // A short list shows whole; folding one or two rows away saves nothing.
-  const folds = !expanded && item.keys.length > confirmRowsShown + 2;
-  const keys = folds ? item.keys.slice(0, confirmRowsShown) : item.keys;
+  const folds = !expanded && ordered.length > confirmRowsShown + 2;
+  const keys = folds ? ordered.slice(0, confirmRowsShown) : ordered;
   const groups = paths
     .map((path) => ({ path, keys: keys.filter((key) => key.path === path) }))
     .filter((group) => group.keys.length > 0);
@@ -299,9 +324,10 @@ function ConfirmationPlace({
       ) : null}
       {item.keys.length > 0 ? (
         <div className="border-t" data-slot="client-confirmation-keys">
-          <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,9rem)] gap-3 px-2.5 pt-1.5 pb-0.5 text-micro text-muted-foreground">
+          <div className={cn(confirmColumns, "pt-1.5 pb-0.5 text-micro")}>
             <span>{i18n.t("clientSetup.confirm.setting")}</span>
             <span>{i18n.t("clientSetup.confirm.now")}</span>
+            <span>{i18n.t("clientSetup.confirm.next")}</span>
           </div>
           {groups.map((group) => (
             <div key={group.path} data-slot="client-confirmation-file">
@@ -312,26 +338,26 @@ function ConfirmationPlace({
               ) : null}
               <dl>
                 {group.keys.map((key) => (
-                  <div
-                    key={key.key}
-                    className="grid grid-cols-[minmax(0,1fr)_minmax(0,9rem)] gap-3 px-2.5 py-0.5"
-                  >
+                  <div key={key.key} className={cn(confirmColumns, "py-0.5")}>
                     <dt className="min-w-0">
-                      <code
-                        className="block truncate font-mono text-foreground"
-                        title={key.key}
-                      >
-                        {key.key}
-                      </code>
+                      <ConfirmValue
+                        className="text-foreground"
+                        value={key.key}
+                      />
                     </dt>
                     <dd className="min-w-0">
-                      {key.current === null ? null : (
-                        <code
-                          className="block truncate font-mono text-muted-foreground"
-                          title={key.current}
-                        >
-                          {key.current}
-                        </code>
+                      <ConfirmValue value={key.current} />
+                    </dd>
+                    <dd className="min-w-0">
+                      {key.removed ? (
+                        <span className="text-warning-foreground">
+                          {i18n.t("clientSetup.confirm.removed")}
+                        </span>
+                      ) : (
+                        <ConfirmValue
+                          className="text-foreground"
+                          value={key.next}
+                        />
                       )}
                     </dd>
                   </div>
@@ -2753,7 +2779,7 @@ function DesktopClientSetupDialog({
                 )}
               </p>
             )}
-            <div className="grid max-h-[min(22rem,50dvh)] gap-2 overflow-y-auto text-left">
+            <div className="grid max-h-[min(22rem,50dvh)] w-full gap-2 overflow-y-auto text-left">
               {confirmItems.map((item) => {
                 const home = homeDirOf(item);
                 const previous = tokenChoices.find(
@@ -2801,6 +2827,7 @@ function DesktopClientSetupDialog({
           </>
         }
         destructive={!replacing}
+        wide={confirmItems.some((item) => item.keys.length > 0)}
         onCancel={() => setConfirmation(null)}
         onConfirm={() => {
           if (!confirmation) return;

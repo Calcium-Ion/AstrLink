@@ -476,12 +476,16 @@ describe("client-config apply parsing", () => {
             {
               path: "/Users/me/.gemini/.env",
               key: "GEMINI_API_KEY",
-              current: null,
+              current: "…12",
+              next: null,
+              removed: true,
             },
             {
               path: "/Users/me/.gemini/settings.json",
               key: "security.auth.selectedType",
               current: "oauth-personal",
+              next: "gemini-api-key",
+              removed: false,
             },
           ],
           gateway: null,
@@ -567,6 +571,29 @@ describe("client-config apply parsing", () => {
       ],
     ],
     [
+      "a removed key with a value after the write",
+      [
+        {
+          client: "gemini",
+          wsl: null,
+          target: null,
+          dir: "/x",
+          remove: false,
+          keys: [
+            {
+              path: "/x/.env",
+              key: "K",
+              current: "a",
+              next: "b",
+              removed: true,
+            },
+          ],
+          gateway: null,
+          token_id: null,
+        },
+      ],
+    ],
+    [
       "a revealed token",
       [
         {
@@ -576,7 +603,13 @@ describe("client-config apply parsing", () => {
           dir: "/x",
           remove: false,
           keys: [
-            { path: "/x/.env", key: "K", current: `astr_${"A".repeat(43)}` },
+            {
+              path: "/x/.env",
+              key: "K",
+              current: null,
+              next: `astr_${"A".repeat(43)}`,
+              removed: false,
+            },
           ],
           gateway: null,
           token_id: null,

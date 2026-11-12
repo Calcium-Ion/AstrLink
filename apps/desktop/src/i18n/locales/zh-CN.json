@@ -3939,7 +3939,10 @@
       "unknownToken": "改用「{{current}}」，之前的令牌不再用于 {{client}}",
       "gateway": "改连这个 AstrLink，{{url}} 不再收到 {{client}} 的请求",
       "setting": "设置",
-      "now": "现在的值",
+      "now": "现在",
+      "next": "写入后",
+      "removed": "删除",
+      "notShown": "不显示",
       "more": "再显示 {{count}} 项"
     },
     "result": {

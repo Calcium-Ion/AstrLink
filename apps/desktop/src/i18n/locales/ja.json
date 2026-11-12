@@ -3939,7 +3939,10 @@
       "unknownToken": "「{{current}}」に切り替え、以前のトークンは {{client}} で使われなくなります",
       "gateway": "この AstrLink に接続し、{{url}} は {{client}} のリクエストを受け取らなくなります",
       "setting": "設定",
-      "now": "今の値",
+      "now": "現在",
+      "next": "書き込み後",
+      "removed": "削除",
+      "notShown": "表示なし",
       "more": "さらに {{count}} 件表示"
     },
     "result": {

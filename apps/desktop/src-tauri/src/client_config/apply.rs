@@ -16,7 +16,7 @@ use super::{
     plan::{
         place_state, plan_remove, plan_sync, plan_write_with, ClientState, Connection, Removal,
     },
-    preview::shown_value,
+    preview::displayed_value,
     records::{read_records, write_records, Records},
 };
 use crate::{
@@ -25,14 +25,20 @@ use crate::{
     sidecar::CoreManager,
 };
 
-/// A value AstrLink did not write that a write replaces or removes.
+/// A value AstrLink did not write that a write replaces or removes. Both
+/// values show as the change preview does: a credential by its ends only.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct ReplacedKey {
     /// The file holding it.
     pub path: String,
     pub key: String,
-    /// The value now, for a model name or similar; never a credential.
+    /// The value now; `None` when it is not one line of text.
     pub current: Option<String>,
+    /// The value the write puts there; `None` when the write removes the
+    /// key or the value is not one line of text.
+    pub next: Option<String>,
+    /// The write removes the key.
+    pub removed: bool,
 }
 
 /// What a client's write or removal asks the user to confirm.
@@ -351,6 +357,7 @@ fn confirmation(
     let plan = plan_write_with(client, existing, connection, details, record)
         .map_err(|error| error.at(paths))?;
     let config = Config::parse(client, existing).map_err(|error| error.at(paths))?;
+    let desired = client.desired_keys(connection, details);
     let state = place_state(records, place, existing, Some(connection.origin), tokens);
     let gateway = record
         .filter(|_| state == ClientState::Elsewhere)
@@ -371,10 +378,21 @@ fn confirmation(
         keys: plan
             .conflicts
             .iter()
-            .map(|key| ReplacedKey {
-                path: paths[config.index(key)].display().to_string(),
-                key: key.clone(),
-                current: shown_value(key, config.get(key).flatten().as_deref()),
+            .map(|key| {
+                let next = desired
+                    .iter()
+                    .find(|(path, _)| path == key)
+                    .map(|(_, value)| value);
+                ReplacedKey {
+                    path: paths[config.index(key)].display().to_string(),
+                    key: key.clone(),
+                    current: config
+                        .get(key)
+                        .flatten()
+                        .and_then(|value| displayed_value(key, &value)),
+                    next: next.and_then(|value| displayed_value(key, value)),
+                    removed: next.is_none(),
+                }
             })
             .collect(),
         gateway,
@@ -838,6 +856,89 @@ mod tests {
     }
 
     #[test]
+    fn a_confirmation_shows_each_replaced_value_before_and_after() {
+        let home = unique_home("before-after");
+        fs::write(
+            home.join(".claude/settings.json"),
+            r#"{"env": {
+                "ANTHROPIC_BASE_URL": "https://me:pw@relay.example/v1?key=abc",
+                "ANTHROPIC_AUTH_TOKEN": "sk-relay-0123456789",
+                "ANTHROPIC_MODEL": "relay-opus",
+                "ANTHROPIC_DEFAULT_HAIKU_MODEL": "relay-haiku",
+                "ANTHROPIC_CUSTOM_HEADERS": "{\"x\": 1}"
+            }}"#,
+        )
+        .unwrap();
+        let models = [("model", "main-route".to_string())];
+        let ApplyOutcome::NeedsConfirmation(confirmation) = write(
+            Home::local(&home),
+            CLAUDE,
+            &connection(&models),
+            &tokens(),
+            false,
+        )
+        .unwrap() else {
+            panic!("expected a confirmation");
+        };
+        let shown = confirmation
+            .keys
+            .iter()
+            .map(|key| {
+                (
+                    key.key.as_str(),
+                    key.current.as_deref(),
+                    key.next.as_deref(),
+                    key.removed,
+                )
+            })
+            .collect::<Vec<_>>();
+        let token = TOKEN.chars().collect::<Vec<_>>();
+        let token = format!(
+            "{}…{}",
+            token[..4].iter().collect::<String>(),
+            token[token.len() - 3..].iter().collect::<String>()
+        );
+        let base_url = CLAUDE.base_url(ORIGIN);
+        assert_eq!(
+            shown,
+            [
+                // An address drops what may carry a credential.
+                (
+                    "env.ANTHROPIC_BASE_URL",
+                    Some("https://relay.example/v1"),
+                    Some(base_url.as_str()),
+                    false
+                ),
+                (
+                    "env.ANTHROPIC_AUTH_TOKEN",
+                    Some("sk-r…789"),
+                    Some(token.as_str()),
+                    false
+                ),
+                (
+                    "env.ANTHROPIC_MODEL",
+                    Some("relay-opus"),
+                    Some("main-route"),
+                    false
+                ),
+                // A tier the write leaves empty goes; an object shows as
+                // nothing.
+                (
+                    "env.ANTHROPIC_DEFAULT_HAIKU_MODEL",
+                    Some("relay-haiku"),
+                    None,
+                    true
+                ),
+                ("env.ANTHROPIC_CUSTOM_HEADERS", None, None, true),
+            ]
+        );
+        let all = format!("{:?}", confirmation.keys);
+        assert!(!all.contains("sk-relay-0123456789") && !all.contains(TOKEN));
+        assert!(!all.contains("pw") && !all.contains("abc"));
+        fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
     fn a_batch_asks_once_then_writes_each_client_on_its_own() {
         let home = unique_home("batch");
         fs::write(
@@ -879,7 +980,11 @@ mod tests {
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].client, CLAUDE);
         assert_eq!(items[0].keys[0].key, "env.ANTHROPIC_API_KEY");
-        assert_eq!(items[0].keys[0].current, None);
+        // The key shows by its ends, as the diff does; AstrLink writes its
+        // token as ANTHROPIC_AUTH_TOKEN, so the API key goes.
+        assert_eq!(items[0].keys[0].current.as_deref(), Some("…et"));
+        assert_eq!(items[0].keys[0].next, None);
+        assert!(items[0].keys[0].removed);
         assert!(!records_path(&home).exists());
         assert!(!home.join(".codex/config.toml").exists());
 

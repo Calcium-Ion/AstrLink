@@ -260,8 +260,8 @@ function dialog(): HTMLElement {
 }
 
 /**
- * A confirmed place's settings, one [name, current value] pair per row; a
- * file heading shows as [file, ""].
+ * A confirmed place's settings, one [name, now, after the write] row each;
+ * a file heading shows as [file].
  */
 function keyRows(place: Element): string[][] {
   const files = place.querySelectorAll(
@@ -270,11 +270,10 @@ function keyRows(place: Element): string[][] {
   return [...files].flatMap((group) =>
     [...group.children].flatMap((child) =>
       child.tagName === "DL"
-        ? [...child.children].map((row) => [
-            row.querySelector("dt")?.textContent ?? "",
-            row.querySelector("dd")?.textContent ?? "",
-          ])
-        : [[child.textContent ?? "", ""]],
+        ? [...child.children].map((row) =>
+            [...row.children].map((cell) => cell.textContent ?? ""),
+          )
+        : [[child.textContent ?? ""]],
     ),
   );
 }
@@ -634,12 +633,16 @@ describe("ClientSetupDialog", () => {
             {
               path: "/Users/me/.gemini/.env",
               key: "GEMINI_API_KEY",
-              current: null,
+              current: "…12",
+              next: null,
+              removed: true,
             },
             {
               path: "/Users/me/.gemini/settings.json",
               key: "security.auth.selectedType",
               current: "oauth-personal",
+              next: "gemini-api-key",
+              removed: false,
             },
           ],
           gateway: null,
@@ -677,11 +680,12 @@ describe("ClientSetupDialog", () => {
     expect(groups?.[0].querySelector("header")?.textContent).toContain(
       "~/.gemini",
     );
+    // What the write sets comes first, then what it takes out.
     expect(gemini).toEqual([
-      [".env", ""],
-      ["GEMINI_API_KEY", ""],
-      ["settings.json", ""],
-      ["security.auth.selectedType", "oauth-personal"],
+      ["settings.json"],
+      ["security.auth.selectedType", "oauth-personal", "gemini-api-key"],
+      [".env"],
+      ["GEMINI_API_KEY", "…12", "删除"],
     ]);
     expect(groups?.[1].textContent).toContain(
       "改用「工作机」，「家里」不再用于 Pi",
@@ -714,6 +718,9 @@ describe("ClientSetupDialog", () => {
       path: "/Users/me/.claude/settings.json",
       key: `env.ANTHROPIC_DEFAULT_${name}`,
       current: "claude-opus-5-5",
+      // Tiers left empty in the dialog go; the rest take the new model.
+      next: name.endsWith("_NAME") ? null : "claude-sonnet-4-5",
+      removed: name.endsWith("_NAME"),
     }));
     bridgeMocks.applyClientConfigs.mockResolvedValueOnce({
       status: "needs_confirmation",
@@ -727,12 +734,16 @@ describe("ClientSetupDialog", () => {
             {
               path: "/Users/me/.claude/settings.json",
               key: "env.ANTHROPIC_AUTH_TOKEN",
-              current: null,
+              current: "sk-o…789",
+              next: "astr…AA0",
+              removed: false,
             },
             {
               path: "/Users/me/.claude/settings.json",
               key: "env.ANTHROPIC_BASE_URL",
-              current: null,
+              current: "https://relay.example/v1",
+              next: "http://localhost:18317",
+              removed: false,
             },
             ...models,
           ],
@@ -763,17 +774,37 @@ describe("ClientSetupDialog", () => {
       "~/.claude/settings.json",
     );
     expect(prompt.textContent).not.toContain("里的");
+    // Every row says what the setting holds now and after the write.
+    const columns = place.querySelector(
+      '[data-slot="client-confirmation-keys"]',
+    )?.firstElementChild;
+    expect(
+      [...(columns?.children ?? [])].map((cell) => cell.textContent),
+    ).toEqual(["设置", "现在", "写入后"]);
     expect(keyRows(place)).toEqual([
-      ["env.ANTHROPIC_AUTH_TOKEN", ""],
-      ["env.ANTHROPIC_BASE_URL", ""],
-      ["env.ANTHROPIC_DEFAULT_FABLE_MODEL", "claude-opus-5-5"],
-      ["env.ANTHROPIC_DEFAULT_FABLE_MODEL_NAME", "claude-opus-5-5"],
+      ["env.ANTHROPIC_AUTH_TOKEN", "sk-o…789", "astr…AA0"],
+      [
+        "env.ANTHROPIC_BASE_URL",
+        "https://relay.example/v1",
+        "http://localhost:18317",
+      ],
+      [
+        "env.ANTHROPIC_DEFAULT_FABLE_MODEL",
+        "claude-opus-5-5",
+        "claude-sonnet-4-5",
+      ],
+      [
+        "env.ANTHROPIC_DEFAULT_HAIKU_MODEL",
+        "claude-opus-5-5",
+        "claude-sonnet-4-5",
+      ],
     ]);
     await click(button("再显示 5 项", prompt));
     expect(keyRows(place)).toHaveLength(9);
     expect(keyRows(place)[8]).toEqual([
       "env.ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",
       "claude-opus-5-5",
+      "删除",
     ]);
     expect(() => button("再显示 5 项", prompt)).toThrow("Missing button");
   });
@@ -834,7 +865,9 @@ describe("ClientSetupDialog", () => {
             {
               path: "/Users/me/.claude/settings.json",
               key: "env.ANTHROPIC_API_KEY",
-              current: null,
+              current: "…12",
+              next: null,
+              removed: true,
             },
           ],
           gateway: null,
@@ -1314,6 +1347,8 @@ describe("ClientSetupDialog", () => {
               path: "/Users/me/.claude/settings.json",
               key: "env.ANTHROPIC_BASE_URL",
               current: "https://api.example.com",
+              next: "http://localhost:18317",
+              removed: false,
             },
           ],
           gateway: null,

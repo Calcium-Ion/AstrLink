@@ -11,7 +11,7 @@ use super::{
     config::Config,
     format::env::closing_quote,
     gateway::{local_origin, reveal_access_token, token_summary},
-    models::{catalog_for, official_details, valid_model, Catalog, Models, Selection},
+    models::{catalog_for, official_details, Catalog, Models, Selection},
     plan::{plan_restore, plan_write_with, Removal},
     records::read_records,
 };
@@ -42,24 +42,41 @@ pub(crate) fn secret_name(name: &str) -> bool {
         && name != "selectedtype"
 }
 
-/// A replaced value worth showing: a model or similar choice, never a
-/// credential or an address that may carry one.
-pub(crate) fn shown_value(path: &str, value: Option<&str>) -> Option<String> {
+/// A value as a confirmation shows it: a credential by its ends only, as
+/// the diff does; an address without the user, password and query that may
+/// carry one; anything else as it is. `None` for a value that is not one
+/// line of text, like an object, or is empty.
+pub(crate) fn displayed_value(path: &str, value: &str) -> Option<String> {
+    const LONGEST: usize = 200;
+    let value = value.trim();
+    if value.is_empty() || value.contains(['\n', '\r']) || value.starts_with(['{', '[']) {
+        return None;
+    }
     let name = path.rsplit('.').next().unwrap_or(path);
-    let lower = name.to_ascii_lowercase();
-    let plain = lower.contains("model")
-        || matches!(
-            name,
-            "selectedType"
-                | "model_provider"
-                | "primary"
-                | "wire_api"
-                | "api"
-                | "defaultProvider"
-                | "model_reasoning_effort"
-        );
-    let value = value?;
-    (plain && !secret_name(name) && valid_model(value)).then(|| value.to_string())
+    if secret_name(name) {
+        return Some(mask(value));
+    }
+    let shown = match reqwest::Url::parse(value) {
+        Ok(mut url)
+            if matches!(url.scheme(), "http" | "https" | "ws" | "wss")
+                && (!url.username().is_empty()
+                    || url.password().is_some()
+                    || url.query().is_some()
+                    || url.fragment().is_some()) =>
+        {
+            let _ = url.set_username("");
+            let _ = url.set_password(None);
+            url.set_query(None);
+            url.set_fragment(None);
+            url.to_string()
+        }
+        _ => value.to_string(),
+    };
+    Some(if shown.chars().count() > LONGEST {
+        format!("{}…", shown.chars().take(LONGEST).collect::<String>())
+    } else {
+        shown
+    })
 }
 
 /// A secret shown by its ends only.

@@ -1165,6 +1165,8 @@ describe("desktop bridge contract", () => {
               path: "/Users/me/.codex/config.toml",
               key: "model_provider",
               current: "openai",
+              next: "astrlink",
+              removed: false,
             },
           ],
           gateway: "http://localhost:8317/v1",
