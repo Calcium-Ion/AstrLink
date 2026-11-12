@@ -243,6 +243,124 @@ const linkProviderNames: Record<string, string> = {
  * Translated text whose `code` placeholders render as code, such as a file
  * and the key inside it; `plain` ones stay text.
  */
+/** Rows a place's confirmation shows before the rest folds away. */
+const confirmRowsShown = 4;
+
+/**
+ * One place in the write confirmation: the client and where its config
+ * lives, what the write changes, and the settings AstrLink did not write,
+ * one per line with the value they hold now.
+ */
+function ConfirmationPlace({
+  changes,
+  dir,
+  fileOf,
+  item,
+  label,
+  pathOf,
+}: {
+  changes: ReactNode[];
+  dir: string;
+  fileOf: (path: string) => string;
+  item: ClientConfigConfirmation;
+  label: string;
+  pathOf: (path: string) => string;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const paths = [...new Set(item.keys.map((key) => key.path))];
+  // A short list shows whole; folding one or two rows away saves nothing.
+  const folds = !expanded && item.keys.length > confirmRowsShown + 2;
+  const keys = folds ? item.keys.slice(0, confirmRowsShown) : item.keys;
+  const groups = paths
+    .map((path) => ({ path, keys: keys.filter((key) => key.path === path) }))
+    .filter((group) => group.keys.length > 0);
+  const where = paths.length === 1 ? pathOf(paths[0]) : dir;
+  return (
+    <section
+      className="min-w-0 rounded-md border text-xs"
+      data-slot="client-confirmation"
+    >
+      <header className="flex min-w-0 items-center gap-2 px-2.5 py-2 font-medium text-foreground">
+        <ClientMark client={item.client} size={16} />
+        <span className="shrink-0">{label}</span>
+        <code
+          className="ml-auto min-w-0 truncate font-mono text-micro font-normal text-muted-foreground"
+          title={where}
+        >
+          {where}
+        </code>
+      </header>
+      {changes.length > 0 ? (
+        <ul className="grid gap-0.5 border-t px-2.5 py-2 text-text-secondary">
+          {changes.map((change, index) => (
+            <li key={index}>{change}</li>
+          ))}
+        </ul>
+      ) : null}
+      {item.keys.length > 0 ? (
+        <div className="border-t" data-slot="client-confirmation-keys">
+          <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,9rem)] gap-3 px-2.5 pt-1.5 pb-0.5 text-micro text-muted-foreground">
+            <span>{i18n.t("clientSetup.confirm.setting")}</span>
+            <span>{i18n.t("clientSetup.confirm.now")}</span>
+          </div>
+          {groups.map((group) => (
+            <div key={group.path} data-slot="client-confirmation-file">
+              {paths.length > 1 ? (
+                <div className="px-2.5 pt-1.5 font-mono text-micro text-muted-foreground">
+                  {fileOf(group.path)}
+                </div>
+              ) : null}
+              <dl>
+                {group.keys.map((key) => (
+                  <div
+                    key={key.key}
+                    className="grid grid-cols-[minmax(0,1fr)_minmax(0,9rem)] gap-3 px-2.5 py-0.5"
+                  >
+                    <dt className="min-w-0">
+                      <code
+                        className="block truncate font-mono text-foreground"
+                        title={key.key}
+                      >
+                        {key.key}
+                      </code>
+                    </dt>
+                    <dd className="min-w-0">
+                      {key.current === null ? null : (
+                        <code
+                          className="block truncate font-mono text-muted-foreground"
+                          title={key.current}
+                        >
+                          {key.current}
+                        </code>
+                      )}
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+            </div>
+          ))}
+          {folds ? (
+            <Button
+              className="mx-1 mb-1 text-muted-foreground"
+              onClick={() => setExpanded(true)}
+              size="xs"
+              type="button"
+              variant="ghost"
+            >
+              <ChevronDown aria-hidden="true" />
+              {i18n.t("clientSetup.confirm.more", {
+                count: item.keys.length - keys.length,
+              })}
+            </Button>
+          ) : (
+            <div className="h-1.5" />
+          )}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 function withCode(
   key: string,
   code: Record<string, string>,
@@ -2637,72 +2755,43 @@ function DesktopClientSetupDialog({
             )}
             <div className="grid max-h-[min(22rem,50dvh)] gap-2 overflow-y-auto text-left">
               {confirmItems.map((item) => {
-                const client = labelOf(item);
                 const home = homeDirOf(item);
                 const previous = tokenChoices.find(
                   (choice) => choice.id === item.token_id,
                 )?.name;
+                const client = clientLabel(item.client);
+                const changes = [
+                  item.remove ? t("clientSetup.confirm.remove") : null,
+                  item.token_id
+                    ? previous
+                      ? t("clientSetup.confirm.token", {
+                          current: currentToken.name,
+                          previous,
+                          client,
+                        })
+                      : t("clientSetup.confirm.unknownToken", {
+                          current: currentToken.name,
+                          client,
+                        })
+                    : null,
+                  item.gateway
+                    ? withCode(
+                        "clientSetup.confirm.gateway",
+                        { url: item.gateway },
+                        { client },
+                      )
+                    : null,
+                ].filter((change) => change !== null);
                 return (
-                  <div
+                  <ConfirmationPlace
                     key={placeKey(item)}
-                    className="grid gap-1 rounded-md border px-2.5 py-2"
-                    data-slot="client-confirmation"
-                  >
-                    <div className="flex min-w-0 items-center gap-2 text-xs font-medium text-foreground">
-                      <ClientMark client={item.client} size={16} />
-                      <span className="truncate">{client}</span>
-                      <code className="ml-auto truncate font-mono text-micro font-normal text-muted-foreground">
-                        {homePath(item.dir, home)}
-                      </code>
-                    </div>
-                    <ul className="grid gap-0.5 pl-6 text-xs text-text-secondary">
-                      {item.remove ? (
-                        <li>{t("clientSetup.confirm.remove")}</li>
-                      ) : null}
-                      {item.token_id ? (
-                        <li>
-                          {previous
-                            ? t("clientSetup.confirm.token", {
-                                current: currentToken.name,
-                                previous,
-                                client: clientLabel(item.client),
-                              })
-                            : t("clientSetup.confirm.unknownToken", {
-                                current: currentToken.name,
-                                client: clientLabel(item.client),
-                              })}
-                        </li>
-                      ) : null}
-                      {item.gateway ? (
-                        <li>
-                          {withCode(
-                            "clientSetup.confirm.gateway",
-                            { url: item.gateway },
-                            { client: clientLabel(item.client) },
-                          )}
-                        </li>
-                      ) : null}
-                      {item.keys.map((key) => (
-                        <li
-                          key={`${key.path}\n${key.key}`}
-                          className="break-all"
-                        >
-                          {withCode(
-                            key.current === null
-                              ? "clientSetup.confirm.key"
-                              : "clientSetup.confirm.keyWithValue",
-                            {
-                              file: confirmFile(key.path, item.dir, home),
-                              key: key.key,
-                            },
-                            key.current === null
-                              ? {}
-                              : { current: key.current },
-                          )}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
+                    changes={changes}
+                    dir={homePath(item.dir, home)}
+                    fileOf={(path) => confirmFile(path, item.dir, home)}
+                    pathOf={(path) => homePath(path, home)}
+                    item={item}
+                    label={labelOf(item)}
+                  />
                 );
               })}
             </div>

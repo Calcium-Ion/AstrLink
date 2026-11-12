@@ -3841,7 +3841,7 @@
     "switchTitle": "改用「{{current}}」？",
     "switchConfirm": "改用并写入",
     "switchAndReplaceTitle": "改用「{{current}}」并替换现有设置？",
-    "switchAndReplaceBody": "以下带文件名的设置不是 AstrLink 写入的。继续会替换它们；移除 AstrLink 的配置时，会恢复成现在的值。",
+    "switchAndReplaceBody": "表中的设置不是 AstrLink 写入的。继续会替换它们；移除 AstrLink 的配置时，会恢复成现在的值。",
     "remove": "移除",
     "removing": "正在移除…",
     "removeTitle": "移除 {{client}} 中的配置？",
@@ -3938,8 +3938,9 @@
       "token": "改用「{{current}}」，「{{previous}}」不再用于 {{client}}",
       "unknownToken": "改用「{{current}}」，之前的令牌不再用于 {{client}}",
       "gateway": "改连这个 AstrLink，{{url}} 不再收到 {{client}} 的请求",
-      "key": "{{file}} 里的 {{key}}",
-      "keyWithValue": "{{file}} 里的 {{key}}（现在是 {{current}}）"
+      "setting": "设置",
+      "now": "现在的值",
+      "more": "再显示 {{count}} 项"
     },
     "result": {
       "ok": "已完成",

@@ -259,6 +259,26 @@ function dialog(): HTMLElement {
   return match;
 }
 
+/**
+ * A confirmed place's settings, one [name, current value] pair per row; a
+ * file heading shows as [file, ""].
+ */
+function keyRows(place: Element): string[][] {
+  const files = place.querySelectorAll(
+    '[data-slot="client-confirmation-file"]',
+  );
+  return [...files].flatMap((group) =>
+    [...group.children].flatMap((child) =>
+      child.tagName === "DL"
+        ? [...child.children].map((row) => [
+            row.querySelector("dt")?.textContent ?? "",
+            row.querySelector("dd")?.textContent ?? "",
+          ])
+        : [[child.textContent ?? "", ""]],
+    ),
+  );
+}
+
 function confirmation(): HTMLElement | null {
   return document.querySelector<HTMLElement>('[role="alertdialog"]');
 }
@@ -645,18 +665,24 @@ describe("ClientSetupDialog", () => {
     const prompt = confirmation();
     expect(prompt?.textContent).toContain("改用「工作机」并替换现有设置？");
     expect(prompt?.textContent).toContain(
-      "以下带文件名的设置不是 AstrLink 写入的。继续会替换它们；移除 AstrLink 的配置时，会恢复成现在的值。",
+      "表中的设置不是 AstrLink 写入的。继续会替换它们；移除 AstrLink 的配置时，会恢复成现在的值。",
     );
     expect(prompt?.textContent).not.toContain("以下设置不是 AstrLink 写入的");
     const groups = prompt?.querySelectorAll(
       '[data-slot="client-confirmation"]',
     );
     expect(groups).toHaveLength(2);
-    expect(groups?.[0].textContent).toContain("~/.gemini");
-    expect(groups?.[0].textContent).toContain(".env 里的 GEMINI_API_KEY");
-    expect(groups?.[0].textContent).toContain(
-      "settings.json 里的 security.auth.selectedType（现在是 oauth-personal）",
+    // Gemini's settings sit in two files: each file heads its own rows.
+    const gemini = keyRows(groups![0]);
+    expect(groups?.[0].querySelector("header")?.textContent).toContain(
+      "~/.gemini",
     );
+    expect(gemini).toEqual([
+      [".env", ""],
+      ["GEMINI_API_KEY", ""],
+      ["settings.json", ""],
+      ["security.auth.selectedType", "oauth-personal"],
+    ]);
     expect(groups?.[1].textContent).toContain(
       "改用「工作机」，「家里」不再用于 Pi",
     );
@@ -673,6 +699,83 @@ describe("ClientSetupDialog", () => {
       items: bridgeMocks.applyClientConfigs.mock.calls[0][0].items,
     });
     expect(dialog().textContent).toContain("已写入 3 个客户端");
+  });
+
+  it("lists many replaced settings one per line under the file, folding the rest", async () => {
+    const models = [
+      "FABLE_MODEL",
+      "FABLE_MODEL_NAME",
+      "HAIKU_MODEL",
+      "HAIKU_MODEL_NAME",
+      "OPUS_MODEL",
+      "OPUS_MODEL_NAME",
+      "SONNET_MODEL_NAME",
+    ].map((name) => ({
+      path: "/Users/me/.claude/settings.json",
+      key: `env.ANTHROPIC_DEFAULT_${name}`,
+      current: "claude-opus-5-5",
+    }));
+    bridgeMocks.applyClientConfigs.mockResolvedValueOnce({
+      status: "needs_confirmation",
+      items: [
+        {
+          client: "claude",
+          wsl: null,
+          dir: "/Users/me/.claude",
+          remove: false,
+          keys: [
+            {
+              path: "/Users/me/.claude/settings.json",
+              key: "env.ANTHROPIC_AUTH_TOKEN",
+              current: null,
+            },
+            {
+              path: "/Users/me/.claude/settings.json",
+              key: "env.ANTHROPIC_BASE_URL",
+              current: null,
+            },
+            ...models,
+          ],
+          gateway: null,
+          token_id: null,
+        },
+      ],
+    });
+    bridgeMocks.getClientConfigStatus.mockResolvedValue(
+      overview({
+        codex: { detected: false },
+        gemini: { detected: false },
+        opencode: { detected: false },
+        openclaw: { detected: false },
+        pi: { detected: false },
+      }),
+    );
+    await renderDialog();
+    await click(button("写入 1 个客户端"));
+
+    const prompt = confirmation()!;
+    expect(prompt.textContent).toContain("替换现有设置？");
+    const [place] = prompt.querySelectorAll(
+      '[data-slot="client-confirmation"]',
+    );
+    // The file is named once, in the place's heading, not on every line.
+    expect(place.querySelector("header")?.textContent).toContain(
+      "~/.claude/settings.json",
+    );
+    expect(prompt.textContent).not.toContain("里的");
+    expect(keyRows(place)).toEqual([
+      ["env.ANTHROPIC_AUTH_TOKEN", ""],
+      ["env.ANTHROPIC_BASE_URL", ""],
+      ["env.ANTHROPIC_DEFAULT_FABLE_MODEL", "claude-opus-5-5"],
+      ["env.ANTHROPIC_DEFAULT_FABLE_MODEL_NAME", "claude-opus-5-5"],
+    ]);
+    await click(button("再显示 5 项", prompt));
+    expect(keyRows(place)).toHaveLength(9);
+    expect(keyRows(place)[8]).toEqual([
+      "env.ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",
+      "claude-opus-5-5",
+    ]);
+    expect(() => button("再显示 5 项", prompt)).toThrow("Missing button");
   });
 
   it("names a move to this token without calling AstrLink's settings someone else's", async () => {

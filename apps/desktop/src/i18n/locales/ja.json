@@ -3841,7 +3841,7 @@
     "switchTitle": "「{{current}}」に切り替えますか？",
     "switchConfirm": "切り替えて書き込む",
     "switchAndReplaceTitle": "「{{current}}」に切り替え、既存の設定を置き換えますか？",
-    "switchAndReplaceBody": "以下のファイル名付きの設定は AstrLink が書き込んだものではありません。続行すると置き換えます。AstrLink の設定を取り除くと、今の値に戻ります。",
+    "switchAndReplaceBody": "表の設定は AstrLink が書き込んだものではありません。続行すると置き換えます。AstrLink の設定を取り除くと、今の値に戻ります。",
     "remove": "取り除く",
     "removing": "取り除いています…",
     "removeTitle": "{{client}} の設定を取り除きますか？",
@@ -3938,8 +3938,9 @@
       "token": "「{{current}}」に切り替え、「{{previous}}」は {{client}} で使われなくなります",
       "unknownToken": "「{{current}}」に切り替え、以前のトークンは {{client}} で使われなくなります",
       "gateway": "この AstrLink に接続し、{{url}} は {{client}} のリクエストを受け取らなくなります",
-      "key": "{{file}} の {{key}}",
-      "keyWithValue": "{{file}} の {{key}}（現在は {{current}}）"
+      "setting": "設定",
+      "now": "今の値",
+      "more": "さらに {{count}} 件表示"
     },
     "result": {
       "ok": "完了",

@@ -3841,7 +3841,7 @@
     "switchTitle": "Switch to “{{current}}”?",
     "switchConfirm": "Switch and write",
     "switchAndReplaceTitle": "Switch to “{{current}}” and replace existing settings?",
-    "switchAndReplaceBody": "AstrLink did not write the settings listed with a file name below. Continuing replaces them; removing AstrLink’s config later restores their current values.",
+    "switchAndReplaceBody": "AstrLink did not write the settings in the tables below. Continuing replaces them; removing AstrLink’s config later restores their current values.",
     "remove": "Remove",
     "removing": "Removing…",
     "removeTitle": "Remove the {{client}} config?",
@@ -3938,8 +3938,9 @@
       "token": "Switch to “{{current}}”; “{{previous}}” is no longer used for {{client}}",
       "unknownToken": "Switch to “{{current}}”; the previous token is no longer used for {{client}}",
       "gateway": "Connect to this AstrLink; {{url}} stops receiving {{client}}’s requests",
-      "key": "{{key}} in {{file}}",
-      "keyWithValue": "{{key}} in {{file}} (now {{current}})"
+      "setting": "Setting",
+      "now": "Current value",
+      "more": "Show {{count}} more"
     },
     "result": {
       "ok": "Done",
