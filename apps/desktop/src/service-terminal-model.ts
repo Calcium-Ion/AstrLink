@@ -1,3 +1,4 @@
+import { defaultModel } from "./client-delivery-model";
 import type { Service } from "./service-model";
 
 /** Clients a terminal session can start; AstrLink sets up both itself. */
@@ -177,7 +178,7 @@ export function suggestedClient(service: Service): TerminalClient {
 /**
  * The model a session starts with: the last one chosen for this provider and
  * client, else the client's own when the provider serves models like it,
- * else the provider's first model.
+ * else the provider's default model (see `defaultModel`).
  */
 export function suggestedModel(
   service: Service,
@@ -190,5 +191,5 @@ export function suggestedModel(
   if (options.some((model) => model.startsWith(ownModelPrefix[client]))) {
     return "";
   }
-  return options[0] ?? "";
+  return defaultModel(options, [{ kind: service.kind, models: options }]);
 }

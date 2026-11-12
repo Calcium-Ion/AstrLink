@@ -40,6 +40,7 @@ import {
 } from "./client-config-model";
 import {
   builtinClientProtocols,
+  defaultModel,
   modelCandidates,
   requiredEntry,
 } from "./client-delivery-model";
@@ -159,26 +160,30 @@ export function GettingStarted({
       ? candidate.startsWith("openai.")
       : candidate === "anthropic.messages",
   );
-  // The snippet shows the first model a client reaches through an entry its
-  // provider already has, as the other tools view does. Every client but
-  // Claude Code needs one to start.
+  // The snippet shows the default model (see `defaultModel`) of those a
+  // client reaches through an entry its provider already has, as the other
+  // tools view does. Every client but Claude Code needs one to start.
   const snippetCatalog = { services: catalog.items, redirects: [] };
   const snippetModel =
     manualClient === "other"
       ? undefined
-      : modelCandidates(
-          snippetCatalog,
-          [builtinClientProtocols[manualClient]],
-          conversionEngine,
-        ).find(
-          (model) =>
-            !requiredEntry(
-              snippetCatalog,
-              model,
-              builtinClientProtocols[manualClient],
-              conversionEngine,
-            ),
+      : defaultModel(
+          modelCandidates(
+            snippetCatalog,
+            [builtinClientProtocols[manualClient]],
+            conversionEngine,
+          ).filter(
+            (model) =>
+              !requiredEntry(
+                snippetCatalog,
+                model,
+                builtinClientProtocols[manualClient],
+                conversionEngine,
+              ),
+          ),
+          catalog.items,
         );
+  const shownModel = defaultModel(models, catalog.items);
   const snippetTarget: ClientConfigTarget | null =
     manualClient !== "other" &&
     token &&
@@ -520,10 +525,10 @@ export function GettingStarted({
                             </Button>
                           </div>
                           <p>{t("onboarding.modelHelp")}</p>
-                          {models[0] ? (
+                          {shownModel ? (
                             <CopyableValue
                               label={t("onboarding.model")}
-                              value={models[0]}
+                              value={shownModel}
                               placeholder=""
                               copyLabel={t("onboarding.copyModel")}
                             />

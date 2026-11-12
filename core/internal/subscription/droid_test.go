@@ -84,7 +84,7 @@ func TestDroidModelsListsTheDocumentedCatalog(t *testing.T) {
 		}
 		seen[model] = true
 	}
-	for _, want := range []string{"claude-opus-4-6", "gpt-5.4", "grok-4.7", "glm-5.2", "kimi-k3", "minimax-m3"} {
+	for _, want := range []string{"claude-fable-5.2", "claude-haiku-5-5", "claude-opus-4-6", "gpt-5.4", "grok-4.7", "glm-5.2", "kimi-k3", "minimax-m3"} {
 		if !seen[want] {
 			t.Fatalf("catalog lacks %q: %v", want, models)
 		}

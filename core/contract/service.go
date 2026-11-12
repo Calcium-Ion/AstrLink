@@ -239,12 +239,16 @@ type Service struct {
 }
 
 // copilotClaudeRedirects maps the model ids Claude Code sends to the dotted
-// ids GitHub Copilot lists. Keep it in step with serviceBuiltinRedirects in
+// ids GitHub Copilot lists, newest first. Ids without a dot (claude-opus-5)
+// need no rule. Keep it in step with serviceBuiltinRedirects in
 // apps/desktop/src/service-model.ts.
 var copilotClaudeRedirects = []ModelRedirect{
+	{From: "claude-fable-5-2", To: "claude-fable-5.2", Enabled: true},
 	{From: "claude-fable-5-1", To: "claude-fable-5.1", Enabled: true},
 	{From: "claude-opus-5-5", To: "claude-opus-5.5", Enabled: true},
 	{From: "claude-sonnet-5-5", To: "claude-sonnet-5.5", Enabled: true},
+	{From: "claude-haiku-5-5", To: "claude-haiku-5.5", Enabled: true},
+	{From: "claude-opus-4-8", To: "claude-opus-4.8", Enabled: true},
 	{From: "claude-opus-4-6", To: "claude-opus-4.6", Enabled: true},
 	{From: "claude-sonnet-4-6", To: "claude-sonnet-4.6", Enabled: true},
 	{From: "claude-opus-4-5", To: "claude-opus-4.5", Enabled: true},

@@ -1473,7 +1473,7 @@
     "fetchList": "Fetch model list",
     "addModel": "Add model",
     "pendingIds": "Model IDs to add",
-    "bulkPlaceholder": "One model ID per line, for example:\ngpt-5\nclaude-sonnet-4-5",
+    "bulkPlaceholder": "One model ID per line, for example:\ngpt-5\nclaude-sonnet-5-5",
     "singlePlaceholder": "Enter a model ID and press Return",
     "singleMode": "Single line",
     "bulkMode": "Paste many",

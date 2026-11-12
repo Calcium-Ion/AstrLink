@@ -1473,7 +1473,7 @@
     "fetchList": "モデル一覧を取得",
     "addModel": "モデルを追加",
     "pendingIds": "追加するモデル ID",
-    "bulkPlaceholder": "1 行に 1 つのモデル ID。例:\ngpt-5\nclaude-sonnet-4-5",
+    "bulkPlaceholder": "1 行に 1 つのモデル ID。例:\ngpt-5\nclaude-sonnet-5-5",
     "singlePlaceholder": "モデル ID を入力して Return キーを押す",
     "singleMode": "1 行",
     "bulkMode": "複数を貼り付け",

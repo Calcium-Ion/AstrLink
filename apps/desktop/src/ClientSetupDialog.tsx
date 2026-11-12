@@ -97,6 +97,7 @@ import {
 import {
   checkedByDefault,
   clientMatches,
+  defaultModel,
   draftModels,
   draftProblem,
   entryTarget,
@@ -658,6 +659,7 @@ function DesktopClientSetupDialog({
           : status.models,
       },
       candidatesOf(status.client),
+      catalog.services,
     );
   const draftOf = (status: ClientConfigStatus) =>
     drafts[placeKey(status)] ?? baseDraft(status);
@@ -831,7 +833,8 @@ function DesktopClientSetupDialog({
       ? selected.entry
       : null;
   const guideModel = guideEntry
-    ? (guideModels[guideEntry.id] ?? candidatesOf(guideEntry.id)[0] ?? "")
+    ? (guideModels[guideEntry.id] ??
+      defaultModel(candidatesOf(guideEntry.id), catalog.services))
     : "";
 
   // Official details: Pi's limits for its default model, the reasoning

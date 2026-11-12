@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { ClientConfigStatus } from "./client-config-model";
 import {
   autoFillClaude,
+  defaultModel,
   checkedByDefault,
   clientMatches,
   draftModels,
@@ -12,6 +13,7 @@ import {
   leadPlace,
   modelCandidates,
   modelProtocol,
+  newestGemini,
   newestModel,
   placeKey,
   protocolBaseURL,
@@ -96,6 +98,107 @@ describe("Claude Code model names", () => {
       sonnetModel: "",
       opusModel: "",
     });
+  });
+
+  it("reads the current lineup and Copilot's dotted ids", () => {
+    const anthropic = [
+      "claude-fable-5",
+      "claude-fable-5-1",
+      "claude-fable-5-2",
+      "claude-haiku-4-5-20251001",
+      "claude-haiku-5-5",
+      "claude-opus-4-8",
+      "claude-opus-5",
+      "claude-opus-5-5",
+      "claude-sonnet-4-6",
+      "claude-sonnet-5",
+      "claude-sonnet-5-5",
+    ];
+    expect(autoFillClaude(anthropic)).toEqual({
+      model: "claude-sonnet-5-5",
+      haikuModel: "claude-haiku-5-5",
+      sonnetModel: "claude-sonnet-5-5",
+      opusModel: "claude-opus-5-5",
+    });
+    expect(newestModel(anthropic, "fable")).toBe("claude-fable-5-2");
+    const copilot = [
+      "claude-fable-5.1",
+      "claude-fable-5.2",
+      "claude-haiku-4.5",
+    ];
+    expect(newestModel(copilot, "fable")).toBe("claude-fable-5.2");
+    expect(newestModel(copilot, "haiku")).toBe("claude-haiku-4.5");
+  });
+});
+
+describe("default model", () => {
+  it("picks the newest Gemini text model over media and older lines", () => {
+    const gemini = [
+      "gemini-2.5-flash",
+      "gemini-2.5-pro",
+      "gemini-3-flash-preview",
+      "gemini-3.1-pro-preview",
+      "gemini-3.8-flash",
+      "gemini-3.8-flash-lite-tts",
+      "gemini-3.8-live",
+      "gemini-4-argon",
+      "gemini-4-carbon",
+      "gemini-embedding-2",
+      "gemini-flash-latest",
+    ];
+    expect(newestGemini(gemini)).toBe("gemini-4-argon");
+    expect(newestGemini(["gemini-3.8-flash-lite", "gemini-3.8-flash"])).toBe(
+      "gemini-3.8-flash",
+    );
+    expect(
+      newestGemini(["gemini-3.8-flash", "gemini-4.5-live", "gemini-5-tts"]),
+    ).toBe("gemini-3.8-flash");
+    expect(newestGemini(["gemini-3.1-pro-preview", "gemini-3.1-pro"])).toBe(
+      "gemini-3.1-pro",
+    );
+    expect(newestGemini(["gemini-embedding-001", "text-embedding"])).toBe(
+      undefined,
+    );
+    expect(defaultModel(gemini)).toBe("gemini-4-argon");
+  });
+
+  it("moves a sorted Claude list to its newest main model and keeps others first", () => {
+    expect(
+      defaultModel([
+        "claude-haiku-4-5",
+        "claude-opus-5-5",
+        "claude-sonnet-5-5",
+      ]),
+    ).toBe("claude-sonnet-5-5");
+    expect(defaultModel(["claude-fable-5", "claude-fable-5-2"])).toBe(
+      "claude-fable-5-2",
+    );
+    expect(defaultModel(["deepseek-v4", "claude-sonnet-5-5"])).toBe(
+      "deepseek-v4",
+    );
+    expect(defaultModel(["claude-custom"])).toBe("claude-custom");
+    expect(defaultModel([])).toBe("");
+  });
+
+  it("follows the provider's kind when the sorted list starts with an agent", () => {
+    const google = [
+      "antigravity-preview-09-2026",
+      "deep-research-preview-04-2026",
+      "gemini-2.5-flash",
+      "gemini-3.8-flash",
+    ];
+    expect(defaultModel(google)).toBe("antigravity-preview-09-2026");
+    expect(defaultModel(google, [{ kind: "gemini", models: google }])).toBe(
+      "gemini-3.8-flash",
+    );
+    expect(
+      defaultModel(google, [{ kind: "openai_compatible", models: google }]),
+    ).toBe("antigravity-preview-09-2026");
+    expect(
+      initialDraft({ client: "gemini", models: {} }, google, [
+        { kind: "gemini", models: google },
+      ]).model,
+    ).toBe("gemini-3.8-flash");
   });
 });
 
@@ -209,6 +312,18 @@ describe("drafts and default checks", () => {
         ["a", "b"],
       ),
     ).toMatchObject({ model: "b", reasoningEffort: "high" });
+    expect(
+      initialDraft({ client: "gemini", models: {} }, [
+        "gemini-2.5-pro",
+        "gemini-4-carbon",
+      ]).model,
+    ).toBe("gemini-4-carbon");
+    expect(
+      initialDraft({ client: "gemini", models: { model: "gemini-2.5-pro" } }, [
+        "gemini-2.5-pro",
+        "gemini-4-carbon",
+      ]).model,
+    ).toBe("gemini-2.5-pro");
     // Claude Code fills its tiers only while the config holds none.
     expect(
       initialDraft({ client: "claude", models: { opusModel: "x" } }, [

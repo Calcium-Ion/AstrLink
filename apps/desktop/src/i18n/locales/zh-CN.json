@@ -1473,7 +1473,7 @@
     "fetchList": "获取模型列表",
     "addModel": "添加模型",
     "pendingIds": "待添加模型 ID",
-    "bulkPlaceholder": "每行一个模型 ID，例如：\ngpt-5\nclaude-sonnet-4-5",
+    "bulkPlaceholder": "每行一个模型 ID，例如：\ngpt-5\nclaude-sonnet-5-5",
     "singlePlaceholder": "输入模型 ID，回车添加",
     "singleMode": "单行输入",
     "bulkMode": "批量粘贴",

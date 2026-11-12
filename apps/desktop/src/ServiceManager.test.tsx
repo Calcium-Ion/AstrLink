@@ -2414,8 +2414,8 @@ describe("ServiceManager", () => {
         .click(),
     );
     // Built-in rows show before the account lists any model.
-    expect(container.querySelectorAll("[data-redirect-row]")).toHaveLength(9);
-    expect(container.textContent).toContain("claude-sonnet-4-6");
+    expect(container.querySelectorAll("[data-redirect-row]")).toHaveLength(12);
+    expect(container.textContent).toContain("claude-fable-5-2");
     await submit();
     expect(copilotRiskDialog()?.textContent).toContain("封禁 GitHub 账号");
     expect(bridgeMocks.createService).not.toHaveBeenCalled();
@@ -2684,7 +2684,7 @@ describe("ServiceManager", () => {
         )!
         .click(),
     );
-    expect(container.querySelectorAll("[data-redirect-row]")).toHaveLength(10);
+    expect(container.querySelectorAll("[data-redirect-row]")).toHaveLength(13);
     const sonnet = container.querySelector<HTMLButtonElement>(
       '[role="switch"][aria-label="启用 claude-sonnet-4-6 的重定向"]',
     );
