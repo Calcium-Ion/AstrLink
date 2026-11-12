@@ -220,7 +220,7 @@ import {
   type SyncStatus,
 } from "./sync-model";
 
-function hasNativeBridge(): boolean {
+export function hasNativeBridge(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
@@ -358,6 +358,23 @@ export async function trayPopoverResize(
 ): Promise<void> {
   requireNativeBridge();
   await invoke<void>("tray_popover_resize", { height, devicePixelRatio });
+}
+
+/**
+ * Shortens a freshly placed main window to the overview's first two modules,
+ * `height` CSS pixels drawn at `devicePixelRatio`. The host applies it once,
+ * never makes the window taller, and leaves a window the operator already
+ * moved or resized alone.
+ */
+export async function fitMainWindowToContent(
+  height: number,
+  devicePixelRatio: number,
+): Promise<boolean> {
+  requireNativeBridge();
+  return invoke<boolean>("fit_main_window_to_content", {
+    height,
+    devicePixelRatio,
+  });
 }
 
 export async function trayPopoverHide(): Promise<void> {

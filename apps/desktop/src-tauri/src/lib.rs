@@ -639,6 +639,22 @@ fn tray_popover_resize(
     tray::resize_popover(&app, height, device_pixel_ratio)
 }
 
+/// Shortens a freshly placed main window to the overview's first two
+/// modules, `height` CSS pixels drawn at `device_pixel_ratio`. Applies once
+/// and never makes the window taller.
+#[tauri::command]
+fn fit_main_window_to_content(
+    app: tauri::AppHandle,
+    height: f64,
+    device_pixel_ratio: f64,
+) -> Result<bool, String> {
+    let Some(window) = app.get_webview_window("main") else {
+        return Ok(false);
+    };
+    startup_window::fit_content_height(&window, height, device_pixel_ratio)
+        .map_err(|error| error.to_string())
+}
+
 #[tauri::command]
 fn tray_popover_hide(app: tauri::AppHandle) {
     tray::dismiss_popover(&app);
@@ -2793,6 +2809,7 @@ pub fn run() {
             tray_state,
             tray_action,
             tray_popover_resize,
+            fit_main_window_to_content,
             tray_popover_hide,
             take_tray_navigation,
             set_main_window_unsaved,

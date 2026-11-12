@@ -51,6 +51,7 @@ import { useOverviewLayout, type OverviewModuleId } from "./overview-layout";
 import { STAR_TRAIL_RANGES } from "./star-trail-model";
 import { UsageStarTrail, UsageStarTrailSkeleton } from "./UsageStarTrail";
 import { LiveCrew } from "./LiveCrew";
+import { useInitialWindowFit } from "./main-window-fit";
 import { RequestSky } from "./RequestSky";
 import { useWorkspaceSnapshot } from "./workspace-snapshots";
 import { PaginatedList } from "@/components/PaginatedList";
@@ -219,6 +220,7 @@ export function Overview({
   const [editingLayout, setEditingLayout] = useState(false);
   const layout = useOverviewLayout();
   const footerRef = useRef<HTMLDivElement>(null);
+  useInitialWindowFit(footerRef, usage.status);
   useLayoutEffect(() => {
     if (!showOnboardingHint) return;
     const scroller = footerRef.current?.closest<HTMLElement>(

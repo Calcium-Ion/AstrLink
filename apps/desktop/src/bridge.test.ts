@@ -32,6 +32,7 @@ import {
   deletePrivacyModelInstallation,
   deleteService,
   dryRunPrivacyPolicy,
+  fitMainWindowToContent,
   getCoreStatus,
   getPreferences,
   getPrivacyModelCatalog,
@@ -629,6 +630,15 @@ describe("desktop bridge contract", () => {
     await vi.advanceTimersByTimeAsync(15_000);
     resolveNative(validSnapshot());
     await expect(result).resolves.toMatchObject({ phase: "ready" });
+  });
+
+  it("asks the host to fit the main window to the overview once", async () => {
+    invokeMock.mockResolvedValue(true);
+    await expect(fitMainWindowToContent(642, 1.25)).resolves.toBe(true);
+    expect(invokeMock).toHaveBeenCalledWith("fit_main_window_to_content", {
+      height: 642,
+      devicePixelRatio: 1.25,
+    });
   });
 
   it("forwards session kind and cursor through the native bridge", async () => {
