@@ -90,9 +90,8 @@ func TestEngineProtocolAwareRedactionFixtures(t *testing.T) {
 					"content":[
 						{"type":"input_text","text":"Card 4539 1488 0343 6467"},
 						{"type":"input_image","image_url":"https://binary.example/private"}
-					],
-					"tool_call":{"arguments":"{\"email\":\"tool@example.com\"}"}
-				}]
+					]
+				},{"type":"function_call","call_id":"call_1","name":"lookup","arguments":"{\"email\":\"tool@example.com\"}"}]
 			}`,
 			mustRedact:   []string{"admin@example.com", "4539 1488 0343 6467", "tool@example.com"},
 			mustPreserve: []string{"model@example.com", "https://binary.example/private"},

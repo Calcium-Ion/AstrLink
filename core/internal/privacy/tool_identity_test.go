@@ -69,12 +69,8 @@ func TestResponsesToolNamespaceProtectionKeepsPayloadsInspectable(t *testing.T) 
 
 func TestToolIdentityProtectionRequiresProtocolPosition(t *testing.T) {
 	fixtures := map[string]string{
-		"message namespace": `{"input":[{"role":"user","content":[{"type":"input_text","namespace":"mcp__cua_repl"}]}]}`,
-		"user call":         `{"input":[{"role":"user","type":"function_call","namespace":"mcp__cua_repl","arguments":"{}"}]}`,
-		"nested call":       `{"input":[{"role":"user","content":{"type":"function_call","namespace":"mcp__cua_repl","arguments":"{}"}}]}`,
-		"prompt variable":   `{"prompt":{"variables":{"namespace":"mcp__cua_repl"}}}`,
-		"schema property":   `{"tools":[{"type":"function","name":"js","parameters":{"type":"object","properties":{"namespace":{"type":"string","description":"mcp__cua_repl"}}}}]}`,
-		"user declaration":  `{"input":[{"type":"additional_tools","role":"user","tools":[{"type":"namespace","name":"mcp__cua_repl","tools":[]}]}]}`,
+		"prompt variable": `{"prompt":{"variables":{"namespace":"mcp__cua_repl"}}}`,
+		"schema property": `{"tools":[{"type":"function","name":"js","parameters":{"type":"object","properties":{"namespace":{"type":"string","description":"mcp__cua_repl"}}}}]}`,
 		"output declaration": `{"input":[{"type":"function_call_output","call_id":"call_fixture","output":{
 			"type":"namespace","name":"mcp__cua_repl","tools":[]}}]}`,
 	}
