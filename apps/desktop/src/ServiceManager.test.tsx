@@ -81,7 +81,7 @@ import { ServiceManager, type ServiceManagerProps } from "./ServiceManager";
 import { PROTOCOL_MODE_GUIDE_KEY } from "./ProtocolModeHelp";
 import { SERVICE_EDITOR_TOUR_KEY } from "./ServiceEditorTour";
 import { SERVICE_ORDER_GUIDE_KEY } from "./ServiceOrderHelp";
-import { parseService, type Service } from "./service-model";
+import { parseService, type Service, type ServiceKind } from "./service-model";
 import { httpServicePreset } from "./service-presets";
 import { WorkspaceSnapshotProvider } from "./workspace-snapshots";
 import type { SubscriptionUsage } from "./subscription-usage-model";
@@ -3889,11 +3889,13 @@ describe("ServiceManager", () => {
     "creates %s with API credentials and preserves its kind on reload",
     async (kind, label) => {
       const preset = httpServicePreset(kind);
+      // These presets cannot list models, so they need some typed in.
+      const listsModels = !["qwen", "glm", "doubao"].includes(kind);
       const service = parseService({
         ...gatewayService,
         name: preset.defaultName,
         kind,
-        models: [],
+        models: [`${kind}-model`],
         http: {
           base_url: preset.baseURL,
           auth: { scheme: preset.authScheme },
@@ -3902,6 +3904,11 @@ describe("ServiceManager", () => {
         capabilities: preset.capabilities,
       });
       bridgeMocks.createService.mockResolvedValue({ service, etag });
+      bridgeMocks.probeDraftServiceModels.mockResolvedValue({
+        service_id: "",
+        protocol: "openai.models",
+        model_ids: [`${kind}-model`],
+      });
       await act(async () =>
         root.render(
           <ServiceManager
@@ -3963,11 +3970,29 @@ describe("ServiceManager", () => {
             new Event("submit", { bubbles: true, cancelable: true }),
           );
       });
+      await settleSave();
+      if (!listsModels) {
+        expect(bridgeMocks.probeDraftServiceModels).not.toHaveBeenCalled();
+        expect(bridgeMocks.createService).not.toHaveBeenCalled();
+        expect(modelFetchNotice()?.textContent).toContain(
+          "这个提供商不能从上游获取模型列表",
+        );
+        await clickButton("手动填写模型");
+        await typeInto(
+          container.querySelector<HTMLInputElement>(
+            'input[aria-label="待添加模型 ID"]',
+          )!,
+          `${kind}-model`,
+        );
+        await clickButton("添加");
+        await submitServiceForm();
+        await settleSave();
+      }
       expect(bridgeMocks.createService).toHaveBeenCalledWith(
         expect.objectContaining({
           kind,
           name: preset.defaultName,
-          models: [],
+          models: [`${kind}-model`],
           capabilities: preset.capabilities,
           http: {
             base_url: preset.baseURL,
@@ -5116,6 +5141,25 @@ describe("ServiceManager", () => {
     }
   }
 
+  /** Lets a save run through its fetch, create and refresh calls. */
+  async function settleSave(): Promise<void> {
+    await act(async () => {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    });
+  }
+
+  function modelFetchNotice(): HTMLElement | null {
+    return container.querySelector<HTMLElement>(
+      '[data-testid="service-model-fetch-notice"]',
+    );
+  }
+
+  function activeEditorTab(): string | null | undefined {
+    return container
+      .querySelector('[role="tab"][data-state="active"]')
+      ?.getAttribute("data-testid");
+  }
+
   async function submitServiceForm(): Promise<void> {
     await act(async () => {
       container
@@ -6019,6 +6063,422 @@ describe("ServiceManager", () => {
         { model: "claude-opus-5-5", protocol: "anthropic.messages" },
         { model: "gpt-5.5", protocol: "openai.chat" },
       ],
+    });
+  });
+
+  describe("saving a new provider without models", () => {
+    const compatibleURL = "https://api.example.com/v1";
+    const compatible: Service = {
+      ...gatewayService,
+      id: "service_compatible",
+      name: "OpenAI 兼容",
+      kind: "openai_compatible",
+      models: ["claude-opus-5-5", "gpt-5.5"],
+      capabilities: httpServicePreset("openai_compatible").capabilities,
+      http: {
+        base_url: compatibleURL,
+        auth: { scheme: "bearer" },
+        credential_ref: "local://service/service_compatible",
+      },
+    };
+    const draftProbe = {
+      kind: "openai_compatible",
+      http: {
+        base_url: compatibleURL,
+        auth: { scheme: "bearer" },
+        credential: { secret: "test-api-key" },
+      },
+      protocol: "openai.models",
+    };
+    const fetched = {
+      service_id: "",
+      protocol: "openai.models",
+      model_ids: ["gpt-5.5", "claude-opus-5-5", "gpt-5.5"],
+      model_protocols: [
+        { model: "claude-opus-5-5", protocol: "anthropic.messages" },
+      ],
+    };
+    const unauthorized = new Error(
+      'POST /control/v1/service-model-probes returned 502 Bad Gateway: {"error":{"code":"upstream_model_discovery_failed","message":"upstream model discovery failed (HTTP 401)","retryable":false,"details":[{"reason":"upstream_unauthorized"}]},"request_id":"req_probe"}',
+    );
+
+    async function renderCreate(serviceKind: ServiceKind): Promise<void> {
+      await act(async () =>
+        root.render(
+          <ServiceManager
+            catalogError={null}
+            catalogStatus="ready"
+            isReady
+            onDirtyChange={() => {}}
+            onRefresh={() => {}}
+            onServiceRemoved={() => {}}
+            onServiceSaved={() => {}}
+            onViewChange={() => {}}
+            protocols={[]}
+            services={[]}
+            view={{ kind: "create", serviceKind }}
+          />,
+        ),
+      );
+    }
+
+    async function fillCompatibleConnection(): Promise<void> {
+      await renderCreate("openai_compatible");
+      await typeInto(
+        container.querySelector<HTMLInputElement>('input[type="url"]')!,
+        compatibleURL,
+      );
+      await typeInto(
+        container.querySelector<HTMLInputElement>('input[type="password"]')!,
+        "test-api-key",
+      );
+    }
+
+    function footerHint(): string | null | undefined {
+      return container.querySelector('[data-testid="service-submit"]')
+        ?.parentElement?.previousElementSibling?.textContent;
+    }
+
+    it("fetches the upstream models and creates the provider with them", async () => {
+      bridgeMocks.probeDraftServiceModels.mockResolvedValue(fetched);
+      bridgeMocks.createService.mockResolvedValue({
+        service: compatible,
+        etag,
+      });
+      await fillCompatibleConnection();
+      expect(footerHint()).toBe("保存时会从上游获取模型");
+
+      await submitServiceForm();
+      await settleSave();
+
+      expect(bridgeMocks.probeDraftServiceModels).toHaveBeenCalledOnce();
+      expect(bridgeMocks.probeDraftServiceModels).toHaveBeenCalledWith(
+        draftProbe,
+      );
+      expect(bridgeMocks.createService).toHaveBeenCalledOnce();
+      expect(bridgeMocks.createService.mock.calls[0]?.[0]).toMatchObject({
+        kind: "openai_compatible",
+        models: ["claude-opus-5-5", "gpt-5.5"],
+        model_protocols: [
+          { model: "claude-opus-5-5", protocol: "anthropic.messages" },
+        ],
+        http: draftProbe.http,
+      });
+      expect(
+        bridgeMocks.probeDraftServiceModels.mock.invocationCallOrder[0],
+      ).toBeLessThan(bridgeMocks.createService.mock.invocationCallOrder[0]!);
+      expect(notifyMocks.success).toHaveBeenCalledWith(
+        "API 提供商已添加，已从上游获取 2 个模型。",
+      );
+    });
+
+    it("keeps the provider unsaved when the key is rejected, then retries or takes typed models", async () => {
+      bridgeMocks.probeDraftServiceModels.mockRejectedValue(unauthorized);
+      bridgeMocks.createService.mockResolvedValue({
+        service: compatible,
+        etag,
+      });
+      await fillCompatibleConnection();
+      await submitServiceForm();
+      await settleSave();
+
+      expect(bridgeMocks.createService).not.toHaveBeenCalled();
+      expect(activeEditorTab()).toBe("service-editor-tab-models");
+      const notice = modelFetchNotice();
+      expect(notice?.getAttribute("role")).toBe("alert");
+      expect(notice?.textContent).toContain(
+        "API 提供商未保存：没有从上游获取到模型。上游拒绝了 API Key（HTTP 401）。",
+      );
+      expect(notice?.textContent).not.toContain("returned 502");
+
+      // Fetching again succeeds and creates the provider with the list.
+      bridgeMocks.probeDraftServiceModels.mockResolvedValueOnce(fetched);
+      await clickButton("重新获取");
+      await settleSave();
+      expect(bridgeMocks.probeDraftServiceModels).toHaveBeenCalledTimes(2);
+      expect(bridgeMocks.createService).toHaveBeenCalledOnce();
+      expect(bridgeMocks.createService.mock.calls[0]?.[0].models).toEqual([
+        "claude-opus-5-5",
+        "gpt-5.5",
+      ]);
+    });
+
+    it("opens the add row from the notice and creates typed models without fetching", async () => {
+      bridgeMocks.probeDraftServiceModels.mockRejectedValue(unauthorized);
+      bridgeMocks.createService.mockResolvedValue({
+        service: compatible,
+        etag,
+      });
+      await fillCompatibleConnection();
+      await submitServiceForm();
+      await settleSave();
+      expect(bridgeMocks.probeDraftServiceModels).toHaveBeenCalledOnce();
+
+      await clickButton("手动填写模型");
+      const input = container.querySelector<HTMLInputElement>(
+        'input[aria-label="待添加模型 ID"]',
+      );
+      expect(input).not.toBeNull();
+      expect(document.activeElement).toBe(input);
+      await typeInto(input!, "my-model");
+      await clickButton("添加");
+      // A listed model answers the notice.
+      expect(modelFetchNotice()).toBeNull();
+
+      await submitServiceForm();
+      await settleSave();
+      expect(bridgeMocks.probeDraftServiceModels).toHaveBeenCalledOnce();
+      expect(bridgeMocks.createService.mock.calls[0]?.[0].models).toEqual([
+        "my-model",
+      ]);
+    });
+
+    it.each([
+      [
+        "a timeout",
+        () =>
+          Promise.reject(
+            new Error(
+              'POST /control/v1/service-model-probes returned 504 Gateway Timeout: {"error":{"code":"upstream_model_discovery_timeout","message":"upstream model discovery timed out","retryable":true},"request_id":"req_probe"}',
+            ),
+          ),
+        "上游没有及时响应。请稍后重试，或检查网络和代理。",
+      ],
+      [
+        "an empty list",
+        () => Promise.resolve({ ...fetched, model_ids: [] }),
+        "上游没有返回任何模型",
+      ],
+    ])("keeps the provider unsaved after %s", async (_name, probe, reason) => {
+      bridgeMocks.probeDraftServiceModels.mockImplementation(probe);
+      await fillCompatibleConnection();
+      await submitServiceForm();
+      await settleSave();
+
+      expect(bridgeMocks.probeDraftServiceModels).toHaveBeenCalledOnce();
+      expect(bridgeMocks.createService).not.toHaveBeenCalled();
+      expect(activeEditorTab()).toBe("service-editor-tab-models");
+      expect(modelFetchNotice()?.textContent).toContain(reason);
+      expect(
+        [...modelFetchNotice()!.querySelectorAll("button")].map(
+          (button) => button.textContent,
+        ),
+      ).toEqual(["重新获取", "手动填写模型"]);
+    });
+
+    it("clears the notice when the connection changes", async () => {
+      bridgeMocks.probeDraftServiceModels.mockRejectedValue(unauthorized);
+      await fillCompatibleConnection();
+      await submitServiceForm();
+      await settleSave();
+      expect(modelFetchNotice()).not.toBeNull();
+
+      await openEditorTab("connection");
+      await typeInto(
+        container.querySelector<HTMLInputElement>('input[type="password"]')!,
+        "another-key",
+      );
+      await openEditorTab("models");
+      expect(modelFetchNotice()).toBeNull();
+    });
+
+    it("leaves the next editor usable when the operator leaves during the fetch", async () => {
+      let answer: (value: typeof fetched) => void = () => {};
+      bridgeMocks.probeDraftServiceModels.mockReturnValueOnce(
+        new Promise<typeof fetched>((resolve) => {
+          answer = resolve;
+        }),
+      );
+      await fillCompatibleConnection();
+      await submitServiceForm();
+      const submit = () =>
+        container.querySelector<HTMLButtonElement>(
+          '[data-testid="service-submit"]',
+        );
+      expect(submit()?.textContent).toBe("正在获取模型…");
+
+      const renderView = (view: ServiceManagerProps["view"]) =>
+        act(async () =>
+          root.render(
+            <ServiceManager
+              catalogError={null}
+              catalogStatus="ready"
+              isReady
+              onDirtyChange={() => {}}
+              onRefresh={() => {}}
+              onServiceRemoved={() => {}}
+              onServiceSaved={() => {}}
+              onViewChange={() => {}}
+              protocols={[]}
+              services={[]}
+              view={view}
+            />,
+          ),
+        );
+      await renderView({ kind: "list" });
+      await renderView({ kind: "create", serviceKind: "openai_compatible" });
+      expect(submit()?.textContent).toBe("保存 API 提供商");
+      expect(submit()?.disabled).toBe(false);
+
+      // The abandoned fetch answers late; it neither creates nor relocks.
+      await act(async () => answer(fetched));
+      await settleSave();
+      expect(bridgeMocks.createService).not.toHaveBeenCalled();
+      expect(submit()?.disabled).toBe(false);
+      expect(
+        container.querySelector<HTMLFieldSetElement>(
+          '[data-testid="service-form"] fieldset',
+        )?.disabled,
+      ).toBe(false);
+    });
+
+    it("saves a manually fetched selection with no second fetch", async () => {
+      bridgeMocks.probeDraftServiceModels.mockResolvedValue(fetched);
+      bridgeMocks.createService.mockResolvedValue({
+        service: compatible,
+        etag,
+      });
+      await fillCompatibleConnection();
+      await openEditorTab("models");
+      await clickButton("获取模型列表");
+      await togglePreviewModel("claude-opus-5-5");
+      await act(async () => applySelectedButton().click());
+      await settleClosedLayer();
+      await submitServiceForm();
+      await settleSave();
+
+      expect(bridgeMocks.probeDraftServiceModels).toHaveBeenCalledOnce();
+      expect(bridgeMocks.createService.mock.calls[0]?.[0]).toMatchObject({
+        models: ["gpt-5.5"],
+      });
+      expect(bridgeMocks.createService.mock.calls[0]?.[0]).not.toHaveProperty(
+        "model_protocols",
+      );
+      expect(notifyMocks.success).toHaveBeenCalledWith(
+        "API 提供商已添加，新请求立即可用。API Key 只保存在本机凭据库中。",
+      );
+    });
+
+    it("saves typed models or a preset's own models without fetching", async () => {
+      bridgeMocks.createService.mockResolvedValue({
+        service: compatible,
+        etag,
+      });
+      await fillCompatibleConnection();
+      await openEditorTab("models");
+      await addModelsByHand(["typed-model"]);
+      expect(footerHint()).not.toBe("保存时会从上游获取模型");
+      await submitServiceForm();
+      await settleSave();
+      expect(bridgeMocks.createService.mock.calls[0]?.[0].models).toEqual([
+        "typed-model",
+      ]);
+
+      await renderCreate("kimi_coding");
+      await typeInto(
+        container.querySelector<HTMLInputElement>('input[type="password"]')!,
+        "test-api-key",
+      );
+      await submitServiceForm();
+      await settleSave();
+      expect(bridgeMocks.createService.mock.calls[1]?.[0]).toMatchObject({
+        kind: "kimi_coding",
+        models: httpServicePreset("kimi_coding").models,
+      });
+      expect(bridgeMocks.probeDraftServiceModels).not.toHaveBeenCalled();
+    });
+
+    it("blocks a provider that cannot list models with only the manual action", async () => {
+      await renderCreate("qwen");
+      await typeInto(
+        container.querySelector<HTMLInputElement>('input[type="password"]')!,
+        "test-api-key",
+      );
+      expect(footerHint()).not.toBe("保存时会从上游获取模型");
+      await submitServiceForm();
+      await settleSave();
+
+      expect(bridgeMocks.probeDraftServiceModels).not.toHaveBeenCalled();
+      expect(bridgeMocks.createService).not.toHaveBeenCalled();
+      expect(activeEditorTab()).toBe("service-editor-tab-models");
+      expect(modelFetchNotice()?.textContent).toContain(
+        "这个提供商不能从上游获取模型列表",
+      );
+      expect(
+        [...modelFetchNotice()!.querySelectorAll("button")].map(
+          (button) => button.textContent,
+        ),
+      ).toEqual(["手动填写模型"]);
+    });
+
+    it("updates an existing provider without models exactly as before", async () => {
+      const empty: Service = { ...compatible, models: [] };
+      bridgeMocks.getService.mockResolvedValue({ service: empty, etag });
+      bridgeMocks.updateService.mockResolvedValue({ service: empty, etag });
+      await act(async () => {
+        root.render(
+          <ServiceManager
+            catalogError={null}
+            catalogStatus="ready"
+            isReady
+            onDirtyChange={() => {}}
+            onRefresh={() => {}}
+            onServiceRemoved={() => {}}
+            onServiceSaved={() => {}}
+            onViewChange={() => {}}
+            protocols={[]}
+            services={[empty]}
+            view={{ kind: "edit", serviceId: empty.id }}
+          />,
+        );
+        await Promise.resolve();
+      });
+      expect(footerHint()).not.toBe("保存时会从上游获取模型");
+      await submitServiceForm();
+      await settleSave();
+
+      expect(bridgeMocks.probeDraftServiceModels).not.toHaveBeenCalled();
+      expect(bridgeMocks.updateService).toHaveBeenCalledOnce();
+      expect(bridgeMocks.updateService.mock.calls[0]?.[2]).toMatchObject({
+        models: [],
+      });
+    });
+
+    it("creates a subscription before any model fetch", async () => {
+      bridgeMocks.createService.mockResolvedValue({
+        service: codexService,
+        etag,
+      });
+      bridgeMocks.beginServiceAuthorization.mockResolvedValue({
+        kind: "session",
+        session: {
+          id: "authorization_01",
+          provider: "openai_codex",
+          status: "pending",
+          flow: "browser",
+          service_id: codexService.id,
+          authorization_url: "https://auth.example/oauth/authorize",
+          expires_at: "2026-07-28T12:10:00Z",
+          created_at: timestamp,
+          updated_at: timestamp,
+        },
+      });
+      await renderCreate("codex_subscription");
+      expect(footerHint()).not.toBe("保存时会从上游获取模型");
+      await act(async () =>
+        container
+          .querySelector<HTMLButtonElement>(
+            '[role="radio"][aria-label="浏览器 OAuth"]',
+          )!
+          .click(),
+      );
+      await submitServiceForm();
+      await settleSave();
+
+      expect(bridgeMocks.createService).toHaveBeenCalledOnce();
+      expect(bridgeMocks.createService.mock.calls[0]?.[0].models).toEqual([]);
+      expect(bridgeMocks.probeDraftServiceModels).not.toHaveBeenCalled();
+      expect(bridgeMocks.probeServiceModels).not.toHaveBeenCalled();
     });
   });
 

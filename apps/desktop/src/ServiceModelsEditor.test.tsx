@@ -24,15 +24,18 @@ function Harness({
   kind,
   models: initialModels,
   protocols: initialProtocols = [],
+  addRequest,
 }: {
   kind: ServiceKind;
   models: string[];
   protocols?: ModelProtocol[];
+  addRequest?: number;
 }) {
   const [models, setModels] = useState(initialModels);
   const [protocols, setProtocols] = useState(initialProtocols);
   return (
     <ServiceModelsEditor
+      addRequest={addRequest}
       compact={kind === "vertex"}
       builtinProtocol={(model) => serviceBuiltinModelProtocol(kind, model)}
       formats={serviceModelFormats(kind)}
@@ -410,6 +413,33 @@ describe("ServiceModelsEditor upstream formats", () => {
         ...container.querySelectorAll('[data-testid="service-model-row"] code'),
       ].map((code) => code.textContent),
     ).toEqual(["claude-opus-5-5"]);
+  });
+
+  it("opens the add row and focuses its input on each new add request", async () => {
+    const addInput = () =>
+      container.querySelector<HTMLInputElement>(
+        'input[aria-label="待添加模型 ID"]',
+      );
+    const renderRequest = (addRequest: number) =>
+      act(async () =>
+        root.render(
+          <Harness addRequest={addRequest} kind="openai" models={[]} />,
+        ),
+      );
+    // A request made before the editor mounted stays answered.
+    await renderRequest(2);
+    expect(addInput()).toBeNull();
+
+    await renderRequest(3);
+    expect(addInput()).not.toBeNull();
+    expect(document.activeElement).toBe(addInput());
+
+    await click(
+      container.querySelector<HTMLElement>('button[aria-label="添加模型"]')!,
+    );
+    expect(addInput()).toBeNull();
+    await renderRequest(4);
+    expect(document.activeElement).toBe(addInput());
   });
 
   it("keeps only deletion for a kind with one format", async () => {

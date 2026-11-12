@@ -34,7 +34,7 @@ func decodeVertexPage(body []byte) ([]listedModel, string, bool, error) {
 		NextPageToken string `json:"nextPageToken"`
 	}
 	if json.Unmarshal(body, &page) != nil || page.Models == nil {
-		return nil, "", false, fmt.Errorf("%w: invalid Vertex catalog response", ErrUpstream)
+		return nil, "", false, fmt.Errorf("%w: invalid Vertex catalog response: %w", ErrUpstream, ErrInvalidResponse)
 	}
 	models := make([]listedModel, 0, len(page.Models))
 	for _, model := range page.Models {

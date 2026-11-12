@@ -38,6 +38,10 @@ var (
 	ErrCredentialUnavailable = errors.New("model discovery credential is unavailable")
 	ErrNotConnected          = errors.New("subscription service is not connected")
 	ErrUpstream              = errors.New("upstream model discovery failed")
+	// ErrUnreachable and ErrInvalidResponse ride along ErrUpstream and say
+	// why it failed: no HTTP answer, or an answer that is not a model list.
+	ErrUnreachable     = errors.New("upstream is unreachable")
+	ErrInvalidResponse = errors.New("upstream response is not a model list")
 )
 
 // Discovery is one model-list probe: the model ids, sorted, and the format
@@ -324,7 +328,7 @@ func (prober *Prober) probeHTTPPages(
 			if errors.Is(probeContext.Err(), context.DeadlineExceeded) {
 				return Discovery{}, context.DeadlineExceeded
 			}
-			return Discovery{}, fmt.Errorf("%w: request failed", ErrUpstream)
+			return Discovery{}, fmt.Errorf("%w: request failed: %w", ErrUpstream, ErrUnreachable)
 		}
 		remaining := maxResponseBytes - totalBytes
 		if remaining <= 0 {
@@ -390,7 +394,7 @@ func decodePage(body []byte, protocol contract.ProtocolID, anthropic bool) ([]li
 			NextPageToken string `json:"nextPageToken"`
 		}
 		if err := json.Unmarshal(body, &page); err != nil || page.Models == nil {
-			return nil, "", false, fmt.Errorf("%w: invalid Gemini response", ErrUpstream)
+			return nil, "", false, fmt.Errorf("%w: invalid Gemini response: %w", ErrUpstream, ErrInvalidResponse)
 		}
 		models := make([]listedModel, 0, len(page.Models))
 		for _, model := range page.Models {
@@ -407,7 +411,7 @@ func decodePage(body []byte, protocol contract.ProtocolID, anthropic bool) ([]li
 		LastID  string `json:"last_id"`
 	}
 	if err := json.Unmarshal(body, &page); err != nil || page.Data == nil {
-		return nil, "", false, fmt.Errorf("%w: invalid model response", ErrUpstream)
+		return nil, "", false, fmt.Errorf("%w: invalid model response: %w", ErrUpstream, ErrInvalidResponse)
 	}
 	models := make([]listedModel, 0, len(page.Data))
 	for _, model := range page.Data {

@@ -892,8 +892,44 @@ func writeServiceModelProbeError(writer http.ResponseWriter, err error) {
 	case errors.Is(err, servicemodel.ErrNotConnected):
 		writeError(writer, http.StatusConflict, "service_not_connected", "subscription service is not connected")
 	default:
-		writeError(writer, http.StatusBadGateway, "upstream_model_discovery_failed", sanitizedModelProbeMessage(err))
+		var details []errorDetail
+		if reason := modelProbeFailureReason(err); reason != "" {
+			details = []errorDetail{{Reason: reason}}
+		}
+		writeErrorDetails(writer, http.StatusBadGateway, "upstream_model_discovery_failed", sanitizedModelProbeMessage(err), details)
 	}
+}
+
+// modelProbeFailureReason names what went wrong with an upstream model list
+// so the UI can tell a wrong key from a wrong address; "" when unknown.
+func modelProbeFailureReason(err error) string {
+	if err == nil {
+		return ""
+	}
+	if match := modelProbeStatusPattern.FindStringSubmatch(err.Error()); len(match) == 2 {
+		status, _ := strconv.Atoi(match[1])
+		switch {
+		case status == http.StatusUnauthorized || status == http.StatusForbidden:
+			return "upstream_unauthorized"
+		case status == http.StatusNotFound || status == http.StatusMethodNotAllowed || status == http.StatusNotImplemented:
+			return "upstream_not_found"
+		case status == http.StatusTooManyRequests:
+			return "upstream_rate_limited"
+		case status >= http.StatusInternalServerError:
+			return "upstream_unavailable"
+		default:
+			return "upstream_status"
+		}
+	}
+	text := err.Error()
+	switch {
+	case errors.Is(err, servicemodel.ErrUnreachable):
+		return "upstream_unreachable"
+	case errors.Is(err, servicemodel.ErrInvalidResponse),
+		strings.Contains(text, "decode codex models"), strings.Contains(text, "invalid Codex"):
+		return "upstream_invalid_response"
+	}
+	return ""
 }
 
 func sanitizedModelProbeMessage(err error) string {
@@ -906,6 +942,12 @@ func sanitizedModelProbeMessage(err error) string {
 	}
 	if strings.Contains(text, "decode codex models") || strings.Contains(text, "invalid Codex") {
 		return "upstream model discovery failed (invalid catalog)"
+	}
+	if errors.Is(err, servicemodel.ErrUnreachable) {
+		return "upstream model discovery failed (connection failed)"
+	}
+	if errors.Is(err, servicemodel.ErrInvalidResponse) {
+		return "upstream model discovery failed (invalid response)"
 	}
 	return "upstream model discovery failed"
 }

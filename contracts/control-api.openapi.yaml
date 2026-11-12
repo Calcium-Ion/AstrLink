@@ -946,7 +946,7 @@ paths:
         "422":
           $ref: "#/components/responses/UnprocessableEntity"
         "502":
-          $ref: "#/components/responses/BadGateway"
+          $ref: "#/components/responses/ModelDiscoveryFailed"
         "504":
           $ref: "#/components/responses/GatewayTimeout"
   /control/v1/service-proxy-probes:
@@ -1039,7 +1039,7 @@ paths:
         "422":
           $ref: "#/components/responses/UnprocessableEntity"
         "502":
-          $ref: "#/components/responses/BadGateway"
+          $ref: "#/components/responses/ModelDiscoveryFailed"
         "504":
           $ref: "#/components/responses/GatewayTimeout"
   /control/v1/services/{service_id}/test:
@@ -4072,6 +4072,22 @@ components:
             $ref: "#/components/schemas/ErrorResponse"
     BadGateway:
       description: Public model metadata could not be fetched or verified.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    ModelDiscoveryFailed:
+      description: >-
+        The upstream model list could not be read (code
+        upstream_model_discovery_failed). When known, details[0].reason says
+        why: upstream_unauthorized (HTTP 401 or 403), upstream_not_found (404,
+        405 or 501), upstream_rate_limited (429), upstream_unavailable (other
+        5xx), upstream_status (another HTTP status), upstream_unreachable (no
+        HTTP response), or upstream_invalid_response (the response is not a
+        model list).
       headers:
         Cache-Control:
           $ref: "#/components/headers/NoStore"

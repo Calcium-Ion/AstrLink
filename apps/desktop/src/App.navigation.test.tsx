@@ -1927,6 +1927,12 @@ describe("App workspace navigation", () => {
       },
       etag: `"sha256:${"b".repeat(64)}"`,
     });
+    // Saving without models lists the upstream's first.
+    bridgeMocks.probeDraftServiceModels.mockResolvedValue({
+      service_id: "",
+      protocol: "openai.models",
+      model_ids: ["gpt-5"],
+    });
     await renderApp();
 
     await act(async () => button("提供商").click());
@@ -1942,11 +1948,13 @@ describe("App workspace navigation", () => {
     );
     await act(async () => {
       button("保存 API 提供商").click();
-      await Promise.resolve();
-      await Promise.resolve();
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
     });
 
     expect(bridgeMocks.createService).toHaveBeenCalledOnce();
+    expect(bridgeMocks.createService.mock.calls[0]?.[0].models).toEqual([
+      "gpt-5",
+    ]);
     expect(workspaceHeading().textContent).toBe("提供商");
     expect(container.textContent).not.toContain("放弃未保存的修改？");
     expect(document.querySelector('[role="alertdialog"]')).toBeNull();
