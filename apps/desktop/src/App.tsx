@@ -418,7 +418,14 @@ export default function App() {
       ? `${snapshot.pid ?? "none"}|${snapshot.ready.control_url}|${snapshot.ready.inference_url}`
       : null;
   const rawSealing = useRawSealingStatus(coreSessionKey, isReady);
-  const onboarding = useOnboarding({ isReady, catalog, tokenCatalog, usage });
+  const onboarding = useOnboarding({
+    isReady,
+    catalog,
+    tokenCatalog,
+    usage,
+    inferenceURL: snapshot?.ready?.client_inference_url ?? "",
+    enabled: !isWebEdition,
+  });
 
   // Silent refreshes read the rendered state to stay out of a visible load.
   const catalogRef = useRef(catalog);

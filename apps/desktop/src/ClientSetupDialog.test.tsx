@@ -42,6 +42,7 @@ import {
 import { ClientSetupDialog } from "./ClientSetupDialog";
 import type { ConversionEngineCapability } from "./core-model";
 import { settleClosedLayer } from "./lib/test-layer-settle";
+import { onClientConfigsChanged } from "./use-client-configs";
 import type { Service } from "./service-model";
 
 const token: AccessTokenSummary = {
@@ -379,7 +380,9 @@ describe("ClientSetupDialog", () => {
   let container: HTMLDivElement;
   let reactRoot: Root;
   const onClose = vi.fn();
+  // Every list of configured clients reads again on this signal.
   const onChanged = vi.fn();
+  let stopListening = () => {};
 
   beforeEach(() => {
     (
@@ -411,6 +414,7 @@ describe("ClientSetupDialog", () => {
       numeric: null,
     });
     pricingMocks.getOfficialModelLimits.mockResolvedValue(null);
+    stopListening = onClientConfigsChanged(onChanged);
     container = document.createElement("div");
     document.body.append(container);
     reactRoot = createRoot(container);
@@ -418,6 +422,7 @@ describe("ClientSetupDialog", () => {
 
   afterEach(async () => {
     await act(async () => reactRoot.unmount());
+    stopListening();
     vi.restoreAllMocks();
     container.remove();
   });
@@ -437,7 +442,6 @@ describe("ClientSetupDialog", () => {
           attentionFirst={attentionFirst}
           conversionEngine={conversionEngine}
           inferenceURL={inferenceURL}
-          onChanged={onChanged}
           onClose={onClose}
           token={token}
           tokens={[token, otherToken]}
@@ -931,7 +935,6 @@ describe("ClientSetupDialog", () => {
       reactRoot.render(
         <ClientSetupDialog
           inferenceURL="http://127.0.0.1:8317"
-          onChanged={onChanged}
           onClose={onClose}
           token={limited}
           tokens={[limited, otherToken]}

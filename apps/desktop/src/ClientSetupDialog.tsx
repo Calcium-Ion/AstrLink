@@ -143,6 +143,7 @@ import {
 } from "./pricing-bridge";
 import type { Service, ServiceCapability } from "./service-model";
 import { protocolLabel } from "./service-presets";
+import { clientConfigsChanged } from "./use-client-configs";
 
 interface Failure {
   message: string;
@@ -322,7 +323,6 @@ function DesktopClientSetupDialog({
   conversionEngine,
   attentionFirst = false,
   onClose,
-  onChanged,
 }: {
   /** The token the dialog opens with; the user can pick another. */
   token: AccessTokenSummary;
@@ -333,8 +333,6 @@ function DesktopClientSetupDialog({
   /** Lists and checks first the clients whose config needs attention. */
   attentionFirst?: boolean;
   onClose: () => void;
-  /** Called after a client config was written or removed. */
-  onChanged?: () => void;
 }) {
   const t = i18n.t.bind(i18n);
   const tokenChoices = tokens.some((item) => item.id === token.id)
@@ -1120,7 +1118,7 @@ function DesktopClientSetupDialog({
       setOutcomes((current) =>
         retry && current ? { ...current, ...next } : next,
       );
-      if (outcome.results.some((result) => result.ok)) onChanged?.();
+      if (outcome.results.some((result) => result.ok)) clientConfigsChanged();
       await refresh();
     } catch (cause) {
       if (active.current)
@@ -1151,7 +1149,7 @@ function DesktopClientSetupDialog({
         ),
       }));
       setOutcomes(null);
-      onChanged?.();
+      clientConfigsChanged();
       await refresh();
     } catch (cause) {
       if (active.current)

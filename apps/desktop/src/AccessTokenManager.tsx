@@ -78,6 +78,7 @@ import { ClientSetupDialog } from "./ClientSetupDialog";
 import { TokenClientMarks, clientNames } from "@/components/TokenClientMarks";
 import {
   clientsUsing as clientsUsingToken,
+  clientConfigsChanged,
   configsUsing as configsUsingToken,
   useClientConfigs,
 } from "./use-client-configs";
@@ -231,11 +232,8 @@ export function AccessTokenManager({
   const [copyingID, setCopyingID] = useState<string | null>(null);
   const [copiedID, setCopiedID] = useState<string | null>(null);
   const [setupToken, setSetupToken] = useState<AccessTokenSummary | null>(null);
-  const {
-    configs: clientConfigs,
-    available: clientModels,
-    refresh: refreshClientConfigs,
-  } = useClientConfigs(inferenceURL);
+  const { configs: clientConfigs, available: clientModels } =
+    useClientConfigs(inferenceURL);
   const [removeConfigs, setRemoveConfigs] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [usageByToken, setUsageByToken] = useWorkspaceSnapshot<
@@ -529,7 +527,7 @@ export function AccessTokenManager({
           }),
         );
       }
-      if (configured.length > 0) refreshClientConfigs();
+      if (configured.length > 0) clientConfigsChanged();
     } catch (requestError) {
       if (sessionGeneration.current === generation) {
         setError(messageOf(requestError, i18n.t("tokens.deleteFailed")));
@@ -1049,7 +1047,6 @@ export function AccessTokenManager({
             inferenceURL={inferenceURL}
             attentionFirst
             onClose={() => setSetupToken(null)}
-            onChanged={refreshClientConfigs}
           />
         )}
       <ConfirmDialog
