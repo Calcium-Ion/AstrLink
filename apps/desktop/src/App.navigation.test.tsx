@@ -1626,8 +1626,10 @@ describe("App workspace navigation", () => {
     expect(workspaceHeading().textContent).toBe("Agent 工具");
     expect(container.textContent).toContain("工具接入");
     expect(container.textContent).toContain("Cursor");
-    expect(container.textContent).toContain("Claude Code");
     expect(container.textContent).toContain("Codex");
+    // Claude Code is not detected, so it folds away until opened.
+    expect(container.textContent).toContain("未检测到的工具");
+    expect(container.textContent).not.toContain("Claude Code");
     expect(bridgeMocks.getAgentDebugStatus).toHaveBeenCalled();
   });
 
