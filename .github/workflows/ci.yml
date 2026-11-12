@@ -312,7 +312,11 @@ jobs:
           restore-keys: bun-packages-v1-${{ runner.os }}-${{ runner.arch }}-
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
-          toolchain: stable
+          # Cargo 1.100 moved test executables and build-script output under
+          # target/<profile>/build/<package>/<hash>/. The worker tests look for
+          # ONNX Runtime beside their executable and ort-sys copies its Windows
+          # runtime by the old layout, so stay on 1.99.1 until both follow.
+          toolchain: 1.99.1
           components: clippy, rustfmt
       - name: Reduce test debug information
         if: env.ASTRLINK_CI_BUILD_ARTIFACTS != 'true'
