@@ -261,7 +261,8 @@ func TestDevInstallsADevelopmentBuild(t *testing.T) {
 		}
 	}
 	marker, _ := os.ReadFile(filepath.Join(installed, plugin.DevelopmentMarker))
-	if !strings.Contains(string(marker), filepath.ToSlash(project)) && !strings.Contains(string(marker), project) {
+	var development plugin.Development
+	if err := json.Unmarshal(marker, &development); err != nil || filepath.Clean(filepath.FromSlash(development.Project)) != filepath.Clean(project) {
 		t.Fatalf("marker = %s", marker)
 	}
 	// A plugin installed otherwise is not replaced without --force.

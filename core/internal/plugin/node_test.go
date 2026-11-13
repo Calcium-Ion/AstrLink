@@ -3,6 +3,7 @@ package plugin
 import (
 	"context"
 	"encoding/json"
+	goruntime "runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -19,6 +20,10 @@ func runNode(t *testing.T, body string, settings ...func(*ManagerOptions)) json.
 	}
 	return outcome.result
 }
+
+// posixOnly are the exports Node, and so the host, has on POSIX systems
+// alone.
+var posixOnly = map[string][]string{"process": {"getegid", "geteuid", "getgid", "getgroups", "getuid"}}
 
 func TestNodeModulesExportWhatTheyList(t *testing.T) {
 	names := make([]string, 0, len(nodeModules))
@@ -47,6 +52,9 @@ export async function prepareTurn() {
 	}
 	for _, name := range names {
 		listed := strings.Fields(nodeModules[name].exports)
+		if goruntime.GOOS == "windows" {
+			listed = slices.DeleteFunc(listed, func(key string) bool { return slices.Contains(posixOnly[name], key) })
+		}
 		slices.Sort(listed)
 		if name == "constants" {
 			// The flags of fs.constants beyond the portable ones differ

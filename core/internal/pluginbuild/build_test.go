@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -154,7 +155,12 @@ module.exports = function spawner() {
 		t.Fatalf("plugin = %+v", loaded.Err)
 	}
 	output, _, err := loaded.Call(context.Background(), plugin.HookPrepareTurn, nil, plugin.CallOptions{})
-	if err != nil || string(output) != `{"digest":"a9993e364706816aba3e25717850c26c9cd0d89d","joined":"a/b","spawner":"ERR_ACCESS_DENIED"}` {
+	// node:path joins with the system's separator, as Node does.
+	joined := `a/b`
+	if runtime.GOOS == "windows" {
+		joined = `a\\b`
+	}
+	if err != nil || string(output) != `{"digest":"a9993e364706816aba3e25717850c26c9cd0d89d","joined":"`+joined+`","spawner":"ERR_ACCESS_DENIED"}` {
 		t.Fatalf("prepareTurn = %s, %v", output, err)
 	}
 }

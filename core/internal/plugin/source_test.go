@@ -5,6 +5,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	goruntime "runtime"
+	"slices"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -160,8 +162,14 @@ func TestDiscoverLetsTheDirectoryOverrideBuiltins(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(elsewhere, "plugin.js"), []byte("linked epsilon"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	// Windows makes a symbolic link only for one allowed to; the directory
+	// is then read without it.
+	linked := true
 	if err := os.Symlink(elsewhere, filepath.Join(dir, "epsilon")); err != nil {
-		t.Fatal(err)
+		if goruntime.GOOS != "windows" {
+			t.Fatal(err)
+		}
+		linked = false
 	}
 
 	sources, err := Discover(builtin, dir)
@@ -182,6 +190,9 @@ func TestDiscoverLetsTheDirectoryOverrideBuiltins(t *testing.T) {
 		"delta directory error not_found",
 		"epsilon directory plugin.js linked epsilon",
 		"gamma directory error ambiguous",
+	}
+	if !linked {
+		want = slices.DeleteFunc(want, func(entry string) bool { return strings.HasPrefix(entry, "epsilon ") })
 	}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("Discover =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
