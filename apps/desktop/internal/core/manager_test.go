@@ -427,7 +427,7 @@ func TestServiceTestCancellationIsSingleUseAndScoped(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.RegisterServiceTest("main", "service_a", "test-1", func() {}); err == nil || err.Error() != ServiceTestAlreadyRunning {
+	if _, err := m.RegisterServiceTest("main", "service_a", "test-1", func() {}); err == nil || err.Error() != control.ServiceTestAlreadyRunning {
 		t.Fatalf("a duplicate registration: %v", err)
 	}
 	if m.CancelServiceTest("other-window", "service_a", "test-1") || m.CancelServiceTest("main", "service_b", "test-1") {

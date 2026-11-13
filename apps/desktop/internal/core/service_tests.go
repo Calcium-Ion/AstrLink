@@ -3,14 +3,8 @@ package core
 import (
 	"errors"
 	"sync"
-)
 
-// Stable error codes of the provider-test command. The frontend matches
-// these codes instead of human-readable messages.
-const (
-	ServiceTestCancelled      = "service_test_cancelled"
-	ServiceTestAlreadyRunning = "service_test_already_running"
-	ServiceTestInvalidID      = "service_test_invalid_id"
+	"github.com/QuantumNous/astrlink/desktop/internal/control"
 )
 
 // serviceTestKey scopes one provider test to the window, service and test
@@ -40,7 +34,7 @@ func (m *Manager) RegisterServiceTest(owner, serviceID, testID string, cancel fu
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if _, ok := t.entries[key]; ok {
-		return nil, errors.New(ServiceTestAlreadyRunning)
+		return nil, errors.New(control.ServiceTestAlreadyRunning)
 	}
 	if t.entries == nil {
 		t.entries = map[serviceTestKey]serviceTestEntry{}

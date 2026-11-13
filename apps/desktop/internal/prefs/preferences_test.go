@@ -365,3 +365,49 @@ func TestQuotaPercent(t *testing.T) {
 		}
 	}
 }
+
+func TestParseInputRequiresTheSettingsFieldsAndDefaultsTheRest(t *testing.T) {
+	values := Default(DefaultInferencePort)
+	values.InferencePort = 19200
+	values.InferenceListen = ListenAllInterfaces
+	encoded, err := json.Marshal(values)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &fields); err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := ParseInput(encoded)
+	if err != nil || !reflect.DeepEqual(parsed, values) {
+		t.Fatalf("parse = %+v, %v", parsed, err)
+	}
+
+	for _, name := range optionalInputFields {
+		delete(fields, name)
+	}
+	encoded, _ = json.Marshal(fields)
+	parsed, err = ParseInput(encoded)
+	defaults := Default(DefaultInferencePort)
+	if err != nil || parsed.InferenceListen != defaults.InferenceListen || parsed.AutostartHidden ||
+		!reflect.DeepEqual(parsed.Tray, defaults.Tray) || !reflect.DeepEqual(parsed.Updates, defaults.Updates) {
+		t.Fatalf("parse without optional fields = %+v, %v", parsed, err)
+	}
+
+	delete(fields, "inference_port")
+	encoded, _ = json.Marshal(fields)
+	if _, err := ParseInput(encoded); err == nil || err.Error() != "missing field `inference_port`" {
+		t.Errorf("missing field error = %v", err)
+	}
+	fields["inference_port"] = json.RawMessage("19200")
+	fields["telemetry"] = json.RawMessage("true")
+	encoded, _ = json.Marshal(fields)
+	if _, err := ParseInput(encoded); err == nil {
+		t.Error("an unknown field was accepted")
+	}
+	for _, invalid := range []string{"null", "[]", "not json"} {
+		if _, err := ParseInput([]byte(invalid)); err == nil {
+			t.Errorf("%s accepted", invalid)
+		}
+	}
+}

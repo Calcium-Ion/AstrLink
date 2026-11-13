@@ -4,24 +4,83 @@
 package host
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
 	"log"
+	"runtime"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/egoist/mygo"
+
+	"github.com/QuantumNous/astrlink/desktop/internal/control"
+	"github.com/QuantumNous/astrlink/desktop/internal/core"
+	"github.com/QuantumNous/astrlink/desktop/internal/instance"
+	"github.com/QuantumNous/astrlink/desktop/internal/keystore"
+	"github.com/QuantumNous/astrlink/desktop/internal/prefs"
+	"github.com/QuantumNous/astrlink/desktop/internal/raw"
 )
 
+// MainLabel is the main window's label, as the frontend reads it from
+// getCurrentWindow().label.
+const MainLabel = "main"
+
+// observerPollInterval spaces the observer and privacy warning polls.
+// Agent-side reads are short bursts; a tight local poll keeps the "being
+// watched" state honest without any push channel from Core.
+const observerPollInterval = 4 * time.Second
+
+// Autostart is the login item (mygo.App.SetOpenAtLogin by default).
+type Autostart interface {
+	Enabled() (bool, error)
+	SetEnabled(enabled bool) error
+}
+
+type loginItem struct{}
+
+func (loginItem) Enabled() (bool, error)        { return mygo.App.OpenAtLogin(), nil }
+func (loginItem) SetEnabled(enabled bool) error { return mygo.App.SetOpenAtLogin(enabled) }
+
 // Host is the running desktop app. New only allocates it; Start, called
-// once the app is ready, does the work.
+// once the app is ready, loads the preferences, starts Core and opens the
+// main window.
 type Host struct {
+	instance  instance.Instance
+	dirs      instance.Directories
+	prefs     *prefs.Store
+	core      *core.Manager
+	pins      *keystore.RawKeyPins
+	autostart Autostart
+	// openURL opens a link in the system browser.
+	openURL func(url string) error
+	// applyTheme sets the appearance of native UI (mygo.Theme.SetSource).
+	applyTheme func(theme prefs.ThemePreference)
+	// stop ends the background polls; stopped is closed once they ended.
+	stop    context.CancelFunc
+	stopped chan struct{}
+
 	mu   sync.Mutex
 	main *mygo.Window
 	// started runs once the host is up, for areas that start their own work
 	// after Core's (the tray, updates).
-	started []func()
+	started            []func()
+	recordsChanged     []func()
+	preferencesChanged []func(previous, current prefs.Preferences)
+	privacyPolicy      []func()
+	privacyReleases    []func()
 }
 
 // New returns a host that has not started.
-func New() *Host { return &Host{} }
+func New() *Host {
+	return &Host{
+		autostart:  loginItem{},
+		openURL:    mygo.Shell.OpenExternal,
+		applyTheme: func(theme prefs.ThemePreference) { mygo.Theme.SetSource(mygo.ThemeSource(theme)) },
+		stopped:    make(chan struct{}),
+	}
+}
 
 // OnStarted registers fn to run on the main thread once Start finished.
 // Areas register in their register*Commands function.
@@ -31,10 +90,193 @@ func (h *Host) OnStarted(fn func()) {
 	h.mu.Unlock()
 }
 
-// Start opens the main window and starts Core. It runs on the main thread
-// once the app is ready (App.WhenReady).
+// OnRecordsChanged registers fn to run after request records were deleted,
+// so the tray counts again.
+func (h *Host) OnRecordsChanged(fn func()) {
+	h.mu.Lock()
+	h.recordsChanged = append(h.recordsChanged, fn)
+	h.mu.Unlock()
+}
+
+// OnPreferencesChanged registers fn to run after the preferences were
+// saved, for the tray, the display currency and the theme of native UI.
+func (h *Host) OnPreferencesChanged(fn func(previous, current prefs.Preferences)) {
+	h.mu.Lock()
+	h.preferencesChanged = append(h.preferencesChanged, fn)
+	h.mu.Unlock()
+}
+
+// OnPrivacyPolicyChanged registers fn to run after the privacy policy
+// changed, so the model update reminder settles at once.
+func (h *Host) OnPrivacyPolicyChanged(fn func()) {
+	h.mu.Lock()
+	h.privacyPolicy = append(h.privacyPolicy, fn)
+	h.mu.Unlock()
+}
+
+// OnPrivacyReleasesRead registers fn to run after the page read the privacy
+// model releases, which the reminder may not have seen.
+func (h *Host) OnPrivacyReleasesRead(fn func()) {
+	h.mu.Lock()
+	h.privacyReleases = append(h.privacyReleases, fn)
+	h.mu.Unlock()
+}
+
+// SetAutostart replaces the login item, for the area that owns it.
+func (h *Host) SetAutostart(autostart Autostart) { h.autostart = autostart }
+
+func (h *Host) run(hooks *[]func()) {
+	h.mu.Lock()
+	fns := append([]func(){}, *hooks...)
+	h.mu.Unlock()
+	for _, fn := range fns {
+		fn()
+	}
+}
+
+// RecordsChanged runs the OnRecordsChanged hooks.
+func (h *Host) RecordsChanged() { h.run(&h.recordsChanged) }
+
+// PrivacyPolicyChanged runs the OnPrivacyPolicyChanged hooks.
+func (h *Host) PrivacyPolicyChanged() { h.run(&h.privacyPolicy) }
+
+// PrivacyReleasesRead runs the OnPrivacyReleasesRead hooks.
+func (h *Host) PrivacyReleasesRead() { h.run(&h.privacyReleases) }
+
+// RawSealingChanged tells every window that the raw unlock or key may have
+// changed.
+func (h *Host) RawSealingChanged() {
+	RawSealingChanged.Broadcast(struct{}{})
+}
+
+// Instance is the instance this app runs as.
+func (h *Host) Instance() instance.Instance { return h.instance }
+
+// Directories are the instance's data and config directories.
+func (h *Host) Directories() instance.Directories { return h.dirs }
+
+// PreferencesStore is the preferences, loaded at Start.
+func (h *Host) PreferencesStore() *prefs.Store { return h.prefs }
+
+// CoreManager is the Core supervisor, created at Start.
+func (h *Host) CoreManager() *core.Manager { return h.core }
+
+// Call sends a control request to the running Core, for the services.
+func (h *Host) Call(ctx context.Context, req control.Request) (control.Response, error) {
+	if h.core == nil {
+		return control.Response{}, errors.New("AstrLink is not running")
+	}
+	return h.core.Call(ctx, req)
+}
+
+// Raw returns the raw content service.
+func (h *Host) Raw() raw.Raw {
+	return raw.Raw{Core: rawCore{h}, Pins: rawPins{h}, Changed: h.RawSealingChanged}
+}
+
+// rawCore and rawPins reach the Core and the pins Start creates.
+type rawCore struct{ h *Host }
+
+func (c rawCore) Call(ctx context.Context, req control.Request) (control.Response, error) {
+	return c.h.Call(ctx, req)
+}
+
+func (c rawCore) DataDirectory() string {
+	if c.h.core == nil {
+		return ""
+	}
+	return c.h.core.DataDirectory()
+}
+
+func (c rawCore) NoteRawKeyReplaced(replaced bool) bool {
+	return c.h.core != nil && c.h.core.NoteRawKeyReplaced(replaced)
+}
+
+func (c rawCore) PollObservers(ctx context.Context) error {
+	if c.h.core == nil {
+		return errors.New("AstrLink is not running")
+	}
+	return c.h.core.PollObservers(ctx)
+}
+
+type rawPins struct{ h *Host }
+
+func (p rawPins) Lock() {
+	if p.h.pins != nil {
+		p.h.pins.Lock()
+	}
+}
+
+func (p rawPins) Unlock() {
+	if p.h.pins != nil {
+		p.h.pins.Unlock()
+	}
+}
+
+func (p rawPins) Apply(account string, status json.RawMessage, action keystore.PinAction) bool {
+	return p.h.pins != nil && p.h.pins.Apply(account, status, action)
+}
+
+// RegisterServiceTest and CancelServiceTest keep the connection tests
+// windows started (control.TestRegistry).
+func (h *Host) RegisterServiceTest(owner, serviceID, testID string, cancel func()) (func(), error) {
+	if h.core == nil {
+		return nil, errors.New("AstrLink is not running")
+	}
+	return h.core.RegisterServiceTest(owner, serviceID, testID, cancel)
+}
+
+func (h *Host) CancelServiceTest(owner, serviceID, testID string) bool {
+	return h.core != nil && h.core.CancelServiceTest(owner, serviceID, testID)
+}
+
+// OpenURL opens a link in the system browser.
+func (h *Host) OpenURL(url string) error { return h.openURL(url) }
+
+// WriteClipboard puts text on the system clipboard.
+func (h *Host) WriteClipboard(text string) error {
+	mygo.Clipboard.WriteText(text)
+	return nil
+}
+
+func (h *Host) appVersion() string { return mygo.App.Version() }
+
+// Start loads the preferences, starts Core and opens the main window. It
+// runs on the main thread once the app is ready (App.WhenReady).
 func (h *Host) Start() {
-	w := mygo.NewWindow(mygo.WindowOptions{Title: "AstrLink", URL: "/", Width: 950, Height: 620})
+	h.instance = instance.Current(mygo.IsDev())
+	dirs, err := h.instance.Dirs()
+	if err != nil {
+		log.Printf("astrlink: unable to resolve the app directories: %v", err)
+	}
+	h.dirs = dirs
+	h.prefs = prefs.Load(dirs.Config, dirs.Data, h.instance.DefaultInferencePort())
+	h.pins = keystore.SystemRawKeyPins(dirs.Config)
+	resources, err := mygo.App.Path(mygo.PathResources)
+	if err != nil {
+		log.Printf("astrlink: unable to resolve the resource directory: %v", err)
+	}
+	h.core = core.New(core.Config{DataDirectory: dirs.Data, ResourceDirectory: resources})
+	values := h.prefs.Values()
+	h.core.Configure(values)
+	h.reconcileAutostart(values)
+	h.applyTheme(values.Theme)
+
+	ctx, stop := context.WithCancel(context.Background())
+	h.stop = stop
+	go h.pollObservers(ctx)
+	if values.CoreAutoStart {
+		// The start may wait on a keychain prompt; keep it off the main
+		// thread.
+		go func() {
+			if err := h.core.Start(); err != nil {
+				log.Printf("astrlink: unable to start astrlink-core: %v", err)
+			}
+		}()
+	}
+	mygo.App.OnWillQuit(func(*mygo.QuitEvent) { h.shutdown() })
+
+	w := h.openMainWindow()
 	h.mu.Lock()
 	h.main = w
 	started := h.started
@@ -42,7 +284,110 @@ func (h *Host) Start() {
 	for _, fn := range started {
 		fn()
 	}
-	log.Printf("AstrLink desktop started")
+}
+
+// reconcileAutostart makes the login item match the preference, which a
+// system settings change or an older release may have moved.
+func (h *Host) reconcileAutostart(values prefs.Preferences) {
+	actual, err := h.autostart.Enabled()
+	if err == nil && actual != values.Autostart {
+		err = h.autostart.SetEnabled(values.Autostart)
+	}
+	if err != nil {
+		h.prefs.ReportWarning(prefs.T(values.Locale, "host.autostart.startupCheckFailed", "error", err.Error()))
+	}
+}
+
+// shutdown stops the polls and Core before the app quits.
+func (h *Host) shutdown() {
+	if h.stop != nil {
+		h.stop()
+		<-h.stopped
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := h.core.StopAndWait(ctx); err != nil {
+		log.Printf("astrlink: unable to stop astrlink-core: %v", err)
+	}
+}
+
+// pollObservers reads what agents do and the privacy warnings while Core
+// is ready, until ctx ends.
+func (h *Host) pollObservers(ctx context.Context) {
+	defer close(h.stopped)
+	var cursor core.WarningCursor
+	ticker := time.NewTicker(observerPollInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		if view, _ := h.core.View(); view.Phase != core.PhaseReady {
+			continue
+		}
+		// Errors are transient (Core restarting); the next tick retries.
+		_ = h.core.PollObservers(ctx)
+		core.PollPrivacyWarnings(ctx, h.core, &cursor, h.prefs.Values().Locale, notify)
+	}
+}
+
+func notify(title, body string) {
+	if err := mygo.NewNotification(mygo.NotificationOptions{Title: title, Body: body}).Show(); err != nil {
+		log.Printf("astrlink: unable to show a notification: %v", err)
+	}
+}
+
+// PlatformName is the OS as the frontend names it
+// (window.__ASTRLINK_DESKTOP_PLATFORM__): macos, linux or windows.
+func PlatformName() string {
+	if runtime.GOOS == "darwin" {
+		return "macos"
+	}
+	return runtime.GOOS
+}
+
+// PreloadScript is what every window's page runs first: its label, the
+// platform and the instance it belongs to.
+func (h *Host) PreloadScript(label string) string {
+	quote := func(s string) string {
+		encoded, _ := json.Marshal(s)
+		return string(encoded)
+	}
+	return "window.__ASTRLINK_WINDOW_LABEL__ = " + quote(label) + ";\n" +
+		"window.__ASTRLINK_DESKTOP_PLATFORM__ = " + quote(PlatformName()) + ";\n" +
+		h.instance.InitializationScript() + "\n"
+}
+
+// mainBackground is the main window's background before the page paints,
+// following the theme.
+const mainBackground = "light-dark(#ffffff, #111827)"
+
+// openMainWindow opens the main window, hidden until its page is ready.
+// macOS keeps the traffic lights over the page; elsewhere the page draws
+// its own title bar.
+func (h *Host) openMainWindow() *mygo.Window {
+	options := mygo.WindowOptions{
+		Title:           h.instance.Name(),
+		URL:             "/",
+		Width:           950,
+		Height:          620,
+		MinWidth:        760,
+		MinHeight:       600,
+		Hidden:          true,
+		BackgroundColor: mainBackground,
+		Page:            mygo.PageOptions{PreloadScript: h.PreloadScript(MainLabel)},
+	}
+	if runtime.GOOS == "darwin" {
+		options.TitleBarStyle = mygo.TitleBarHidden
+	} else {
+		options.Frameless = true
+	}
+	w := mygo.NewWindow(options)
+	SetLabel(w, MainLabel)
+	w.OnReadyToShow(w.Show)
+	return w
 }
 
 // MainWindow returns the main window, or nil before Start or once it closed.
@@ -53,4 +398,104 @@ func (h *Host) MainWindow() *mygo.Window {
 		return nil
 	}
 	return h.main
+}
+
+var labels sync.Map // *mygo.Window → string
+
+// SetLabel names a window for the frontend and the commands that scope
+// state per window.
+func SetLabel(w *mygo.Window, label string) {
+	labels.Store(w, label)
+	w.OnClosed(func() { labels.Delete(w) })
+}
+
+// Label is a window's label, "" for none.
+func Label(w *mygo.Window) string {
+	if w == nil {
+		return ""
+	}
+	label, _ := labels.Load(w)
+	text, _ := label.(string)
+	return text
+}
+
+// settingsSnapshot is what the settings page shows. The backups are
+// rescanned every time, so a backup the user deletes stops showing.
+func (h *Host) settingsSnapshot() SettingsSnapshot {
+	snapshot := SettingsSnapshot{
+		Snapshot:    h.prefs.Snapshot(),
+		DataBackups: core.ScanBackupFiles(h.dirs.Data),
+	}
+	if actual, err := h.autostart.Enabled(); err != nil {
+		message := prefs.T(snapshot.Values.Locale, "host.autostart.readFailed", "error", err.Error())
+		snapshot.AutostartError = &message
+	} else {
+		snapshot.AutostartActual = &actual
+	}
+	if storage := h.core.LocalKeyStorage(); storage != "" {
+		snapshot.LocalKeyStorage = &storage
+	}
+	return snapshot
+}
+
+// updatePreferences saves values, first moving the login item to match and
+// moving it back when the save fails, then applies them.
+func (h *Host) updatePreferences(values prefs.Preferences) error {
+	if err := values.Validate(); err != nil {
+		return err
+	}
+	locale := values.Locale
+	previous := h.prefs.Values()
+	actual, err := h.autostart.Enabled()
+	if err != nil {
+		return errors.New(prefs.T(locale, "host.autostart.readFailedUnsaved", "error", err.Error()))
+	}
+	if values.Autostart != actual {
+		if err := h.autostart.SetEnabled(values.Autostart); err != nil {
+			key := "host.autostart.disableFailed"
+			if values.Autostart {
+				key = "host.autostart.enableFailed"
+			}
+			return errors.New(prefs.T(locale, key, "error", err.Error()))
+		}
+		reconciled, err := h.autostart.Enabled()
+		if err != nil {
+			return errors.New(prefs.T(locale, "host.autostart.verifyFailed", "error", err.Error()))
+		}
+		if reconciled != values.Autostart {
+			return errors.New(prefs.T(locale, "host.autostart.mismatch"))
+		}
+	}
+	if _, persistErr := h.prefs.Replace(values); persistErr != nil {
+		if values.Autostart == actual {
+			return persistErr
+		}
+		if err := h.autostart.SetEnabled(actual); err != nil {
+			return errors.New(prefs.T(locale, "host.autostart.rollbackFailed",
+				"persist_error", persistErr.Error(), "rollback_error", err.Error()))
+		}
+		return errors.New(prefs.T(locale, "host.autostart.rollbackOk", "persist_error", persistErr.Error()))
+	}
+	h.core.Configure(values)
+	h.mu.Lock()
+	hooks := append([]func(previous, current prefs.Preferences){}, h.preferencesChanged...)
+	h.mu.Unlock()
+	for _, fn := range hooks {
+		fn(previous, values)
+	}
+	QuotaDisplayModeChanged.Broadcast(string(values.QuotaDisplayMode))
+	h.applyTheme(values.Theme)
+	ThemePreferenceChanged.Broadcast(string(values.Theme))
+	return nil
+}
+
+// decorationLayout is GTK's button layout, as gtk-decoration-layout spells
+// it, on Linux.
+func decorationLayout() *string {
+	if runtime.GOOS != "linux" {
+		return nil
+	}
+	buttons := mygo.Theme.WindowButtons()
+	layout := strings.Join(buttons.Start, ",") + ":" + strings.Join(buttons.End, ",")
+	return &layout
 }

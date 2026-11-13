@@ -8,6 +8,10 @@ import (
 	"strings"
 )
 
+// ValidateAuthorizationURL checks that value is the page of an
+// authorization provider the desktop may open in the browser.
+func ValidateAuthorizationURL(value string) error { return validateAuthorizationURL(value) }
+
 func validateAuthorizationURL(value string) error {
 	if value == "" || len(value) > 4096 {
 		return errors.New("authorization URL is invalid")

@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"slices"
 	"strings"
@@ -323,6 +324,47 @@ func decodePreferences(data []byte, port uint16) (Preferences, error) {
 		return Preferences{}, err
 	}
 	return Preferences(p), nil
+}
+
+// optionalInputFields are the fields the settings page may leave out; they
+// take their defaults.
+var optionalInputFields = []string{"autostart_hidden", "inference_listen", "tray", "updates"}
+
+// ParseInput reads the preferences the settings page saves. Every field
+// but optionalInputFields is required and unknown fields are refused.
+func ParseInput(data []byte) (Preferences, error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return Preferences{}, err
+	}
+	for _, name := range preferenceFields() {
+		if _, ok := fields[name]; !ok && !slices.Contains(optionalInputFields, name) {
+			return Preferences{}, fmt.Errorf("missing field `%s`", name)
+		}
+	}
+	defaults := Default(DefaultInferencePort)
+	p := Preferences{
+		InferenceListen: defaults.InferenceListen,
+		Tray:            defaults.Tray,
+		Updates:         defaults.Updates,
+	}
+	type plain Preferences
+	v := plain(p)
+	if err := decodeStrict(data, &v); err != nil {
+		return Preferences{}, err
+	}
+	return Preferences(v), nil
+}
+
+// preferenceFields lists the JSON names of the Preferences fields.
+func preferenceFields() []string {
+	t := reflect.TypeFor[Preferences]()
+	names := make([]string, 0, t.NumField())
+	for i := range t.NumField() {
+		name, _, _ := strings.Cut(t.Field(i).Tag.Get("json"), ",")
+		names = append(names, name)
+	}
+	return names
 }
 
 // Validate checks the values the settings page can set.

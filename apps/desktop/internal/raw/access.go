@@ -52,8 +52,10 @@ type ProofOutcome struct {
 	// Grant is the decided grant of OutcomeDecided.
 	Grant json.RawMessage `json:"grant,omitempty"`
 	// Status is the new raw sealing state of OutcomeSealing.
-	Status            json.RawMessage `json:"status,omitempty"`
-	RetryAfterSeconds uint64          `json:"retry_after_seconds,omitempty"`
+	Status json.RawMessage `json:"status,omitempty"`
+	// RetryAfterSeconds is how long OutcomeBackoff waits. It is omitzero:
+	// the IPC encodes with encoding/json/v2, whose omitempty keeps zeros.
+	RetryAfterSeconds uint64 `json:"retry_after_seconds,omitzero"`
 }
 
 // ProofArg is the proof the dialog collected: a password, or a request for
