@@ -147,6 +147,16 @@ func normalize(value any) any {
 	return value
 }
 
+// Object is a JSON object whose members keep their order, as a struct
+// serde serializes.
+type Object []Member
+
+// Member is one member of an Object.
+type Member struct {
+	Key   string
+	Value any
+}
+
 // Encode writes value as compact JSON, as serde_json's to_string does.
 func Encode(value any) string {
 	var b strings.Builder
@@ -182,6 +192,17 @@ func encodeTo(b *strings.Builder, value any) {
 			encodeString(b, key)
 			b.WriteByte(':')
 			encodeTo(b, v[key])
+		}
+		b.WriteByte('}')
+	case Object:
+		b.WriteByte('{')
+		for i, member := range v {
+			if i > 0 {
+				b.WriteByte(',')
+			}
+			encodeString(b, member.Key)
+			b.WriteByte(':')
+			encodeTo(b, member.Value)
 		}
 		b.WriteByte('}')
 	default:
@@ -255,6 +276,21 @@ func encodePretty(b *bytes.Buffer, value any, indent string) {
 			b.WriteString(indent + "  " + Encode(key) + ": ")
 			encodePretty(b, v[key], indent+"  ")
 			if i+1 < len(keys) {
+				b.WriteByte(',')
+			}
+			b.WriteByte('\n')
+		}
+		b.WriteString(indent + "}")
+	case Object:
+		if len(v) == 0 {
+			b.WriteString("{}")
+			return
+		}
+		b.WriteString("{\n")
+		for i, member := range v {
+			b.WriteString(indent + "  " + Encode(member.Key) + ": ")
+			encodePretty(b, member.Value, indent+"  ")
+			if i+1 < len(v) {
 				b.WriteByte(',')
 			}
 			b.WriteByte('\n')
