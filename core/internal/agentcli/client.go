@@ -13,9 +13,22 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/QuantumNous/astrlink/core/contract"
+	"github.com/QuantumNous/astrlink/core/internal/controlapi"
 )
 
-const requestTimeout = 15 * time.Second
+const (
+	requestTimeout          = 15 * time.Second
+	maxControlResponseBytes = 8 << 20
+	// An audit read carries up to four captured bodies (client and upstream
+	// request and response). JSON escaping and base64 can grow them, so allow
+	// twice the largest capture the audit settings permit.
+	maxAuditResponseBytes = 2 * (2*contract.MaxRequestBodyMaxBytes + 2*contract.MaxResponseContentMaxBytes)
+	// auditReadTimeout matches the desktop's audit reads: Core decrypts every
+	// captured part before it answers.
+	auditReadTimeout = 60 * time.Second
+)
 
 // userAgent must keep the `astrlink-cli` prefix the Control API classifies
 // agent-side observers by.
@@ -58,8 +71,9 @@ func Dial(options DialOptions) (*Client, error) {
 	if base == "" {
 		return nil, fmt.Errorf("control URL is required when no control socket is available")
 	}
+	// Each request sets its own deadline in do; audit reads need longer.
 	return &Client{
-		http:    &http.Client{Timeout: requestTimeout},
+		http:    &http.Client{},
 		baseURL: base,
 		token:   resolved.token,
 	}, nil
@@ -109,7 +123,13 @@ func unixHTTPClient(socket string) *http.Client {
 			return dialer.DialContext(ctx, "unix", socket)
 		},
 	}
-	return &http.Client{Timeout: requestTimeout, Transport: transport}
+	return &http.Client{Transport: transport}
+}
+
+// isAuditReadPath reports whether path reads one request's audit bodies,
+// which may far exceed every other Control API response.
+func isAuditReadPath(path string) bool {
+	return strings.HasPrefix(path, controlapi.RequestsPath+"/") && strings.HasSuffix(path, "/audit")
 }
 
 func (client *Client) get(ctx context.Context, path string, query url.Values) (json.RawMessage, error) {
@@ -127,6 +147,12 @@ func (client *Client) post(ctx context.Context, path string, body any) (json.Raw
 func (client *Client) do(
 	ctx context.Context, method, path string, query url.Values, body []byte, header http.Header,
 ) (json.RawMessage, error) {
+	limit, timeout := int64(maxControlResponseBytes), requestTimeout
+	if isAuditReadPath(path) {
+		limit, timeout = maxAuditResponseBytes, auditReadTimeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 	target := client.baseURL + path
 	if encoded := query.Encode(); encoded != "" {
 		target += "?" + encoded
@@ -158,9 +184,12 @@ func (client *Client) do(
 		return nil, fmt.Errorf("control API request failed: %w", err)
 	}
 	defer response.Body.Close()
-	payload, err := io.ReadAll(io.LimitReader(response.Body, 8<<20))
+	payload, err := io.ReadAll(io.LimitReader(response.Body, limit+1))
 	if err != nil {
 		return nil, fmt.Errorf("read control API response: %w", err)
+	}
+	if int64(len(payload)) > limit {
+		return nil, fmt.Errorf("control API response is larger than %d MiB", limit>>20)
 	}
 	if response.StatusCode >= 300 {
 		return nil, &APIError{Status: response.StatusCode, Body: json.RawMessage(payload)}
