@@ -52,7 +52,7 @@ func listed(fields []cc.Field, list ...string) *cc.Connection {
 }
 
 func codexModels() []cc.Field  { return models("model", "gpt-route") }
-func piModels() []cc.Field     { return models("model", "pi-route") }
+func piRoute() []cc.Field      { return models("model", "pi-route") }
 func geminiModels() []cc.Field { return models("model", "gemini-route") }
 
 // tokens are the tokens of the gateway connection writes for.

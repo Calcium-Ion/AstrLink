@@ -17,5 +17,6 @@ func init() {
 		Gemini,
 		OpenCode,
 		OpenClaw,
+		Pi,
 	)
 }
