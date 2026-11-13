@@ -28,6 +28,17 @@ func configList(config *cc.Config, key string) []any {
 	return items
 }
 
+// configObject is the object a config holds at key, decoded.
+func configObject(config *cc.Config, key string) (map[string]any, bool) {
+	value, ok := config.String(key)
+	if !ok {
+		return nil, false
+	}
+	decoded, err := format.DecodeJSON(value)
+	object, isObject := decoded.(map[string]any)
+	return object, err == nil && isObject
+}
+
 // getOwned reads the list at key as the entries owned picks, compact;
 // nothing when there are none.
 func getOwned(json *format.JSONDocument, key string, owned func(any) bool) (string, bool, bool) {

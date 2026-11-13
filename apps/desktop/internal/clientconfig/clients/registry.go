@@ -29,5 +29,6 @@ func init() {
 		VSCodeCopilot,
 		KiloCode,
 		Crush,
+		Cline,
 	)
 }

@@ -72,16 +72,6 @@ func crushRank(name string) int {
 	return len(order)
 }
 
-func crushJSONAt(config *cc.Config, key string) (map[string]any, bool) {
-	value, ok := config.String(key)
-	if !ok {
-		return nil, false
-	}
-	decoded, err := format.DecodeJSON(value)
-	object, isObject := decoded.(map[string]any)
-	return object, err == nil && isObject
-}
-
 // crushDataFile is Crush's data file, where a model picked in Crush is
 // kept.
 func crushDataFile(home agents.Home) string {
@@ -124,7 +114,7 @@ func (crush) HoldsConnection(key string) bool {
 func (crush) CurrentModels(config *cc.Config) cc.CurrentModels {
 	var ids []string
 	for _, route := range crushRoutes {
-		entry, ok := crushJSONAt(config, crushProviderPrefix+route.id)
+		entry, ok := configObject(config, crushProviderPrefix+route.id)
 		if !ok {
 			continue
 		}
@@ -137,7 +127,7 @@ func (crush) CurrentModels(config *cc.Config) cc.CurrentModels {
 		}
 	}
 	var models cc.CurrentModels
-	if large, ok := crushJSONAt(config, crushLargeKey); ok {
+	if large, ok := configObject(config, crushLargeKey); ok {
 		provider, _ := field(large, "provider")
 		if model, ok := field(large, "model"); ok && crushOurs(provider) {
 			models.Model = cc.Some(model)
@@ -205,7 +195,7 @@ func (c crush) SyncedKeys(config *cc.Config, record *cc.Record, origin string) [
 		if !c.HoldsConnection(key) {
 			continue
 		}
-		provider, ok := crushJSONAt(config, key)
+		provider, ok := configObject(config, key)
 		if !ok {
 			continue
 		}
