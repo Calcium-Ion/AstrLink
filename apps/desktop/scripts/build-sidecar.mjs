@@ -126,6 +126,27 @@ if (reuseWindowsWorkers) {
   }
 }
 const binariesDirectory = path.join(desktopDirectory, "src-tauri", "binaries");
+// The MyGo app ships resources/<os>-<arch> merged into its resource
+// directory: the programs under bin/, the Linux ONNX Runtime under
+// onnxruntime/ and the license notices under notices/. Each program keeps
+// its plain name, so Core finds its workers beside it.
+const mygoPlatform = {
+  "aarch64-apple-darwin": "darwin-arm64",
+  "x86_64-apple-darwin": "darwin-amd64",
+  "x86_64-unknown-linux-gnu": "linux-amd64",
+  "aarch64-unknown-linux-gnu": "linux-arm64",
+  "x86_64-pc-windows-msvc": "windows-amd64",
+  "aarch64-pc-windows-msvc": "windows-arm64",
+}[target];
+if (!mygoPlatform) {
+  throw new Error(`No MyGo platform directory for the Rust target ${target}.`);
+}
+const resourcesDirectory = path.join(
+  desktopDirectory,
+  "resources",
+  mygoPlatform,
+);
+const resourcesBinDirectory = path.join(resourcesDirectory, "bin");
 const output = path.join(
   binariesDirectory,
   `astrlink-core-${target}${executableSuffix}`,
@@ -151,6 +172,23 @@ const runtimeConfigOutput = path.join(
 );
 
 mkdirSync(binariesDirectory, { recursive: true });
+mkdirSync(resourcesBinDirectory, { recursive: true });
+
+// stageResource copies a staged file into the MyGo platform resources.
+function stageResource(source, relativePath) {
+  const destination = path.join(resourcesDirectory, relativePath);
+  mkdirSync(path.dirname(destination), { recursive: true });
+  copyFileSync(source, destination);
+  if (relativePath.startsWith("bin/") && !target.includes("windows")) {
+    chmodSync(destination, 0o755);
+  }
+}
+
+// stageProgram copies a Tauri sidecar into bin/ under its plain name.
+function stageProgram(sidecar, name) {
+  stageResource(sidecar, `bin/${name}${executableSuffix}`);
+  console.log(`Staged ${name} for MyGo: ${resourcesBinDirectory}`);
+}
 
 async function stageOnnxRuntimeNotices(version) {
   const cacheDirectory = path.join(
@@ -195,6 +233,7 @@ async function stageOnnxRuntimeNotices(version) {
       cached,
       path.join(binariesDirectory, `onnxruntime-${version}-${notice.name}`),
     );
+    stageResource(cached, `notices/onnxruntime-${version}/${notice.name}`);
   }
   console.log(`Staged pinned ONNX Runtime ${version} license notices.`);
 }
@@ -268,6 +307,8 @@ async function stageMacOSRuntime(
       path.join(directory, "target", "release", libraryName),
     ),
     path.join(binariesDirectory, libraryName),
+    // The workers load it from beside their executable.
+    path.join(resourcesBinDirectory, libraryName),
   ];
   return { runtimeSource, runtimeDestinations, version };
 }
@@ -383,6 +424,8 @@ async function stageLinuxRuntime() {
       linuxRuntimeLibraryName,
     ),
     path.join(binariesDirectory, linuxRuntimeLibraryName),
+    // The desktop hands Core this path (ASTRLINK_ONNX_RUNTIME_PATH).
+    path.join(resourcesDirectory, "onnxruntime", linuxRuntimeLibraryName),
   ];
   return { runtimeSource, runtimeDestinations };
 }
@@ -500,6 +543,7 @@ execFileSync(
 );
 
 console.log(`Staged astrlink-core for Tauri: ${output}`);
+stageProgram(output, "astrlink-core");
 
 execFileSync(
   "go",
@@ -513,6 +557,7 @@ if (!target.includes("windows")) {
   chmodSync(cliOutput, 0o755);
 }
 console.log(`Staged astrlink-cli for Tauri: ${cliOutput}`);
+stageProgram(cliOutput, "astrlink-cli");
 
 const macOSRuntime = await stageMacOSRuntime();
 const coreMLRuntime = await stageCoreMLRuntime();
@@ -570,6 +615,7 @@ if (!target.includes("windows")) {
 }
 
 console.log(`Staged astrlink-privacy-worker for Tauri: ${workerOutput}`);
+stageProgram(workerOutput, "astrlink-privacy-worker");
 
 if (!reuseWindowsWorkers) {
   execFileSync(
@@ -605,6 +651,7 @@ if (!target.includes("windows")) {
 console.log(
   `Staged astrlink-classifier-worker for Tauri: ${classifierWorkerOutput}`,
 );
+stageProgram(classifierWorkerOutput, "astrlink-classifier-worker");
 
 if (target.includes("windows")) {
   const runtimeName = "DirectML.dll";
@@ -629,5 +676,6 @@ if (target.includes("windows")) {
     throw new Error("Windows workers require the same bundled DirectML.dll.");
   }
   copyFileSync(runtimeSource, path.join(binariesDirectory, runtimeName));
+  stageResource(runtimeSource, `bin/${runtimeName}`);
   console.log(`Staged Windows ONNX Runtime dependency: ${runtimeName}`);
 }

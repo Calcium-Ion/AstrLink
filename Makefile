@@ -66,7 +66,7 @@ desktop-rust-check: desktop-sidecar
 	cd apps/desktop/src-tauri && cargo clippy --locked --all-targets -- -D warnings
 	cd apps/desktop/src-tauri && cargo test --locked --all-targets
 
-# Requires Bun, Go, Rust, and Tauri platform prerequisites on PATH.
+# Requires Bun, Go and Rust on PATH.
 desktop-toolchain:
 	@command -v $(BUN) >/dev/null || { echo "error: bun not found on PATH"; exit 1; }
 	@command -v go >/dev/null || { echo "error: go not found on PATH (need Go 1.23+)"; exit 1; }
@@ -74,15 +74,15 @@ desktop-toolchain:
 	@command -v cargo >/dev/null || { echo "error: cargo not found on PATH"; exit 1; }
 
 # One-shot local desktop: install JS deps, build Go/Rust sidecars, start an
-# isolated development instance with its own data, port and identity. Client
-# configs stay in the user's home; it asks before taking over a client another
-# AstrLink set up.
+# isolated development instance with its own data, port and identity
+# (`mygo dev`). Client configs stay in the user's home; it asks before taking
+# over a client another AstrLink set up.
 dev: desktop-install desktop-toolchain
 	cd apps/desktop && $(BUN) run desktop:dev
 
-# AstrLink with its usual data and port. Builds the frontend once and starts
-# without file watching: neither frontend nor Rust changes reload until the
-# next start.
+# AstrLink with its usual data and port. Builds the app for this machine once
+# (`mygo build`) and runs it without file watching: neither frontend nor Go
+# changes reload until the next start.
 start: desktop-install desktop-toolchain
 	cd apps/desktop && $(BUN) run desktop:start
 

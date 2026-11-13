@@ -8,3 +8,7 @@ src-tauri/binaries/astrlink-cli-*
 # Left behind by builds from before the CLI replaced the MCP bridge.
 src-tauri/binaries/astrlink-mcp-*
 
+# MyGo: the programs build-sidecar stages, and mygo build and dev output.
+resources/*-*/
+build/
+.mygo/
