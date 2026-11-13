@@ -154,7 +154,9 @@ func TestHostGuardsCreatedByInstallAreRemovedAndSyncRespectsManualRemoval(t *tes
 	}
 }
 
-func claudeGuarded(context *InstallContext) bool { return toolOf(Status(context), ToolClaude).GuardInstalled }
+func claudeGuarded(context *InstallContext) bool {
+	return toolOf(Status(context), ToolClaude).GuardInstalled
+}
 
 func TestSyncAddsTheRawKeyPinFileToGuardsInstalledBeforeIt(t *testing.T) {
 	home := t.TempDir()
