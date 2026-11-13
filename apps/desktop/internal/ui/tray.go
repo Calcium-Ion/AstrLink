@@ -41,7 +41,12 @@ const (
 	// popoverHandoffTimeout is how long a dismissal waits for the app it
 	// hands the foreground to before it hides the popover anyway.
 	popoverHandoffTimeout = 400 * time.Millisecond
-	popoverGap            = 2
+	// menuRelease is how long the panel waits to open from the Linux tray
+	// menu. The desktop's panel draws that menu and holds the keyboard
+	// while it shows, and tells the click before it lets go: a panel shown
+	// at once does not get the keyboard, and closes only as it loses it.
+	menuRelease = 200 * time.Millisecond
+	popoverGap  = 2
 )
 
 // The panel opens from the tray menu on Linux, whose tray reports no
@@ -190,7 +195,7 @@ func (t *trayController) menu(model TrayModel) (*mygo.Menu, string) {
 		}
 	}
 	items = append(items, mygo.Separator(),
-		item("host.tray.panel", t.open),
+		item("host.tray.panel", func() { time.AfterFunc(menuRelease, t.open) }),
 		item("host.tray.show", t.a.ShowMain),
 		item("host.tray.settings", func() { t.navigate("settings") }),
 		item("host.tray.quit", mygo.App.Quit))
