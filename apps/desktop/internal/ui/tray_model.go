@@ -794,10 +794,15 @@ func subscriptionServices(items []json.RawMessage) []subscriptionService {
 }
 
 // collectedUsage is the usage lines to collect: the enabled cards plus what
-// the menu-bar text reads, so it does not go blank when its card is off.
+// the menu-bar text or a placed desktop widget reads, so neither goes blank
+// when its card is off.
 // The popover gates each card on the preference, not the data.
-func collectedUsage(tray prefs.TrayPreferences) prefs.TrayUsagePreferences {
+func collectedUsage(tray prefs.TrayPreferences, widgetPlaced bool) prefs.TrayUsagePreferences {
 	usage := tray.Usage
+	// A desktop widget reads plan windows like the menu-bar figure does.
+	if widgetPlaced {
+		usage.SubscriptionWindows = true
+	}
 	switch tray.MenubarText {
 	case prefs.MenubarRequests, prefs.MenubarTokens:
 		usage.Today = true

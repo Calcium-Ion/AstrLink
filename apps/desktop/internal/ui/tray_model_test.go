@@ -206,7 +206,7 @@ func TestTheMenubarFigureIsCollectedEvenWithItsCardOff(t *testing.T) {
 	collect := func(text prefs.TrayMenubarText) prefs.TrayUsagePreferences {
 		tray := prefs.DefaultTrayPreferences()
 		tray.MenubarText, tray.Usage = text, off
-		return collectedUsage(tray)
+		return collectedUsage(tray, false)
 	}
 	if !collect(prefs.MenubarRequests).Today || !collect(prefs.MenubarTokens).Today ||
 		!collect(prefs.MenubarCost).Cost || !collect(prefs.MenubarSubscription).SubscriptionWindows {
@@ -214,6 +214,44 @@ func TestTheMenubarFigureIsCollectedEvenWithItsCardOff(t *testing.T) {
 	}
 	if collect(prefs.MenubarNone) != off || collect(prefs.MenubarAlertOnly) != off {
 		t.Fatal("a choice without a figure collected more")
+	}
+	// A desktop widget reads plan windows like the menu-bar figure does.
+	tray := prefs.DefaultTrayPreferences()
+	tray.MenubarText, tray.Usage = prefs.MenubarNone, off
+	if widget := collectedUsage(tray, true); !widget.SubscriptionWindows || widget.Today {
+		t.Fatalf("widget collected %+v", widget)
+	}
+}
+
+func TestTheWidgetKeepsItsPlansThroughCachedAndFailedReads(t *testing.T) {
+	earlier := time.Date(2026, 11, 13, 9, 0, 0, 0, time.UTC)
+	now := earlier.Add(2 * time.Minute)
+	listed, none := 2, 0
+	read := UsageDigest{Subscriptions: []SubscriptionDigest{{ID: "svc", Name: "Codex", Kind: "codex_subscription"}}, subscriptionServices: &listed}
+	if plans, ok := widgetRead(read, earlier, now); !ok || len(plans) != 1 || plans[0].ID != "svc" {
+		t.Fatalf("new read: %v %v", plans, ok)
+	}
+	// A cached read keeps the instant it was read at.
+	if _, ok := widgetRead(read, earlier, earlier); ok {
+		t.Fatal("a cached read reached the widget")
+	}
+	// Lookups failed: plans were listed, none came back.
+	if _, ok := widgetRead(UsageDigest{subscriptionServices: &listed}, earlier, time.Time{}); ok {
+		t.Fatal("a failed read cleared the widget")
+	}
+	// Core lists no plan-backed service at all.
+	if plans, ok := widgetRead(UsageDigest{subscriptionServices: &none}, earlier, time.Time{}); !ok || plans == nil || len(plans) != 0 {
+		t.Fatalf("no plans: %v %v", plans, ok)
+	}
+	label, seconds := "Monthly", int64(18000)
+	reset := now.Add(time.Hour)
+	converted := widgetPlans([]SubscriptionDigest{{ID: "svc", Name: "Kimi", Kind: "kimi_coding", Windows: []WindowDigest{
+		{Label: &label, LimitWindowSeconds: &seconds, Secondary: true, UsedPercent: 21, ResetAt: &reset},
+	}}})
+	if len(converted) != 1 || converted[0].ID != "svc" || *converted[0].Windows[0].Label != "Monthly" ||
+		*converted[0].Windows[0].LimitWindowSeconds != 18000 || !converted[0].Windows[0].Secondary ||
+		converted[0].Windows[0].UsedPercent != 21 || !converted[0].Windows[0].ResetAt.Equal(reset) {
+		t.Fatalf("converted %+v", converted)
 	}
 }
 

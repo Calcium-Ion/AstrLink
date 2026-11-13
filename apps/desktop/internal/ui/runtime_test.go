@@ -13,6 +13,7 @@ import (
 	"github.com/QuantumNous/astrlink/desktop/internal/control"
 	"github.com/QuantumNous/astrlink/desktop/internal/core"
 	"github.com/QuantumNous/astrlink/desktop/internal/prefs"
+	"github.com/QuantumNous/astrlink/desktop/internal/widget"
 )
 
 func TestOnlyLoginLaunchesWithBothPreferencesEnabledStayHidden(t *testing.T) {
@@ -106,7 +107,21 @@ func TestTheSchedulerRefreshesHiddenNumbersSlowerThanShownOnes(t *testing.T) {
 	if plans, _ := tray.tickPlan(false, prefs.MenubarTokens); plans.kind != planReuse {
 		t.Fatalf("tokens title: %+v", plans)
 	}
+	// A placed desktop widget shows plan figures just as the menu-bar
+	// title does, so it gets the same background cadence.
+	placed := &placedWidget{count: 1}
+	tray.widget = widget.NewFeed(t.TempDir(), placed)
+	if plans, ok := tray.tickPlan(false, prefs.MenubarNone); !ok || plans != ifOlderThan(planRefreshBackground) {
+		t.Fatalf("placed widget: %+v %v", plans, ok)
+	}
 }
+
+// placedWidget is WidgetKit with count widgets on the desktop.
+type placedWidget struct{ count int32 }
+
+func (*placedWidget) Reload()         {}
+func (*placedWidget) QueryPlaced()    {}
+func (w *placedWidget) Placed() int32 { return w.count }
 
 // fakeCore answers the control API with fixed bodies by path prefix and
 // counts the plan lookups.

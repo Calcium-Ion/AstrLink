@@ -19,6 +19,7 @@ import (
 	"github.com/QuantumNous/astrlink/desktop/internal/host"
 	"github.com/QuantumNous/astrlink/desktop/internal/prefs"
 	"github.com/QuantumNous/astrlink/desktop/internal/raw"
+	"github.com/QuantumNous/astrlink/desktop/internal/widget"
 )
 
 // PopoverLabel is the tray popover's label (TRAY_POPOVER_LABEL in the
@@ -120,10 +121,17 @@ type trayController struct {
 	// takes it.
 	navigation  *string
 	copiedUntil time.Time
+	// widget feeds the macOS desktop widget; nil without one.
+	widget *widget.Feed
+	// widgetPlans is the last plan read the widget can show, read at
+	// widgetReadAt (zero for none). It outlives the digest: a stopped
+	// gateway leaves the widget its last numbers, which it marks as old.
+	widgetPlans  []SubscriptionDigest
+	widgetReadAt time.Time
 }
 
 func newTray(a *App) *trayController {
-	return &trayController{a: a, now: time.Now, popoverWidth: PopoverWidth, popoverHeight: popoverInitialHeight}
+	return &trayController{a: a, now: time.Now, popoverWidth: PopoverWidth, popoverHeight: popoverInitialHeight, widget: widget.Default()}
 }
 
 func (t *trayController) view() core.View {
@@ -223,7 +231,12 @@ func (t *trayController) refresh() {
 	t.model = &model
 	t.menuKey = menuKey
 	popover := t.popover
+	plans, readAt := t.widgetPlans, t.widgetReadAt
 	t.mu.Unlock()
+	if !readAt.IsZero() {
+		values := t.a.prefs()
+		t.widget.Publish(widget.NewSnapshot(widgetPlans(plans), readAt, values.Locale, values.QuotaDisplayMode))
+	}
 	if tray != nil && (changed || menuChanged) {
 		t.render(tray, model, menu, copied)
 	}
@@ -658,9 +671,9 @@ func (t *trayController) tickPlan(visible bool, menubar prefs.TrayMenubarText) (
 	if !localDue {
 		return planRefresh{}, false
 	}
-	// The menu bar title shows plan figures, so it gets a background
-	// cadence, and nothing faster.
-	if menubar == prefs.MenubarSubscription && plansDue {
+	// The menu bar title and a placed desktop widget show plan figures,
+	// so they get a background cadence, and nothing faster.
+	if (menubar == prefs.MenubarSubscription || t.widget.Placed()) && plansDue {
 		return ifOlderThan(planRefreshBackground), true
 	}
 	return planRefresh{kind: planReuse}, true
@@ -687,7 +700,7 @@ func (t *trayController) refreshUsage(ctx context.Context, plans planRefresh) {
 	if t.view().Phase != core.PhaseReady {
 		return
 	}
-	usage := collectedUsage(t.a.prefs().Tray)
+	usage := collectedUsage(t.a.prefs().Tray, t.widget.Placed())
 	t.mu.Lock()
 	if t.refreshing {
 		t.mu.Unlock()
@@ -724,9 +737,44 @@ func (t *trayController) refreshUsage(ctx context.Context, plans planRefresh) {
 		digest, subscriptionsAt = &collected, at
 	}
 	t.mu.Lock()
+	if digest != nil {
+		if plans, ok := widgetRead(*digest, previousAt, subscriptionsAt); ok {
+			t.widgetPlans, t.widgetReadAt = plans, t.now()
+		}
+	}
 	t.digest, t.digestAt, t.subscriptionsAt = digest, t.now(), subscriptionsAt
 	t.mu.Unlock()
 	t.refresh()
+}
+
+// widgetRead is the plans a refresh just read for the desktop widget: a
+// new read, or a fresh service list with no plans in it. A cached read
+// changes nothing, and an empty read with plans listed is a failed lookup,
+// after which the widget keeps its last numbers.
+func widgetRead(digest UsageDigest, previousAt, subscriptionsAt time.Time) ([]SubscriptionDigest, bool) {
+	if !subscriptionsAt.IsZero() && !subscriptionsAt.Equal(previousAt) {
+		return digest.Subscriptions, true
+	}
+	if digest.subscriptionServices != nil && *digest.subscriptionServices == 0 {
+		return []SubscriptionDigest{}, true
+	}
+	return nil, false
+}
+
+// widgetPlans is the digest's plans as the widget snapshot lists them.
+func widgetPlans(plans []SubscriptionDigest) []widget.Plan {
+	out := make([]widget.Plan, 0, len(plans))
+	for _, plan := range plans {
+		windows := make([]widget.Window, 0, len(plan.Windows))
+		for _, w := range plan.Windows {
+			windows = append(windows, widget.Window{
+				Label: w.Label, LimitWindowSeconds: w.LimitWindowSeconds, Secondary: w.Secondary,
+				UsedPercent: w.UsedPercent, ResetAt: w.ResetAt,
+			})
+		}
+		out = append(out, widget.Plan{ID: plan.ID, Name: plan.Name, Kind: plan.Kind, Windows: windows})
+	}
+	return out
 }
 
 // collectDigest reads only what the enabled cards need. Local numbers are
