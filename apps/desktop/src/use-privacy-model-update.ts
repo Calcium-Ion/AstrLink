@@ -1,5 +1,5 @@
-import { isTauri, invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { isTauri, invoke } from "./native-host/core";
+import { listen } from "./native-host/event";
 import { useEffect, useState } from "react";
 
 /**

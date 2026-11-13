@@ -1,5 +1,5 @@
-import { invoke, isTauri } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { invoke, isTauri } from "./native-host/core";
+import { listen } from "./native-host/event";
 import {
   emptyLocalClients,
   parseLocalClients,

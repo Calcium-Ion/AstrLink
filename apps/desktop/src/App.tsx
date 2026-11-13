@@ -2,8 +2,8 @@ import { isWebEdition } from "./edition";
 import { ConsoleLogout } from "./ConsoleEntry";
 import { WebSettings } from "./WebSettings";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { isTauri } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { isTauri } from "./native-host/core";
+import { listen, type UnlistenFn } from "./native-host/event";
 import {
   Activity,
   CircleHelp,

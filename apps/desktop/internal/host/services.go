@@ -146,6 +146,22 @@ func (Window) WindowChromePreferences() WindowChrome {
 	return WindowChrome{Platform: PlatformName(), DecorationLayout: decorationLayout()}
 }
 
+// WindowState is what a custom title bar draws from.
+type WindowState struct {
+	Focused    bool `json:"focused"`
+	FullScreen bool `json:"full_screen"`
+	Maximized  bool `json:"maximized"`
+}
+
+// WindowState returns the state of the window the call came from.
+func (Window) WindowState(ctx context.Context) (WindowState, error) {
+	w := mygo.CallerWindow(ctx)
+	if w == nil {
+		return WindowState{}, errors.New("no window made this call")
+	}
+	return WindowState{Focused: w.IsFocused(), FullScreen: w.IsFullScreen(), Maximized: w.IsMaximized()}, nil
+}
+
 // WindowService returns the window service, for registerWindowCommands.
 func (h *Host) WindowService() *Window { return &Window{h} }
 

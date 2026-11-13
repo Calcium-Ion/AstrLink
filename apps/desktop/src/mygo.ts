@@ -364,6 +364,13 @@ export interface WindowChrome {
   decoration_layout: string | null;
 }
 
+/** WindowState is what a custom title bar draws from. */
+export interface WindowState {
+  focused: boolean;
+  full_screen: boolean;
+  maximized: boolean;
+}
+
 // ---- Services ----
 
 /** Core starts and stops the Core process and reports its state. */
@@ -978,6 +985,10 @@ export const Window = {
   windowChromePreferences(): Promise<WindowChrome> {
     return call("Window.WindowChromePreferences");
   },
+  /** WindowState returns the state of the window the call came from. */
+  windowState(): Promise<WindowState> {
+    return call("Window.WindowState");
+  },
 } as const;
 
 // ---- Events ----
@@ -1012,4 +1023,10 @@ export const events = {
   quotaDisplayModeChanged: event<string>("quota-display-mode-changed"),
   /** ThemePreferenceChanged carries the theme the user chose. */
   themePreferenceChanged: event<string>("theme-preference-changed"),
+  /**
+   * WindowResized tells a window's page that it was resized, maximized or
+   * went into or out of full screen, so a custom title bar reads its
+   * state again (getCurrentWindow().onResized).
+   */
+  windowResized: event<{}>("window:resized"),
 } as const;

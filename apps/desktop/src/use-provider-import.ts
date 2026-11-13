@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { isTauri } from "@tauri-apps/api/core";
+import { isTauri } from "./native-host/core";
 
 import {
   dismissProviderImport,

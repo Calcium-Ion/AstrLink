@@ -36,4 +36,8 @@ var (
 	QuotaDisplayModeChanged = mygo.NewEvent[string]("quota-display-mode-changed")
 	// ThemePreferenceChanged carries the theme the user chose.
 	ThemePreferenceChanged = mygo.NewEvent[string]("theme-preference-changed")
+	// WindowResized tells a window's page that it was resized, maximized or
+	// went into or out of full screen, so a custom title bar reads its
+	// state again (getCurrentWindow().onResized).
+	WindowResized = mygo.NewEvent[struct{}]("window:resized")
 )

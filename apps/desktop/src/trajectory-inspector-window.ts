@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { invoke } from "./native-host/core";
+import { listen, type UnlistenFn } from "./native-host/event";
+import { getCurrentWindow } from "./native-host/window";
 
 import { i18n } from "./i18n";
 import { notify } from "./notify";

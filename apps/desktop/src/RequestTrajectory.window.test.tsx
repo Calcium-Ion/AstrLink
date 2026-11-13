@@ -11,9 +11,9 @@ const hostMocks = vi.hoisted(() => ({
   windowLabel: { current: "main" },
 }));
 
-vi.mock("@tauri-apps/api/core", () => ({ invoke: hostMocks.invoke }));
-vi.mock("@tauri-apps/api/event", () => ({ listen: hostMocks.listen }));
-vi.mock("@tauri-apps/api/window", () => ({
+vi.mock("./native-host/core", () => ({ invoke: hostMocks.invoke }));
+vi.mock("./native-host/event", () => ({ listen: hostMocks.listen }));
+vi.mock("./native-host/window", () => ({
   getCurrentWindow: () => ({ label: hostMocks.windowLabel.current }),
 }));
 

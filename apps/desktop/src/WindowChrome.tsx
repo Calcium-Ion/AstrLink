@@ -1,4 +1,4 @@
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { getCurrentWindow } from "./native-host/window";
 import {
   createContext,
   type MouseEvent as ReactMouseEvent,
@@ -303,7 +303,7 @@ export function WindowChrome({
     controls.length > 0 ? (
       <div
         className={cn(
-          "flex h-full items-center [app-region:no-drag] [-webkit-app-region:no-drag]",
+          "flex h-full items-center [--app-region:no-drag] [app-region:no-drag] [-webkit-app-region:no-drag]",
           placement === "start" ? "col-start-1" : "col-start-3",
           platform === "linux" && "gap-[3px] px-1.5",
         )}
@@ -361,7 +361,7 @@ export function WindowChrome({
       >
         {renderControls(layout.start, "start")}
         <div
-          className="col-start-2 row-start-1 h-full min-w-0 [app-region:drag] [-webkit-app-region:drag]"
+          className="col-start-2 row-start-1 h-full min-w-0 [--app-region:drag] [app-region:drag] [-webkit-app-region:drag]"
           data-tauri-drag-region
           data-slot="window-drag-region"
         />
@@ -369,7 +369,7 @@ export function WindowChrome({
           // Shares the drag region's cell, so the bar stays draggable
           // everywhere the accessory does not cover.
           <div
-            className="col-start-2 row-start-1 flex h-full items-center gap-1.5 justify-self-end px-3 empty:hidden [app-region:no-drag] [-webkit-app-region:no-drag]"
+            className="col-start-2 row-start-1 flex h-full items-center gap-1.5 justify-self-end px-3 empty:hidden [--app-region:no-drag] [app-region:no-drag] [-webkit-app-region:no-drag]"
             data-slot="window-accessory"
             ref={setAccessorySlot}
           />

@@ -385,7 +385,7 @@ func (h *Host) openMainWindow() *mygo.Window {
 		options.Frameless = true
 	}
 	w := mygo.NewWindow(options)
-	SetLabel(w, MainLabel)
+	Register(w, MainLabel)
 	w.OnReadyToShow(w.Show)
 	return w
 }
@@ -402,11 +402,18 @@ func (h *Host) MainWindow() *mygo.Window {
 
 var labels sync.Map // *mygo.Window → string
 
-// SetLabel names a window for the frontend and the commands that scope
-// state per window.
-func SetLabel(w *mygo.Window, label string) {
+// Register names a window for the frontend and the commands that scope
+// state per window, and tells its page when its size or state changes.
+// Every window the app opens is registered.
+func Register(w *mygo.Window, label string) {
 	labels.Store(w, label)
 	w.OnClosed(func() { labels.Delete(w) })
+	resized := func() { _ = WindowResized.Emit(w, struct{}{}) }
+	w.OnResize(resized)
+	w.OnMaximize(resized)
+	w.OnUnmaximize(resized)
+	w.OnEnterFullScreen(resized)
+	w.OnLeaveFullScreen(resized)
 }
 
 // Label is a window's label, "" for none.

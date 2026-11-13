@@ -121,7 +121,7 @@ vi.mock("sonner", async (importOriginal) => {
 vi.mock("./bridge", () => bridgeMocks);
 
 const eventMocks = vi.hoisted(() => ({ listen: vi.fn() }));
-vi.mock("@tauri-apps/api/event", () => ({ listen: eventMocks.listen }));
+vi.mock("./native-host/event", () => ({ listen: eventMocks.listen }));
 
 const modelUpdate = vi.hoisted(() => ({
   current: null as

@@ -19,11 +19,11 @@ const windowMocks = vi.hoisted(() => ({
   unlistenResize: vi.fn(),
 }));
 
-vi.mock("@tauri-apps/api/core", () => ({
+vi.mock("./native-host/core", () => ({
   invoke: windowMocks.invoke,
 }));
 
-vi.mock("@tauri-apps/api/window", () => ({
+vi.mock("./native-host/window", () => ({
   getCurrentWindow: () => ({
     close: windowMocks.close,
     isFocused: windowMocks.isFocused,

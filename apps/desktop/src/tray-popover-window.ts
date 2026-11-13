@@ -1,4 +1,4 @@
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { getCurrentWindow } from "./native-host/window";
 
 /** Must match `POPOVER_LABEL` in `src-tauri/src/tray.rs`. */
 export const TRAY_POPOVER_LABEL = "tray-popover";

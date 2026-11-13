@@ -13,7 +13,7 @@ const bridge = vi.hoisted(() => ({
   trayPopoverResize: vi.fn(),
 }));
 vi.mock("./bridge", () => bridge);
-vi.mock("@tauri-apps/api/event", () => ({
+vi.mock("./native-host/event", () => ({
   listen: vi.fn().mockResolvedValue(() => {}),
 }));
 

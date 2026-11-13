@@ -1,4 +1,4 @@
-import { isTauri } from "@tauri-apps/api/core";
+import { isTauri } from "../native-host/core";
 import type { ComponentProps, MouseEvent } from "react";
 
 import { ArrowUpRight } from "@/components/icons";

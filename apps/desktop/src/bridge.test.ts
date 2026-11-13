@@ -7,7 +7,7 @@ const downloadMocks = vi.hoisted(() => ({
   downloadTextFile: vi.fn(),
 }));
 
-vi.mock("@tauri-apps/api/core", () => ({
+vi.mock("./native-host/core", () => ({
   invoke: invokeMock,
 }));
 vi.mock("./download-text-file", () => downloadMocks);

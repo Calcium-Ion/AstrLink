@@ -1,5 +1,5 @@
 import { useEffect, useId, useState } from "react";
-import { isTauri } from "@tauri-apps/api/core";
+import { isTauri } from "./native-host/core";
 import { Panel, PanelHeader } from "@/components/Panel";
 import { DataField, DataRow } from "@/components/DataRow";
 import { Badge } from "@/components/ui/badge";
