@@ -4,8 +4,8 @@ cloud.google.com/go/compute/metadata v0.3.0 h1:Tz+eQXMEqDIKRsmY3cHTL6FVaynIjX2Qx
 cloud.google.com/go/compute/metadata v0.3.0/go.mod h1:zFmK7XCadkQkj6TtorcaGlCW1hT1fIilQDwofLpJ20k=
 github.com/MoeForge/moego v0.1.0-alpha.1 h1:d+asBZu+2oKnBj1kzdvdANMStbIKw9BLCpknuWjiR28=
 github.com/MoeForge/moego v0.1.0-alpha.1/go.mod h1:SBNiQjCpWC3IEBMKFBOwOyhhQ3jywMrISqCwJTdr4aA=
-github.com/QuantumNous/new-api/relaykit v0.3.6-0.20261103113342-ba5f73677975 h1:ra8ead+yFh0P4aedEIq4ELI3bVxlBIsBrjlB3BBQg/A=
-github.com/QuantumNous/new-api/relaykit v0.3.6-0.20261103113342-ba5f73677975/go.mod h1:MRN+oK1GdKyOSBvC+VIOJvX+faU1KJgHN/fh8RAVupI=
+github.com/QuantumNous/new-api/relaykit v0.3.7 h1:GDL8i+m0y+FeL6YYg1H5s7NWBs4o++mkdydQ1ckIOPA=
+github.com/QuantumNous/new-api/relaykit v0.3.7/go.mod h1:MRN+oK1GdKyOSBvC+VIOJvX+faU1KJgHN/fh8RAVupI=
 github.com/andybalholm/brotli v1.2.8 h1:H9F6r7RNwzSRsx/lytpIYkbjNFMt2yNBwsJ2+0gpx78=
 github.com/andybalholm/brotli v1.2.8/go.mod h1:rzTDkvFWvIrjDXZHkuS16NPggd91W3kUSvPlQ1pLaKY=
 github.com/danieljoos/wincred v1.2.2 h1:774zMFJrqaeYCK2W57BgAem/MLi6mtSE47MB6BOJ0i0=
