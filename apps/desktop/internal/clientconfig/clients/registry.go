@@ -23,5 +23,6 @@ func init() {
 		DeepSeekHarness,
 		QwenCode,
 		KimiCode,
+		GrokBuild,
 	)
 }
