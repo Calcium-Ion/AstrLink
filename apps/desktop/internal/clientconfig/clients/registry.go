@@ -32,5 +32,6 @@ func init() {
 		Cline,
 		Zed,
 		Goose,
+		MistralVibe,
 	)
 }
