@@ -27,5 +27,6 @@ func init() {
 		Droid,
 		CopilotCLI,
 		VSCodeCopilot,
+		KiloCode,
 	)
 }
