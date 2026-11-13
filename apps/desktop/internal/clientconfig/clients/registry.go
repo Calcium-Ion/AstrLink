@@ -38,5 +38,6 @@ func init() {
 		ZCode,
 		MiniMaxCode,
 		StepCode,
+		Aider,
 	)
 }
