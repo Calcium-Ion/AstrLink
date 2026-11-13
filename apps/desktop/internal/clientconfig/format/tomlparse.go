@@ -702,7 +702,7 @@ func (p *tomlParser) literalString() (string, *tomlError) {
 	return value, nil
 }
 
-// multilineString reads a `"""` or `”'` string.
+// multilineString reads a multi-line string, basic or literal.
 func (p *tomlParser) multilineString(quote byte) (string, *tomlError) {
 	p.pos += 3
 	if p.is('\n') {
