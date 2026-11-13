@@ -34,5 +34,6 @@ func init() {
 		Goose,
 		MistralVibe,
 		CodeWhale,
+		Reasonix,
 	)
 }

@@ -1,7 +1,6 @@
 package clients
 
 import (
-	"fmt"
 	"path/filepath"
 	"slices"
 
@@ -200,97 +199,35 @@ func (mistralVibe) SyncedKeys(config *cc.Config, _ *cc.Record, origin string) []
 	return []cc.Setting{{Key: vibeProvidersKey, Value: format.Encode(providers)}}
 }
 
-// vibeTables are the `[[list]]` tables, when list is one.
-func vibeTables(document format.Document, list string) *format.TOMLArrayOfTables {
-	toml, ok := document.(*format.TOMLDocument)
-	if !ok {
-		return nil
-	}
-	tables, _ := toml.Root().Get(list).(*format.TOMLArrayOfTables)
-	return tables
-}
-
-func vibeTableOwned(owned func(any) bool) func(*format.TOMLTable) bool {
-	return func(table *format.TOMLTable) bool {
-		entry, ok := format.TOMLJSON(table)
-		return ok && owned(entry)
-	}
-}
-
 func (vibeConfig) Format() format.Format { return format.TOMLFormat{} }
 
 func (vibeConfig) Holds(key string) bool { return key != vibeKeyName }
 
 // Get reads a list as AstrLink's tables in it.
 func (vibeConfig) Get(document format.Document, key string) (string, bool, bool) {
-	if key != vibeProvidersKey && key != vibeModelsKey {
+	toml, ok := document.(*format.TOMLDocument)
+	if !ok || key != vibeProvidersKey && key != vibeModelsKey {
 		return document.Get(key)
 	}
-	tables := vibeTables(document, key)
-	if tables == nil {
-		return "", false, false
-	}
-	owned := vibeOwnedIn(key)
-	var list []any
-	for _, table := range tables.Tables {
-		if entry, ok := format.TOMLJSON(table); ok && owned(entry) {
-			list = append(list, entry)
-		}
-	}
-	if len(list) == 0 {
-		return "", false, false
-	}
-	return format.Encode(list), true, true
+	return getOwnedTables(toml, key, vibeOwnedIn(key))
 }
 
 // Set puts AstrLink's tables after the user's.
 func (vibeConfig) Set(document format.Document, key, value string) error {
-	if key != vibeProvidersKey && key != vibeModelsKey {
+	toml, ok := document.(*format.TOMLDocument)
+	if !ok || key != vibeProvidersKey && key != vibeModelsKey {
 		return document.Set(key, value)
 	}
-	toml, ok := document.(*format.TOMLDocument)
-	if !ok {
-		return fmt.Errorf("%s is not TOML", key)
-	}
-	decoded, err := format.DecodeJSON(value)
-	list, isList := decoded.([]any)
-	if err != nil || !isList {
-		return fmt.Errorf("%s is not a list", key)
-	}
-	root := toml.Root()
-	if !root.ContainsKey(key) {
-		root.Insert(key, &format.TOMLArrayOfTables{})
-	}
-	tables, ok := root.Get(key).(*format.TOMLArrayOfTables)
-	if !ok {
-		return fmt.Errorf("has a %s value that is not a list of tables", key)
-	}
-	owned := vibeTableOwned(vibeOwnedIn(key))
-	tables.Retain(func(table *format.TOMLTable) bool { return !owned(table) })
-	for _, entry := range list {
-		table, ok := format.TOMLTableOf(entry, vibeRank)
-		if !ok {
-			return fmt.Errorf("%s holds a value TOML cannot", key)
-		}
-		tables.Push(table)
-	}
-	return nil
+	return setOwnedTables(toml, key, value, vibeOwnedIn(key), vibeRank)
 }
 
 func (vibeConfig) Remove(document format.Document, key string) {
-	if key != vibeProvidersKey && key != vibeModelsKey {
+	toml, ok := document.(*format.TOMLDocument)
+	if !ok || key != vibeProvidersKey && key != vibeModelsKey {
 		document.Remove(key)
 		return
 	}
-	tables := vibeTables(document, key)
-	if tables == nil {
-		return
-	}
-	owned := vibeTableOwned(vibeOwnedIn(key))
-	tables.Retain(func(table *format.TOMLTable) bool { return !owned(table) })
-	if len(tables.Tables) == 0 {
-		document.(*format.TOMLDocument).Root().Remove(key)
-	}
+	dropOwnedTables(toml, key, vibeOwnedIn(key))
 }
 
 func (vibeEnv) Format() format.Format { return format.EnvFormat{} }
