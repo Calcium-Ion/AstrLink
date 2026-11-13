@@ -2022,6 +2022,12 @@ func (session *recordSession) resolveSession(ctx context.Context, store RequestR
 	if session.sessionID == "" {
 		session.sessionID = newSessionID()
 		session.noteOpener()
+		// A Paseo agent opens with the create_agent task its creator gave
+		// it, which a response of the creator's conversation recorded. A
+		// later message never moves an existing conversation under a parent.
+		if thread.paseoTask != "" && spawn == "" && thread.parent == "" {
+			spawn = spawnFingerprint(session.linkFingerprinter, thread.paseoTask)
+		}
 	}
 	if session.parentSessionID == nil {
 		session.findParent(lookupCtx, store, logf, thread.parent, spawn)
@@ -2094,7 +2100,8 @@ func (session *recordSession) noteOpener() {
 }
 
 // findParent links a subagent's conversation to the one that started it: by
-// the parent thread the client named, or, for a DeepSeek Harness subagent, by
+// the parent thread the client named, or, for a DeepSeek Harness or Paseo
+// subagent, by
 // the call of the same access token that gave it its prompt shortly before.
 func (session *recordSession) findParent(ctx context.Context, store RequestRecordStore, logf func(string, ...any), parent, spawn string) {
 	if store == nil {
