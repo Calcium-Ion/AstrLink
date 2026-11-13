@@ -20,5 +20,6 @@ func init() {
 		Pi,
 		WorkBuddy,
 		CodeBuddy,
+		DeepSeekHarness,
 	)
 }

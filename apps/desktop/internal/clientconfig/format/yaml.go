@@ -741,3 +741,21 @@ func yamlFloat(text string) (float64, bool) {
 	}
 	return f, true
 }
+
+// ReadYAML reads the data of a YAML file of any shape, for a file
+// AstrLink only looks at.
+func ReadYAML(text string) (any, error) { return readYAML(text) }
+
+// YAMLMappingOf returns a mapping value; a tagged value, which reads as
+// `{"!tag": value}`, is none.
+func YAMLMappingOf(value any) (map[string]any, bool) {
+	mapping, ok := value.(map[string]any)
+	if ok && len(mapping) == 1 {
+		for name := range mapping {
+			if strings.HasPrefix(name, "!") {
+				return nil, false
+			}
+		}
+	}
+	return mapping, ok
+}
