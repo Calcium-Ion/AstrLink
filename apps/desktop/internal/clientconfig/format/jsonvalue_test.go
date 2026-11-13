@@ -12,3 +12,17 @@ func TestObjectsKeepTheirMemberOrder(t *testing.T) {
 		t.Errorf("pretty %q", got)
 	}
 }
+
+func TestInvalidJSONNamesThePositionSerdeDoes(t *testing.T) {
+	for _, tc := range []struct{ text, want string }{
+		// At the end of the text the column is the last character's.
+		{`{"env": `, "is not valid JSON (line 1, column 8)"},
+		{"{\n  \"a\": 1,\n", "is not valid JSON (line 3, column 0)"},
+		{`{"a" 1}`, "is not valid JSON (line 1, column 6)"},
+	} {
+		_, err := ParseJSON(tc.text, JSONFormat{})
+		if invalid, ok := err.(*Invalid); !ok || invalid.Message != tc.want {
+			t.Errorf("%q: %v", tc.text, err)
+		}
+	}
+}

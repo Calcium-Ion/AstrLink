@@ -545,7 +545,8 @@ func contains(list []string, item string) bool {
 }
 
 // strictJSONErrorPosition is the 1-based line and column a strict JSON
-// reader stops at in text.
+// reader stops at in text. Like serde_json, it counts the character it
+// stopped at, so at the end of the text the column is the last one's.
 func strictJSONErrorPosition(text string) (int, int) {
 	offset := len(text)
 	if _, err := parseJSONText(text, JSONSyntax{}, false); err != nil {
@@ -559,5 +560,8 @@ func strictJSONErrorPosition(text string) (int, int) {
 			column++
 		}
 	}
-	return line, column + 1
+	if offset < len(text) {
+		column++
+	}
+	return line, column
 }
