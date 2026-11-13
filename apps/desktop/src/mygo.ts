@@ -282,6 +282,9 @@ export type LocalKeyStorage = "keychain" | "file" | "keychain_unavailable";
 /** Locale is a language the interface is written in. */
 export type Locale = "en" | "zh-CN" | "ja";
 
+/** ModelPhase is how far the newer model release is. */
+export type ModelPhase = "available" | "ready";
+
 /** Models is what the dialog writes a client with. */
 export interface Models {
   model?: string;
@@ -410,6 +413,14 @@ export interface PrivacyDigest {
 export interface PrivacyKindCount {
   kind: string;
   count: number;
+}
+
+/** PrivacyModelUpdate is a newer release of the model the policy runs. */
+export interface PrivacyModelUpdate {
+  catalog_id: string;
+  name: string;
+  version: string;
+  phase: ModelPhase;
 }
 
 /**
@@ -1533,6 +1544,17 @@ export const Clients = {
    */
   removeClientConfig(client: unknown, target: string | null, distribution: string | null): Promise<void> {
     return call("Clients.RemoveClientConfig", client, target, distribution);
+  },
+} as const;
+
+/**
+ * Release is the service of app and privacy model updates
+ * (src/native-host/commands-release.ts).
+ */
+export const Release = {
+  /** PrivacyModelUpdateStatus is the privacy model reminder, null without one. */
+  privacyModelUpdateStatus(): Promise<PrivacyModelUpdate | null> {
+    return call("Release.PrivacyModelUpdateStatus");
   },
 } as const;
 

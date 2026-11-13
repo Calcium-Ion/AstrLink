@@ -37,7 +37,6 @@ const pendingCommands: Record<string, string[]> = {
     "check_app_update",
     "download_app_update",
     "install_app_update",
-    "privacy_model_update_status",
     "update_update_preferences",
   ],
   // Only the server edition installs the claude CLI; the desktop never
