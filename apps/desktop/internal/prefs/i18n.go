@@ -78,8 +78,7 @@ func catalog(locale Locale) map[string]any {
 	if err := json.Unmarshal(data, &root); err != nil {
 		panic("prefs: invalid catalog " + file + ": " + err.Error())
 	}
-	host := map[string]any{"host": root["host"]}
-	c, _ := catalogs.LoadOrStore(locale, host)
+	c, _ := catalogs.LoadOrStore(locale, root)
 	return c.(map[string]any)
 }
 
