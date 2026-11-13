@@ -1,6 +1,7 @@
 package ingress
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"regexp"
@@ -109,9 +110,16 @@ func readAgentThread(
 		readDeepSeekHarnessThread(&thread, protocol, fields, summary)
 	}
 	if thread.parent == "" && thread.spawnOpener == "" {
+		history := fields["messages"]
+		if protocol == contract.ProtocolOpenAIResponses {
+			history = fields["input"]
+		}
+		// Most requests carry no envelope; skip reading their history.
 		switch protocol {
 		case contract.ProtocolOpenAIChat, contract.ProtocolOpenAIResponses, contract.ProtocolAnthropicMessages:
-			thread.paseoTask = paseoCreateTask(protocol, userRawParts(protocol, fields))
+			if bytes.Contains(history, []byte("paseo-system")) {
+				thread.paseoTask = paseoCreateTask(protocol, userRawParts(protocol, fields))
+			}
 		}
 	}
 	return thread
@@ -544,16 +552,18 @@ func (spawns *spawnCalls) observe(payload []byte, streaming bool) {
 			return true
 		})
 	case contract.ProtocolOpenAIResponses:
-		// A stream repeats every output item in its final event.
+		// A stream sends each finished item in output_item.done and repeats
+		// them in its final event, which the Codex backend leaves empty.
+		if streaming && document.Get("type").String() == "response.output_item.done" {
+			spawns.setItem(document.Get("output_index").Int(), document.Get("item"))
+			return
+		}
 		output := document.Get("output")
 		if streaming {
 			output = document.Get("response.output")
 		}
 		output.ForEach(func(position, item ojson.Result) bool {
-			if item.Get("type").String() == "function_call" {
-				spawns.add(position.Int(), item.Get("name").String(), item.Get("arguments").String())
-				spawns.calls[position.Int()].namespace = item.Get("namespace").String()
-			}
+			spawns.setItem(position.Int(), item)
 			return true
 		})
 	case contract.ProtocolAnthropicMessages:
@@ -571,6 +581,19 @@ func (spawns *spawnCalls) observe(payload []byte, streaming bool) {
 			spawns.add(document.Get("index").Int(), "", delta.Get("partial_json").String())
 		}
 	}
+}
+
+// setItem replaces the call at key with a whole Responses output item.
+func (spawns *spawnCalls) setItem(key int64, item ojson.Result) {
+	if item.Get("type").String() != "function_call" {
+		return
+	}
+	if call := spawns.calls[key]; call != nil {
+		spawns.bytes -= call.arguments.Len()
+		delete(spawns.calls, key)
+	}
+	spawns.add(key, item.Get("name").String(), item.Get("arguments").String())
+	spawns.calls[key].namespace = item.Get("namespace").String()
 }
 
 func (spawns *spawnCalls) add(key int64, name, arguments string) {
