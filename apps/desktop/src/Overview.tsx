@@ -152,6 +152,23 @@ const BREAKDOWN_LIST_HEIGHT = [
   "min-h-75",
 ] as const;
 
+type UsageView = "chart" | "heatmap" | "trail";
+
+/**
+ * The range `view` shows when `chosen` was picked by hand: that range when
+ * the view can show it, otherwise the view's own. A ring per model for a
+ * day, or per day for a week or a month, fits the star trail's disc; a
+ * calendar of one or seven days says less than a bar chart, so the heatmap
+ * opens on a year.
+ */
+function rangeForView(chosen: UsageRange, view: UsageView): UsageRange {
+  if (view === "trail") {
+    return STAR_TRAIL_RANGES.some((range) => range === chosen) ? chosen : "1d";
+  }
+  if (view === "heatmap" && (chosen === "1d" || chosen === "7d")) return "1y";
+  return chosen;
+}
+
 export function Overview({
   catalog,
   copyState,
@@ -206,12 +223,19 @@ export function Overview({
 }) {
   const t = i18n.t.bind(i18n);
   // The star trail opens first; a view picked by hand stays for the session.
-  const [view, setView] = useWorkspaceSnapshot<"chart" | "heatmap" | "trail">(
+  const [view, setView] = useWorkspaceSnapshot<UsageView>(
     "overview-usage-view",
     () =>
       STAR_TRAIL_RANGES.some((range) => range === usageRange)
         ? "trail"
         : "heatmap",
+    "desktop",
+  );
+  // The range last picked by hand. A view that cannot show it borrows its
+  // own fallback while it is open, and the next view that can gets it back.
+  const [chosenRange, setChosenRange] = useWorkspaceSnapshot<UsageRange>(
+    "overview-usage-chosen-range",
+    () => usageRange,
     "desktop",
   );
   const rangeKey = usageRangeKey(usageRange);
@@ -841,20 +865,9 @@ export function Overview({
                       value={view}
                       onValueChange={(next) => {
                         setView(next);
-                        if (
-                          next === "heatmap" &&
-                          (usageRange === "1d" || usageRange === "7d")
-                        )
-                          onUsageRangeChange("1y");
-                        // A ring per model for a day, or per day for a week or a
-                        // month, fits the disc.
-                        if (
-                          next === "trail" &&
-                          !STAR_TRAIL_RANGES.some(
-                            (range) => range === usageRange,
-                          )
-                        )
-                          onUsageRangeChange("1d");
+                        const shown = rangeForView(chosenRange, next);
+                        if (usageRangeKey(shown) !== rangeKey)
+                          onUsageRangeChange(shown);
                       }}
                       options={[
                         { value: "trail", label: t("overview.starTrail") },
@@ -868,7 +881,9 @@ export function Overview({
                       className="min-w-24"
                       custom={view !== "trail"}
                       onChange={(next) => {
-                        if (next !== null) onUsageRangeChange(next);
+                        if (next === null) return;
+                        setChosenRange(next);
+                        onUsageRangeChange(next);
                       }}
                       // A calendar of one or seven days says less than a bar
                       // chart.

@@ -85,6 +85,7 @@ import {
   localDayKey,
   resolveUsageWindow,
   type UsageGroup,
+  type UsageRange,
   type UsageSummary,
 } from "./usage-range";
 import { customRangeLabel } from "@/components/UsageRangePicker";
@@ -2004,6 +2005,68 @@ describe("Overview", () => {
       expect(cells.filter((cell) => cell.tabIndex === 0)).toHaveLength(1);
     },
   );
+
+  it("gives the chart back the range picked by hand after the heatmap and star trail", async () => {
+    let range: UsageRange = "1d";
+    const rerender = () =>
+      renderOverview({
+        onUsageRangeChange: (next) => {
+          range = next;
+        },
+        usage: {
+          status: "ready",
+          summary: emptyUsageSummary(resolveUsageWindow(range, now)),
+          error: null,
+        },
+        usageRange: range,
+      });
+    const rangeLabel = () =>
+      container.querySelector('button[aria-label="用量区间"]')?.textContent;
+    const pick = async (label: string) => {
+      await act(async () =>
+        container
+          .querySelector<HTMLButtonElement>('button[aria-label="用量区间"]')!
+          .click(),
+      );
+      await act(async () => {
+        [
+          ...document.querySelectorAll<HTMLButtonElement>(
+            '[data-slot="usage-range-picker"] button[aria-pressed]',
+          ),
+        ]
+          .find((option) => option.textContent === label)!
+          .click();
+      });
+      await settleClosedLayer();
+      await rerender();
+    };
+    const show = async (view: string) => {
+      await act(async () => button(view).click());
+      await rerender();
+    };
+
+    await rerender();
+    await show("图表");
+    expect(rangeLabel()).toBe("近 24 小时");
+    // A day or a week has no calendar, so the heatmap borrows a year.
+    await show("热力图");
+    expect(rangeLabel()).toBe("近一年");
+    await show("图表");
+    expect(rangeLabel()).toBe("近 24 小时");
+
+    await pick("近 90 天");
+    await show("星轨");
+    expect(rangeLabel()).toBe("近 24 小时");
+    await show("热力图");
+    expect(rangeLabel()).toBe("近 90 天");
+    await show("图表");
+    expect(rangeLabel()).toBe("近 90 天");
+
+    // A year picked by hand on the heatmap stays a year on the chart.
+    await pick("近一年");
+    await show("图表");
+    expect(rangeLabel()).toBe("近一年");
+  });
 
   it("switches hourly heatmaps to a yearly calendar and hides cells after failure", async () => {
     const { onUsageRangeChange } = await renderOverview({
