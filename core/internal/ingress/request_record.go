@@ -270,6 +270,9 @@ type recordSession struct {
 	// sideCall is set for a helper call of its conversation, such as a
 	// title request: it keeps the turn and carries no preview.
 	sideCall bool
+	// delegatedParent is the request an official Claude account's CLI made
+	// this call for; the call is recorded as its child.
+	delegatedParent *contract.RequestID
 	// parentSessionID names the conversation that started this one as a
 	// subagent.
 	parentSessionID *contract.SessionID
@@ -281,6 +284,18 @@ type recordSession struct {
 	// link cursors and is nil with it.
 	fingerprinter     *convo.Fingerprinter
 	linkFingerprinter *convo.Fingerprinter
+	// context is what the call carried to the model, digests keyed;
+	// recordContext prepares it for each record from the raw memory titles
+	// and hooks in contextTitles, and the raw index lines and catalogs in
+	// contextIndex, contextSkills and contextMCP. Nil when the body was not
+	// read. project is the working directory the request named, the home
+	// directory written as ~.
+	context       *contract.RequestContext
+	contextTitles [][2]string
+	contextIndex  []observedIndexEntry
+	contextSkills *observedItem
+	contextMCP    *observedItem
+	project       string
 	// turn is the user turn convo placed this request in, with the state the
 	// next linked request compares against; nil when the protocol has none.
 	turn        *convo.TurnState
@@ -301,6 +316,11 @@ type recordSession struct {
 	// Keep serialized metadata so pointer-backed fields cannot mutate the last
 	// successful snapshot. Unchanged capture/progress callbacks need no write.
 	persistedMetadata []byte
+	// attemptImages is what image compression did to the current attempt.
+	// forwardedImages is the first attempt with inline images an upstream
+	// answered; the totals count it once.
+	attemptImages   imageCompressionResult
+	forwardedImages *imageCompressionResult
 }
 
 func newRecordSession(
@@ -572,7 +592,7 @@ func (session *recordSession) recordSnapshot(
 	record := contract.RequestRecord{
 		ClientType:         session.clientType,
 		ID:                 session.id,
-		ParentRequestID:    nil,
+		ParentRequestID:    session.delegatedParent,
 		AttemptIndex:       session.attemptIndex,
 		ChildCount:         session.childCount,
 		StartedAt:          session.startedAt,
@@ -624,6 +644,11 @@ func (session *recordSession) recordSnapshot(
 	}
 	if preview := session.visibleInputPreview(); preview != "" {
 		record.InputPreview = &preview
+	}
+	record.Context = session.recordContext()
+	if session.project != "" {
+		project := session.project
+		record.Project = &project
 	}
 	if session.turn != nil && session.turn.Index >= 1 {
 		index, users := session.turn.Index, session.turn.UserMessages
@@ -805,6 +830,33 @@ func (session *recordSession) noteGatewayReasoning(reasoning gatewayReasoning) {
 	}
 }
 
+// noteGatewayRewrites records the rewrites of the current attempt that no
+// record field shows, one request diagnostic each with the rewrite as its
+// path, so statistics can count them. Like every diagnostic it must follow
+// beginNetworkAttempt, which starts the attempt's list afresh.
+func (session *recordSession) noteGatewayRewrites(reasoning gatewayReasoning, identity bool) {
+	if session == nil {
+		return
+	}
+	var notes []relaykitbridge.ConversionDiagnostic
+	note := func(rewrite contract.GatewayRewrite, message string) {
+		notes = append(notes, relaykitbridge.ConversionDiagnostic{
+			Code: contract.GatewayRewriteDiagnostic, Path: string(rewrite), Message: message,
+			Severity: string(contract.ConversionDiagnosticWarning),
+		})
+	}
+	if reasoning.systemPrompt {
+		note(contract.GatewayRewriteSystemPrompt, "added the global system prompt")
+	}
+	if reasoning.effort != "" {
+		note(contract.GatewayRewriteReasoning, "sent reasoning "+reasoning.effort)
+	}
+	if identity {
+		note(contract.GatewayRewriteClientIdentity, "sent with the subscription's client identity")
+	}
+	session.noteConversionDiagnostics(contract.ConversionDiagnosticPhaseRequest, notes)
+}
+
 // addImageCompressionEvent records what image compression did to the
 // attempt beginNetworkAttempt opens. Compression ran while the attempt was
 // prepared, so the phase keeps its own times and lands ahead of the route
@@ -823,6 +875,33 @@ func (session *recordSession) addImageCompressionEvent(result imageCompressionRe
 		Summary:      sanitizeSummary(summary),
 		AttemptIndex: session.attemptIndex,
 	})
+}
+
+// ImageCompressionCounter keeps the image compression totals. The request
+// record store implements it; a store without it keeps no totals.
+type ImageCompressionCounter interface {
+	AddImageCompression(context.Context, storage.ImageCompressionCount) error
+}
+
+// countForwardedImages adds the request to the image compression totals once,
+// however many attempts it took. Every attempt compresses the same client
+// images from scratch, so the first one an upstream answered stands for the
+// request. A request that never reached an upstream, rejected before it
+// left or failed to connect, is not counted.
+func (session *recordSession) countForwardedImages(ctx context.Context, store RequestRecordStore, logf func(string, ...any)) {
+	result := session.forwardedImages
+	counter, ok := store.(ImageCompressionCounter)
+	if result == nil || !ok {
+		return
+	}
+	session.forwardedImages = nil
+	count := storage.ImageCompressionCount{
+		Images: result.images, Compressed: result.compressed,
+		OriginalBytes: int64(result.before), SentBytes: int64(result.after),
+	}
+	if err := counter.AddImageCompression(ctx, count); err != nil {
+		logRequestRecordFailure(logf, "image_compression_totals", err)
+	}
 }
 
 // reasoningEffort is the level the record shows: the one the attempt sent.
@@ -901,6 +980,7 @@ func (session *recordSession) beginNetworkAttempt(
 	session.upstreamScanner = newUsageScanner(plan.UpstreamProtocol, session.classified.Streaming)
 	session.noteSelected(candidate, plan)
 	session.addImageCompressionEvent(images)
+	session.attemptImages = images
 	serviceName := string(candidate.Service.ID)
 	session.addEvent(contract.RequestEventRouted, contract.RequestStatusSucceeded, string(plan.Type)+" · "+serviceName)
 	session.addEvent(contract.RequestEventUpstream, contract.RequestStatusPending, string(plan.UpstreamProtocol))
@@ -1006,6 +1086,11 @@ func (session *recordSession) wrapUpstreamResponseBody(
 	session.upstreamHTTPStatus = status
 	session.hasUpstreamHTTPStatus = true
 	session.upstreamError = nil
+	// An upstream answered, so the attempt's images reached it.
+	if session.forwardedImages == nil && session.attemptImages.images > 0 {
+		forwarded := session.attemptImages
+		session.forwardedImages = &forwarded
+	}
 	if status >= http.StatusBadRequest {
 		session.upstreamError = newUpstreamErrorCapture(status, headers.Get("Content-Type"), headers.Get("Content-Encoding"))
 	}
@@ -1278,8 +1363,11 @@ func (session *recordSession) demoteCurrentAttemptToChild(
 	child.ID = childID
 	child.ParentRequestID = &parentID
 	child.ChildCount = 0
-	// The root carries the turn's preview; an attempt would only repeat it.
+	// The root carries the turn's preview and what the call carried; an
+	// attempt would only repeat them.
 	child.InputPreview = nil
+	child.Context = nil
+	child.Project = nil
 	child.Events = eventsForAttempt(session.events, session.attemptIndex)
 	child.Audit = session.upstreamAuditSummary()
 	// A failed attempt produced nothing the client will replay; only the
@@ -1419,6 +1507,7 @@ func (session *recordSession) finish(
 		return
 	}
 	defer logIngressAccess(logf, session)
+	session.countForwardedImages(ctx, store, logf)
 	if session.status == contract.RequestStatusPending {
 		session.status = contract.RequestStatusFailed
 		session.errorSummary = &contract.ErrorSummary{

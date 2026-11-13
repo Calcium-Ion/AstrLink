@@ -3,8 +3,8 @@ package ingress
 import (
 	"strings"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/QuantumNous/astrlink/core/contract"
-	"github.com/tidwall/gjson"
 )
 
 // streamOutput classifies one decoded stream event by the generated content
@@ -25,8 +25,8 @@ const (
 // event mixing reasoning with an answer counts as the answer, because the
 // model has stopped only thinking.
 func classifyStreamOutput(protocol contract.ProtocolID, payload []byte) streamOutput {
-	doc := gjson.ParseBytes(payload)
-	nonempty := func(value gjson.Result) bool { return value.Type == gjson.String && value.Str != "" }
+	doc := ojson.ParseBytes(payload)
+	nonempty := func(value ojson.Result) bool { return value.Type == ojson.String && value.Str != "" }
 	kind := streamOutputNone
 	note := func(class streamOutput, present bool) {
 		if present && class > kind {

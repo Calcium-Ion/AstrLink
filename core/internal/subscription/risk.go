@@ -93,7 +93,7 @@ func (manager *Manager) ReportRisk(ctx context.Context, id contract.ServiceID, o
 			risk.Occurrences = 1
 		}
 		account.Risk = &risk
-		delete(manager.usageCache, id)
+		manager.expireUsage(id)
 		account.UpdatedAt = now
 		return nil
 	})
@@ -122,7 +122,7 @@ func (manager *Manager) ClearRisk(ctx context.Context, id contract.ServiceID) (c
 			return errRiskUnchanged
 		}
 		account.Risk = nil
-		delete(manager.usageCache, id)
+		manager.expireUsage(id)
 		account.UpdatedAt = now
 		cleared = true
 		return nil
@@ -207,7 +207,7 @@ func (manager *Manager) markUnauthorized(ctx context.Context, id contract.Servic
 			return errRiskUnchanged
 		}
 		account.Status = contract.SubscriptionStatusNeedsReauth
-		delete(manager.usageCache, id)
+		manager.expireUsage(id)
 		delete(manager.forcedRefreshAt, id)
 		account.LastError = &contract.SubscriptionError{
 			Code:    ErrCodeUpstreamUnauthorized,

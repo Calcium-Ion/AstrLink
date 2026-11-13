@@ -52,6 +52,14 @@ const MAX_CONTROL_BODY: usize = 8 * 1024 * 1024;
 // Decrypted audit content may reach response_content_max_bytes (64 MiB).
 const MAX_AUDIT_CONTENT_BODY: usize = 96 * 1024 * 1024;
 const AUDIT_CONTENT_TIMEOUT: Duration = Duration::from_secs(60);
+const REQUEST_PURGE_PATH: &str = "/control/v1/requests/purge";
+// One transaction deletes the whole selection; 300,000 records with their
+// captured content take about a minute. Core finishes a purge it started even
+// after this wait ends, so the wait only bounds how long the page shows it.
+const REQUEST_PURGE_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+/// Returned when a purge outlasts REQUEST_PURGE_TIMEOUT. Core is still
+/// deleting; the records page matches this code to say so.
+const REQUEST_PURGE_STILL_RUNNING: &str = "request_purge_still_running";
 /// Stable machine-readable error codes for the provider-test command. The
 /// frontend matches these codes instead of human-readable messages.
 pub const SERVICE_TEST_CANCELLED: &str = "service_test_cancelled";
@@ -1737,6 +1745,39 @@ impl CoreManager {
         service_order_record(etag, &body)
     }
 
+    pub async fn get_service_packages(&self) -> Result<serde_json::Value, String> {
+        let (_, body) = self
+            .authenticated_control(Method::GET, "/control/v1/service-packages", None, None)
+            .await?;
+        let value: serde_json::Value = serde_json::from_slice(&body)
+            .map_err(|error| format!("invalid service packages: {error}"))?;
+        if !value["packages"].is_array() {
+            return Err("service packages omitted packages".into());
+        }
+        Ok(value)
+    }
+
+    pub async fn update_service_package(
+        &self,
+        package_id: &str,
+        strategy: &str,
+    ) -> Result<serde_json::Value, String> {
+        validate_package_id(package_id)?;
+        validate_package_strategy(strategy)?;
+        let (_, body) = self
+            .authenticated_control(
+                Method::PATCH,
+                &format!(
+                    "/control/v1/service-packages/{}",
+                    percent_encode_query(package_id)
+                ),
+                Some(serde_json::json!({"strategy": strategy})),
+                None,
+            )
+            .await?;
+        serde_json::from_slice(&body).map_err(|error| format!("invalid service package: {error}"))
+    }
+
     /// Polls the agent-side observer state and folds it into the view. The
     /// lock release republishes the view, which is also how an observation
     /// expires: the poll after the window closes recomputes it as inactive.
@@ -1961,6 +2002,20 @@ impl CoreManager {
             .map_err(|error| format!("privacy summary returned invalid JSON: {error}"))
     }
 
+    /// What request image compression has saved since counting began.
+    pub async fn get_image_compression_totals(&self) -> Result<serde_json::Value, String> {
+        let (_, body) = self
+            .authenticated_control(
+                Method::GET,
+                "/control/v1/image-compression-totals",
+                None,
+                None,
+            )
+            .await?;
+        serde_json::from_slice(&body)
+            .map_err(|error| format!("image compression totals returned invalid JSON: {error}"))
+    }
+
     pub async fn list_access_token_usage(
         &self,
         today_from: &str,
@@ -1976,14 +2031,22 @@ impl CoreManager {
             .map_err(|error| format!("access token usage returned invalid JSON: {error}"))
     }
 
-    pub async fn create_access_token(&self, name: &str) -> Result<serde_json::Value, String> {
+    pub async fn create_access_token(
+        &self,
+        name: &str,
+        service_scope: Option<&str>,
+        service_ids: Option<Vec<String>>,
+    ) -> Result<serde_json::Value, String> {
+        let body = match service_scope {
+            Some(scope) => serde_json::json!({
+                "name": name,
+                "service_scope": scope,
+                "service_ids": service_ids.unwrap_or_default(),
+            }),
+            None => serde_json::json!({ "name": name }),
+        };
         let (_, body) = self
-            .authenticated_control(
-                Method::POST,
-                "/control/v1/access-tokens",
-                Some(serde_json::json!({ "name": name })),
-                None,
-            )
+            .authenticated_control(Method::POST, "/control/v1/access-tokens", Some(body), None)
             .await?;
         serde_json::from_slice(&body)
             .map_err(|error| format!("access token create returned invalid JSON: {error}"))
@@ -2001,6 +2064,33 @@ impl CoreManager {
             .await?;
         serde_json::from_slice(&body)
             .map_err(|error| format!("access token reveal returned invalid JSON: {error}"))
+    }
+
+    pub async fn update_access_token(
+        &self,
+        token_id: &str,
+        name: &str,
+        service_scope: &str,
+        service_ids: Vec<String>,
+    ) -> Result<serde_json::Value, String> {
+        validate_resource_id(token_id)?;
+        for service_id in &service_ids {
+            validate_resource_id(service_id)?;
+        }
+        let (_, body) = self
+            .authenticated_control(
+                Method::PATCH,
+                &format!("/control/v1/access-tokens/{token_id}"),
+                Some(serde_json::json!({
+                    "name": name,
+                    "service_scope": service_scope,
+                    "service_ids": service_ids,
+                })),
+                None,
+            )
+            .await?;
+        serde_json::from_slice(&body)
+            .map_err(|error| format!("access token update returned invalid JSON: {error}"))
     }
 
     pub async fn delete_access_token(&self, token_id: &str) -> Result<(), String> {
@@ -2278,7 +2368,9 @@ impl CoreManager {
     ) -> Result<serde_json::Value, String> {
         let base = "/control/v1/pricing";
         let (method, path, body) = match operation {
-            "status" | "catalog" => (Method::GET, format!("{base}/{operation}"), None),
+            "status" | "catalog" | "estimates" => {
+                (Method::GET, format!("{base}/{operation}"), None)
+            }
             // The official model behind a gateway model; null when unknown.
             "model" => {
                 let model = input
@@ -2343,32 +2435,6 @@ impl CoreManager {
             .authenticated_control(method, &path, body, None)
             .await?;
         serde_json::from_slice(&body).map_err(|_| "pricing returned invalid JSON".into())
-    }
-
-    /// The reasoning levels of the official model a gateway model reaches,
-    /// or `None` when LLM Metadata does not list it as reasoning.
-    pub async fn official_reasoning(&self, model: &str) -> Result<Option<Vec<String>>, String> {
-        #[derive(Deserialize)]
-        struct ModelMetadata {
-            reasoning: bool,
-            reasoning_levels: Vec<String>,
-        }
-        let path = format!(
-            "/control/v1/model-metadata?model={}",
-            percent_encode_query(model)
-        );
-        let (status, body) = self
-            .authenticated_control_status(Method::GET, &path, None, None)
-            .await?;
-        if status == reqwest::StatusCode::NOT_FOUND {
-            return Ok(None);
-        }
-        if !status.is_success() {
-            return Err(control_status_error(&Method::GET, &path, status, &body));
-        }
-        serde_json::from_slice::<ModelMetadata>(&body)
-            .map(|model| model.reasoning.then_some(model.reasoning_levels))
-            .map_err(|_| "model metadata returned invalid JSON".into())
     }
 
     /// Configuration sync. `configure` stores the settings, `passphrase` sets
@@ -2534,12 +2600,28 @@ impl CoreManager {
             };
         // Starting the Core session must still succeed when the OS refuses to
         // open a browser. Device Code remains visible in-app and can be opened
-        // again explicitly.
-        let _ = open_authorization_url(authorization_url);
+        // again explicitly. `claude auth login` opens its page itself.
+        if session.get("flow").and_then(|value| value.as_str()) != Some("claude_cli") {
+            let _ = open_authorization_url(authorization_url);
+        }
         Ok(serde_json::json!({
             "kind": "session",
             "session": session,
         }))
+    }
+
+    /// Reads the claude CLI official Claude accounts run. The desktop never
+    /// installs it; the status links to the official instructions instead.
+    pub async fn get_claude_cli(&self) -> Result<serde_json::Value, String> {
+        let (_, body) = self
+            .authenticated_control(Method::GET, "/control/v1/claude-cli", None, None)
+            .await?;
+        let status: serde_json::Value = serde_json::from_slice(&body)
+            .map_err(|error| format!("Claude Code status is invalid JSON: {error}"))?;
+        if !status.is_object() {
+            return Err("Claude Code status must be an object".to_string());
+        }
+        Ok(status)
     }
 
     pub async fn get_service_authorization(
@@ -2692,6 +2774,40 @@ impl CoreManager {
             .map_err(|error| format!("request activity returned invalid JSON: {error}"))
     }
 
+    pub async fn get_project_memory(
+        &self,
+        query: serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
+        let qs = build_project_memory_query(&query, false)?;
+        let (_, body) = self
+            .authenticated_control(
+                Method::GET,
+                &format!("/control/v1/request-memory{qs}"),
+                None,
+                None,
+            )
+            .await?;
+        serde_json::from_slice(&body)
+            .map_err(|error| format!("request memory returned invalid JSON: {error}"))
+    }
+
+    pub async fn get_project_memory_entry(
+        &self,
+        query: serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
+        let qs = build_project_memory_query(&query, true)?;
+        let (_, body) = self
+            .authenticated_control(
+                Method::GET,
+                &format!("/control/v1/request-memory/entry{qs}"),
+                None,
+                None,
+            )
+            .await?;
+        serde_json::from_slice(&body)
+            .map_err(|error| format!("request memory entry returned invalid JSON: {error}"))
+    }
+
     pub async fn get_request_session(&self, session_id: &str) -> Result<serde_json::Value, String> {
         validate_resource_id(session_id)?;
         let (_, body) = self
@@ -2778,12 +2894,7 @@ impl CoreManager {
     ) -> Result<serde_json::Value, String> {
         let input = validate_purge_request_records_input(&input)?;
         let (_, body) = self
-            .authenticated_control(
-                Method::POST,
-                "/control/v1/requests/purge",
-                Some(input),
-                None,
-            )
+            .authenticated_control(Method::POST, REQUEST_PURGE_PATH, Some(input), None)
             .await?;
         serde_json::from_slice(&body)
             .map_err(|error| format!("request purge returned invalid JSON: {error}"))
@@ -2804,6 +2915,23 @@ impl CoreManager {
             .await?;
         serde_json::from_slice(&body)
             .map_err(|error| format!("request audit content returned invalid JSON: {error}"))
+    }
+
+    pub async fn get_request_context_texts(
+        &self,
+        request_id: &str,
+    ) -> Result<serde_json::Value, String> {
+        validate_resource_id(request_id)?;
+        let (_, body) = self
+            .authenticated_control(
+                Method::GET,
+                &format!("/control/v1/requests/{request_id}/audit/context"),
+                None,
+                None,
+            )
+            .await?;
+        serde_json::from_slice(&body)
+            .map_err(|error| format!("request context texts returned invalid JSON: {error}"))
     }
 
     pub async fn builtin_tool_action(
@@ -3000,6 +3128,7 @@ impl CoreManager {
                 Err(error) => {
                     if attempt == 0
                         && !is_builtin_tool_test(&method, path)
+                        && !is_request_purge(&method, path)
                         && !crate::raw_access::is_proof_request(&method, path)
                         && is_control_transport_error(&error)
                     {
@@ -3054,7 +3183,7 @@ impl CoreManager {
         let response = request
             .send()
             .await
-            .map_err(|error| format!("{} {path} failed: {error}", method.as_str()))?;
+            .map_err(|error| control_send_error(&method, path, &error))?;
         let status = response.status();
         let etag = response
             .headers()
@@ -3277,14 +3406,36 @@ fn is_subscription_usage_path(path: &str) -> bool {
         && (path.ends_with("/usage") || path.ends_with("/usage/reset"))
 }
 
+/// The reads that decrypt a call's captured body: its audit content and the
+/// texts it carried.
+fn is_request_audit_read_path(path: &str) -> bool {
+    path.starts_with("/control/v1/requests/")
+        && (path.ends_with("/audit") || path.ends_with("/audit/context"))
+}
+
 fn is_request_record_list_path(path: &str) -> bool {
-    if path.starts_with("/control/v1/requests/") && path.ends_with("/audit") {
+    if is_request_audit_read_path(path) {
         return false;
     }
     path == "/control/v1/requests"
         || path.starts_with("/control/v1/requests/")
         || path == "/control/v1/request-sessions"
         || path.starts_with("/control/v1/request-sessions/")
+        || path == "/control/v1/request-memory"
+        || path == "/control/v1/request-memory/entry"
+}
+
+/// A purge must not be sent twice: Core keeps deleting after the desktop
+/// stops waiting, and a second request would only queue behind the first.
+fn is_request_purge(method: &Method, path: &str) -> bool {
+    *method == Method::POST && control_path(path) == REQUEST_PURGE_PATH
+}
+
+fn control_send_error(method: &Method, path: &str, error: &reqwest::Error) -> String {
+    if error.is_timeout() && is_request_purge(method, path) {
+        return REQUEST_PURGE_STILL_RUNNING.to_string();
+    }
+    format!("{} {path} failed: {error}", method.as_str())
 }
 
 fn is_builtin_tool_test(method: &Method, path: &str) -> bool {
@@ -3385,10 +3536,7 @@ fn control_request_timeout(method: &Method, path: &str) -> Duration {
     {
         return PRIVACY_MUTATION_TIMEOUT;
     }
-    if method == Method::GET
-        && path.starts_with("/control/v1/requests/")
-        && path.ends_with("/audit")
-    {
+    if method == Method::GET && is_request_audit_read_path(path) {
         return AUDIT_CONTENT_TIMEOUT;
     }
     if (*method == Method::GET || *method == Method::POST) && is_subscription_usage_path(path) {
@@ -3397,11 +3545,14 @@ fn control_request_timeout(method: &Method, path: &str) -> Duration {
     if *method == Method::GET && is_request_record_list_path(path) {
         return REQUEST_LIST_TIMEOUT;
     }
+    if is_request_purge(method, path) {
+        return REQUEST_PURGE_TIMEOUT;
+    }
     REQUEST_TIMEOUT
 }
 
 fn control_body_limit(path: &str) -> usize {
-    if path.starts_with("/control/v1/requests/") && path.ends_with("/audit") {
+    if is_request_audit_read_path(path) {
         MAX_AUDIT_CONTENT_BODY
     } else {
         MAX_CONTROL_BODY
@@ -4937,6 +5088,37 @@ fn validate_resource_id(value: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Package IDs are `service:<service id>` or `subscription:<provider>:<plan>`;
+/// the plan is whatever the provider reported, lowercased, so it is only
+/// checked for control characters and length.
+fn validate_package_id(value: &str) -> Result<(), String> {
+    let valid = if let Some(service_id) = value.strip_prefix("service:") {
+        validate_resource_id(service_id).is_ok()
+    } else if let Some(rest) = value.strip_prefix("subscription:") {
+        rest.split_once(':').is_some_and(|(provider, plan)| {
+            !provider.is_empty()
+                && provider.bytes().all(|byte| byte.is_ascii_lowercase())
+                && !plan.is_empty()
+                && plan.chars().count() <= 128
+                && !plan.chars().any(char::is_control)
+        })
+    } else {
+        false
+    };
+    if valid {
+        Ok(())
+    } else {
+        Err("package id is invalid".to_string())
+    }
+}
+
+fn validate_package_strategy(value: &str) -> Result<(), String> {
+    match value {
+        "auto" | "soonest_reset" | "most_remaining" => Ok(()),
+        _ => Err("package strategy is invalid".to_string()),
+    }
+}
+
 const SUBSCRIPTION_PROVIDERS: &[&str] = &[
     "openai_codex",
     "claude_code",
@@ -4947,7 +5129,8 @@ const SUBSCRIPTION_PROVIDERS: &[&str] = &[
 ];
 const AUTHORIZATION_SESSION_STATUSES: &[&str] =
     &["pending", "completed", "cancelled", "expired", "failed"];
-const AUTHORIZATION_FLOWS: &[&str] = &["browser", "device_code", "authorization_code"];
+const AUTHORIZATION_FLOWS: &[&str] =
+    &["browser", "device_code", "authorization_code", "claude_cli"];
 
 fn validate_subscription_provider(value: &str) -> Result<(), String> {
     if !SUBSCRIPTION_PROVIDERS.contains(&value) {
@@ -5135,7 +5318,7 @@ fn parse_authorization_session_value(
         .ok_or_else(|| "authorization session omitted flow".to_string())?;
     validate_authorization_flow(flow)?;
 
-    if (provider == "claude_code") != (flow == "authorization_code") {
+    if (provider == "claude_code") != (flow == "authorization_code" || flow == "claude_cli") {
         return Err("authorization flow is unsupported by provider".to_string());
     }
     if provider == "antigravity" && flow != "browser" {
@@ -5187,7 +5370,9 @@ fn parse_authorization_session_value(
     if let Some(device_code) = device_code {
         session["device_code"] = parse_authorization_device_code_value(device_code)?;
     }
-    if status == "pending" && (flow == "browser" || flow == "authorization_code") {
+    if status == "pending"
+        && (flow == "browser" || flow == "authorization_code" || flow == "claude_cli")
+    {
         if authorization_url.is_none() {
             return Err(
                 "pending browser authorization session requires authorization_url".to_string(),
@@ -5233,6 +5418,18 @@ fn percent_encode_query(value: &str) -> String {
     encoded
 }
 
+/// A lowercase snake_case id such as a protocol or client type; Core checks
+/// the value against its own list.
+fn query_id_ok(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 64
+        && value.bytes().enumerate().all(|(index, byte)| match byte {
+            b'a'..=b'z' => true,
+            b'0'..=b'9' | b'_' => index > 0,
+            _ => false,
+        })
+}
+
 fn timestamp_query_charset_ok(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 64
@@ -5249,6 +5446,10 @@ fn build_request_session_query(query: &serde_json::Value) -> Result<String, Stri
     let kind = record_query
         .as_object_mut()
         .and_then(|object| object.remove("kind"));
+    // Core filters records by client type, not sessions.
+    if query.get("client_type").is_some() {
+        return Err("request session query contains unknown key client_type".to_string());
+    }
     let mut qs = build_request_record_query(&record_query)?;
     if let Some(kind) = kind {
         let kind = kind
@@ -5262,6 +5463,113 @@ fn build_request_session_query(query: &serde_json::Value) -> Result<String, Stri
         qs.push_str(kind);
     }
     Ok(qs)
+}
+
+/// Builds the request memory query: a project or the calls without one, a
+/// client, the day start and, for one entry, its file, each checked before it
+/// reaches Core.
+fn build_project_memory_query(query: &serde_json::Value, entry: bool) -> Result<String, String> {
+    if query.is_null() {
+        return if entry {
+            Err("request memory entry query must name a file".to_string())
+        } else {
+            Ok(String::new())
+        };
+    }
+    let object = query
+        .as_object()
+        .ok_or_else(|| "request memory query must be an object".to_string())?;
+    let mut project: Option<&str> = None;
+    let mut no_project = false;
+    let mut client_type: Option<&str> = None;
+    let mut day_start: Option<&str> = None;
+    let mut file: Option<&str> = None;
+    for (key, value) in object {
+        match key.as_str() {
+            "project" => {
+                let text = value
+                    .as_str()
+                    .ok_or_else(|| "request memory query project must be a string".to_string())?;
+                if text.is_empty()
+                    || text.chars().count() > 512
+                    || text.chars().any(char::is_control)
+                {
+                    return Err("request memory query project is invalid".to_string());
+                }
+                project = Some(text);
+            }
+            "no_project" => {
+                if value.as_bool() != Some(true) {
+                    return Err("request memory query no_project must be true".to_string());
+                }
+                no_project = true;
+            }
+            "client_type" => {
+                let text = value.as_str().ok_or_else(|| {
+                    "request memory query client_type must be a string".to_string()
+                })?;
+                if text.is_empty()
+                    || text.len() > 32
+                    || !text.bytes().all(|byte| matches!(byte, b'a'..=b'z' | b'_'))
+                {
+                    return Err("request memory query client_type is invalid".to_string());
+                }
+                client_type = Some(text);
+            }
+            "day_start" => {
+                let text = value
+                    .as_str()
+                    .ok_or_else(|| "request memory query day_start must be a string".to_string())?;
+                if !timestamp_query_charset_ok(text) {
+                    return Err(
+                        "request memory query day_start has an invalid timestamp charset"
+                            .to_string(),
+                    );
+                }
+                day_start = Some(text);
+            }
+            "file" if entry => {
+                let text = value
+                    .as_str()
+                    .ok_or_else(|| "request memory query file must be a string".to_string())?;
+                if text.is_empty()
+                    || text.chars().count() > 128
+                    || text.chars().any(char::is_control)
+                {
+                    return Err("request memory query file is invalid".to_string());
+                }
+                file = Some(text);
+            }
+            _ => return Err(format!("request memory query has an unknown field {key}")),
+        }
+    }
+    if project.is_some() && no_project {
+        return Err("request memory query cannot name a project and no project".to_string());
+    }
+    if entry && file.is_none() {
+        return Err("request memory entry query must name a file".to_string());
+    }
+    let mut pairs = Vec::new();
+    if let Some(project) = project {
+        pairs.push(format!("project={}", percent_encode_query(project)));
+    }
+    if no_project {
+        pairs.push("no_project=true".to_string());
+    }
+    if let Some(client_type) = client_type {
+        pairs.push(format!("client_type={client_type}"));
+    }
+    if let Some(day_start) = day_start {
+        pairs.push(format!("day_start={}", percent_encode_query(day_start)));
+    }
+    if let Some(file) = file {
+        pairs.push(format!("file={}", percent_encode_query(file)));
+    }
+    Ok(if pairs.is_empty() {
+        String::new()
+    } else {
+        format!("?{}", pairs.join("&"))
+    })
 }
 
 fn build_request_record_query(query: &serde_json::Value) -> Result<String, String> {
@@ -5281,6 +5589,7 @@ fn build_request_record_query(query: &serde_json::Value) -> Result<String, Strin
     let mut local_access_token_ids: Vec<&str> = Vec::new();
     let mut models: Vec<&str> = Vec::new();
     let mut status: Option<&str> = None;
+    let mut client_type: Option<&str> = None;
 
     for (key, value) in object {
         match key.as_str() {
@@ -5330,14 +5639,7 @@ fn build_request_record_query(query: &serde_json::Value) -> Result<String, Strin
                 let text = value
                     .as_str()
                     .ok_or_else(|| "request record query protocol must be a string".to_string())?;
-                if text.is_empty()
-                    || text.len() > 64
-                    || !text.bytes().enumerate().all(|(index, byte)| match byte {
-                        b'a'..=b'z' => true,
-                        b'0'..=b'9' | b'_' => index > 0,
-                        _ => false,
-                    })
-                {
+                if !query_id_ok(text) {
                     return Err("request record query protocol is invalid".to_string());
                 }
                 protocol = Some(text);
@@ -5394,6 +5696,15 @@ fn build_request_record_query(query: &serde_json::Value) -> Result<String, Strin
                     _ => return Err("request record query status is invalid".to_string()),
                 }
             }
+            "client_type" => {
+                let text = value.as_str().ok_or_else(|| {
+                    "request record query client_type must be a string".to_string()
+                })?;
+                if !query_id_ok(text) {
+                    return Err("request record query client_type is invalid".to_string());
+                }
+                client_type = Some(text);
+            }
             other => {
                 return Err(format!("request record query contains unknown key {other}"));
             }
@@ -5430,6 +5741,9 @@ fn build_request_record_query(query: &serde_json::Value) -> Result<String, Strin
     }
     if let Some(value) = status {
         pairs.push(format!("status={}", percent_encode_query(value)));
+    }
+    if let Some(value) = client_type {
+        pairs.push(format!("client_type={}", percent_encode_query(value)));
     }
     if pairs.is_empty() {
         return Ok(String::new());
@@ -6000,6 +6314,25 @@ mod tests {
     }
 
     #[test]
+    fn package_ids_and_strategies_are_checked_before_patching() {
+        assert!(super::validate_package_id("service:service_a").is_ok());
+        assert!(super::validate_package_id("subscription:claude:max_20x").is_ok());
+        assert!(super::validate_package_id("subscription:codex:unknown").is_ok());
+        assert!(super::validate_package_id("service:bad/path").is_err());
+        assert!(super::validate_package_id("subscription:claude").is_err());
+        assert!(super::validate_package_id("subscription::pro").is_err());
+        assert!(super::validate_package_id("subscription:claude:\npro").is_err());
+        assert!(super::validate_package_id("other:claude:pro").is_err());
+        assert_eq!(
+            super::percent_encode_query("subscription:claude:max 20x"),
+            "subscription%3Aclaude%3Amax%2020x"
+        );
+        assert!(super::validate_package_strategy("most_remaining").is_ok());
+        assert!(super::validate_package_strategy("").is_err());
+        assert!(super::validate_package_strategy("fastest").is_err());
+    }
+
+    #[test]
     fn service_order_requires_strong_etag_and_distinct_ids() {
         let tag = format!("\"sha256:{}\"", "a".repeat(64));
         let body = br#"{"service_ids":["service_b","service_a"]}"#;
@@ -6231,6 +6564,15 @@ mod tests {
         assert!(parse_authorization_session_value(&claude).is_ok());
         claude["code"] = serde_json::json!("secret#state");
         assert!(parse_authorization_session_value(&claude).is_err());
+        claude.as_object_mut().unwrap().remove("code");
+        claude["flow"] = serde_json::json!("claude_cli");
+        claude["authorization_url"] = serde_json::json!("https://claude.ai/oauth/authorize");
+        assert!(parse_authorization_session_value(&claude).is_ok());
+        claude.as_object_mut().unwrap().remove("authorization_url");
+        assert!(parse_authorization_session_value(&claude).is_err());
+        let mut codex_cli = browser.clone();
+        codex_cli["flow"] = serde_json::json!("claude_cli");
+        assert!(parse_authorization_session_value(&codex_cli).is_err());
 
         let mut device = common.clone();
         device["flow"] = serde_json::json!("device_code");
@@ -6283,10 +6625,10 @@ mod tests {
     }
 
     #[test]
-    fn builtin_tool_control_waits_past_two_seconds_and_does_not_repeat_transport_failures() {
+    fn tool_tests_and_purges_wait_past_two_seconds_and_do_not_repeat_transport_failures() {
         use std::io::{BufRead, Read, Write};
         use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-        for succeeds in [true, false] {
+        for (purge, succeeds) in [(false, true), (false, false), (true, true), (true, false)] {
             let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
             listener.set_nonblocking(true).unwrap();
             let address = listener.local_addr().unwrap();
@@ -6346,16 +6688,64 @@ mod tests {
                 .enable_all()
                 .build()
                 .unwrap();
-            let result = runtime.block_on(manager.builtin_tool_action("web_search".into(), "test".into(), Some(serde_json::json!({"enabled":true,"backend":"upstream","service_id":"service_test","model":"main"}))));
+            let result = if purge {
+                runtime.block_on(
+                    manager
+                        .purge_request_records(serde_json::json!({"scope":"all","confirm":true})),
+                )
+            } else {
+                runtime.block_on(manager.builtin_tool_action("web_search".into(), "test".into(), Some(serde_json::json!({"enabled":true,"backend":"upstream","service_id":"service_test","model":"main"}))))
+            };
             stop.store(true, Ordering::SeqCst);
             server.join().unwrap();
-            assert_eq!(result.is_ok(), succeeds, "{result:?}");
+            assert_eq!(result.is_ok(), succeeds, "purge={purge} {result:?}");
             assert_eq!(
                 calls.load(Ordering::SeqCst),
                 1,
-                "a tool test must never be automatically retried"
+                "purge={purge}: a tool test or purge must never be automatically retried"
             );
         }
+    }
+
+    #[test]
+    fn request_purge_waits_long_and_reports_a_purge_still_running() {
+        assert_eq!(
+            control_request_timeout(&Method::POST, REQUEST_PURGE_PATH),
+            REQUEST_PURGE_TIMEOUT
+        );
+        assert!(is_request_purge(&Method::POST, REQUEST_PURGE_PATH));
+        assert!(!is_request_purge(&Method::GET, REQUEST_PURGE_PATH));
+        assert_eq!(
+            control_request_timeout(&Method::DELETE, "/control/v1/requests/request_one"),
+            REQUEST_TIMEOUT
+        );
+
+        // A listener that never answers makes reqwest time out the request.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let error = runtime.block_on(async {
+            reqwest::Client::builder()
+                .no_proxy()
+                .build()
+                .unwrap()
+                .post(format!("http://{address}{REQUEST_PURGE_PATH}"))
+                .timeout(Duration::from_millis(50))
+                .send()
+                .await
+                .unwrap_err()
+        });
+        drop(listener);
+        assert!(error.is_timeout(), "{error}");
+        assert_eq!(
+            control_send_error(&Method::POST, REQUEST_PURGE_PATH, &error),
+            REQUEST_PURGE_STILL_RUNNING
+        );
+        let other = control_send_error(&Method::GET, "/control/v1/requests", &error);
+        assert!(is_control_transport_error(&other), "{other}");
     }
 
     #[test]
@@ -6540,6 +6930,21 @@ mod tests {
             AUDIT_CONTENT_TIMEOUT
         );
         assert_eq!(
+            control_request_timeout(
+                &Method::GET,
+                "/control/v1/requests/req_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/audit/context"
+            ),
+            AUDIT_CONTENT_TIMEOUT
+        );
+        assert_eq!(
+            control_request_timeout(&Method::GET, "/control/v1/request-memory?no_project=true"),
+            REQUEST_LIST_TIMEOUT
+        );
+        assert_eq!(
+            control_request_timeout(&Method::GET, "/control/v1/request-memory/entry?file=a.md"),
+            REQUEST_LIST_TIMEOUT
+        );
+        assert_eq!(
             control_request_timeout(&Method::GET, "/control/v1/request-sessions?limit=50"),
             REQUEST_LIST_TIMEOUT
         );
@@ -6574,6 +6979,7 @@ mod tests {
 
     #[test]
     fn percent_encode_query_leaves_unreserved_and_encodes_specials() {
+        assert_eq!(percent_encode_query("~/proj"), "~%2Fproj");
         assert_eq!(percent_encode_query("Aa0-._~"), "Aa0-._~");
         assert_eq!(percent_encode_query("+"), "%2B");
         assert_eq!(percent_encode_query("="), "%3D");
@@ -6581,6 +6987,74 @@ mod tests {
         assert_eq!(percent_encode_query("/"), "%2F");
         assert_eq!(percent_encode_query(" "), "%20");
         assert_eq!(percent_encode_query("猫"), "%E7%8C%AB");
+    }
+
+    #[test]
+    fn build_project_memory_query_checks_each_field() {
+        assert_eq!(
+            build_project_memory_query(&serde_json::Value::Null, false).unwrap(),
+            ""
+        );
+        assert_eq!(
+            build_project_memory_query(&serde_json::json!({}), false).unwrap(),
+            ""
+        );
+        assert_eq!(
+            build_project_memory_query(
+                &serde_json::json!({
+                    "day_start": "2026-10-26T00:00:00+08:00",
+                    "client_type": "claude_code",
+                    "project": "~/GolandProjects/astrlink 项目"
+                }),
+                false
+            )
+            .unwrap(),
+            "?project=~%2FGolandProjects%2Fastrlink%20%E9%A1%B9%E7%9B%AE&client_type=claude_code&day_start=2026-10-26T00%3A00%3A00%2B08%3A00"
+        );
+        assert_eq!(
+            build_project_memory_query(&serde_json::json!({"no_project": true}), false).unwrap(),
+            "?no_project=true"
+        );
+        assert_eq!(
+            build_project_memory_query(
+                &serde_json::json!({"project": "~/proj", "file": "no jitter.md"}),
+                true
+            )
+            .unwrap(),
+            "?project=~%2Fproj&file=no%20jitter.md"
+        );
+        for query in [
+            serde_json::Value::Null,
+            serde_json::json!({"project": "~/proj"}),
+            serde_json::json!({"file": ""}),
+            serde_json::json!({"file": "a\nb.md"}),
+            serde_json::json!({"file": "x".repeat(129)}),
+        ] {
+            assert!(
+                build_project_memory_query(&query, true).is_err(),
+                "accepted entry {query}"
+            );
+        }
+        for query in [
+            serde_json::json!("~/proj"),
+            serde_json::json!({"project": ""}),
+            serde_json::json!({"project": "a\nb"}),
+            serde_json::json!({"project": "x".repeat(513)}),
+            serde_json::json!({"project": "~/proj", "no_project": true}),
+            serde_json::json!({"no_project": false}),
+            serde_json::json!({"no_project": "true"}),
+            serde_json::json!({"client_type": "Claude"}),
+            serde_json::json!({"client_type": "claude&code"}),
+            serde_json::json!({"day_start": "yesterday"}),
+            serde_json::json!({"since": "2026-10-26T00:00:00Z"}),
+            serde_json::json!({"file": "a.md"}),
+            serde_json::json!({"limit": 5}),
+        ] {
+            assert!(
+                build_project_memory_query(&query, false).is_err(),
+                "accepted {query}"
+            );
+        }
     }
 
     #[test]
@@ -6635,6 +7109,7 @@ mod tests {
             assert!(build_request_session_query(&serde_json::json!({"kind": kind})).is_err());
         }
         assert!(build_request_record_query(&serde_json::json!({"kind": "inference"})).is_err());
+        assert!(build_request_session_query(&serde_json::json!({"client_type": "zed"})).is_err());
     }
 
     #[test]
@@ -6645,6 +7120,7 @@ mod tests {
         );
         assert_eq!(
             build_request_record_query(&serde_json::json!({
+                "client_type": "zed",
                 "status": "succeeded",
                 "service_id": "service_01",
                 "local_access_token_ids": ["token_01", "token_02"],
@@ -6655,7 +7131,7 @@ mod tests {
                 "limit": 50
             }))
             .unwrap(),
-            "?limit=50&cursor=a%2Bb%3Dc%26d%2Fe&from=2026-07-24T00%3A00%3A00Z&to=2026-07-25T12%3A00%3A00Z&protocol=openai_responses&service_id=service_01&local_access_token_id=token_01&local_access_token_id=token_02&status=succeeded"
+            "?limit=50&cursor=a%2Bb%3Dc%26d%2Fe&from=2026-07-24T00%3A00%3A00Z&to=2026-07-25T12%3A00%3A00Z&protocol=openai_responses&service_id=service_01&local_access_token_id=token_01&local_access_token_id=token_02&status=succeeded&client_type=zed"
         );
         assert!(
             build_request_record_query(&serde_json::json!({"unknown": 1}))
@@ -6679,6 +7155,18 @@ mod tests {
         assert!(build_request_record_query(&serde_json::json!({"limit": 201})).is_err());
         assert!(build_request_record_query(&serde_json::json!({"status": "ok"})).is_err());
         assert!(build_request_record_query(&serde_json::json!({"protocol": "OpenAI"})).is_err());
+        for client_type in [
+            serde_json::json!("Zed"),
+            serde_json::json!("_goose"),
+            serde_json::json!("zed&x=1"),
+            serde_json::json!(""),
+            serde_json::json!(["zed"]),
+        ] {
+            assert!(build_request_record_query(&serde_json::json!({
+                "client_type": client_type
+            }))
+            .is_err());
+        }
         assert!(build_request_record_query(&serde_json::json!({
             "cursor": "x".repeat(513)
         }))
@@ -6777,6 +7265,12 @@ mod tests {
     fn control_body_limit_raises_only_for_audit_content_paths() {
         assert_eq!(
             control_body_limit("/control/v1/requests/req_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/audit"),
+            MAX_AUDIT_CONTENT_BODY
+        );
+        assert_eq!(
+            control_body_limit(
+                "/control/v1/requests/req_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/audit/context"
+            ),
             MAX_AUDIT_CONTENT_BODY
         );
         assert_eq!(control_body_limit("/control/v1/requests"), MAX_CONTROL_BODY);

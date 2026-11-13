@@ -1,6 +1,7 @@
 package sqlite
 
 import (
+	"slices"
 	"testing"
 	"time"
 
@@ -71,10 +72,23 @@ func TestSubagentSessionsLinkFoldAndPurge(t *testing.T) {
 		subagentRoot("request_child_b1", "session_child_b", "session_parent", start.Add(2*time.Second), 1, 1, "fp_b", "child-b"),
 		subagentRoot("request_child_a2", "session_child_a", "session_parent", start.Add(3*time.Second), 1, 1, "fp_a", "child-a"),
 		subagentRoot("request_grandchild", "session_grandchild", "session_child_b", start.Add(4*time.Second), 1, 1, "fp_g", "grandchild"),
+		subagentRoot("request_grandchild_a", "session_grandchild_a", "session_child_a", start.Add(4500*time.Millisecond), 1, 1, "fp_ga", "grandchild-a"),
 		subagentRoot("request_parent_2", "session_parent", "", start.Add(5*time.Second), 1, 1, "fp_p", "parent-thread"),
 		subagentRoot("request_other", "session_other", "", start.Add(6*time.Second), 1, 1, "fp_o", "other"),
 	}
+	retry := subagentRoot("request_child_a2_retry", "session_child_a", "", start.Add(3500*time.Millisecond), 1, 1, "", "")
+	retry.ParentRequestID, retry.SessionID, retry.AttemptIndex = &records[3].ID, nil, 1
+	records = append(records, retry)
+	usage := map[contract.RequestID][2]int{
+		"request_parent_1": {100, 10}, "request_parent_2": {100, 10},
+		"request_child_a1": {20, 2}, "request_child_a2": {20, 2}, "request_child_a2_retry": {7, 1},
+		"request_child_b1": {30, 3}, "request_grandchild": {5, 1}, "request_grandchild_a": {4, 1},
+		"request_other": {1000, 1000},
+	}
 	for _, record := range records {
+		if tokens, ok := usage[record.ID]; ok {
+			record.Usage = &contract.Usage{InputTokens: tokens[0], OutputTokens: tokens[1], TotalTokens: tokens[0] + tokens[1]}
+		}
 		if err := store.InsertRequestRecord(t.Context(), record); err != nil {
 			t.Fatal(err)
 		}
@@ -100,30 +114,51 @@ func TestSubagentSessionsLinkFoldAndPurge(t *testing.T) {
 	for _, session := range page.Items {
 		byID[session.ID] = session
 	}
-	if parent := byID["session_parent"]; parent.SubagentCount != 2 || parent.ParentSessionID != nil {
+	// Subagents of subagents count toward every conversation above them.
+	if parent := byID["session_parent"]; parent.SubagentCount != 4 || parent.ParentSessionID != nil {
 		t.Fatalf("parent summary = %+v", parent)
 	}
-	if child := byID["session_child_a"]; child.ParentSessionID == nil || *child.ParentSessionID != "session_parent" || child.CallCount != 2 {
+	if child := byID["session_child_a"]; child.ParentSessionID == nil || *child.ParentSessionID != "session_parent" ||
+		child.CallCount != 3 || child.SubagentCount != 1 {
 		t.Fatalf("child summary = %+v", child)
 	}
 	if child := byID["session_child_b"]; child.SubagentCount != 1 {
 		t.Fatalf("nested parent summary = %+v", child)
 	}
+	if other := byID["session_other"]; other.SubagentCount != 0 {
+		t.Fatalf("unrelated summary = %+v", other)
+	}
 
+	// The detail lists the whole tree, each subagent right after the one
+	// that started it, and sums its calls and tokens with the parent's.
 	detail, err := store.GetRequestSession(t.Context(), "session_parent")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if detail.SubagentCount != 2 || len(detail.Subagents) != 2 || detail.Subagents[0].ID != "session_child_a" ||
-		detail.Subagents[1].ID != "session_child_b" || detail.Subagents[0].CallCount != 2 {
-		t.Fatalf("parent detail subagents = %+v", detail.Subagents)
+	var order []contract.SessionID
+	for _, subagent := range detail.Subagents {
+		order = append(order, subagent.ID)
+	}
+	if want := []contract.SessionID{"session_child_a", "session_grandchild_a", "session_child_b", "session_grandchild"}; detail.SubagentCount != 4 ||
+		!slices.Equal(order, want) || detail.Subagents[0].CallCount != 3 ||
+		detail.Subagents[1].ParentSessionID == nil || *detail.Subagents[1].ParentSessionID != "session_child_a" {
+		t.Fatalf("parent detail subagents = %v, want %v", order, want)
+	}
+	if totals := detail.WithSubagents; totals == nil ||
+		*totals != (contract.SessionTotals{CallCount: 8, InputTokens: 286, OutputTokens: 30}) {
+		t.Fatalf("parent totals = %+v", totals)
 	}
 	if err := detail.Validate(); err != nil {
 		t.Fatal(err)
 	}
 	child, err := store.GetRequestSession(t.Context(), "session_child_b")
-	if err != nil || child.ParentSessionID == nil || *child.ParentSessionID != "session_parent" || len(child.Subagents) != 1 {
-		t.Fatalf("child detail = %+v %v", child.RequestSession, err)
+	if err != nil || child.ParentSessionID == nil || *child.ParentSessionID != "session_parent" || len(child.Subagents) != 1 ||
+		child.WithSubagents == nil || *child.WithSubagents != (contract.SessionTotals{CallCount: 2, InputTokens: 35, OutputTokens: 4}) {
+		t.Fatalf("child detail = %+v %+v %v", child.RequestSession, child.WithSubagents, err)
+	}
+	leaf, err := store.GetRequestSession(t.Context(), "session_grandchild")
+	if err != nil || len(leaf.Subagents) != 0 || leaf.WithSubagents != nil {
+		t.Fatalf("leaf detail = %+v %+v %v", leaf.RequestSession, leaf.WithSubagents, err)
 	}
 
 	calls, err := store.ListRequestActivity(t.Context(), start)
@@ -145,7 +180,7 @@ func TestSubagentSessionsLinkFoldAndPurge(t *testing.T) {
 	result, err := store.PurgeRequestRecords(t.Context(), contract.PurgeRequest{
 		Scope: contract.PurgeScopeSessions, SessionIDs: []contract.SessionID{"session_parent"}, Confirm: true,
 	})
-	if err != nil || result.DeletedRecords != 6 {
+	if err != nil || result.DeletedRecords != 8 {
 		t.Fatalf("purge = %+v %v", result, err)
 	}
 	page, err = store.ListRequestSessions(t.Context(), storagecontract.RequestSessionListOptions{Limit: 20})

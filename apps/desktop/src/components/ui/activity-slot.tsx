@@ -6,7 +6,7 @@ import "./activity-slot.css";
 
 /**
  * The bordered slot that shows what a worker is busy with, as on a job queue
- * board: a band sweeps across it while work runs, hatching marks a pause.
+ * board: a light tint while work runs, hatching for a pause.
  */
 export function ActivitySlot({
   className,

@@ -4,6 +4,7 @@ mod cc_switch;
 mod client_config;
 mod client_updates;
 mod control_session;
+mod currency;
 mod data_hygiene;
 #[cfg(debug_assertions)]
 mod dev_reload;
@@ -12,8 +13,10 @@ mod host_files;
 mod i18n;
 mod instance;
 mod kek_store;
+mod local_import;
 #[cfg(target_os = "macos")]
 mod macos_app;
+mod macos_widget;
 mod model_updates;
 mod os_lock;
 mod preferences;
@@ -100,6 +103,7 @@ struct PreferencesInput {
     locale: Locale,
     theme: ThemePreference,
     quota_display_mode: preferences::QuotaDisplayMode,
+    display_currency: String,
     #[serde(default)]
     tray: TrayPreferences,
     #[serde(default)]
@@ -123,6 +127,7 @@ impl From<PreferencesInput> for Preferences {
             locale: input.locale,
             theme: input.theme,
             quota_display_mode: input.quota_display_mode,
+            display_currency: input.display_currency,
             tray: input.tray,
             updates: input.updates,
         }
@@ -481,7 +486,8 @@ fn update_preferences(
     let values = Preferences::from(input);
     values.validate()?;
     let locale = values.locale;
-    let previous_tray = store.snapshot().values.tray;
+    let previous = store.snapshot().values;
+    let previous_tray = previous.tray;
     let autostart = app.autolaunch();
     let actual = autostart.is_enabled().map_err(|error| {
         i18n::t(
@@ -562,6 +568,12 @@ fn update_preferences(
     if let Err(error) = app.emit("quota-display-mode-changed", values.quota_display_mode) {
         eprintln!("unable to broadcast quota display mode: {error}");
     }
+    if values.display_currency != previous.display_currency {
+        if let Some(rates) = app.try_state::<Arc<currency::ExchangeRates>>() {
+            rates.wake();
+        }
+        currency::broadcast(&app);
+    }
     apply_native_theme(&app, values.theme);
     if let Err(error) = app.emit("theme-preference-changed", values.theme) {
         eprintln!("unable to broadcast AstrLink theme: {error}");
@@ -625,6 +637,22 @@ fn tray_popover_resize(
     device_pixel_ratio: f64,
 ) -> Result<(), String> {
     tray::resize_popover(&app, height, device_pixel_ratio)
+}
+
+/// Shortens a freshly placed main window to the overview's first two
+/// modules, `height` CSS pixels drawn at `device_pixel_ratio`. Applies once
+/// and never makes the window taller.
+#[tauri::command]
+fn fit_main_window_to_content(
+    app: tauri::AppHandle,
+    height: f64,
+    device_pixel_ratio: f64,
+) -> Result<bool, String> {
+    let Some(window) = app.get_webview_window("main") else {
+        return Ok(false);
+    };
+    startup_window::fit_content_height(&window, height, device_pixel_ratio)
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -1365,6 +1393,22 @@ async fn update_service_order(
 }
 
 #[tauri::command]
+async fn get_service_packages(
+    manager: State<'_, Arc<CoreManager>>,
+) -> Result<serde_json::Value, String> {
+    manager.get_service_packages().await
+}
+
+#[tauri::command]
+async fn update_service_package(
+    package_id: String,
+    strategy: String,
+    manager: State<'_, Arc<CoreManager>>,
+) -> Result<serde_json::Value, String> {
+    manager.update_service_package(&package_id, &strategy).await
+}
+
+#[tauri::command]
 async fn get_service(
     service_id: String,
     manager: State<'_, Arc<CoreManager>>,
@@ -1561,12 +1605,17 @@ async fn save_text_file(
     contents: String,
 ) -> Result<Option<String>, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let Some(file) = app
-            .dialog()
-            .file()
-            .set_file_name(&default_filename)
-            .blocking_save_file()
-        else {
+        let dialog = app.dialog().file().set_file_name(&default_filename);
+        // Windows uses the filter's extension when saving a name without a suffix.
+        let dialog = match std::path::Path::new(&default_filename)
+            .extension()
+            .and_then(|extension| extension.to_str())
+        {
+            Some("md") => dialog.add_filter("Markdown (*.md)", &["md"]),
+            Some("txt") => dialog.add_filter("TXT (*.txt)", &["txt"]),
+            _ => dialog,
+        };
+        let Some(file) = dialog.blocking_save_file() else {
             return Ok(None);
         };
         let path = file.into_path().map_err(|error| error.to_string())?;
@@ -1583,6 +1632,11 @@ async fn get_service_authorization(
     manager: State<'_, Arc<CoreManager>>,
 ) -> Result<serde_json::Value, String> {
     manager.get_service_authorization(&service_id).await
+}
+
+#[tauri::command]
+async fn get_claude_cli(manager: State<'_, Arc<CoreManager>>) -> Result<serde_json::Value, String> {
+    manager.get_claude_cli().await
 }
 
 #[tauri::command]
@@ -1640,6 +1694,22 @@ async fn get_request_activity(
     manager: State<'_, Arc<CoreManager>>,
 ) -> Result<serde_json::Value, String> {
     manager.get_request_activity(&since).await
+}
+
+#[tauri::command]
+async fn get_project_memory(
+    query: serde_json::Value,
+    manager: State<'_, Arc<CoreManager>>,
+) -> Result<serde_json::Value, String> {
+    manager.get_project_memory(query).await
+}
+
+#[tauri::command]
+async fn get_project_memory_entry(
+    query: serde_json::Value,
+    manager: State<'_, Arc<CoreManager>>,
+) -> Result<serde_json::Value, String> {
+    manager.get_project_memory_entry(query).await
 }
 
 #[tauri::command]
@@ -1715,6 +1785,14 @@ async fn get_request_audit_content(
     manager: State<'_, Arc<CoreManager>>,
 ) -> Result<serde_json::Value, String> {
     manager.get_request_audit_content(&request_id).await
+}
+
+#[tauri::command]
+async fn get_request_context_texts(
+    request_id: String,
+    manager: State<'_, Arc<CoreManager>>,
+) -> Result<serde_json::Value, String> {
+    manager.get_request_context_texts(&request_id).await
 }
 
 #[tauri::command]
@@ -2232,6 +2310,13 @@ async fn get_privacy_summary(
 }
 
 #[tauri::command]
+async fn get_image_compression_totals(
+    manager: State<'_, Arc<CoreManager>>,
+) -> Result<serde_json::Value, String> {
+    manager.get_image_compression_totals().await
+}
+
+#[tauri::command]
 async fn list_access_token_usage(
     today_from: String,
     manager: State<'_, Arc<CoreManager>>,
@@ -2242,9 +2327,27 @@ async fn list_access_token_usage(
 #[tauri::command]
 async fn create_access_token(
     name: String,
+    service_scope: Option<String>,
+    service_ids: Option<Vec<String>>,
     manager: State<'_, Arc<CoreManager>>,
 ) -> Result<serde_json::Value, String> {
-    manager.create_access_token(&name).await
+    manager
+        .create_access_token(&name, service_scope.as_deref(), service_ids)
+        .await
+}
+
+/// Renames a token and replaces the API providers it may use.
+#[tauri::command]
+async fn update_access_token(
+    token_id: String,
+    name: String,
+    service_scope: String,
+    service_ids: Vec<String>,
+    manager: State<'_, Arc<CoreManager>>,
+) -> Result<serde_json::Value, String> {
+    manager
+        .update_access_token(&token_id, &name, &service_scope, service_ids)
+        .await
 }
 
 /// Copies an access token from Core straight to the clipboard: the token
@@ -2270,23 +2373,29 @@ async fn copy_access_token(
     }
 }
 
+/// Opens a client's import link for a token, so the token never reaches
+/// the webview. The link carries it, so neither it nor the opener's error
+/// is logged.
+#[tauri::command]
+async fn open_client_import_link(
+    token_id: String,
+    client: String,
+    protocol: String,
+    inference_url: String,
+    manager: State<'_, Arc<CoreManager>>,
+) -> Result<(), String> {
+    let origin = client_config::local_origin(&inference_url)?;
+    let token = client_config::reveal_access_token(&manager, &token_id, &inference_url).await?;
+    let link = client_config::import_link(&client, &protocol, &origin, &token)?;
+    tauri_plugin_opener::open_url(link, None::<&str>)
+        .map_err(|_| format!("unable to open the {client} import link"))
+}
+
 #[tauri::command]
 async fn cc_switch_installed() -> Result<bool, String> {
     tauri::async_runtime::spawn_blocking(cc_switch::installed)
         .await
         .map_err(|error| error.to_string())
-}
-
-#[tauri::command]
-async fn open_cc_switch_import(
-    token_id: String,
-    client: client_config::Client,
-    models: client_config::Models,
-    inference_url: String,
-    manager: State<'_, Arc<CoreManager>>,
-) -> Result<(), String> {
-    let home = control_session::user_home()?;
-    cc_switch::open_import(&manager, home, &token_id, client, &models, &inference_url).await
 }
 
 /// Read-only: reports whether the system proxy keeps Codex from reaching
@@ -2325,18 +2434,11 @@ async fn client_config_status(
                 }
             }
         }
-        let dirs = cc_switch::config_dirs(&homes.host);
         Ok(client_config::ClientOverview {
             clients,
             wsl_unchecked,
             wsl_localhost: wsl::localhost_shared(&homes.host),
-            cc_switch_wsl: client_config::CcSwitchWsl {
-                claude: cc_switch::managed_distribution(
-                    dirs.clone(),
-                    client_config::Client::Claude,
-                ),
-                codex: cc_switch::managed_distribution(dirs, client_config::Client::Codex),
-            },
+            installed: client_config::installed(),
         })
     })
     .await
@@ -2356,25 +2458,59 @@ fn client_home(wsl: Option<String>) -> Result<agent_home::OwnedHome, String> {
         })
 }
 
+/// The desktop user's home and the named WSL homes, started if stopped.
+async fn named_homes(names: Vec<String>) -> Result<agent_home::Homes, String> {
+    home_task(move || {
+        agent_home::Homes::find(control_session::user_home()?, wsl::Reach::Named(&names))
+    })
+    .await
+}
+
+/// Writes and removes several clients' configs with one token. Without
+/// `confirmed`, nothing is written while any of them needs confirmation.
 #[tauri::command]
-async fn apply_client_config(
-    token_id: String,
-    client: client_config::Client,
-    models: client_config::Models,
+async fn apply_client_configs(
+    token_id: Option<String>,
     inference_url: String,
-    replace: bool,
-    wsl: Option<String>,
+    items: Vec<client_config::ApplyItem>,
+    confirmed: bool,
     manager: State<'_, Arc<CoreManager>>,
-) -> Result<client_config::ApplyOutcome, String> {
-    let target = home_task(move || client_home(wsl)).await?;
-    client_config::apply(
+) -> Result<client_config::BatchOutcome, String> {
+    let mut names = items
+        .iter()
+        .filter_map(|item| item.wsl.clone())
+        .collect::<Vec<_>>();
+    names.sort();
+    names.dedup();
+    let homes = named_homes(names).await?;
+    client_config::apply(&manager, homes, token_id, inference_url, items, confirmed).await
+}
+
+/// What writing or removing one client's config would change, with the
+/// token shown as its hint.
+#[allow(clippy::too_many_arguments)]
+#[tauri::command]
+async fn preview_client_config_changes(
+    token_id: Option<String>,
+    client: client_config::Client,
+    target: Option<String>,
+    wsl: Option<String>,
+    action: client_config::Action,
+    models: Option<client_config::Models>,
+    inference_url: String,
+    manager: State<'_, Arc<CoreManager>>,
+) -> Result<client_config::Preview, String> {
+    let place = client_config::Place::new(client, target.as_deref())?;
+    let homes = named_homes(wsl.iter().cloned().collect()).await?;
+    client_config::preview(
         &manager,
-        target,
+        homes,
         token_id,
-        client,
-        &models,
+        place,
+        wsl,
+        action,
+        models,
         inference_url,
-        replace,
     )
     .await
 }
@@ -2382,13 +2518,22 @@ async fn apply_client_config(
 #[tauri::command]
 async fn remove_client_config(
     client: client_config::Client,
+    target: Option<String>,
     wsl: Option<String>,
 ) -> Result<(), String> {
-    home_task(move || client_config::remove(client_home(wsl)?.home(), client)).await
+    let place = client_config::Place::new(client, target.as_deref())?;
+    home_task(move || Ok(client_config::remove(client_home(wsl)?.home(), place)?)).await
 }
 
-/// The config `apply_client_config` would write to a fresh file, with the
-/// token shown as its hint.
+/// Every client the dialog lists, in its order: the ones AstrLink writes,
+/// then the ones it explains.
+#[tauri::command]
+fn client_catalog() -> client_config::ClientCatalog {
+    client_config::catalog()
+}
+
+/// The files `apply_client_configs` would write for a client that has
+/// none, with the token shown as its hint.
 #[tauri::command]
 async fn preview_client_config_snippet(
     token_id: String,
@@ -2396,22 +2541,11 @@ async fn preview_client_config_snippet(
     models: client_config::Models,
     inference_url: String,
     manager: State<'_, Arc<CoreManager>>,
-) -> Result<String, String> {
-    let origin = client_config::local_origin(&inference_url)?;
-    let models = models.fields(client)?;
-    let (_, hint) = client_config::token_summary(&manager, &token_id).await?;
-    client_config::snippet(
-        client,
-        &client_config::Connection {
-            token_id: &token_id,
-            token: &hint,
-            origin: &origin,
-            models: &models,
-        },
-    )
+) -> Result<Vec<client_config::SnippetFile>, String> {
+    client_config::snippet_files(&manager, &token_id, client, &models, &inference_url, false).await
 }
 
-/// Copies the real snippet straight to the clipboard, like
+/// Copies one file of the real snippet straight to the clipboard, like
 /// `copy_access_token`. `false` means the clipboard refused it.
 #[tauri::command]
 async fn copy_client_config_snippet(
@@ -2420,21 +2554,16 @@ async fn copy_client_config_snippet(
     client: client_config::Client,
     models: client_config::Models,
     inference_url: String,
+    file: usize,
     manager: State<'_, Arc<CoreManager>>,
 ) -> Result<bool, String> {
-    let origin = client_config::local_origin(&inference_url)?;
-    let models = models.fields(client)?;
-    let token = client_config::reveal_access_token(&manager, &token_id, &inference_url).await?;
-    let snippet = client_config::snippet(
-        client,
-        &client_config::Connection {
-            token_id: &token_id,
-            token: &token,
-            origin: &origin,
-            models: &models,
-        },
-    )?;
-    match app.clipboard().write_text(snippet) {
+    let mut files =
+        client_config::snippet_files(&manager, &token_id, client, &models, &inference_url, true)
+            .await?;
+    if file >= files.len() {
+        return Err("invalid snippet file".into());
+    }
+    match app.clipboard().write_text(files.swap_remove(file).contents) {
         Ok(()) => Ok(true),
         Err(error) => {
             eprintln!("unable to copy the client config: {error}");
@@ -2660,15 +2789,22 @@ pub fn run() {
         .manage(Arc::new(client_updates::ClientUpdateManager::default()))
         .manage(Arc::new(model_updates::PrivacyModelUpdates::default()))
         .manage(provider_import::ProviderImports::default())
+        .manage(local_import::LocalImports::default())
         .invoke_handler(tauri::generate_handler![
             client_updates::local_client_status,
             provider_import::pending_provider_import,
             provider_import::dismiss_provider_import,
             provider_import::confirm_provider_import,
+            local_import::local_import_sources,
+            local_import::read_local_import,
+            local_import::probe_local_import_models,
+            local_import::confirm_local_import,
+            local_import::dismiss_local_import,
             client_updates::refresh_local_clients,
             client_updates::update_local_clients,
             updates::app_update_status,
             model_updates::privacy_model_update_status,
+            currency::display_currency,
             updates::check_app_update,
             updates::download_app_update,
             updates::install_app_update,
@@ -2680,6 +2816,7 @@ pub fn run() {
             tray_state,
             tray_action,
             tray_popover_resize,
+            fit_main_window_to_content,
             tray_popover_hide,
             take_tray_navigation,
             set_main_window_unsaved,
@@ -2689,6 +2826,8 @@ pub fn run() {
             list_services,
             get_service_order,
             update_service_order,
+            get_service_packages,
+            update_service_package,
             get_service,
             create_service,
             update_service,
@@ -2712,6 +2851,7 @@ pub fn run() {
             service_terminal::pick_terminal_directory,
             service_terminal::open_service_terminal,
             get_service_authorization,
+            get_claude_cli,
             cancel_service_authorization,
             logout_service,
             clear_service_risk,
@@ -2719,6 +2859,8 @@ pub fn run() {
             list_request_records,
             list_request_sessions,
             get_request_activity,
+            get_project_memory,
+            get_project_memory_entry,
             get_request_session,
             get_session_channel_bindings,
             release_session_channel_bindings,
@@ -2727,6 +2869,7 @@ pub fn run() {
             delete_request_record,
             purge_request_records,
             get_request_audit_content,
+            get_request_context_texts,
             list_raw_access,
             decide_raw_access,
             revoke_raw_grant,
@@ -2749,17 +2892,21 @@ pub fn run() {
             list_access_token_usage,
             get_usage_summary,
             get_privacy_summary,
+            get_image_compression_totals,
             create_access_token,
             copy_access_token,
+            open_client_import_link,
             cc_switch_installed,
-            open_cc_switch_import,
+            client_catalog,
             client_config_status,
             check_client_proxy,
-            apply_client_config,
+            apply_client_configs,
+            preview_client_config_changes,
             remove_client_config,
             preview_client_config_snippet,
             copy_client_config_snippet,
             delete_access_token,
+            update_access_token,
             list_privacy_policies,
             get_privacy_policy,
             update_privacy_policy,
@@ -2831,8 +2978,16 @@ pub fn run() {
                     &[("error", &error)],
                 ));
             }
-            start_client_config_sync(Arc::clone(&setup_manager), Arc::clone(&preferences));
+            // The development instance shares the user's client configs with
+            // the other AstrLink but never repoints them on its own. Any
+            // rebuild restarts it, and the token check alone has let it take
+            // the other AstrLink's config. It changes a client only when one
+            // is set up from its own window.
+            if !instance::is_isolated() {
+                start_client_config_sync(Arc::clone(&setup_manager), Arc::clone(&preferences));
+            }
             app.manage(preferences);
+            app.manage(Arc::new(currency::ExchangeRates::load(&config_directory)));
             let updates =
                 Arc::new(updates::UpdateManager::new(app.handle()).map_err(std::io::Error::other)?);
             app.manage(Arc::clone(&updates));
@@ -2850,6 +3005,7 @@ pub fn run() {
                 }
             }
             tray::start(app.handle());
+            currency::start(app.handle());
             model_updates::start(app.handle());
             // The raw unlock and agent grants end with the session lock.
             os_lock::watch(app.handle());

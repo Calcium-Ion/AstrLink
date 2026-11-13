@@ -86,8 +86,8 @@ function localRecord(
 }
 
 describe("usage range windows", () => {
-  it("defaults to a year and resolves seven local days ending today", () => {
-    expect(DEFAULT_USAGE_RANGE_PRESET).toBe("1y");
+  it("defaults to the last 24 hours and resolves seven local days ending today", () => {
+    expect(DEFAULT_USAGE_RANGE_PRESET).toBe("1d");
     expect(usageRangeDays("1d")).toBe(1);
     expect(usageRangeDays("7d")).toBe(7);
     expect(usageRangeDays("30d")).toBe(30);

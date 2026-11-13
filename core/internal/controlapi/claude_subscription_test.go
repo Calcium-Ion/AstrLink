@@ -137,7 +137,7 @@ func testClaudeLifecycle(t *testing.T, useProxy bool) {
 		return w.Body.Bytes()
 	}
 	var service contract.Service
-	if err := json.Unmarshal(call("POST", ServicesPath, `{"name":"Claude Code","kind":"claude_subscription","models":["claude-sonnet-4-5"]`+proxyInput+`}`, 201), &service); err != nil {
+	if err := json.Unmarshal(call("POST", ServicesPath, `{"name":"Claude Code","kind":"claude_subscription","subscription_mode":"legacy","models":["claude-sonnet-4-5"]`+proxyInput+`}`, 201), &service); err != nil {
 		t.Fatal(err)
 	}
 	if service.Subscription.Provider != contract.SubscriptionProviderClaudeCode || service.Capabilities[0].Protocol != contract.ProtocolAnthropicMessages {

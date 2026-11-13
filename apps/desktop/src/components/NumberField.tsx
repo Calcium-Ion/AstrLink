@@ -18,6 +18,7 @@ export function NumberInput({
   max,
   step = 1,
   disabled,
+  invalid,
   className,
   onChange,
 }: {
@@ -30,6 +31,8 @@ export function NumberInput({
   max: number;
   step?: number | "any";
   disabled?: boolean;
+  /** Marks the value invalid for a check the caller makes itself. */
+  invalid?: boolean;
   className?: string;
   onChange: (value: number) => void;
 }) {
@@ -42,6 +45,7 @@ export function NumberInput({
         id={id}
         aria-label={label}
         aria-describedby={describedBy ? `${unitId} ${describedBy}` : unitId}
+        aria-invalid={invalid || undefined}
         className={cn(
           "h-9 pr-12 tabular-nums [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none",
           className,

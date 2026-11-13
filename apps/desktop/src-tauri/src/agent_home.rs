@@ -20,6 +20,12 @@ pub struct ToolDirs {
     pub claude: Option<PathBuf>,
     pub codex: Option<PathBuf>,
     pub grok: Option<PathBuf>,
+    /// Gemini CLI's directory, `~/.gemini` by default.
+    pub gemini: Option<PathBuf>,
+    /// OpenCode's config directory, `~/.config/opencode` by default.
+    pub opencode: Option<PathBuf>,
+    /// OpenClaw's directory, `~/.openclaw` by default.
+    pub openclaw: Option<PathBuf>,
     /// Pi's agent directory, `~/.pi/agent` by default.
     pub pi: Option<PathBuf>,
 }
@@ -28,6 +34,9 @@ static DEFAULT_DIRS: ToolDirs = ToolDirs {
     claude: None,
     codex: None,
     grok: None,
+    gemini: None,
+    opencode: None,
+    openclaw: None,
     pi: None,
 };
 
@@ -71,6 +80,22 @@ impl Homes {
 
     pub fn iter(&self) -> impl Iterator<Item = Home<'_>> {
         homes(&self.host, &self.dirs, &self.wsl)
+    }
+
+    /// The desktop user's home for `None`, or the named distribution's.
+    pub fn get(&self, distribution: Option<&str>) -> Option<Home<'_>> {
+        match distribution {
+            None => Some(Home {
+                host: &self.host,
+                wsl: None,
+                dirs: &self.dirs,
+            }),
+            Some(name) => self
+                .wsl
+                .iter()
+                .find(|wsl| wsl.distribution.eq_ignore_ascii_case(name))
+                .map(|wsl| Home::in_wsl(&self.host, wsl)),
+        }
     }
 
     /// The desktop user's home for `None`, or the named distribution's.
@@ -189,6 +214,33 @@ impl<'a> Home<'a> {
 
     pub(crate) fn grok_dir(self) -> PathBuf {
         self.dirs.grok.clone().unwrap_or_else(|| self.join(".grok"))
+    }
+
+    pub(crate) fn gemini_dir(self) -> PathBuf {
+        self.dirs
+            .gemini
+            .clone()
+            .unwrap_or_else(|| self.join(".gemini"))
+    }
+
+    pub(crate) fn opencode_dir(self) -> PathBuf {
+        self.dirs
+            .opencode
+            .clone()
+            .unwrap_or_else(|| self.join(".config").join("opencode"))
+    }
+
+    /// OpenCode makes its config directory only once it writes a config; its
+    /// data directory marks a run.
+    pub(crate) fn opencode_detected(self) -> bool {
+        self.opencode_dir().is_dir() || self.join(".local").join("share").join("opencode").is_dir()
+    }
+
+    pub(crate) fn openclaw_dir(self) -> PathBuf {
+        self.dirs
+            .openclaw
+            .clone()
+            .unwrap_or_else(|| self.join(".openclaw"))
     }
 
     pub(crate) fn pi_agent_dir(self) -> PathBuf {

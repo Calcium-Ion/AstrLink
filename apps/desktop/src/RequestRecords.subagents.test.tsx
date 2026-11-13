@@ -318,9 +318,10 @@ describe("RequestRecords subagents", () => {
     expect(subagent.querySelector('[title="子代理"]')).not.toBeNull();
     // The board counts the conversation once, with its subagent.
     expect(
-      container.querySelector('[data-testid="activity-conversations"]')
-        ?.textContent,
-    ).toBe("1个对话");
+      container
+        .querySelector('[data-slot="live-trend-plot"]')
+        ?.getAttribute("aria-label"),
+    ).toBe("近 5 分钟同时进行的对话，最多 1 个，现在 1 个");
     // A finished subagent folds into its conversation instead of a row.
     expect(
       container.querySelector('[data-session-id="session_child_finished"]'),
@@ -459,5 +460,90 @@ describe("RequestRecords subagents", () => {
     expect(
       document.querySelector('[role="alertdialog"]')?.textContent,
     ).toContain("将永久删除 3 次调用、2 个子代理和加密审计内容。");
+  });
+
+  it("sums the conversation with every subagent under it", async () => {
+    // A subagent the finished one started comes right after it.
+    const nested = session({
+      id: "session_grandchild",
+      parent_session_id: "session_child_finished",
+      title: "Read the lane header",
+      started_at: "2026-10-24T11:58:35Z",
+    });
+    bridgeMocks.getRequestSession.mockImplementation(async (id: string) => {
+      const item = [working, parent, finished, unrelated, nested].find(
+        (candidate) => candidate.id === id,
+      );
+      if (!item) throw new Error(`missing session ${id}`);
+      return item.id === parent.id
+        ? {
+            ...detail(parent),
+            subagent_count: 3,
+            subagents: [finished, nested, working],
+            with_subagents: {
+              call_count: 2762,
+              input_tokens: 453_000_000,
+              output_tokens: 2_380_000,
+            },
+          }
+        : detail(item);
+    });
+    await renderRecords();
+    await act(async () =>
+      container
+        .querySelector<HTMLButtonElement>('[data-session-id="session_main"]')!
+        .click(),
+    );
+    for (let index = 0; index < 4; index += 1) {
+      await act(async () => await Promise.resolve());
+    }
+    const totals = document.querySelector<HTMLElement>(
+      '[data-testid="session-with-subagents"]',
+    );
+    expect(totals?.textContent).toContain("含子代理");
+    expect(totals?.textContent).toContain("2762 次调用");
+    expect(totals?.title).toContain("3 个子代理");
+    expect(totals?.title).toContain("453,000,000");
+
+    const trigger = document.querySelector<HTMLButtonElement>(
+      '[data-testid="session-subagents"]',
+    );
+    expect(trigger?.textContent).toContain("3 个子代理");
+    await act(async () => {
+      trigger!.dispatchEvent(
+        new PointerEvent("pointerdown", {
+          bubbles: true,
+          button: 0,
+          pointerType: "mouse",
+        }),
+      );
+      await Promise.resolve();
+    });
+    const items = [
+      ...document.querySelectorAll<HTMLElement>('[role="menuitem"]'),
+    ].map((item) => [item.dataset.sessionId, item.dataset.depth]);
+    expect(items).toEqual([
+      ["session_child_finished", "0"],
+      ["session_grandchild", "1"],
+      ["session_child_working", "0"],
+    ]);
+  });
+
+  it("leaves the totals out of a conversation without subagents", async () => {
+    await renderRecords();
+    await act(async () =>
+      container
+        .querySelector<HTMLButtonElement>('[data-session-id="session_other"]')!
+        .click(),
+    );
+    for (let index = 0; index < 4; index += 1) {
+      await act(async () => await Promise.resolve());
+    }
+    expect(bridgeMocks.getRequestSession).toHaveBeenLastCalledWith(
+      "session_other",
+    );
+    expect(
+      document.querySelector('[data-testid="session-with-subagents"]'),
+    ).toBeNull();
   });
 });

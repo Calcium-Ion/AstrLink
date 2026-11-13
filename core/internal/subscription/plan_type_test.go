@@ -2,8 +2,10 @@ package subscription_test
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -102,5 +104,111 @@ func TestUsageIncludesProviderPlanType(t *testing.T) {
 				t.Fatalf("metadata calls = %d; want 1 with cached usage", metadataCalls.Load())
 			}
 		})
+	}
+}
+
+// TestLoginKeepsThePlanOfTheSameProviderAccount checks that signing in again
+// to the account a plan was read from keeps the plan, and that signing in to
+// another account or signing out drops it with the cached snapshot.
+func TestLoginKeepsThePlanOfTheSameProviderAccount(t *testing.T) {
+	var tokenAccount atomic.Value
+	tokenAccount.Store("acct_claude_1")
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/token":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"access_token": "test-access-token", "refresh_token": "test-refresh-token", "expires_in": 3600,
+				"account": map[string]any{"uuid": tokenAccount.Load()},
+			})
+		case "/base/api/oauth/usage":
+			_, _ = w.Write([]byte(`{"five_hour":{"utilization":25}}`))
+		case "/base/api/oauth/profile":
+			_, _ = w.Write([]byte(`{"organization":{"organization_type":"claude_pro"}}`))
+		default:
+			t.Errorf("unexpected path %s", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer upstream.Close()
+	ctx := context.Background()
+	now := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	expires := now.Add(time.Hour)
+	provider, id := contract.SubscriptionProviderClaudeCode, contract.ServiceID("service_claude_plan")
+	accounts := subscription.NewMemoryAccountStore()
+	credentials := accountauth.NewMemoryCredentialStore()
+	if err := accounts.PutAccount(ctx, contract.SubscriptionAccount{
+		ID: id, Provider: provider, DisplayName: "Claude", Status: contract.SubscriptionStatusConnected,
+		ProviderAccountID: "acct_claude_1", PlanType: "pro", CredentialRef: accountauth.CredentialRefFor(id),
+		TokenExpiresAt: &expires, Capabilities: provider.Capabilities(), CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := credentials.Put(ctx, id, accountauth.AccountTokens{
+		AccessToken: "test-access-token", RefreshToken: "test-refresh-token", AccountID: "acct_claude_1", ExpiresAt: expires,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	manager, err := subscription.NewManager(accounts, credentials,
+		accountauth.OAuthConfig{HTTPClient: upstream.Client(), Now: func() time.Time { return now }},
+		accountauth.OAuthConfig{Provider: provider, APIBaseURL: upstream.URL + "/base", TokenURL: upstream.URL + "/token"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	login := func(providerAccountID string) {
+		t.Helper()
+		tokenAccount.Store(providerAccountID)
+		session, err := manager.BeginAuthorization(ctx, id, contract.AuthorizationFlowCode)
+		if err != nil {
+			t.Fatal(err)
+		}
+		authorize, err := url.Parse(session.AuthorizationURL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := manager.CompleteAuthorizationCode(ctx, id, session.ID, "code#"+authorize.Query().Get("state")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	plans := func() (stored, cached string, ok bool) {
+		t.Helper()
+		account, err := accounts.GetAccount(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		usage, ok := manager.CachedUsage(id)
+		return account.PlanType, usage.PlanType, ok
+	}
+	if usage, err := manager.Usage(ctx, id); err != nil || usage.PlanType != "pro" {
+		t.Fatalf("Usage() = %#v, %v", usage, err)
+	}
+
+	login("acct_claude_1")
+	if stored, cached, ok := plans(); stored != "pro" || cached != "pro" || !ok {
+		t.Fatalf("after signing in to the same account: stored %q, cached %q (%v)", stored, cached, ok)
+	}
+	login("acct_claude_2")
+	if stored, _, ok := plans(); stored != "" || ok {
+		t.Fatalf("after signing in to another account: stored %q, cached %v", stored, ok)
+	}
+
+	// The new account reads its own plan, which the core's usage observer
+	// stores (written here directly); signing out drops it.
+	if _, err := manager.Usage(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	account, err := accounts.GetAccount(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	account.PlanType = "pro"
+	if err := accounts.PutAccount(ctx, account); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Logout(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	if stored, _, ok := plans(); stored != "" || ok {
+		t.Fatalf("after signing out: stored %q, cached %v", stored, ok)
 	}
 }

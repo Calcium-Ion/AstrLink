@@ -8,25 +8,33 @@ import {
   type ReactNode,
 } from "react";
 
-import { ActionGroup } from "@/components/ActionGroup";
 import { ChoiceCard } from "@/components/ChoiceCard";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { CopyableValue } from "@/components/CopyableValue";
 import { DataRow } from "@/components/DataRow";
-import { Field } from "@/components/Field";
 import { FormMessage } from "@/components/FormMessage";
 import { HelpPopover } from "@/components/HelpPopover";
 import { InferencePortNotice } from "@/components/InferencePortNotice";
-import { Panel, PanelHeader } from "@/components/Panel";
+import { NumberInput } from "@/components/NumberField";
+import { Panel, PanelFooter, PanelHeader } from "@/components/Panel";
 import { SectionKicker } from "@/components/SectionKicker";
-import { StatusDot } from "@/components/StatusDot";
+import { SegmentedControl } from "@/components/SegmentedControl";
+import { SettingRow, SettingSwitchRow } from "@/components/SettingRow";
+import { StatusBadge } from "@/components/StatusBadge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RadioGroup } from "@/components/ui/radio-group";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Menu, RefreshCw, SlidersHorizontal } from "@/components/icons";
+import { Menu, RefreshCw, Server, SlidersHorizontal } from "@/components/icons";
 import { cn } from "@/lib/utils";
 import { SyncSettings } from "./SyncSettings";
 
@@ -54,9 +62,9 @@ import {
   LOCALE_NAMES,
   LOCALES,
   useT,
-  type Locale,
 } from "./i18n";
 import {
+  INFERENCE_LISTENS,
   MAX_MAX_CONCURRENT_INSPECTIONS,
   MAX_REQUEST_BODY_MIB,
   MAX_RESPONSE_START_TIMEOUT_SECONDS,
@@ -72,13 +80,18 @@ import {
 } from "./preferences-model";
 import { notify } from "./notify";
 import { PageHeader } from "./PageHeader";
+import { applyQuotaDisplayMode, QUOTA_DISPLAY_MODES } from "./quota-display";
 import {
-  applyQuotaDisplayMode,
-  QUOTA_DISPLAY_MODES,
-  type QuotaDisplayMode,
-} from "./quota-display";
+  currencyName,
+  DISPLAY_CURRENCIES,
+  formatCurrency,
+  formatRateDate,
+  isDisplayCurrencyChoice,
+  useDisplayCurrency,
+  type DisplayCurrency,
+} from "./currency-display";
 import { applyTheme } from "./theme";
-import { THEME_PREFERENCES, type ThemePreference } from "./theme-model";
+import { THEME_PREFERENCES } from "./theme-model";
 import type { TrayState } from "./tray-model";
 import { TrayPopoverPanel } from "./TrayPopover";
 
@@ -86,12 +99,13 @@ const TRAY_PREVIEW_REFRESH_MS = 30_000;
 /** Time for a requested usage collection to land before the preview re-reads. */
 const TRAY_PREVIEW_SETTLE_MS = 2_500;
 
-type SettingsTab = "general" | "tray" | "sync";
+type SettingsTab = "general" | "gateway" | "tray" | "sync";
 
 type InstantPatch = Omit<
   Preferences,
   | "inference_port"
   | "inference_listen"
+  | "use_system_proxy"
   | "max_concurrent_inspections"
   | "response_start_timeout_seconds"
   | "max_request_body_mib"
@@ -164,6 +178,28 @@ function formatBackupSize(bytes: number): string {
     unit += 1;
   }
   return unit === 0 ? `${value} B` : `${value.toFixed(1)} ${units[unit]}`;
+}
+
+/** What the currency setting does, then the rate in use or why there is none. */
+function currencyHint(
+  t: ReturnType<typeof useT>,
+  currency: DisplayCurrency,
+): ReactNode {
+  const hint = t("settings.currencyHint");
+  if (currency.wanted === "USD") return hint;
+  const status =
+    currency.code === currency.wanted && currency.rate_date
+      ? t("settings.currencyRate", {
+          date: formatRateDate(currency.rate_date, currentLocale()),
+          amount: formatCurrency(currency.per_usd, currency.digits, currency),
+        })
+      : t("settings.currencyPending");
+  return (
+    <>
+      {hint}
+      <span className="block">{status}</span>
+    </>
+  );
 }
 
 // Hand-made database copies are not encrypted with the live data; point them
@@ -257,6 +293,9 @@ export function SettingsCenter({
     settings?.values.inference_listen ?? null,
   );
   const [listenConfirmOpen, setListenConfirmOpen] = useState(false);
+  const [proxyDraft, setProxyDraft] = useState<boolean | null>(
+    settings?.values.use_system_proxy ?? null,
+  );
   const [addresses, setAddresses] = useState<NetworkAddress[] | null>(null);
   const [addressesError, setAddressesError] = useState<string | null>(null);
   const [concurrencyDraft, setConcurrencyDraft] = useState<number | null>(
@@ -280,6 +319,8 @@ export function SettingsCenter({
   const [now, setNow] = useState(() => new Date());
 
   const entryDirtyRef = useRef(false);
+  const fieldId = useId();
+  const currency = useDisplayCurrency();
 
   // The preview is the real panel over real data; refresh it on a slow tick.
   useEffect(() => {
@@ -347,6 +388,7 @@ export function SettingsCenter({
           if (!entryDirtyRef.current) {
             setPortDraft(next.values.inference_port);
             setListenDraft(next.values.inference_listen);
+            setProxyDraft(next.values.use_system_proxy);
             setConcurrencyDraft(next.values.max_concurrent_inspections);
             setTimeoutDraft(next.values.response_start_timeout_seconds);
             setBodyLimitDraft(next.values.max_request_body_mib);
@@ -394,6 +436,10 @@ export function SettingsCenter({
     settings !== null &&
     listenDraft !== null &&
     listenDraft !== settings.values.inference_listen;
+  const proxyDirty =
+    settings !== null &&
+    proxyDraft !== null &&
+    proxyDraft !== settings.values.use_system_proxy;
   const portDirty = useMemo(
     () =>
       settings !== null &&
@@ -427,6 +473,7 @@ export function SettingsCenter({
   const entryDirty =
     portDirty ||
     listenDirty ||
+    proxyDirty ||
     concurrencyDirty ||
     timeoutDirty ||
     bodyLimitDirty;
@@ -463,6 +510,7 @@ export function SettingsCenter({
       ...patch,
       inference_port: settings.values.inference_port,
       inference_listen: settings.values.inference_listen,
+      use_system_proxy: settings.values.use_system_proxy,
       max_concurrent_inspections: settings.values.max_concurrent_inspections,
       response_start_timeout_seconds:
         settings.values.response_start_timeout_seconds,
@@ -479,7 +527,6 @@ export function SettingsCenter({
       if (patch.quota_display_mode !== undefined)
         applyQuotaDisplayMode(next.values.quota_display_mode);
       if (patch.theme !== undefined) applyTheme(next.values.theme);
-      if (patch.use_system_proxy !== undefined) notifyLaunchSaved();
       if (patch.locale && patch.locale !== previous.values.locale) {
         await applyLocale(patch.locale);
       }
@@ -536,6 +583,7 @@ export function SettingsCenter({
       !settings ||
       portDraft === null ||
       listenDraft === null ||
+      proxyDraft === null ||
       concurrencyDraft === null ||
       timeoutDraft === null ||
       bodyLimitDraft === null ||
@@ -552,6 +600,7 @@ export function SettingsCenter({
         ...settings.values,
         inference_port: portDraft,
         inference_listen: revert?.inference_listen ?? listenDraft,
+        use_system_proxy: proxyDraft,
         max_concurrent_inspections: concurrencyDraft,
         response_start_timeout_seconds: timeoutDraft,
         max_request_body_mib: bodyLimitDraft,
@@ -560,6 +609,7 @@ export function SettingsCenter({
       setSettings(next);
       setPortDraft(next.values.inference_port);
       setListenDraft(next.values.inference_listen);
+      setProxyDraft(next.values.use_system_proxy);
       setConcurrencyDraft(next.values.max_concurrent_inspections);
       setTimeoutDraft(next.values.response_start_timeout_seconds);
       setBodyLimitDraft(next.values.max_request_body_mib);
@@ -595,6 +645,7 @@ export function SettingsCenter({
   if (
     !settings ||
     portDraft === null ||
+    proxyDraft === null ||
     concurrencyDraft === null ||
     timeoutDraft === null ||
     bodyLimitDraft === null
@@ -612,7 +663,6 @@ export function SettingsCenter({
   const applyTray = (patch: Partial<TrayPreferences>) =>
     void applyInstant({ tray: { ...prefs.tray, ...patch } });
   const phase = snapshot?.phase ?? "unavailable";
-  const tone = phaseTone(phase);
   const canStart = ["stopped", "exited", "error"].includes(phase);
   const canStop = gatewayRunning;
   const recoveryHint =
@@ -630,6 +680,26 @@ export function SettingsCenter({
   const restartPending = snapshot?.restart_pending === true;
   const listenValue = listenDraft ?? settings.values.inference_listen;
   const exposedPort = active ?? settings.values.inference_port;
+  // A port waiting for a restart differs from the one in use; a fallback
+  // port with nothing pending is what clients use, so show its address.
+  const portChanging =
+    active !== null && portDraft !== active && (portDirty || restartPending);
+  const clientURL = (
+    snapshot?.ready?.client_inference_url ??
+    `http://localhost:${settings.values.inference_port}`
+  ).replace(/\/+$/, "");
+  const [addressBefore, addressAfter = ""] = t("settings.portAddressHint", {
+    url: "\u0000",
+  }).split("\u0000");
+  const portHint = portChanging ? (
+    t("settings.portChanging", { active, draft: portDraft })
+  ) : (
+    <>
+      {addressBefore}
+      <span className="font-mono">{clientURL}</span>
+      {addressAfter}
+    </>
+  );
 
   return (
     <section className="gutter-frame flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
@@ -676,6 +746,10 @@ export function SettingsCenter({
               <SlidersHorizontal aria-hidden="true" />
               {t("settings.tabs.general")}
             </TabsTrigger>
+            <TabsTrigger value="gateway">
+              <Server aria-hidden="true" />
+              {t("settings.tabs.gateway")}
+            </TabsTrigger>
             <TabsTrigger value="tray">
               <Menu aria-hidden="true" />
               {t("settings.tabs.tray")}
@@ -691,319 +765,290 @@ export function SettingsCenter({
             data-tab-scroller
             value="general"
           >
-            <div className="grid grid-cols-2 gap-3 pb-2 pr-1 max-[920px]:grid-cols-1">
-              <Panel className="min-w-0">
-                <SettingsPanelHeader
-                  hint={t("settings.instantHint")}
-                  kicker={t("settings.windowKicker")}
-                  title={t("settings.desktopBehavior")}
-                />
-
-                <div className="grid gap-2 border-b px-4 py-3">
-                  <span className="text-xs font-medium text-text-secondary">
-                    {t("settings.theme")}
-                  </span>
-                  <RadioGroup
-                    className="grid grid-cols-3 gap-2 max-[560px]:grid-cols-1"
-                    aria-label={t("settings.theme")}
+            <div className="grid min-w-0 gap-3 pr-1 pb-2">
+              <Panel>
+                <PanelHeader>
+                  <h2 className="text-sm font-semibold">
+                    {t("settings.appearance")}
+                  </h2>
+                </PanelHeader>
+                <SettingRow
+                  hint={t("settings.themeHint")}
+                  label={t("settings.theme")}
+                >
+                  <SegmentedControl
                     disabled={prefsBusy}
-                    onValueChange={(value) =>
-                      void applyInstant({ theme: value as ThemePreference })
-                    }
+                    label={t("settings.theme")}
+                    onValueChange={(theme) => void applyInstant({ theme })}
+                    options={THEME_PREFERENCES.map((theme) => ({
+                      value: theme,
+                      label: t(`settings.themeOptions.${theme}`),
+                    }))}
                     value={prefs.theme}
-                  >
-                    {THEME_PREFERENCES.map((theme) => (
-                      <ChoiceCard
-                        key={theme}
-                        disabled={prefsBusy}
-                        label={t(`settings.themeOptions.${theme}`)}
-                        selected={prefs.theme === theme}
-                        value={theme}
-                      />
-                    ))}
-                  </RadioGroup>
-                </div>
-
-                <div className="grid gap-2 border-b px-4 py-3">
-                  <span className="text-xs font-medium text-text-secondary">
-                    {t("settings.quotaDisplayMode")}
-                  </span>
-                  <RadioGroup
-                    className="grid grid-cols-2 gap-2 max-[560px]:grid-cols-1"
-                    aria-label={t("settings.quotaDisplayMode")}
+                  />
+                </SettingRow>
+                <SettingRow
+                  hint={t("settings.languageHint")}
+                  label={t("settings.language")}
+                >
+                  <SegmentedControl
                     disabled={prefsBusy}
-                    onValueChange={(value) =>
-                      void applyInstant({
-                        quota_display_mode: value as QuotaDisplayMode,
-                      })
-                    }
-                    value={prefs.quota_display_mode}
-                  >
-                    {QUOTA_DISPLAY_MODES.map((mode) => (
-                      <ChoiceCard
-                        key={mode}
-                        disabled={prefsBusy}
-                        label={t(`settings.quotaDisplayOptions.${mode}`)}
-                        selected={prefs.quota_display_mode === mode}
-                        value={mode}
-                      />
-                    ))}
-                  </RadioGroup>
-                  <p className="text-xs text-muted-foreground">
-                    {t("settings.quotaDisplayHint")}
-                  </p>
-                </div>
-
-                <div className="grid gap-2 border-b px-4 py-3">
-                  <span className="text-xs font-medium text-text-secondary">
-                    {t("settings.language")}
-                  </span>
-                  <RadioGroup
-                    className={cn(
-                      "grid grid-cols-3 gap-2 max-[560px]:grid-cols-1",
-                      prefsBusy && "pointer-events-none opacity-60",
-                    )}
-                    aria-label={t("settings.language")}
-                    disabled={prefsBusy}
-                    onValueChange={(value) =>
-                      void applyInstant({ locale: value as Locale })
-                    }
+                    label={t("settings.language")}
+                    onValueChange={(locale) => void applyInstant({ locale })}
+                    options={LOCALES.map((locale) => ({
+                      value: locale,
+                      label: LOCALE_NAMES[locale],
+                    }))}
                     value={prefs.locale}
-                  >
-                    {LOCALES.map((locale) => (
-                      <ChoiceCard
-                        key={locale}
-                        label={LOCALE_NAMES[locale]}
-                        selected={prefs.locale === locale}
-                        value={locale}
-                      />
-                    ))}
-                  </RadioGroup>
-                  <p className="text-xs text-muted-foreground">
-                    {t("settings.languageHint")}
-                  </p>
-                </div>
-
-                <div className="grid gap-2 border-b px-4 py-3">
-                  <span className="text-xs font-medium text-text-secondary">
-                    {t("settings.onClose")}
-                  </span>
-                  <RadioGroup
-                    className={cn(
-                      "grid grid-cols-2 gap-2 max-[560px]:grid-cols-1",
-                      prefsBusy && "pointer-events-none opacity-60",
-                    )}
-                    aria-label={t("settings.onClose")}
+                  />
+                </SettingRow>
+                <SettingRow
+                  hint={t("settings.quotaDisplayHint")}
+                  label={t("settings.quotaDisplayMode")}
+                >
+                  <SegmentedControl
                     disabled={prefsBusy}
-                    onValueChange={(value) =>
-                      void applyInstant({
-                        close_behavior: value as Preferences["close_behavior"],
-                      })
+                    label={t("settings.quotaDisplayMode")}
+                    onValueChange={(quota_display_mode) =>
+                      void applyInstant({ quota_display_mode })
                     }
-                    value={prefs.close_behavior}
+                    options={QUOTA_DISPLAY_MODES.map((mode) => ({
+                      value: mode,
+                      label: t(`settings.quotaDisplayOptions.${mode}`),
+                    }))}
+                    value={prefs.quota_display_mode}
+                  />
+                </SettingRow>
+                <SettingRow
+                  hint={currencyHint(t, currency)}
+                  hintId={`${fieldId}-currency-hint`}
+                  label={t("settings.currency")}
+                >
+                  <Select
+                    disabled={prefsBusy}
+                    onValueChange={(display_currency) => {
+                      // Radix reports "" while it remounts; not a choice.
+                      if (isDisplayCurrencyChoice(display_currency))
+                        void applyInstant({ display_currency });
+                    }}
+                    value={prefs.display_currency}
                   >
-                    <ChoiceCard
-                      description={t("settings.hideToTrayHint")}
-                      label={t("settings.hideToTray")}
-                      selected={prefs.close_behavior === "hide_to_tray"}
-                      value="hide_to_tray"
-                    />
-                    <ChoiceCard
-                      description={t("settings.quitHint")}
-                      label={t("settings.quit")}
-                      selected={prefs.close_behavior === "quit"}
-                      value="quit"
-                    />
-                  </RadioGroup>
-                </div>
+                    <SelectTrigger
+                      aria-describedby={`${fieldId}-currency-hint`}
+                      aria-label={t("settings.currency")}
+                      className="w-56"
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="auto">
+                        {t("settings.currencyAuto", {
+                          name: currencyName(currency.system, currentLocale()),
+                        })}
+                      </SelectItem>
+                      {DISPLAY_CURRENCIES.map((code) => (
+                        <SelectItem key={code} value={code}>
+                          {currencyName(code, currentLocale())} {code}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </SettingRow>
+              </Panel>
 
-                <SettingsToggle
+              <Panel>
+                <PanelHeader>
+                  <h2 className="text-sm font-semibold">
+                    {t("settings.windowTitle")}
+                  </h2>
+                </PanelHeader>
+                <SettingRow
+                  hint={t("settings.onCloseHint")}
+                  label={t("settings.onClose")}
+                >
+                  <SegmentedControl
+                    disabled={prefsBusy}
+                    label={t("settings.onClose")}
+                    onValueChange={(close_behavior) =>
+                      void applyInstant({ close_behavior })
+                    }
+                    options={[
+                      {
+                        value: "hide_to_tray",
+                        label: t("settings.hideToTray"),
+                      },
+                      { value: "quit", label: t("settings.quit") },
+                    ]}
+                    value={prefs.close_behavior}
+                  />
+                </SettingRow>
+                <SettingSwitchRow
                   checked={prefs.autostart}
                   disabled={prefsBusy}
+                  hint={t("settings.autostartHint")}
                   label={t("settings.autostart")}
-                  onChange={(autostart) => void applyInstant({ autostart })}
+                  onCheckedChange={(autostart) =>
+                    void applyInstant({ autostart })
+                  }
                 />
-
-                <SettingsToggle
+                <SettingSwitchRow
                   checked={prefs.autostart_hidden}
                   disabled={prefsBusy || !prefs.autostart}
                   hint={t("settings.autostartHiddenHint")}
+                  inset
                   label={t("settings.autostartHidden")}
-                  onChange={(autostart_hidden) =>
+                  onCheckedChange={(autostart_hidden) =>
                     void applyInstant({ autostart_hidden })
                   }
                 />
-
-                <p className="px-4 py-2.5 text-xs text-muted-foreground">
-                  {t("settings.trayHint")}
-                </p>
               </Panel>
+            </div>
+          </TabsContent>
 
-              <Panel className="min-w-0">
-                <SettingsPanelHeader
-                  kicker={t("settings.runtimeKicker")}
-                  title={t("settings.gatewayTitle")}
-                />
-
-                <SettingsToggle
+          <TabsContent
+            className="gutter-scroller min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain"
+            data-tab-scroller
+            value="gateway"
+          >
+            <div className="grid min-w-0 gap-3 pr-1 pb-2">
+              <Panel>
+                <PanelHeader
+                  actions={
+                    <>
+                      {canStart ? (
+                        <Button
+                          disabled={busy !== null}
+                          onClick={() => void runCoreAction("start")}
+                          size="sm"
+                          type="button"
+                          variant="outline"
+                        >
+                          {busy === "start"
+                            ? t("settings.starting")
+                            : t("settings.start")}
+                        </Button>
+                      ) : (
+                        <Button
+                          disabled={!canStop || busy !== null}
+                          onClick={() => void runCoreAction("stop")}
+                          size="sm"
+                          type="button"
+                          variant="outline"
+                        >
+                          {busy === "stop"
+                            ? t("settings.stopping")
+                            : t("settings.stop")}
+                        </Button>
+                      )}
+                      <Button
+                        disabled={phase === "unavailable" || busy !== null}
+                        onClick={() => void runCoreAction("restart")}
+                        size="sm"
+                        type="button"
+                        variant="outline"
+                      >
+                        {busy === "restart"
+                          ? t("settings.restarting")
+                          : t("settings.restart")}
+                      </Button>
+                    </>
+                  }
+                >
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h2 className="text-sm font-semibold">
+                      {t("settings.gatewayTitle")}
+                    </h2>
+                    <StatusBadge tone={phaseTone(phase)}>
+                      {phaseLabel(phase)}
+                    </StatusBadge>
+                  </div>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {t("settings.gatewayHint")}
+                  </p>
+                  {recoveryHint ? (
+                    <p className="mt-1 text-xs text-warning-foreground">
+                      {recoveryHint}
+                    </p>
+                  ) : null}
+                </PanelHeader>
+                {snapshot?.last_error ? (
+                  <div className="border-b px-4 py-3">
+                    <code className="block rounded-sm border bg-card px-2 py-1.5 font-mono text-xs whitespace-normal text-text-secondary [overflow-wrap:anywhere]">
+                      {snapshot.last_error}
+                    </code>
+                  </div>
+                ) : null}
+                <SettingSwitchRow
                   checked={prefs.core_auto_start}
                   disabled={prefsBusy}
+                  hint={t("settings.coreAutoStartHint")}
                   label={t("settings.coreAutoStart")}
-                  onChange={(core_auto_start) =>
+                  onCheckedChange={(core_auto_start) =>
                     void applyInstant({ core_auto_start })
                   }
                 />
-                <SettingsToggle
+                <SettingSwitchRow
                   checked={prefs.core_auto_recover}
                   disabled={prefsBusy}
+                  hint={t("settings.coreAutoRecoverHint")}
                   label={t("settings.coreAutoRecover")}
-                  onChange={(core_auto_recover) =>
+                  onCheckedChange={(core_auto_recover) =>
                     void applyInstant({ core_auto_recover })
                   }
                 />
-
-                <SettingsToggle
-                  checked={prefs.use_system_proxy}
-                  disabled={busy !== null}
-                  label={t("settings.useSystemProxy")}
-                  hint={t("settings.systemProxyHint")}
-                  onChange={(use_system_proxy) =>
-                    void applyInstant({ use_system_proxy })
-                  }
-                />
-
-                <div className="border-b px-4 py-3">
-                  <div
-                    className={cn(
-                      "flex items-center gap-2.5 rounded-md border bg-muted px-3 py-2.5",
-                      tone === "positive" &&
-                        "border-success/25 bg-success-wash",
-                      tone === "pending" && "border-warning/30 bg-warning-wash",
-                      tone === "negative" &&
-                        "border-destructive/25 bg-danger-wash",
-                    )}
-                  >
-                    <StatusDot tone={tone} />
-                    <div className="grid min-w-0 gap-0.5">
-                      <strong className="text-sm font-medium">
-                        {phaseLabel(phase)}
-                      </strong>
-                      <span className="truncate text-xs text-text-secondary">
-                        {t("settings.currentStatus", {
-                          phase: phaseLabel(phase),
-                        })}
-                        {recoveryHint ? ` · ${recoveryHint}` : ""}
-                      </span>
-                    </div>
-                  </div>
-
-                  {snapshot?.last_error ? (
-                    <code className="mt-2 block rounded-sm border bg-card px-2 py-1.5 font-mono text-xs whitespace-normal text-text-secondary [overflow-wrap:anywhere]">
-                      {snapshot.last_error}
-                    </code>
-                  ) : null}
-                </div>
-
-                <div className="flex flex-wrap items-center gap-2 px-4 py-3">
-                  <Button
-                    disabled={!canStart || busy !== null}
-                    onClick={() => void runCoreAction("start")}
-                    type="button"
-                  >
-                    {busy === "start"
-                      ? t("settings.starting")
-                      : t("settings.start")}
-                  </Button>
-                  <Button
-                    variant="outline"
-                    disabled={!canStop || busy !== null}
-                    onClick={() => void runCoreAction("stop")}
-                    type="button"
-                  >
-                    {busy === "stop"
-                      ? t("settings.stopping")
-                      : t("settings.stop")}
-                  </Button>
-                  <Button
-                    variant="outline"
-                    disabled={phase === "unavailable" || busy !== null}
-                    onClick={() => void runCoreAction("restart")}
-                    type="button"
-                  >
-                    {busy === "restart"
-                      ? t("settings.restarting")
-                      : t("settings.restart")}
-                  </Button>
-                </div>
               </Panel>
 
               <Panel
                 className={cn(
-                  "col-span-full min-w-0 max-[920px]:col-auto",
+                  "flex flex-col",
                   entryDirty && "border-warning/50",
                 )}
               >
-                <SettingsPanelHeader
-                  hint={t("settings.portHint")}
-                  kicker={t("settings.portKicker")}
-                  title={t("settings.portTitle")}
-                />
-
-                <div className="grid grid-cols-3 gap-3 border-b px-4 py-3 max-[560px]:grid-cols-1">
-                  <Field label={t("settings.portField")}>
-                    <Input
-                      className="font-mono tabular-nums"
-                      max={65535}
-                      min={1024}
-                      onChange={(event) =>
-                        setPortDraft(Number(event.target.value))
-                      }
-                      type="number"
-                      value={portDraft}
-                    />
-                  </Field>
-                  <Field label={t("settings.portActive")}>
-                    <span className="flex h-8 items-center rounded-md border bg-muted px-2.5 font-mono text-sm tabular-nums">
-                      {active ?? t("settings.portNotReady")}
-                    </span>
-                  </Field>
-                  <Field label={t("settings.portSaved")}>
-                    <span className="flex h-8 items-center rounded-md border bg-muted px-2.5 font-mono text-sm tabular-nums">
-                      {settings.values.inference_port}
-                    </span>
-                  </Field>
-                </div>
-
-                <div className="grid gap-2 border-b px-4 py-3">
-                  <span className="text-xs font-medium text-text-secondary">
-                    {t("settings.listenField")}
-                  </span>
-                  <RadioGroup
-                    aria-label={t("settings.listenField")}
-                    className="grid grid-cols-2 gap-2 max-[560px]:grid-cols-1"
-                    disabled={busy !== null}
-                    onValueChange={(value) =>
-                      selectListen(value as InferenceListen)
+                <PanelHeader>
+                  <h2 className="text-sm font-semibold">
+                    {t("settings.connectionTitle")}
+                  </h2>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {t("settings.connectionHint")}
+                  </p>
+                </PanelHeader>
+                <SettingRow
+                  hint={portHint}
+                  hintId={`${fieldId}-port-hint`}
+                  htmlFor={`${fieldId}-port`}
+                  label={t("settings.portField")}
+                >
+                  <Input
+                    aria-describedby={`${fieldId}-port-hint`}
+                    className="h-8 w-24 font-mono tabular-nums"
+                    id={`${fieldId}-port`}
+                    max={65535}
+                    min={1024}
+                    onChange={(event) =>
+                      setPortDraft(Number(event.target.value))
                     }
+                    type="number"
+                    value={portDraft}
+                  />
+                </SettingRow>
+                <SettingRow
+                  hint={t("settings.listenHint")}
+                  label={t("settings.listenField")}
+                >
+                  <SegmentedControl
+                    disabled={busy !== null}
+                    label={t("settings.listenField")}
+                    onValueChange={selectListen}
+                    options={INFERENCE_LISTENS.map((listen) => ({
+                      value: listen,
+                      label: t(`settings.listenOptions.${listen}`),
+                    }))}
                     value={listenValue}
-                  >
-                    <ChoiceCard
-                      description={t("settings.listenHints.loopback")}
-                      disabled={busy !== null}
-                      label={t("settings.listenOptions.loopback")}
-                      selected={listenValue === "loopback"}
-                      value="loopback"
-                    />
-                    <ChoiceCard
-                      description={t("settings.listenHints.all_interfaces")}
-                      disabled={busy !== null}
-                      label={t("settings.listenOptions.all_interfaces")}
-                      selected={listenValue === "all_interfaces"}
-                      value="all_interfaces"
-                    />
-                  </RadioGroup>
-                  {exposedActive ? (
-                    <FormMessage tone="warning">
+                  />
+                </SettingRow>
+                {exposedActive ? (
+                  <div className="border-b px-4 py-3">
+                    <FormMessage asChild tone="warning">
                       <div className="grid gap-2">
                         <p>
                           {t("settings.listenExposedNotice", {
@@ -1059,123 +1104,118 @@ export function SettingsCenter({
                         </div>
                       </div>
                     </FormMessage>
-                  ) : null}
+                  </div>
+                ) : null}
+                <SettingSwitchRow
+                  checked={proxyDraft}
+                  disabled={busy !== null}
+                  hint={t("settings.useSystemProxyHint")}
+                  label={t("settings.useSystemProxy")}
+                  onCheckedChange={setProxyDraft}
+                />
+                <div className="border-b bg-muted/40 px-4 py-2">
+                  <SectionKicker>{t("settings.requestHandling")}</SectionKicker>
                 </div>
-
-                <div className="grid grid-cols-3 gap-3 border-b px-4 py-3 max-[560px]:grid-cols-1">
-                  <Field label={t("settings.concurrencyField")}>
-                    <Input
-                      aria-label={t("settings.concurrencyField")}
-                      className="font-mono tabular-nums"
-                      max={MAX_MAX_CONCURRENT_INSPECTIONS}
-                      min={MIN_MAX_CONCURRENT_INSPECTIONS}
-                      onChange={(event) =>
-                        setConcurrencyDraft(Number(event.target.value))
-                      }
-                      type="number"
-                      value={concurrencyDraft}
-                    />
-                  </Field>
-                  <Field label={t("settings.concurrencySaved")}>
-                    <span className="flex h-8 items-center rounded-md border bg-muted px-2.5 font-mono text-sm tabular-nums">
-                      {settings.values.max_concurrent_inspections}
-                    </span>
-                  </Field>
-                  <p className="col-span-1 flex items-end text-xs text-muted-foreground max-[560px]:items-start">
-                    {t("settings.concurrencyHint")}
-                  </p>
-                </div>
-
-                <div className="grid grid-cols-3 gap-3 border-b px-4 py-3 max-[560px]:grid-cols-1">
-                  <Field label={t("settings.responseStartTimeoutField")}>
-                    <Input
-                      aria-label={t("settings.responseStartTimeoutField")}
-                      className="font-mono tabular-nums"
-                      max={MAX_RESPONSE_START_TIMEOUT_SECONDS}
-                      min={0}
-                      onChange={(event) =>
-                        setTimeoutDraft(Number(event.target.value))
-                      }
-                      type="number"
-                      value={timeoutDraft}
-                    />
-                  </Field>
-                  <Field label={t("settings.responseStartTimeoutSaved")}>
-                    <span className="flex h-8 items-center rounded-md border bg-muted px-2.5 font-mono text-sm tabular-nums">
-                      {settings.values.response_start_timeout_seconds}
-                    </span>
-                  </Field>
-                  <p className="col-span-1 flex items-end text-xs text-muted-foreground max-[560px]:items-start">
-                    {t("settings.responseStartTimeoutHint")}
-                  </p>
-                </div>
-
-                <div className="grid grid-cols-3 gap-3 border-b px-4 py-3 max-[560px]:grid-cols-1">
-                  <Field label={t("settings.requestBodyLimitField")}>
-                    <Input
-                      aria-label={t("settings.requestBodyLimitField")}
-                      aria-invalid={!bodyLimitValid}
-                      className="font-mono tabular-nums"
-                      max={MAX_REQUEST_BODY_MIB}
-                      min={0}
-                      step={1}
-                      onChange={(event) =>
-                        setBodyLimitDraft(Number(event.target.value))
-                      }
-                      type="number"
-                      value={bodyLimitDraft}
-                    />
-                  </Field>
-                  <Field label={t("settings.concurrencySaved")}>
-                    <span className="flex h-8 items-center rounded-md border bg-muted px-2.5 font-mono text-sm tabular-nums">
-                      {settings.values.max_request_body_mib === 0
-                        ? t("settings.requestBodyUnlimited")
-                        : `${settings.values.max_request_body_mib} MiB`}
-                    </span>
-                  </Field>
-                  <p className="col-span-1 flex items-end text-xs text-muted-foreground max-[560px]:items-start">
-                    {t("settings.requestBodyLimitHint")}
-                  </p>
-                </div>
-
-                <div className="flex items-center justify-between gap-3 px-4 py-3 max-[560px]:flex-col max-[560px]:items-stretch">
-                  {entryDirty ? (
-                    <p className="min-w-0 flex-1 text-xs text-warning-foreground">
-                      {t("settings.portDirty")}
-                    </p>
-                  ) : restartPending ? (
-                    <p className="min-w-0 flex-1 text-xs text-warning-foreground">
-                      {t("settings.restartPending")}
-                    </p>
-                  ) : (
-                    <p className="min-w-0 flex-1 text-xs text-muted-foreground">
-                      {t("settings.portControlHint")}
-                    </p>
-                  )}
-                  <ActionGroup className="shrink-0 max-[560px]:ml-0 max-[560px]:[&>*]:flex-1">
-                    {restartPending && !entryDirty ? (
+                <SettingRow
+                  hint={t("settings.concurrencyHint")}
+                  hintId={`${fieldId}-concurrency-hint`}
+                  htmlFor={`${fieldId}-concurrency`}
+                  label={t("settings.concurrencyField")}
+                >
+                  <NumberInput
+                    className="h-8 w-32"
+                    describedBy={`${fieldId}-concurrency-hint`}
+                    id={`${fieldId}-concurrency`}
+                    label={t("settings.concurrencyField")}
+                    max={MAX_MAX_CONCURRENT_INSPECTIONS}
+                    min={MIN_MAX_CONCURRENT_INSPECTIONS}
+                    onChange={setConcurrencyDraft}
+                    unit={t("settings.concurrencyUnit")}
+                    value={concurrencyDraft}
+                  />
+                </SettingRow>
+                <SettingRow
+                  hint={t("settings.responseStartTimeoutHint")}
+                  hintId={`${fieldId}-timeout-hint`}
+                  htmlFor={`${fieldId}-timeout`}
+                  label={t("settings.responseStartTimeoutField")}
+                >
+                  <NumberInput
+                    className="h-8 w-32"
+                    describedBy={`${fieldId}-timeout-hint`}
+                    id={`${fieldId}-timeout`}
+                    label={t("settings.responseStartTimeoutField")}
+                    max={MAX_RESPONSE_START_TIMEOUT_SECONDS}
+                    min={0}
+                    onChange={setTimeoutDraft}
+                    unit={t("settings.secondsUnit")}
+                    value={timeoutDraft}
+                  />
+                </SettingRow>
+                <SettingRow
+                  hint={t("settings.requestBodyLimitHint")}
+                  hintId={`${fieldId}-body-hint`}
+                  htmlFor={`${fieldId}-body`}
+                  label={t("settings.requestBodyLimitField")}
+                >
+                  <NumberInput
+                    className="h-8 w-32"
+                    describedBy={`${fieldId}-body-hint`}
+                    id={`${fieldId}-body`}
+                    invalid={!bodyLimitValid}
+                    label={t("settings.requestBodyLimitField")}
+                    max={MAX_REQUEST_BODY_MIB}
+                    min={0}
+                    onChange={setBodyLimitDraft}
+                    unit="MiB"
+                    value={bodyLimitDraft}
+                  />
+                </SettingRow>
+                <PanelFooter
+                  actions={
+                    <>
+                      {restartPending && !entryDirty ? (
+                        <Button
+                          disabled={busy !== null}
+                          onClick={() => void runCoreAction("restart")}
+                          type="button"
+                          variant="outline"
+                        >
+                          {busy === "restart"
+                            ? t("settings.restarting")
+                            : t("settings.restartNow")}
+                        </Button>
+                      ) : null}
                       <Button
-                        disabled={busy !== null}
-                        onClick={() => void runCoreAction("restart")}
+                        disabled={
+                          !entryDirty || !bodyLimitValid || busy !== null
+                        }
+                        onClick={() => void saveEntry()}
                         type="button"
-                        variant="outline"
                       >
-                        {busy === "restart"
-                          ? t("settings.restarting")
-                          : t("settings.restartNow")}
+                        {busy === "port"
+                          ? t("settings.savingPort")
+                          : t("settings.savePort")}
                       </Button>
-                    ) : null}
-                    <Button
-                      disabled={!entryDirty || !bodyLimitValid || busy !== null}
-                      onClick={() => void saveEntry()}
-                      type="button"
-                    >
-                      {busy === "port"
-                        ? t("settings.savingPort")
-                        : t("settings.savePort")}
-                    </Button>
-                  </ActionGroup>
-                </div>
+                    </>
+                  }
+                  className="py-2.5"
+                >
+                  <p
+                    className={cn(
+                      "text-xs",
+                      entryDirty || restartPending
+                        ? "text-warning-foreground"
+                        : "text-muted-foreground",
+                    )}
+                  >
+                    {entryDirty
+                      ? t("settings.entryDirty")
+                      : restartPending
+                        ? t("settings.restartPending")
+                        : t("settings.entryHint")}
+                  </p>
+                </PanelFooter>
               </Panel>
               <ConfirmDialog
                 cancelLabel={t("settings.listenKeepLoopback")}

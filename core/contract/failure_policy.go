@@ -200,6 +200,9 @@ type RoutingSettings struct {
 	AllowUnmatchedFailover bool                          `json:"allow_unmatched_failover"`
 	Strategy               FailoverStrategy              `json:"strategy"`
 	MaxAttempts            int                           `json:"max_attempts"`
+	// PackageStrategies orders the accounts of service packages, keyed by
+	// package ID. A package without an entry uses PackageStrategyAuto.
+	PackageStrategies map[string]PackageStrategy `json:"package_strategies,omitempty"`
 }
 
 func DefaultRoutingSettings() RoutingSettings {
@@ -285,6 +288,9 @@ func (settings RoutingSettings) Validate() error {
 		}
 	}
 	if err := settings.DefaultFailurePolicy.Validate(); err != nil {
+		return err
+	}
+	if err := validatePackageStrategies(settings.PackageStrategies); err != nil {
 		return err
 	}
 	return settings.FailoverPolicy().Validate()

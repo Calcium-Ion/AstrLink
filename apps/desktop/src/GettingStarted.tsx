@@ -19,6 +19,7 @@ import { Panel, PanelBody } from "@/components/Panel";
 import { SegmentedControl } from "@/components/SegmentedControl";
 import { SetupSteps } from "@/components/SetupSteps";
 import { InferencePortNotice } from "@/components/InferencePortNotice";
+import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
@@ -32,15 +33,27 @@ import {
   previewClientConfigSnippet,
   type ClientConfigTarget,
 } from "./bridge";
-import { ClientSetupDialog, clientLabel } from "./ClientSetupDialog";
-import type { DirectClient } from "./client-config-model";
+import { ClientSetupDialog } from "./ClientSetupDialog";
+import {
+  clientConfigClients,
+  type BuiltinClient,
+  type ClientConfigSnippetFile,
+} from "./client-config-model";
+import {
+  builtinClientProtocols,
+  defaultModel,
+  modelCandidates,
+  requiredEntry,
+} from "./client-delivery-model";
+import { clientLabel } from "./client-setup-clients";
 import type { AppSnapshot } from "./core-model";
 import type { AccessTokenCatalog } from "./AccessTokenManager";
 import type { ServiceCatalog } from "./Overview";
 import { PageHeader } from "./PageHeader";
 import { useT } from "./i18n";
 import { notify } from "./notify";
-import type { useOnboarding } from "./use-onboarding";
+import { protocolLabel } from "./service-presets";
+import { onboardingToken, type useOnboarding } from "./use-onboarding";
 import type { UsageState } from "./usage-range";
 
 export function GettingStarted({
@@ -77,23 +90,25 @@ export function GettingStarted({
   const t = useT();
   const [selectedStep, setSelectedStep] = useState(onboarding.step);
   const [protocol, setProtocol] = useState<"openai" | "anthropic">("openai");
-  const [manualClient, setManualClient] = useState<DirectClient | "other">(
+  const [manualClient, setManualClient] = useState<BuiltinClient | "other">(
     "claude",
   );
   const [snippet, setSnippet] = useState<{
     key: string;
-    text: string | null;
+    files: ClientConfigSnippetFile[] | null;
   } | null>(null);
-  const [copyingSnippet, setCopyingSnippet] = useState(false);
+  // The block being copied, by its index.
+  const [copyingSnippet, setCopyingSnippet] = useState<number | null>(null);
   const [tokenId, setTokenId] = useState("");
   const [copying, setCopying] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const mounted = useRef(true);
   const copyPending = useRef(false);
   const snippetCopyPending = useRef(false);
+  // The user's pick stays; otherwise the token the guide always starts with.
   const token =
     tokenCatalog.items.find((item) => item.id === tokenId) ??
-    tokenCatalog.items[0];
+    onboardingToken(tokenCatalog.items);
   const inferenceURL =
     snapshot?.ready?.client_inference_url?.replace(/\/+$/, "") ?? "";
   const baseURL = inferenceURL
@@ -104,11 +119,6 @@ export function GettingStarted({
     onboarding.serviceReady &&
     onboarding.tokenReady &&
     Boolean(baseURL);
-  const complete =
-    onboarding.catalogsReady &&
-    onboarding.serviceReady &&
-    onboarding.tokenReady &&
-    onboarding.requestReady;
   const steps = [
     {
       title: t("onboarding.serviceTitle"),
@@ -123,7 +133,7 @@ export function GettingStarted({
     {
       title: t("onboarding.clientTitle"),
       description: t("onboarding.clientShort"),
-      complete: onboarding.requestReady,
+      complete: onboarding.connected,
     },
   ];
   const completedCount = steps.filter((step) => step.complete).length;
@@ -147,16 +157,30 @@ export function GettingStarted({
       ? candidate.startsWith("openai.")
       : candidate === "anthropic.messages",
   );
-  // The snippet shows the first model a client can reach, as the other
-  // tools view does; Codex cannot start without one.
+  // The snippet shows the default model (see `defaultModel`) of those a
+  // client reaches through an entry its provider already has, as the other
+  // tools view does. Every client but Claude Code needs one to start.
+  const snippetCatalog = { services: catalog.items, redirects: [] };
   const snippetModel =
     manualClient === "other"
       ? undefined
-      : modelsFor((candidate) =>
-          manualClient === "codex"
-            ? candidate === "openai.responses"
-            : candidate === "anthropic.messages",
-        )[0];
+      : defaultModel(
+          modelCandidates(
+            snippetCatalog,
+            [builtinClientProtocols[manualClient]],
+            conversionEngine,
+          ).filter(
+            (model) =>
+              !requiredEntry(
+                snippetCatalog,
+                model,
+                builtinClientProtocols[manualClient],
+                conversionEngine,
+              ),
+          ),
+          catalog.items,
+        );
+  const shownModel = defaultModel(models, catalog.items);
   const snippetTarget: ClientConfigTarget | null =
     manualClient !== "other" &&
     token &&
@@ -182,13 +206,20 @@ export function GettingStarted({
   useEffect(() => {
     if (!canConnect) setImportOpen(false);
   }, [canConnect]);
+  // The guide closes once a client is set up; the dialog's results and
+  // paste steps stay readable until the user closes it.
+  const { hold } = onboarding;
+  useEffect(() => {
+    hold(importOpen);
+    return () => hold(false);
+  }, [hold, importOpen]);
   useEffect(() => {
     if (!snippetKey) return;
     let cancelled = false;
     const target = JSON.parse(snippetKey) as ClientConfigTarget;
     previewClientConfigSnippet(target).then(
-      (text) => !cancelled && setSnippet({ key: snippetKey, text }),
-      () => !cancelled && setSnippet({ key: snippetKey, text: null }),
+      (files) => !cancelled && setSnippet({ key: snippetKey, files }),
+      () => !cancelled && setSnippet({ key: snippetKey, files: null }),
     );
     return () => {
       cancelled = true;
@@ -217,13 +248,13 @@ export function GettingStarted({
     }
   };
 
-  const copySnippet = async () => {
+  const copySnippet = async (file: number) => {
     if (!snippetTarget || snippetCopyPending.current) return;
     snippetCopyPending.current = true;
-    setCopyingSnippet(true);
+    setCopyingSnippet(file);
     try {
-      // The host fills in the real token and copies the config itself.
-      const copied = await copyClientConfigSnippet(snippetTarget);
+      // The host fills in the real token and copies the file itself.
+      const copied = await copyClientConfigSnippet({ ...snippetTarget, file });
       if (!mounted.current) return;
       if (copied) notify.success(t("onboarding.configCopied"));
       else notify.error(t("common.copyFailed"));
@@ -234,7 +265,7 @@ export function GettingStarted({
         );
     } finally {
       snippetCopyPending.current = false;
-      if (mounted.current) setCopyingSnippet(false);
+      if (mounted.current) setCopyingSnippet(null);
     }
   };
 
@@ -332,9 +363,12 @@ export function GettingStarted({
                   {t(
                     [
                       "onboarding.serviceBody",
-                      "onboarding.tokenBody",
+                      token
+                        ? "onboarding.tokenBody"
+                        : "onboarding.tokenMissing",
                       "onboarding.clientBody",
                     ][selectedStep],
+                    { name: token?.name },
                   )}
                 </p>
               </div>
@@ -418,39 +452,77 @@ export function GettingStarted({
               ) : (
                 <>
                   <div className="grid gap-3">
-                    {tokenCatalog.items.length > 1 ? (
-                      <Select value={token?.id} onValueChange={setTokenId}>
-                        <SelectTrigger aria-label={t("onboarding.selectToken")}>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {tokenCatalog.items.map((item) => (
-                            <SelectItem key={item.id} value={item.id}>
-                              {item.name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    ) : null}
-                    <Button
-                      variant="outline"
-                      className="w-fit"
-                      onClick={() => setImportOpen(true)}
+                    <div
+                      className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1.5"
+                      data-slot="onboarding-token"
                     >
-                      <Cable aria-hidden="true" />
-                      {t("onboarding.importClient")}
-                    </Button>
+                      {tokenCatalog.items.length > 1 ? (
+                        <>
+                          <Label
+                            className="text-xs font-medium text-text-secondary"
+                            htmlFor="onboarding-token"
+                          >
+                            {t("onboarding.token")}
+                          </Label>
+                          <Select
+                            value={token?.id}
+                            // Radix reports a blank value while its options change.
+                            onValueChange={(value) =>
+                              value && setTokenId(value)
+                            }
+                          >
+                            <SelectTrigger
+                              className="w-55"
+                              id="onboarding-token"
+                            >
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {tokenCatalog.items.map((item) => (
+                                <SelectItem key={item.id} value={item.id}>
+                                  <span className="truncate">{item.name}</span>
+                                  <span className="font-mono text-muted-foreground">
+                                    {item.hint}
+                                  </span>
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </>
+                      ) : token ? (
+                        <>
+                          <span className="text-xs font-medium text-text-secondary">
+                            {t("onboarding.token")}
+                          </span>
+                          <span className="min-w-0 truncate text-sm">
+                            {token.name}
+                          </span>
+                          <span className="font-mono text-xs text-muted-foreground">
+                            {token.hint}
+                          </span>
+                        </>
+                      ) : null}
+                      <Button
+                        variant="outline"
+                        onClick={() => setImportOpen(true)}
+                      >
+                        <Cable aria-hidden="true" />
+                        {t("onboarding.importClient")}
+                      </Button>
+                    </div>
                     <HelpDisclosure
                       title={t("onboarding.manualSetup")}
-                      open={!complete}
+                      open={!onboarding.finished}
                     >
                       <SegmentedControl
                         label={t("onboarding.manualClient")}
                         value={manualClient}
                         onValueChange={setManualClient}
                         options={[
-                          { value: "claude", label: clientLabel("claude") },
-                          { value: "codex", label: clientLabel("codex") },
+                          ...clientConfigClients.map((client) => ({
+                            value: client,
+                            label: clientLabel(client),
+                          })),
                           { value: "other", label: t("onboarding.otherTools") },
                         ]}
                       />
@@ -496,10 +568,10 @@ export function GettingStarted({
                             </Button>
                           </div>
                           <p>{t("onboarding.modelHelp")}</p>
-                          {models[0] ? (
+                          {shownModel ? (
                             <CopyableValue
                               label={t("onboarding.model")}
-                              value={models[0]}
+                              value={shownModel}
                               placeholder=""
                               copyLabel={t("onboarding.copyModel")}
                             />
@@ -508,43 +580,62 @@ export function GettingStarted({
                           )}
                         </>
                       ) : !snippetTarget ? (
-                        <p>{t("onboarding.snippetNeedsModel")}</p>
+                        <p>
+                          {t("onboarding.snippetNeedsModel", {
+                            client: clientLabel(manualClient),
+                            protocol: protocolLabel(
+                              builtinClientProtocols[manualClient],
+                            ),
+                          })}
+                        </p>
                       ) : (
                         <>
-                          <p>
-                            {t("onboarding.snippetHint", {
-                              path:
-                                manualClient === "codex"
-                                  ? "~/.codex/config.toml"
-                                  : "~/.claude/settings.json",
-                            })}
-                          </p>
-                          {shownSnippet && shownSnippet.text === null ? (
+                          <p>{t("onboarding.snippetHint")}</p>
+                          {!shownSnippet ? (
+                            <pre
+                              aria-busy="true"
+                              className="rounded-md border bg-muted/40 p-3 font-mono text-xs leading-relaxed"
+                            >
+                              {t("common.loading")}
+                            </pre>
+                          ) : !shownSnippet.files ? (
                             <FormMessage tone="error">
                               {t("onboarding.snippetFailed")}
                             </FormMessage>
                           ) : (
-                            <pre
-                              aria-busy={!shownSnippet}
-                              className="max-h-64 overflow-auto rounded-md border bg-muted/40 p-3 font-mono text-xs leading-relaxed whitespace-pre"
-                            >
-                              {shownSnippet?.text ?? t("common.loading")}
-                            </pre>
+                            shownSnippet.files.map((file, index) => (
+                              <div
+                                key={file.path}
+                                className="grid gap-1.5"
+                                data-slot="config-snippet"
+                              >
+                                <div className="flex min-w-0 items-center gap-2">
+                                  <code className="min-w-0 flex-1 truncate font-mono text-xs text-foreground">
+                                    {file.path}
+                                  </code>
+                                  <Button
+                                    aria-label={t("onboarding.copyFile", {
+                                      file: file.path,
+                                    })}
+                                    disabled={copyingSnippet !== null}
+                                    onClick={() => void copySnippet(index)}
+                                    size="xs"
+                                    variant="outline"
+                                  >
+                                    <Copy aria-hidden="true" />
+                                    {t(
+                                      copyingSnippet === index
+                                        ? "common.copying"
+                                        : "onboarding.copyConfig",
+                                    )}
+                                  </Button>
+                                </div>
+                                <pre className="max-h-64 overflow-auto rounded-md border bg-muted/40 p-3 font-mono text-xs leading-relaxed whitespace-pre">
+                                  {file.contents}
+                                </pre>
+                              </div>
+                            ))
                           )}
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="w-fit"
-                            disabled={copyingSnippet || !shownSnippet?.text}
-                            onClick={() => void copySnippet()}
-                          >
-                            <Copy aria-hidden="true" />
-                            {t(
-                              copyingSnippet
-                                ? "common.copying"
-                                : "onboarding.copyConfig",
-                            )}
-                          </Button>
                         </>
                       )}
                     </HelpDisclosure>
@@ -552,7 +643,7 @@ export function GettingStarted({
                   <div className="mt-auto grid gap-3 border-t pt-4">
                     <p className="text-sm leading-relaxed" role="status">
                       {t(
-                        complete
+                        onboarding.finished
                           ? "onboarding.success"
                           : usage.summary?.totals.failed_requests
                             ? "onboarding.failedRequest"
@@ -560,7 +651,8 @@ export function GettingStarted({
                       )}
                     </p>
                     <div className="flex flex-wrap gap-2">
-                      {complete ? (
+                      {/* Reached only by reopening a guide already done. */}
+                      {onboarding.finished ? (
                         <Button onClick={onboarding.complete}>
                           <Check aria-hidden="true" />
                           {t("onboarding.finish")}

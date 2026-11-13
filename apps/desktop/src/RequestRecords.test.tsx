@@ -10,8 +10,11 @@ const bridgeMocks = vi.hoisted(() => ({
   getCoreStatus: vi.fn(),
   getPreferences: vi.fn(),
   getPrivacyPolicy: vi.fn(),
+  getProjectMemory: vi.fn(),
+  getProjectMemoryEntry: vi.fn(),
   getRawSealingStatus: vi.fn(),
   getRequestAuditContent: vi.fn(),
+  getRequestContextTexts: vi.fn(),
   getRequestRecord: vi.fn(),
   getRequestSession: vi.fn(),
   getRoutingSettings: vi.fn(),
@@ -913,11 +916,11 @@ describe("RequestRecords", () => {
     const runtime = () =>
       container.querySelector('[data-testid="request-session-row"]')
         ?.textContent;
-    expect(runtime()).toContain("22.0 s");
+    expect(runtime()).toContain("22 s");
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1000);
     });
-    expect(runtime()).toContain("23.0 s");
+    expect(runtime()).toContain("23 s");
     bridgeMocks.listRequestSessions.mockResolvedValue({
       items: [
         {
@@ -934,10 +937,87 @@ describe("RequestRecords", () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(5000);
     });
-    expect(runtime()).toContain("23.0 s");
+    expect(runtime()).toContain("23 s");
   });
 
-  it("counts conversations in progress across every model call, whatever the list shows", async () => {
+  it("leaves the board out until a call comes and after five quiet minutes", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-28T12:00:00Z"));
+    let calls: RequestActivityCall[] = [];
+    // Each read waits until the test answers it with the calls of the moment.
+    const pending: (() => void)[] = [];
+    bridgeMocks.getRequestActivity.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          pending.push(() => resolve({ now: new Date().toISOString(), calls }));
+        }),
+    );
+    const answer = async () => {
+      await act(async () => pending.shift()?.());
+      await flush();
+    };
+    await renderRecords();
+    const board = () =>
+      container.querySelector('[data-testid="request-activity"]');
+    // The tab row follows the board, or the page header when it is away.
+    const aboveTabs = () =>
+      container.querySelector('[role="tablist"]')?.parentElement
+        ?.previousElementSibling;
+    const reads = () => bridgeMocks.getRequestActivity.mock.calls.length;
+    // Nothing is drawn before the first read comes back.
+    expect(reads()).toBe(1);
+    expect(board()).toBeNull();
+
+    // A quiet window draws nothing either, and the poll goes on.
+    await answer();
+    expect(board()).toBeNull();
+    expect(
+      aboveTabs()?.querySelector("#request-records-heading"),
+    ).not.toBeNull();
+
+    calls = [
+      {
+        session_id: "fresh",
+        client_type: "codex",
+        started_at: "2026-07-28T12:00:00Z",
+        completed_at: null,
+        status: "pending",
+      },
+    ];
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+    });
+    expect(reads()).toBe(2);
+    await answer();
+    expect(aboveTabs()?.querySelector('[data-testid="request-activity"]')).toBe(
+      board(),
+    );
+    expect(board()).not.toBeNull();
+
+    // The call ends; the board stays while it is in the window.
+    calls = [
+      {
+        ...calls[0],
+        completed_at: "2026-07-28T12:00:02Z",
+        status: "succeeded",
+      },
+    ];
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+    });
+    await answer();
+    expect(board()).not.toBeNull();
+
+    // Past the window and the grace after the call, it goes away again.
+    vi.setSystemTime(new Date("2026-07-28T12:06:03Z"));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+    });
+    await answer();
+    expect(board()).toBeNull();
+  });
+
+  it("charts conversations in progress across every model call, whatever the list shows", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-28T12:00:10Z"));
     bridgeMocks.getRequestActivity.mockResolvedValue({
@@ -976,10 +1056,12 @@ describe("RequestRecords", () => {
     await renderRecords();
     await flush();
     const board = container.querySelector('[data-testid="request-activity"]')!;
-    const text = (testId: string) =>
-      board.querySelector(`[data-testid="${testId}"]`)?.textContent;
-    expect(text("activity-conversations")).toBe("2个对话");
-    expect(text("activity-throughput")).toBe("5tok/s");
+    // Throughput is the one number; the list counts conversations and
+    // failures itself.
+    expect(board.querySelectorAll("dt")).toHaveLength(1);
+    expect(
+      board.querySelector('[data-testid="activity-throughput"]')?.textContent,
+    ).toBe("5tok/s");
     expect(
       board
         .querySelector('[data-slot="live-trend-plot"]')
@@ -999,15 +1081,213 @@ describe("RequestRecords", () => {
     expect(
       container.querySelector('[data-testid="active-sessions"]'),
     ).toBeNull();
+  });
 
+  it("says under a live lane when one tool call keeps failing", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-28T12:00:10Z"));
+    const live = {
+      started_at: "2026-07-28T11:50:00Z",
+      last_started_at: "2026-07-28T12:00:01Z",
+      completed_at: "2026-07-28T12:00:05Z",
+    };
+    bridgeMocks.listRequestSessions.mockResolvedValue({
+      items: [
+        sessionFromRecord(firstRecord, {
+          ...live,
+          id: "stuck",
+          title: "conversation running into the same error",
+          failed_repeats: { tool: "Bash", count: 4, command: true },
+        }),
+        sessionFromRecord(firstRecord, {
+          ...live,
+          id: "fine",
+          title: "conversation at work",
+        }),
+      ],
+      next_cursor: null,
+    });
+    await renderRecords();
+    const lane = (id: string) =>
+      container.querySelector<HTMLElement>(
+        `[data-testid="active-sessions"] [data-session-id="${id}"]`,
+      );
+    const line = lane("stuck")?.querySelector(
+      '[data-testid="lane-failed-repeats"]',
+    );
+    expect(line?.textContent).toBe("同一条 Bash 命令连续失败 4 次");
+    expect(line?.className).toContain("text-danger-foreground");
+    expect(
+      lane("fine")?.querySelector('[data-testid="lane-failed-repeats"]'),
+    ).toBeNull();
+  });
+
+  it("reads memory in its own tab, and moves between it and the conversation", async () => {
+    const entry = {
+      file: "no-jitter.md",
+      title: "No jitter-sensitive tests",
+      hook: "wait on done channels",
+      noted_at: firstRecord.started_at,
+      reads: Array<number>(14).fill(0),
+      total_reads: 0,
+    };
+    bridgeMocks.getProjectMemory.mockResolvedValue({
+      projects: [
+        {
+          project: "~/proj",
+          client_types: ["codex"],
+          last_seen_at: firstRecord.started_at,
+        },
+      ],
+      project: "~/proj",
+      client_type: "codex",
+      day_start: firstRecord.started_at,
+      recent: 0,
+      entries: [entry],
+      stories: [],
+      rules: [
+        { name: "AGENTS.md", path: "~/proj/AGENTS.md", scope: "project" },
+      ],
+      toolbox: { skills: [], mcp: [], idle_tokens: 0 },
+      has_memory: true,
+      has_rules: true,
+    });
+    bridgeMocks.getProjectMemoryEntry.mockResolvedValue({
+      entry,
+      events: [
+        {
+          kind: "noted",
+          at: firstRecord.started_at,
+          request_id: firstRecord.id,
+          session_id: firstRecord.id,
+        },
+      ],
+    });
+    // The call that noted it shows the write in its conversation.
+    const noted: RequestRecord = {
+      ...firstRecord,
+      client_type: "codex",
+      project: "~/proj",
+      context: {
+        items: [],
+        memory_writes: [
+          {
+            kind: "memory",
+            name: "MEMORY.md",
+            title: "No jitter-sensitive tests",
+            entry: "no-jitter.md",
+          },
+        ],
+      },
+    };
+    bridgeMocks.getRequestSession.mockImplementation(async () =>
+      sessionDetail(noted),
+    );
+    await renderRecords();
+    expect(
+      [
+        ...container.querySelectorAll(
+          `[aria-label="${i18n.t("records.kind")}"] [role="tab"]`,
+        ),
+      ].map((tab) => tab.textContent),
+    ).toStrictEqual(["模型调用", "模型获取", "全部", "记忆"]);
+    expect(bridgeMocks.getProjectMemory).not.toHaveBeenCalled();
+    const listPanel = () =>
+      container.querySelector<HTMLElement>(
+        '[data-testid="request-records-scroll"]',
+      )!;
+
+    listPanel().scrollTop = 600;
+
+    await act(async () => exactButton("记忆").focus());
+    await flush();
+    expect(bridgeMocks.getProjectMemory).toHaveBeenCalledTimes(1);
+    // The list stays mounted under the memory tab, hidden.
+    expect(listPanel().hidden).toBe(true);
+    expect(
+      listPanel().querySelector(`[data-session-id="${firstRecord.id}"]`),
+    ).not.toBeNull();
+    // WKWebView drops the offset while display: none hides the list.
+    listPanel().scrollTop = 0;
+    const row = () =>
+      container.querySelector<HTMLElement>('[data-testid="memory-entry"]');
+    expect(row()?.textContent).toContain("No jitter-sensitive tests");
+    // The list's filters give their row to the memory's own.
+    expect(
+      container
+        .querySelector(`button[aria-label="${i18n.t("records.moreFilters")}"]`)
+        ?.closest("[hidden]"),
+    ).not.toBeNull();
     await act(async () =>
-      board
-        .querySelector<HTMLButtonElement>('[data-testid="activity-failures"]')!
+      container
+        .querySelector<HTMLButtonElement>(
+          `button[aria-label="${i18n.t("common.refresh")}"]`,
+        )!
         .click(),
     );
+    await flush();
+    expect(bridgeMocks.getProjectMemory).toHaveBeenCalledTimes(2);
+
+    // A memory's history opens the conversation at the call that noted it.
+    await act(async () => row()!.querySelector("button")!.click());
+    await flush();
+    await act(async () =>
+      document
+        .querySelector<HTMLButtonElement>(
+          '[data-testid="memory-event"] button',
+        )!
+        .click(),
+    );
+    await settleFilterLayer();
+    await flush();
+    const selectedSection = () =>
+      container.querySelector(
+        `[aria-label="${i18n.t("records.sections")}"] [role="tab"][aria-selected="true"]`,
+      )?.textContent;
+    expect(selectedSection()).toBe("摘要");
+
+    // The conversation's new memory opens back in the memory tab.
+    await vi.waitFor(() => {
+      expect(
+        container.querySelector('[data-testid="conversation-memory"] button'),
+      ).not.toBeNull();
+    });
+    await act(async () =>
+      container
+        .querySelector<HTMLButtonElement>(
+          '[data-testid="conversation-memory"] button',
+        )!
+        .click(),
+    );
+    await flush();
+    expect(row()).not.toBeNull();
+    expect(bridgeMocks.getProjectMemory).toHaveBeenLastCalledWith(
+      expect.objectContaining({ project: "~/proj", client_type: "codex" }),
+    );
+    expect(bridgeMocks.getProjectMemoryEntry).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        project: "~/proj",
+        client_type: "codex",
+        file: "no-jitter.md",
+      }),
+    );
     expect(
-      container.querySelector('button[aria-label="清除筛选：状态: 失败"]'),
-    ).not.toBeNull();
+      document.querySelector('[data-testid="memory-entry-dialog"] h2')
+        ?.textContent,
+    ).toBe("No jitter-sensitive tests");
+    await act(async () => {
+      document.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+      );
+    });
+    await settleFilterLayer();
+
+    // Back on the lists, the list reads as it was left.
+    await act(async () => exactButton("模型调用").focus());
+    await flush();
+    expect(row()).toBeNull();
+    expect(listPanel().hidden).toBe(false);
+    expect(listPanel().scrollTop).toBe(600);
   });
 
   it("leads the list with conversations in progress until their wait runs out", async () => {
@@ -1057,8 +1337,27 @@ describe("RequestRecords", () => {
     expect(lanes()).toEqual([
       ["waiting", "idle", "空闲 5 s"],
       ["tools", "idle", "运行 Bash 6 s"],
-      ["calling", "calling", "等待模型 10.0 s"],
+      ["calling", "calling", "等待模型 10 s"],
     ]);
+    // Only a running lane's state moves: the slot holds still, and the time
+    // goes a whole second at a time.
+    const calling = container.querySelector<HTMLElement>(
+      '[data-testid="active-sessions"] [data-session-id="calling"]',
+    )!;
+    expect(
+      calling
+        .querySelector('[data-slot="activity-slot"]')
+        ?.getAttribute("data-state"),
+    ).toBe("running");
+    const state = calling.querySelector('[data-testid="lane-state"]')!;
+    expect(state.innerHTML).toMatch(/shimmer/);
+    expect(state.innerHTML).toMatch(/animate-spin/);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+    });
+    expect(
+      calling.querySelector('[data-testid="lane-state"]')?.textContent,
+    ).toBe("等待模型 11 s");
     expect(
       container
         .querySelector('[data-testid="active-sessions"]')
@@ -1066,7 +1365,7 @@ describe("RequestRecords", () => {
     ).toBe("3 条");
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(60_000);
+      await vi.advanceTimersByTimeAsync(59_000);
     });
     // A long command keeps its conversation in progress past the grace.
     expect(lanes()).toEqual([
@@ -1125,9 +1424,9 @@ describe("RequestRecords", () => {
       );
       return [label?.dataset.action, label?.textContent, label?.title];
     };
-    expect(state("thinking")).toEqual(["thinking", "思考中 10.0 s", ""]);
-    expect(state("writing")).toEqual(["writing", "写回答 10.0 s", ""]);
-    expect(state("calling")).toEqual(["calling", "调用 Bash 10.0 s", ""]);
+    expect(state("thinking")).toEqual(["thinking", "思考中 10 s", ""]);
+    expect(state("writing")).toEqual(["writing", "写回答 10 s", ""]);
+    expect(state("calling")).toEqual(["calling", "调用 Bash 10 s", ""]);
     expect(state("tools")).toEqual([
       "running",
       "运行 Read · Bash +1 8 s",
@@ -4146,6 +4445,8 @@ describe("RequestRecords", () => {
       hint: "astr_…K8Q2",
       source: "user" as const,
       created_at: "2026-07-24T10:30:00Z",
+      service_scope: "all" as const,
+      service_ids: [],
     };
     await act(async () => {
       reactRoot.render(
@@ -4272,6 +4573,8 @@ describe("RequestRecords", () => {
               hint: "astr_…K8Q2",
               source: "user",
               created_at: "2026-07-24T10:30:00Z",
+              service_scope: "all",
+              service_ids: [],
             },
           ]}
           accessTokensReady
@@ -4336,6 +4639,8 @@ describe("RequestRecords", () => {
               hint: "astr_…K8Q2",
               source: "user",
               created_at: "2026-07-24T10:30:00Z",
+              service_scope: "all",
+              service_ids: [],
             },
           ]}
           accessTokensReady
@@ -4384,6 +4689,8 @@ describe("RequestRecords", () => {
               hint: "astr_…K8Q2",
               source: "user",
               created_at: "2026-07-24T10:30:00Z",
+              service_scope: "all",
+              service_ids: [],
             },
             {
               id: "token_02",
@@ -4391,6 +4698,8 @@ describe("RequestRecords", () => {
               hint: "astr_…H5Z8",
               source: "user",
               created_at: "2026-07-24T10:30:00Z",
+              service_scope: "all",
+              service_ids: [],
             },
           ]}
           accessTokensReady
@@ -4762,7 +5071,8 @@ describe("RequestRecords", () => {
         `[aria-label="${i18n.t("records.sections")}"] [role="tab"]`,
       ),
     ].map((tab) => tab.textContent?.trim());
-    expect(tabs.slice(0, 2)).toEqual(["摘要", "追踪"]);
+    // The context sits right after the summary it explains.
+    expect(tabs.slice(0, 3)).toEqual(["摘要", "上下文", "追踪"]);
     expect(
       container.querySelector('[data-testid="request-conversation"]'),
     ).not.toBeNull();
@@ -5994,6 +6304,44 @@ describe("RequestRecords", () => {
     if (!actions) throw new Error("Missing selection actions");
     return actions;
   };
+
+  it("says a purge is still running when the desktop stops waiting", async () => {
+    await renderRecords();
+    bridgeMocks.purgeRequestRecords.mockRejectedValueOnce(
+      new Error("request_purge_still_running"),
+    );
+    await act(async () =>
+      (await menuItem("更多清理方式", "清空全部记录及加密内容")).click(),
+    );
+    await act(async () => {
+      exactButton("确定清理").click();
+      await Promise.resolve();
+    });
+    await act(async () => await Promise.resolve());
+
+    expect(container.textContent).toContain(
+      "记录较多，仍在后台删除。请稍后刷新列表查看。",
+    );
+    expect(container.textContent).not.toContain("request_purge_still_running");
+  });
+
+  it("says no answer came back when a delete loses its connection", async () => {
+    await renderRecords();
+    bridgeMocks.purgeRequestRecords.mockRejectedValueOnce(
+      new Error(
+        "POST /control/v1/requests/purge failed: error sending request for url (http://127.0.0.1:54576/control/v1/requests/purge)",
+      ),
+    );
+    await act(async () => exactButton("清理").click());
+    await act(async () => sessionRow(secondRecord.id).click());
+    await act(async () => exactButton("删除", selectionActions()).click());
+    await confirmDelete();
+
+    expect(container.textContent).toContain(
+      "没有收到删除结果。请刷新列表，确认记录是否已删除后再决定是否重试。",
+    );
+    expect(container.textContent).not.toContain("error sending request");
+  });
 
   it("selects sessions to delete from the purge button", async () => {
     await renderRecords();

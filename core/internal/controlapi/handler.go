@@ -56,6 +56,10 @@ type Dependencies struct {
 	AuditSettings      storage.AuditSettingsStore
 	AuditKeys          storage.AuditKeyStore
 	AuditBlobs         storage.AuditBlobStore
+	// ContextTexts reads what a captured request body carried as text: the
+	// gateway's own reading of request context. Optional; without it the
+	// route is not found.
+	ContextTexts func(contract.ProtocolID, []byte) contract.RequestContextTexts
 	// PrivacyWarnings is the feed of requests the warn action let through.
 	// Optional; without it the route is not registered.
 	PrivacyWarnings PrivacyWarningFeed
@@ -70,9 +74,15 @@ type Dependencies struct {
 	// ClientIdentities reports learned client identity versions. Optional.
 	ClientIdentities ClientIdentityReporter
 	Subscriptions    *subscription.Manager
+	// ClaudeCLI reports and installs the CLI official Claude accounts run.
+	// Optional; without it the routes are not registered.
+	ClaudeCLI ClaudeCLI
 	// RateLimits releases gateway cooldowns when subscription risk is cleared.
 	// Supply the same resolver used by ingress. Optional.
 	RateLimits RateLimitReleaser
+	// ServicePackages lists service packages. Supply the same resolver used
+	// by ingress. Optional; without it the route reports 503.
+	ServicePackages ServicePackageLister
 	// CodingPlans reads first-party plan quotas for API-key coding plan
 	// services (Kimi, GLM, MiniMax, OpenCode Go). Optional.
 	CodingPlans      CodingPlanUsage
@@ -106,7 +116,8 @@ type CodingPlanUsage interface {
 
 type AccessTokenManager interface {
 	List(context.Context) ([]accesstoken.Token, error)
-	Create(context.Context, string) (accesstoken.CreatedToken, error)
+	Create(context.Context, string, ...contract.AccessTokenServices) (accesstoken.CreatedToken, error)
+	Update(context.Context, contract.AccessTokenID, string, contract.AccessTokenServices) (accesstoken.Token, error)
 	Reveal(context.Context, contract.AccessTokenID) (string, error)
 	Delete(context.Context, contract.AccessTokenID) error
 }
@@ -145,12 +156,15 @@ type Handler struct {
 	auditSettings     storage.AuditSettingsStore
 	auditKeys         storage.AuditKeyStore
 	auditBlobs        storage.AuditBlobStore
+	contextTexts      func(contract.ProtocolID, []byte) contract.RequestContextTexts
 	rawVault          RawVault
 	rawGrants         *rawGrantManager
 	localData         storage.LocalDataStore
 	clientIdentities  ClientIdentityReporter
 	subscriptions     *subscription.Manager
+	claudeCLI         ClaudeCLI
 	rateLimits        RateLimitReleaser
+	servicePackages   ServicePackageLister
 	codingPlans       CodingPlanUsage
 	serviceModels     ServiceModelProber
 	serviceTester     ServiceTester
@@ -218,11 +232,14 @@ func newHandler(version contract.VersionResponse, dependencies Dependencies) (*H
 		auditSettings:   dependencies.AuditSettings,
 		auditKeys:       dependencies.AuditKeys,
 		auditBlobs:      dependencies.AuditBlobs,
+		contextTexts:    dependencies.ContextTexts,
 		rawVault:        dependencies.RawVault,
 		rawGrants:       newRawGrantManager(),
 		localData:       dependencies.LocalData,
 		subscriptions:   dependencies.Subscriptions,
+		claudeCLI:       dependencies.ClaudeCLI,
 		rateLimits:      dependencies.RateLimits,
+		servicePackages: dependencies.ServicePackages,
 		codingPlans:     dependencies.CodingPlans,
 		serviceModels:   dependencies.ServiceModels,
 		serviceTester:   dependencies.ServiceTester,
@@ -280,7 +297,10 @@ func newHandler(version contract.VersionResponse, dependencies Dependencies) (*H
 		}
 		handler.registerServiceRoutes()
 	}
+	handler.registerClaudeCLIRoutes()
 	handler.mux.HandleFunc(ServiceOrderPath, handler.authenticated(handler.serviceOrderResource, RoleObserver))
+	handler.mux.HandleFunc(ServicePackagesPath, handler.authenticated(handler.servicePackagesResource, RoleObserver))
+	handler.mux.HandleFunc(ServicePackagesPath+"/", handler.authenticated(handler.servicePackagesResource, RoleObserver))
 	for _, path := range []string{RoutesPath, RoutesPath + "/", RecoveryPathsPath, RecoveryPathsPath + "/", AutoClassifierPath, AutoClassifierPath + "/"} {
 		handler.mux.HandleFunc(path, handler.authenticated(handler.retiredRouting, RoleObserver))
 	}

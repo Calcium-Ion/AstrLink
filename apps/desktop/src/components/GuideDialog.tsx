@@ -35,6 +35,7 @@ export function useFirstVisitGuide(storageKey: string, ready = true) {
 export function GuideDialog({
   triggerLabel,
   triggerVariant = "icon",
+  triggerSize = "icon-xs",
   title,
   description,
   note,
@@ -48,6 +49,8 @@ export function GuideDialog({
   triggerLabel: string;
   /** `button` shows the label next to the icon for a more prominent entry. */
   triggerVariant?: "icon" | "button";
+  /** The icon trigger's size, to match the controls beside it. */
+  triggerSize?: "icon-xs" | "icon";
   title: string;
   description: string;
   note?: string;
@@ -93,7 +96,7 @@ export function GuideDialog({
           aria-label={triggerLabel}
           aria-haspopup="dialog"
           onClick={() => setOpen(true)}
-          size="icon-xs"
+          size={triggerSize}
           type="button"
           variant="ghost"
         >

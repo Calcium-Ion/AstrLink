@@ -511,3 +511,32 @@ func TestClaudeExtraUsageRejectionStaysOnOneAccount(t *testing.T) {
 		})
 	}
 }
+
+func TestOfficialClaudeUnauthorizedLeavesTheCLITokenAlone(t *testing.T) {
+	t.Parallel()
+	reporter := newRecordingSubscriptionRisk()
+	handler := &Handler{subscriptionRisk: reporter}
+	headers := http.Header{"Authorization": {"Bearer cli-token"}}
+	candidate := func(id contract.ServiceID, mode contract.SubscriptionMode) endpoint.Resolved {
+		return endpoint.Resolved{Service: contract.Service{
+			ID: id, Kind: contract.ServiceKindClaudeSubscription,
+			Subscription: &contract.SubscriptionConnection{
+				Provider: contract.SubscriptionProviderClaudeCode, Status: contract.SubscriptionStatusConnected, Mode: mode,
+			},
+		}}
+	}
+	// The official account's CLI refreshes its own token; AstrLink must not
+	// take it to refresh with.
+	handler.applySubscriptionRisk(context.Background(), candidate("service_claude_official", contract.SubscriptionModeOfficial),
+		subscriptionRiskSignal{unauthorized: true}, headers)
+	handler.applySubscriptionRisk(context.Background(), candidate("service_claude_legacy", ""),
+		subscriptionRiskSignal{unauthorized: true}, headers)
+	if got := waitForRiskSignal(t, reporter.refreshed); got != "service_claude_legacy:cli-token" {
+		t.Fatalf("forced refresh = %q", got)
+	}
+	select {
+	case got := <-reporter.refreshed:
+		t.Fatalf("another forced refresh: %q", got)
+	default:
+	}
+}

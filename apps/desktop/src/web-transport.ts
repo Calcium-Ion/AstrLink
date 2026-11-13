@@ -14,6 +14,8 @@ export class ConsoleError extends Error {
     public status: number,
     public code: string,
     public retryAfter: number,
+    /** The first detail's reason, such as why a quota read failed. */
+    public reason?: string,
   ) {
     super(
       code === "oauth_loopback_callback_unavailable"
@@ -67,6 +69,7 @@ export async function consoleRequest(
       response.status,
       error?.code ?? `HTTP ${response.status}`,
       Number(retry),
+      error?.details?.find((v: Args) => typeof v.reason === "string")?.reason,
     );
   }
   return { value, etag: response.headers.get("ETag") };
@@ -96,6 +99,17 @@ function id(args: Args, key: string): string {
   return value;
 }
 const service = (a: Args) => `/services/${id(a, "serviceId")}`;
+// Package IDs carry `:` and provider-reported plan keys, so they are escaped
+// as one path segment instead of matched against the resource ID shape.
+function packageID(args: Args): string {
+  const value = args.packageId;
+  if (
+    typeof value !== "string" ||
+    !/^(service|subscription):\P{Cc}{1,400}$/u.test(value)
+  )
+    throw new Error("Invalid package ID");
+  return encodeURIComponent(value);
+}
 const request = (a: Args) => `/requests/${id(a, "requestId")}`;
 const session = (a: Args) => `/request-sessions/${id(a, "sessionId")}`;
 const model = (a: Args) => `/privacy-models/${id(a, "installationId")}`;
@@ -228,6 +242,12 @@ const commands: Record<string, Command> = {
     (a) => ({ service_ids: a.serviceIds }),
     "order",
   ),
+  get_service_packages: route("/service-packages"),
+  update_service_package: route(
+    (a) => `/service-packages/${packageID(a)}`,
+    "PATCH",
+    (a) => ({ strategy: a.strategy }),
+  ),
   get_service: route(service, "GET", undefined, "service"),
   create_service: route("/services", "POST", input, "service"),
   update_service: route(service, "PATCH", patch, "service"),
@@ -292,6 +312,8 @@ const commands: Record<string, Command> = {
     return { kind: "session", session: value };
   },
   get_service_authorization: route((a) => `${service(a)}/authorization`),
+  get_claude_cli: route("/claude-cli"),
+  install_claude_cli: route("/claude-cli/install", "POST"),
   complete_service_authorization: route(
     (a) => `${service(a)}/authorization`,
     "PUT",
@@ -323,6 +345,10 @@ const commands: Record<string, Command> = {
   get_request_activity: route(
     (a) => `/request-activity${query({ since: a.since })}`,
   ),
+  get_project_memory: route((a) => `/request-memory${query(a.query as Args)}`),
+  get_project_memory_entry: route(
+    (a) => `/request-memory/entry${query(a.query as Args)}`,
+  ),
   get_request_session: route(session),
   get_session_channel_bindings: route(
     (a) => `${session(a)}/channel-bindings${query({ before: a.before })}`,
@@ -336,6 +362,7 @@ const commands: Record<string, Command> = {
   delete_request_record: route(request, "DELETE"),
   purge_request_records: route("/requests/purge", "POST", input),
   get_request_audit_content: route((a) => `${request(a)}/audit`),
+  get_request_context_texts: route((a) => `${request(a)}/audit/context`),
   list_raw_access: route("/audit/raw-access"),
   decide_raw_access: (a) =>
     raw(
@@ -382,9 +409,25 @@ const commands: Record<string, Command> = {
     (a) =>
       `/privacy-summary${query({ from: a.from, to: a.to, time_zone: a.timeZone, bucket: a.bucket })}`,
   ),
-  create_access_token: route("/access-tokens", "POST", (a) => ({
-    name: a.name,
-  })),
+  get_image_compression_totals: route("/image-compression-totals"),
+  create_access_token: route("/access-tokens", "POST", (a) =>
+    a.serviceScope
+      ? {
+          name: a.name,
+          service_scope: a.serviceScope,
+          service_ids: a.serviceIds ?? [],
+        }
+      : { name: a.name },
+  ),
+  update_access_token: route(
+    (a) => `/access-tokens/${id(a, "tokenId")}`,
+    "PATCH",
+    (a) => ({
+      name: a.name,
+      service_scope: a.serviceScope,
+      service_ids: a.serviceIds ?? [],
+    }),
+  ),
   copy_access_token: async (a) => {
     const { value } = await consoleRequest(
       `/control/v1/access-tokens/${id(a, "tokenId")}/secret`,
@@ -431,6 +474,7 @@ const commands: Record<string, Command> = {
     switch (a.operation) {
       case "status":
       case "catalog":
+      case "estimates":
         return route(`${base}/${a.operation}`)(a);
       case "sync":
         return route(`${base}/sync`, "POST")(a);

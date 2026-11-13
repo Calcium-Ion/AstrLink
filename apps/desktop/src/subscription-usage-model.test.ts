@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   formatQuotaExpiry,
   formatQuotaUSD,
+  formatResetClock,
   formatResetCountdown,
   formatSubscriptionUsageError,
   parseSubscriptionUsage,
@@ -15,6 +16,7 @@ import {
   usageBarFillClass,
   usageBarPercent,
   usageBarTrackClass,
+  usageFailureReason,
   usageWindowTone,
   windowLabel,
 } from "./subscription-usage-model";
@@ -123,7 +125,7 @@ describe("subscription usage contract", () => {
   it("parses a sanitized official snapshot", () => {
     expect(parseSubscriptionUsage(snapshot)).toEqual(snapshot);
     expect(windowLabel(18_000, false)).toBe("5 小时");
-    expect(windowLabel(604_800, true)).toBe("7 天");
+    expect(windowLabel(604_800, true)).toBe("每周");
     expect(usageBarPercent(134)).toBe(100);
     expect(usageWindowTone(80)).toBe("warning");
     expect(usageWindowTone(12, true)).toBe("critical");
@@ -135,8 +137,8 @@ describe("subscription usage contract", () => {
 
   it.each([
     ["openai_codex", "plus", "Plus"],
-    ["openai_codex", "prolite", "Pro 5×"],
-    ["openai_codex", "PRO", "Pro 20×"],
+    ["openai_codex", "prolite", "ProLite"],
+    ["openai_codex", "PRO", "Pro"],
     ["openai_codex", "team", "Team"],
     ["claude_code", "pro", "Pro"],
     ["claude_code", "max", "Max"],
@@ -254,6 +256,17 @@ describe("subscription usage contract", () => {
     ).toBe("4 天后");
   });
 
+  it("formats a reset as a clock time, by weekday within a week", () => {
+    // Tuesday noon, local time.
+    const now = new Date(2026, 10, 3, 12, 0);
+    const at = (day: number, hour: number, minute = 0) =>
+      new Date(2026, 10, day, hour, minute).getTime();
+    expect(formatResetClock(at(3, 17, 18), now)).toBe("17:18 重置");
+    expect(formatResetClock(at(4, 0, 5), now)).toBe("周三 00:05 重置");
+    expect(formatResetClock(at(9, 9), now)).toBe("周一 09:00 重置");
+    expect(formatResetClock(at(10, 9), now)).toBe("11月10日 重置");
+  });
+
   it("extracts the control error from a sidecar failure", () => {
     expect(
       formatSubscriptionUsageError(
@@ -309,5 +322,19 @@ describe("subscription usage contract", () => {
         outcome: "full_reset",
       }),
     ).toThrow(/outcome/);
+  });
+});
+
+describe("usageFailureReason", () => {
+  it("reads the reason from a web error or a desktop error's text", () => {
+    expect(usageFailureReason({ reason: "no_plan" })).toBe("no_plan");
+    expect(
+      usageFailureReason(
+        new Error(
+          `GET /control/v1/services/svc/usage returned 502 Bad Gateway: {"error":{"code":"subscription_usage_failed","details":[{"reason":"timeout"}]}}`,
+        ),
+      ),
+    ).toBe("timeout");
+    expect(usageFailureReason(new Error("status 401"))).toBeUndefined();
   });
 });

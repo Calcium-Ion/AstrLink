@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/astrlink/core/contract"
+	"github.com/QuantumNous/astrlink/core/internal/claudeofficial"
 	"github.com/QuantumNous/astrlink/core/internal/endpoint"
 	"github.com/QuantumNous/astrlink/core/internal/transport"
 )
@@ -426,7 +427,9 @@ func (handler *Handler) applySubscriptionRisk(
 			handler.logSubscriptionRisk("record subscription risk: service_id=%s code=%s: %v", id, observation.Code, err)
 		}
 	}
-	if !signal.unauthorized {
+	// An official account's CLI refreshes its own token, which AstrLink
+	// never takes.
+	if !signal.unauthorized || claudeofficial.Official(candidate.CanonicalService()) {
 		return
 	}
 	token, ok := strings.CutPrefix(upstreamHeaders.Get("Authorization"), "Bearer ")

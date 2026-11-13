@@ -58,15 +58,6 @@ pub fn initialization_script() -> String {
     format!("window.__ASTRLINK_ISOLATED__ = {};", is_isolated())
 }
 
-/// The name this instance goes by, as its login item and app bundle show it.
-pub fn product_name() -> &'static str {
-    if is_isolated() {
-        ISOLATED_NAME
-    } else {
-        "AstrLink"
-    }
-}
-
 pub fn default_inference_port() -> u16 {
     if is_isolated() {
         ISOLATED_INFERENCE_PORT
@@ -117,7 +108,7 @@ mod tests {
     fn the_shared_instance_goes_by_the_configured_product_name() {
         let config: serde_json::Value =
             serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
-        assert_eq!(config["productName"], product_name());
+        assert_eq!(config["productName"], "AstrLink");
         assert_eq!(config["identifier"], IDENTIFIER);
     }
 

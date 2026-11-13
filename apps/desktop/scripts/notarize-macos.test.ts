@@ -140,6 +140,27 @@ describe("macOS release signing gates", () => {
     ).toBe(false);
   });
 
+  it("requires Hardened Runtime on the desktop widget extension", () => {
+    const options = fixture();
+    const normal = options.runCommand.getMockImplementation()!;
+    options.runCommand.mockImplementation((command, args) => {
+      if (
+        command === "codesign" &&
+        args[0] === "--display" &&
+        args.at(-1)?.endsWith("AstrLinkWidgets.appex")
+      ) {
+        return signature.replace("0x10000(runtime)", "0x0(none)");
+      }
+      return normal(command, args);
+    });
+    expect(() => notarizeMacOS(options)).toThrow("Hardened Runtime");
+    expect(
+      options.runCommand.mock.calls.some(
+        ([, args]) => args[0] === "notarytool",
+      ),
+    ).toBe(false);
+  });
+
   it.each(["Invalid", "Rejected", "In Progress"])(
     "never staples or passes Gatekeeper on Apple status %s",
     (status) => {

@@ -207,3 +207,57 @@ func TestListRequestActivityReadsFinalOutputTokens(t *testing.T) {
 		}
 	}
 }
+
+func TestListRequestActivityReadsTheModelEachCallRanWith(t *testing.T) {
+	store := openTestStore(t, filepath.Join(t.TempDir(), "activity.db"))
+	defer store.Close()
+	ctx := context.Background()
+	since := time.Date(2026, 10, 23, 6, 0, 0, 0, time.UTC)
+	call := func(id string, started time.Duration, model string) contract.RequestRecord {
+		session := contract.SessionID("session_" + id)
+		record := contract.RequestRecord{
+			ID: contract.RequestID("request_" + id), SessionID: &session, StartedAt: since.Add(started),
+			Status: contract.RequestStatusPending, InputProtocol: contract.ProtocolAnthropicMessages,
+			Audit: contract.NotCapturedAuditSummary(),
+		}
+		if model != "" {
+			record.RequestedModel = &model
+		}
+		return record
+	}
+	asked := call("asked", time.Minute, "claude-opus-5-5")
+	// A routing redirect sent the call to another model.
+	redirected := call("redirected", 2*time.Minute, "claude-opus-5-5")
+	redirected.ModelRedirect = &contract.RequestModelRedirect{From: "claude-opus-5-5", To: "kimi-k3"}
+	// The provider maps the model to its own name; that one ran.
+	served := call("served", 3*time.Minute, "claude-opus-5-5")
+	served.ModelRedirect = &contract.RequestModelRedirect{From: "claude-opus-5-5", To: "deepseek-v4"}
+	served.Recovery = &contract.RequestRecovery{UpstreamModel: "deepseek-v4-0901"}
+	unnamed := call("unnamed", 4*time.Minute, "")
+	for _, record := range []contract.RequestRecord{asked, redirected, served, unnamed} {
+		if err := store.InsertRequestRecord(ctx, record); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	calls, err := store.ListRequestActivity(ctx, since)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := make(map[contract.SessionID]string, len(calls))
+	for _, item := range calls {
+		got[item.SessionID] = item.Model
+	}
+	want := map[contract.SessionID]string{
+		"session_asked": "claude-opus-5-5", "session_redirected": "kimi-k3",
+		"session_served": "deepseek-v4-0901", "session_unnamed": "",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("models = %v, want %v", got, want)
+	}
+	for session, model := range want {
+		if got[session] != model {
+			t.Fatalf("models = %v, want %v", got, want)
+		}
+	}
+}

@@ -1,5 +1,11 @@
 import type { CorePhase, InferencePortFallback } from "./core-model";
 import {
+  convertUSD,
+  displayCurrency,
+  formatCurrency,
+  smallestUnit,
+} from "./currency-display";
+import {
   parseTrayPreferences,
   type TrayPreferences,
 } from "./preferences-model";
@@ -638,10 +644,16 @@ export function formatCompactTokens(tokens: number): string {
   return `${Math.round(value)}`;
 }
 
-export function formatUsd(amount: number): string {
-  if (!Number.isFinite(amount) || amount <= 0) return "0.00";
-  if (amount < 0.01) return "<0.01";
-  return amount.toFixed(2);
+/** Today's cost in the display currency: `$0.83`, `<$0.01`, `$0.00`. */
+export function formatUsd(amountUSD: number): string {
+  const currency = displayCurrency();
+  const amount = convertUSD(amountUSD, currency);
+  const unit = smallestUnit(currency);
+  if (!Number.isFinite(amount) || amount <= 0)
+    return formatCurrency(0, currency.digits, currency);
+  if (amount < unit)
+    return `<${formatCurrency(unit, currency.digits, currency)}`;
+  return formatCurrency(amount, currency.digits, currency);
 }
 
 /** Signed percent change of today against yesterday; null without a baseline. */

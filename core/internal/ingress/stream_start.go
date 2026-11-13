@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/QuantumNous/astrlink/core/contract"
-	"github.com/tidwall/gjson"
 )
 
 // An upstream can accept a request with HTTP 200 and then refuse it in the
@@ -62,7 +62,7 @@ func classifyStreamStart(protocol contract.ProtocolID, frame []byte) streamStart
 	if len(data) == 0 {
 		return streamStartAnnouncement
 	}
-	eventType := gjson.GetBytes(data, "type").Str
+	eventType := ojson.GetBytes(data, "type").Str
 	if eventType == "" {
 		eventType = name
 	}
@@ -78,19 +78,19 @@ func classifyStreamStart(protocol contract.ProtocolID, frame []byte) streamStart
 		case "response.created", "response.in_progress", "response.queued", "response.metadata":
 			return streamStartAnnouncement
 		case "response.output_item.added":
-			item := gjson.GetBytes(data, "item")
+			item := ojson.GetBytes(data, "item")
 			switch item.Get("type").Str {
 			case "message", "reasoning":
 				// Empty containers can precede an overload, even though their
 				// names mention output. Populated or encrypted content commits.
 				encrypted := item.Get("encrypted_content")
 				if emptyStreamStartArray(item.Get("content")) && emptyStreamStartArray(item.Get("summary")) &&
-					(encrypted.Type == gjson.Null || encrypted.Type == gjson.String && encrypted.Str == "") {
+					(encrypted.Type == ojson.Null || encrypted.Type == ojson.String && encrypted.Str == "") {
 					return streamStartAnnouncement
 				}
 			}
 		case "response.content_part.added", "response.reasoning_summary_part.added":
-			part := gjson.GetBytes(data, "part")
+			part := ojson.GetBytes(data, "part")
 			field := "text"
 			switch part.Get("type").Str {
 			case "refusal":
@@ -99,11 +99,11 @@ func classifyStreamStart(protocol contract.ProtocolID, frame []byte) streamStart
 			default:
 				return streamStartProgress
 			}
-			if value := part.Get(field); value.Type == gjson.String && value.Str == "" {
+			if value := part.Get(field); value.Type == ojson.String && value.Str == "" {
 				return streamStartAnnouncement
 			}
 		case "response.output_text.delta", "response.refusal.delta", "response.reasoning_text.delta", "response.reasoning_summary_text.delta":
-			if delta := gjson.GetBytes(data, "delta"); delta.Type == gjson.String && delta.Str == "" {
+			if delta := ojson.GetBytes(data, "delta"); delta.Type == ojson.String && delta.Str == "" {
 				return streamStartAnnouncement
 			}
 		}
@@ -116,8 +116,8 @@ func classifyStreamStart(protocol contract.ProtocolID, frame []byte) streamStart
 	return streamStartProgress
 }
 
-func emptyStreamStartArray(value gjson.Result) bool {
-	return value.Type == gjson.Null || value.IsArray() && len(value.Array()) == 0
+func emptyStreamStartArray(value ojson.Result) bool {
+	return value.Type == ojson.Null || value.IsArray() && len(value.Array()) == 0
 }
 
 // streamOutcome is what one event says about how a stream ends.
@@ -250,7 +250,7 @@ func anthropicErrorStatus(errType string) int {
 // streamFailureFields reads the error of a failure event: nested under
 // response.error or error, or flat in OpenAI's error event.
 func streamFailureFields(event []byte) (errType, code, message string) {
-	document := gjson.ParseBytes(event)
+	document := ojson.ParseBytes(event)
 	problem := document.Get("response.error")
 	if !problem.IsObject() {
 		problem = document.Get("error")

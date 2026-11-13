@@ -3,8 +3,9 @@ package accountauth
 import (
 	"crypto/rand"
 	"crypto/sha256"
-	"encoding/base64"
 	"fmt"
+
+	"github.com/MoeForge/moego/base64"
 )
 
 // PkceCodes holds an RFC 7636 S256 verifier/challenge pair.

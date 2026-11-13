@@ -40,6 +40,89 @@ var (
 	ErrRateLimited = errors.New("usage lookups are rate limited")
 )
 
+// FailureReason says why a quota read failed, so the app can explain it for
+// the provider at hand instead of repeating the provider's raw text.
+type FailureReason string
+
+const (
+	// ReasonKeyRejected: the provider refused the key (401, 403 or its own
+	// authentication code).
+	ReasonKeyRejected FailureReason = "key_rejected"
+	// ReasonNoPlan: the key works but has no plan with a quota.
+	ReasonNoPlan FailureReason = "no_plan"
+	// ReasonWrongAddress: the quota route is not at the configured address.
+	ReasonWrongAddress FailureReason = "wrong_address"
+	// ReasonUnreachable: the address could not be reached.
+	ReasonUnreachable FailureReason = "unreachable"
+	// ReasonTimeout: the provider did not answer in time.
+	ReasonTimeout FailureReason = "timeout"
+	// ReasonProviderDown: the provider answered with a server error.
+	ReasonProviderDown FailureReason = "provider_down"
+	// ReasonUnexpectedReply: the reply is not the quota document expected.
+	ReasonUnexpectedReply FailureReason = "unexpected_reply"
+	// ReasonNoQuota: the reply is valid but carries no quota window.
+	ReasonNoQuota FailureReason = "no_quota"
+	// ReasonProviderError: the provider reported an error of its own.
+	ReasonProviderError FailureReason = "provider_error"
+)
+
+// UsageFailure is a failed quota read with its reason. Its message keeps the
+// "usage unavailable: <detail>" form; it unwraps to ErrUsageUnavailable and
+// to the underlying cause, if any.
+type UsageFailure struct {
+	Reason FailureReason
+	Detail string
+	cause  error
+}
+
+func (failure *UsageFailure) Error() string {
+	return ErrUsageUnavailable.Error() + ": " + failure.Detail
+}
+
+func (failure *UsageFailure) Unwrap() []error {
+	if failure.cause == nil {
+		return []error{ErrUsageUnavailable}
+	}
+	return []error{ErrUsageUnavailable, failure.cause}
+}
+
+func failed(reason FailureReason, detail string, cause error) error {
+	return &UsageFailure{Reason: reason, Detail: detail, cause: cause}
+}
+
+// ReasonOf returns the reason of a failed quota read, or "" when err does not
+// carry one.
+func ReasonOf(err error) FailureReason {
+	var failure *UsageFailure
+	if errors.As(err, &failure) {
+		return failure.Reason
+	}
+	return ""
+}
+
+// statusReason classifies a non-200 answer from a quota route.
+func statusReason(status int) FailureReason {
+	switch {
+	case status == http.StatusUnauthorized || status == http.StatusForbidden:
+		return ReasonKeyRejected
+	case status == http.StatusNotFound || status == http.StatusMethodNotAllowed:
+		return ReasonWrongAddress
+	case status >= 500:
+		return ReasonProviderDown
+	default:
+		return ReasonProviderError
+	}
+}
+
+// transportReason classifies a request that got no answer.
+func transportReason(err error) FailureReason {
+	var timeout interface{ Timeout() bool }
+	if errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &timeout) && timeout.Timeout()) {
+		return ReasonTimeout
+	}
+	return ReasonUnreachable
+}
+
 const (
 	fiveHourSeconds int64 = 5 * 3600
 	weeklySeconds   int64 = 7 * 24 * 3600
@@ -259,14 +342,14 @@ func (fetcher *Fetcher) lookup(ctx context.Context, service contract.Service, en
 			return contract.SubscriptionUsage{}, limited
 		}
 		if !errors.Is(err, ErrUsageUnavailable) {
-			err = fmt.Errorf("%w: %w", ErrUsageUnavailable, err)
+			err = failed(ReasonProviderError, err.Error(), err)
 		}
 		return contract.SubscriptionUsage{}, fmt.Errorf("%s %w", Label(service.Kind), err)
 	}
 	usage.ServiceID = service.ID
 	usage.FetchedAt = now
 	if err := usage.Validate(); err != nil {
-		return contract.SubscriptionUsage{}, fmt.Errorf("%s %w: invalid payload", Label(service.Kind), ErrUsageUnavailable)
+		return contract.SubscriptionUsage{}, fmt.Errorf("%s %w", Label(service.Kind), failed(ReasonUnexpectedReply, "invalid payload", err))
 	}
 	return usage, nil
 }
@@ -323,7 +406,7 @@ func (fetcher *Fetcher) fetch(ctx context.Context, kind contract.ServiceKind, en
 	defer cancel()
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return contract.SubscriptionUsage{}, fmt.Errorf("%w: %w", ErrUsageUnavailable, err)
+		return contract.SubscriptionUsage{}, failed(ReasonWrongAddress, err.Error(), err)
 	}
 	request.Header.Set("Accept", "application/json")
 	switch kind {
@@ -345,9 +428,9 @@ func (fetcher *Fetcher) fetch(ctx context.Context, kind contract.ServiceKind, en
 			return contract.SubscriptionUsage{}, &RateLimitError{RetryAfter: retryAfter(header.Get("Retry-After"), fetcher.now())}
 		}
 		if kind == contract.ServiceKindOpenCodeGo && status == http.StatusForbidden {
-			return contract.SubscriptionUsage{}, fmt.Errorf("%w: key has no OpenCode Go subscription (status 403)", ErrUsageUnavailable)
+			return contract.SubscriptionUsage{}, failed(ReasonNoPlan, "key has no OpenCode Go subscription (status 403)", nil)
 		}
-		return contract.SubscriptionUsage{}, fmt.Errorf("%w: status %d", ErrUsageUnavailable, status)
+		return contract.SubscriptionUsage{}, failed(statusReason(status), fmt.Sprintf("status %d", status), nil)
 	}
 	quotaPerUnit := float64(defaultNewAPIQuotaPerUnit)
 	if kind == contract.ServiceKindNewAPI {
@@ -359,12 +442,12 @@ func (fetcher *Fetcher) fetch(ctx context.Context, kind contract.ServiceKind, en
 func (fetcher *Fetcher) read(request *http.Request) (int, http.Header, []byte, error) {
 	response, err := fetcher.client.Do(request)
 	if err != nil {
-		return 0, nil, nil, fmt.Errorf("%w: %w", ErrUsageUnavailable, err)
+		return 0, nil, nil, failed(transportReason(err), err.Error(), err)
 	}
 	defer response.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(response.Body, maxBodyBytes))
 	if err != nil {
-		return 0, nil, nil, fmt.Errorf("%w: %w", ErrUsageUnavailable, err)
+		return 0, nil, nil, failed(transportReason(err), err.Error(), err)
 	}
 	return response.StatusCode, response.Header, body, nil
 }
@@ -458,7 +541,7 @@ func UsageURL(kind contract.ServiceKind, baseURL string) (string, error) {
 func baseOrigin(baseURL string) (*url.URL, error) {
 	parsed, err := url.Parse(strings.TrimSpace(baseURL))
 	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
-		return nil, fmt.Errorf("%w: invalid base URL", ErrUsageUnavailable)
+		return nil, failed(ReasonWrongAddress, "invalid base URL", nil)
 	}
 	return &url.URL{Scheme: parsed.Scheme, Host: parsed.Host}, nil
 }
@@ -494,7 +577,7 @@ func decode(kind contract.ServiceKind, body []byte, now time.Time, quotaPerUnit 
 		return contract.SubscriptionUsage{}, err
 	}
 	if usage.Primary == nil && usage.Secondary == nil && len(usage.AdditionalRateLimits) == 0 {
-		return contract.SubscriptionUsage{}, fmt.Errorf("%w: no usage windows", ErrUsageUnavailable)
+		return contract.SubscriptionUsage{}, failed(ReasonNoQuota, "no usage windows", nil)
 	}
 	if usage.Primary != nil || usage.Secondary != nil {
 		reached := (usage.Primary != nil && usage.Primary.UsedPercent >= 100) ||
@@ -560,7 +643,7 @@ func decodeGLM(document map[string]json.RawMessage) (contract.SubscriptionUsage,
 		if json.Unmarshal(raw, &success) == nil && !success {
 			var message string
 			_ = json.Unmarshal(document["msg"], &message)
-			return contract.SubscriptionUsage{}, fmt.Errorf("%w: %s", ErrUsageUnavailable, sanitizeMessage(message, "provider error"))
+			return contract.SubscriptionUsage{}, failed(ReasonProviderError, sanitizeMessage(message, "provider error"), nil)
 		}
 	}
 	var data struct {
@@ -573,7 +656,7 @@ func decodeGLM(document map[string]json.RawMessage) (contract.SubscriptionUsage,
 		} `json:"limits"`
 	}
 	if raw := document["data"]; !jsonObject(raw) || json.Unmarshal(raw, &data) != nil {
-		return contract.SubscriptionUsage{}, fmt.Errorf("%w: invalid payload", ErrUsageUnavailable)
+		return contract.SubscriptionUsage{}, failed(ReasonUnexpectedReply, "invalid payload", nil)
 	}
 	type entry struct {
 		percent float64
@@ -641,7 +724,13 @@ func decodeMiniMax(document map[string]json.RawMessage) (contract.SubscriptionUs
 		StatusMsg  string `json:"status_msg"`
 	}
 	if raw := document["base_resp"]; jsonObject(raw) && json.Unmarshal(raw, &base) == nil && base.StatusCode != nil && *base.StatusCode != 0 {
-		return contract.SubscriptionUsage{}, fmt.Errorf("%w: %s (code %d)", ErrUsageUnavailable, sanitizeMessage(base.StatusMsg, "provider error"), *base.StatusCode)
+		reason := ReasonProviderError
+		// MiniMax reports a refused key in base_resp: 1004 for failed
+		// authentication and 2049 for an invalid API key.
+		if *base.StatusCode == 1004 || *base.StatusCode == 2049 {
+			reason = ReasonKeyRejected
+		}
+		return contract.SubscriptionUsage{}, failed(reason, fmt.Sprintf("%s (code %d)", sanitizeMessage(base.StatusMsg, "provider error"), *base.StatusCode), nil)
 	}
 	var remains []struct {
 		ModelName      string          `json:"model_name"`
@@ -652,7 +741,7 @@ func decodeMiniMax(document map[string]json.RawMessage) (contract.SubscriptionUs
 		WeeklyEndTime  json.RawMessage `json:"weekly_end_time"`
 	}
 	if raw := document["model_remains"]; !jsonArray(raw) || json.Unmarshal(raw, &remains) != nil {
-		return contract.SubscriptionUsage{}, fmt.Errorf("%w: invalid payload", ErrUsageUnavailable)
+		return contract.SubscriptionUsage{}, failed(ReasonUnexpectedReply, "invalid payload", nil)
 	}
 	usage := contract.SubscriptionUsage{}
 	for _, item := range remains {
@@ -686,7 +775,7 @@ func decodeOpenCodeGo(document map[string]json.RawMessage, now time.Time) (contr
 		ResetsAt json.RawMessage `json:"resetsAt"`
 	}
 	if raw := document["usage"]; !jsonObject(raw) || json.Unmarshal(raw, &windows) != nil {
-		return contract.SubscriptionUsage{}, fmt.Errorf("%w: invalid payload", ErrUsageUnavailable)
+		return contract.SubscriptionUsage{}, failed(ReasonUnexpectedReply, "invalid payload", nil)
 	}
 	read := func(key string, seconds int64) *contract.RateLimitWindow {
 		window, ok := windows[key]
@@ -724,15 +813,15 @@ func decodeNewAPI(document map[string]json.RawMessage, quotaPerUnit float64) (co
 	if json.Unmarshal(document["code"], &ok) != nil || !ok {
 		var message string
 		_ = json.Unmarshal(document["message"], &message)
-		return contract.SubscriptionUsage{}, fmt.Errorf("%w: %s", ErrUsageUnavailable, sanitizeMessage(message, "provider error"))
+		return contract.SubscriptionUsage{}, failed(ReasonProviderError, sanitizeMessage(message, "provider error"), nil)
 	}
 	var data map[string]json.RawMessage
 	if raw := document["data"]; !jsonObject(raw) || json.Unmarshal(raw, &data) != nil {
-		return contract.SubscriptionUsage{}, fmt.Errorf("%w: invalid payload", ErrUsageUnavailable)
+		return contract.SubscriptionUsage{}, failed(ReasonUnexpectedReply, "invalid payload", nil)
 	}
 	used, ok := flexibleNumber(data["total_used"])
 	if !ok {
-		return contract.SubscriptionUsage{}, fmt.Errorf("%w: invalid payload", ErrUsageUnavailable)
+		return contract.SubscriptionUsage{}, failed(ReasonUnexpectedReply, "invalid payload", nil)
 	}
 	used = math.Max(used, 0)
 	var unlimited bool
@@ -742,7 +831,7 @@ func decodeNewAPI(document map[string]json.RawMessage, quotaPerUnit float64) (co
 	if !unlimited {
 		remaining, ok := flexibleNumber(data["total_available"])
 		if !ok {
-			return contract.SubscriptionUsage{}, fmt.Errorf("%w: invalid payload", ErrUsageUnavailable)
+			return contract.SubscriptionUsage{}, failed(ReasonUnexpectedReply, "invalid payload", nil)
 		}
 		// An overdrawn key reports negative availability; it is simply empty.
 		remaining = math.Max(remaining, 0)
@@ -784,11 +873,11 @@ func newWindow(percent float64, seconds int64, reset *time.Time) *contract.RateL
 func decodeObject(body []byte) (map[string]json.RawMessage, error) {
 	trimmed := bytes.TrimSpace(body)
 	if len(trimmed) == 0 || trimmed[0] != '{' {
-		return nil, fmt.Errorf("%w: invalid payload", ErrUsageUnavailable)
+		return nil, failed(ReasonUnexpectedReply, "invalid payload", nil)
 	}
 	var document map[string]json.RawMessage
 	if err := json.Unmarshal(trimmed, &document); err != nil || document == nil {
-		return nil, fmt.Errorf("%w: invalid payload", ErrUsageUnavailable)
+		return nil, failed(ReasonUnexpectedReply, "invalid payload", nil)
 	}
 	return document, nil
 }

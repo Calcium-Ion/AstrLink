@@ -16,6 +16,7 @@ import (
 
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/accountauth"
+	"github.com/QuantumNous/astrlink/core/internal/claudeofficial"
 	"github.com/QuantumNous/astrlink/core/internal/endpoint"
 	"github.com/QuantumNous/astrlink/core/internal/networkproxy"
 	"github.com/QuantumNous/astrlink/core/internal/planner"
@@ -173,6 +174,16 @@ func (handler *Handler) executeCandidatesWithTest(
 		records.noteRoutingTried(candidate.CanonicalService().ID)
 		candidate.Service = candidate.CanonicalService()
 		candidate.BaseURL = candidate.EffectiveBaseURL()
+		// An official Claude account is served by its claude CLI, whose own
+		// calls come back on the loopback path; risk signals and client
+		// identity belong to those calls, not to this hop.
+		official := claudeofficial.Official(candidate.Service)
+		loopback := claudeLoopbackFrom(request.Context())
+		protection := protection
+		if official {
+			protection.claudeIdentity = false
+			protection.risk = protection.risk && loopback != nil
+		}
 		policy := failurePolicy(candidate)
 		mode := candidate.Mode
 		if !mode.Valid() {
@@ -300,12 +311,17 @@ func (handler *Handler) executeCandidatesWithTest(
 		}
 
 		resetResponseHeaders(downstream.Header(), initialHeaders)
-		finishPrivacy, privacyResult, privacyErr := handler.applyPrivacy(
-			downstream,
-			attemptRequest,
-			classified,
-			candidate.Service,
-		)
+		finishPrivacy, privacyResult, privacyErr := func() {}, privacyOutcome{}, error(nil)
+		if loopback == nil {
+			// The privacy filter applies once, to the client's request; a CLI
+			// call carries what that filter already let through.
+			finishPrivacy, privacyResult, privacyErr = handler.applyPrivacy(
+				downstream,
+				attemptRequest,
+				classified,
+				candidate.Service,
+			)
+		}
 		redactions := privacyResult.redactions
 		if request.Context().Err() != nil {
 			finishPrivacy()
@@ -351,7 +367,7 @@ func (handler *Handler) executeCandidatesWithTest(
 		// first. Connection tests send their own fixed request.
 		var reasoning gatewayReasoning
 		var images imageCompressionResult
-		if test == nil {
+		if test == nil && loopback == nil {
 			var rewriteErr error
 			reasoning, rewriteErr = handler.applyGatewayRewrite(attemptRequest, plan.UpstreamProtocol, rewrite, haiku)
 			if rewriteErr == nil {
@@ -425,7 +441,8 @@ func (handler *Handler) executeCandidatesWithTest(
 			}
 		}
 
-		if candidate.Service.Kind == contract.ServiceKindClaudeSubscription && plan.UpstreamProtocol == contract.ProtocolAnthropicMessages {
+		if candidate.Service.Kind == contract.ServiceKindClaudeSubscription && plan.UpstreamProtocol == contract.ProtocolAnthropicMessages &&
+			!official {
 			converted := plan.Type == contract.PlanTypeRelayKit
 			official := false
 			if !converted && (protection.officialPassthrough || protection.claudeAutoLearn) &&
@@ -475,16 +492,25 @@ func (handler *Handler) executeCandidatesWithTest(
 			}
 		}
 		records.noteCodexOfficial(clientClass == accountauth.ClientClassOfficial)
+		identity := protection.sendsClientIdentity(candidate.Service.Kind, clientClass)
 		var headers http.Header
 		authorizationEndpoint, authorizeErr := candidate.AuthorizationEndpoint()
 		// The recognized class rides the proxy context so the authorizer, which
 		// receives only headers, keeps an official client's identity.
 		proxyContext := accountauth.WithClientClass(request.Context(), clientClass)
-		if authorizeErr == nil {
+		var officialDiagnostics []relaykitbridge.ConversionDiagnostic
+		switch {
+		case official && loopback == nil:
+			attemptRequest, authorizeErr = handler.claudeOfficialRequest(attemptRequest, candidate, records)
+			officialDiagnostics = claudeOfficialDiagnostics(attemptRequest)
+		case authorizeErr == nil:
 			proxyContext, authorizeErr = networkproxy.Bind(proxyContext, candidate.Service, handler.proxyCredentials)
 			attemptRequest = attemptRequest.WithContext(proxyContext)
 		}
-		if authorizeErr == nil {
+		if loopback != nil && authorizeErr == nil {
+			// The CLI's own credential goes upstream unchanged.
+			headers = http.Header{"Authorization": loopback.authorization}
+		} else if authorizeErr == nil && !official {
 			authorizationEndpoint.Auth = providerapi.Auth(candidate.Service.Kind, plan.UpstreamProtocol, authorizationEndpoint.Auth)
 			var headersErr error
 			headers, headersErr = handler.authorizer.Headers(proxyContext, authorizationEndpoint, attemptRequest.Header)
@@ -651,7 +677,11 @@ func (handler *Handler) executeCandidatesWithTest(
 					handler.requestRecords,
 					handler.recordLogger,
 				)
+				// Rewrites go first so a long conversion report cannot crowd
+				// them out of the diagnostics limit.
+				recordSession.noteGatewayRewrites(reasoning, identity)
 				recordSession.noteConversionDiagnostics(contract.ConversionDiagnosticPhaseRequest, conversion.Diagnostics)
+				recordSession.noteConversionDiagnostics(contract.ConversionDiagnosticPhaseRequest, officialDiagnostics)
 				recordSession.noteGatewayReasoning(reasoning)
 				recordSession.observeOutboundCapture(outbound)
 			}
@@ -705,6 +735,9 @@ func (handler *Handler) executeCandidatesWithTest(
 			}
 			startWriter.markStarted(response.StatusCode)
 			responseRetryAfter = parseRetryAfter(response.Header.Get("Retry-After"), time.Now())
+			if loopback != nil && handler.claudeOfficial != nil {
+				handler.claudeOfficial.ObserveUsage(context.WithoutCancel(request.Context()), candidate.Service.ID, response.Header)
+			}
 			if startErr != nil {
 				// Nothing reached the client, so the stream failed like a
 				// dropped connection.
@@ -865,6 +898,8 @@ func (handler *Handler) executeCandidatesWithTest(
 		var forwardErr error
 		if turn := responsesWSTurnFromContext(request.Context()); turn != nil {
 			forwardErr = turn.forward(startWriter, attemptRequest, forwardTarget, candidate, upstreamModel)
+		} else if official && loopback == nil {
+			forwardErr = handler.forwardClaudeOfficial(startWriter, attemptRequest, forwardTarget)
 		} else {
 			forwardErr = handler.forwarder.Forward(startWriter, attemptRequest, forwardTarget)
 		}

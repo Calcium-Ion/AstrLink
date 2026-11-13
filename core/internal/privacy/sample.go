@@ -11,7 +11,7 @@ import (
 // SupportsInspection reports whether the protocol has extractable request-body
 // roots for privacy evaluation.
 func SupportsInspection(protocol contract.ProtocolID) bool {
-	_, ok := protocolRoots(protocol)
+	_, ok := requestRoots(protocol, InspectionOptions{})
 	return ok
 }
 

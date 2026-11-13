@@ -61,6 +61,12 @@ FROM records`); err != nil {
 		{query: `SELECT id FROM request_records WHERE parent_request_id IS NULL AND previous_response_id = 'missing' AND session_id IS NOT NULL ORDER BY started_at DESC, id DESC LIMIT 1`, index: "request_records_previous_latest_idx"},
 		{query: `SELECT id FROM request_records WHERE parent_request_id IS NULL AND output_response_id = 'missing' AND session_id IS NOT NULL ORDER BY started_at DESC, id DESC LIMIT 1`, index: "request_records_output_latest_idx"},
 		{query: `SELECT rowid FROM response_affinities ORDER BY created_at DESC, rowid DESC LIMIT -1 OFFSET 10000`, index: "response_affinities_created_idx"},
+		// The orphan triggers and the memory view look calls up by their
+		// context set.
+		{query: `SELECT 1 FROM request_records WHERE context_set_id = 7`, index: "request_records_context_set_idx"},
+		{query: `SELECT MAX(started_at) FROM request_records WHERE context_set_id = 7`, index: "request_records_context_set_idx"},
+		{query: `SELECT id FROM request_records WHERE context_set_id IN (SELECT id FROM context_sets WHERE project = '~/proj' AND client_type = 'claude_code') AND ` + ContextActivityFilter + ` ORDER BY started_at DESC LIMIT 64`, index: "request_records_context_activity_idx", allowTempBTree: true},
+		{query: `SELECT 1 FROM context_sets WHERE catalog_id = 7`, index: "context_sets_catalog_idx"},
 	} {
 		rows, err := db.Query("EXPLAIN QUERY PLAN " + test.query)
 		if err != nil {

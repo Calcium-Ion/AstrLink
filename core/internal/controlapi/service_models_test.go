@@ -281,3 +281,86 @@ func TestServiceModelProbeErrorStatusMapping(t *testing.T) {
 		})
 	}
 }
+
+// A failed upstream list says why, so the editor can point at the key or the
+// address instead of showing a bare failure.
+func TestDraftModelProbeFailureNamesReason(t *testing.T) {
+	store, err := openControlTestStore(t, context.Background(), t.TempDir()+"/astrlink.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	for _, test := range []struct {
+		name    string
+		status  int
+		body    string
+		dialErr bool
+		reason  string
+		message string
+	}{
+		{name: "wrong key", status: http.StatusUnauthorized, reason: "upstream_unauthorized", message: "upstream model discovery failed (HTTP 401)"},
+		{name: "forbidden", status: http.StatusForbidden, reason: "upstream_unauthorized", message: "upstream model discovery failed (HTTP 403)"},
+		{name: "no model list", status: http.StatusNotFound, reason: "upstream_not_found", message: "upstream model discovery failed (HTTP 404)"},
+		{name: "method not allowed", status: http.StatusMethodNotAllowed, reason: "upstream_not_found", message: "upstream model discovery failed (HTTP 405)"},
+		{name: "rate limited", status: http.StatusTooManyRequests, reason: "upstream_rate_limited", message: "upstream model discovery failed (HTTP 429)"},
+		{name: "server error", status: http.StatusServiceUnavailable, reason: "upstream_unavailable", message: "upstream model discovery failed (HTTP 503)"},
+		{name: "other status", status: http.StatusTeapot, reason: "upstream_status", message: "upstream model discovery failed (HTTP 418)"},
+		{name: "not a model list", status: http.StatusOK, body: "<html>welcome</html>", reason: "upstream_invalid_response", message: "upstream model discovery failed (invalid response)"},
+		{name: "unreachable", dialErr: true, reason: "upstream_unreachable", message: "upstream model discovery failed (connection failed)"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client := &http.Client{Transport: controlRoundTripFunc(func(*http.Request) (*http.Response, error) {
+				if test.dialErr {
+					return nil, errors.New("dial tcp 127.0.0.1:9: connect: connection refused")
+				}
+				return &http.Response{
+					StatusCode: test.status,
+					Header:     make(http.Header),
+					Body:       io.NopCloser(strings.NewReader(test.body)),
+				}, nil
+			})}
+			handler, err := NewWithDependencies(
+				contract.DefaultVersionResponse("0.1.0-test", "abc1234"),
+				Dependencies{ServiceStore: store, ServiceModels: servicemodel.New(store, nil, client), ControlToken: testControlToken},
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			response := controlRequest(t, handler, http.MethodPost, ServiceModelProbesPath, "application/json", `{
+        "kind":"openai_compatible",
+        "http":{"base_url":"https://upstream.example/v1","auth":{"scheme":"bearer"},"credential":{"secret":"draft-secret"}},
+        "protocol":"openai.models"
+      }`, "")
+			if response.Code != http.StatusBadGateway {
+				t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+			}
+			var envelope errorEnvelope
+			decode(t, response, &envelope)
+			if envelope.Error.Code != "upstream_model_discovery_failed" || envelope.Error.Message != test.message {
+				t.Fatalf("error = %#v, want message %q", envelope.Error, test.message)
+			}
+			if len(envelope.Error.Details) != 1 || envelope.Error.Details[0].Reason != test.reason {
+				t.Fatalf("details = %#v, want reason %q", envelope.Error.Details, test.reason)
+			}
+			if strings.Contains(response.Body.String(), "draft-secret") || strings.Contains(response.Body.String(), "welcome") {
+				t.Fatalf("error leaked upstream material: %s", response.Body.String())
+			}
+		})
+	}
+}
+
+func TestModelProbeFailureReasonLeavesUnknownFailuresBlank(t *testing.T) {
+	for _, err := range []error{
+		nil,
+		servicemodel.ErrUpstream,
+		fmt.Errorf("%w: pagination limit exceeded", servicemodel.ErrUpstream),
+	} {
+		if got := modelProbeFailureReason(err); got != "" {
+			t.Fatalf("reason for %v = %q, want none", err, got)
+		}
+	}
+	codex := fmt.Errorf("%w: %v", servicemodel.ErrUpstream, errors.New("decode codex models: unexpected"))
+	if got := modelProbeFailureReason(codex); got != "upstream_invalid_response" {
+		t.Fatalf("codex catalog reason = %q", got)
+	}
+}

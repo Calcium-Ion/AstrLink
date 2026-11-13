@@ -49,6 +49,7 @@ const clients: Record<
   mistral_vibe: { name: "Mistral Vibe", Mark: vendorMarks.mistral },
   zed: { name: "Zed" },
   cherry_studio: { name: "Cherry Studio", Mark: CherryStudioColor },
+  goose: { name: "Goose" },
 };
 
 /** Product name of a detected client, or the unknown-client label. */

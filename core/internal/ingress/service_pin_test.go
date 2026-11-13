@@ -10,12 +10,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/endpoint"
 	"github.com/QuantumNous/astrlink/core/internal/storage"
 	"github.com/QuantumNous/astrlink/core/internal/storage/sqlite"
 	"github.com/QuantumNous/astrlink/core/internal/transport"
-	"github.com/tidwall/gjson"
 )
 
 // A request naming a provider in X-AstrLink-Service is served by that
@@ -136,7 +136,7 @@ func TestNamedServiceServesTheRequestAlone(t *testing.T) {
 		{"Not an ID", 400, "X-AstrLink-Service must hold one API provider ID"},
 	} {
 		response := serve("POST", "/v1/chat/completions", test.pin, opening)
-		message := gjson.Get(response.Body.String(), "error.message").String()
+		message := ojson.Get(response.Body.String(), "error.message").String()
 		if response.Code != test.status || message != test.message || len(hosts) != 0 {
 			t.Fatalf("%s: %d %q, hosts %v", test.pin, response.Code, message, hosts)
 		}
@@ -150,7 +150,7 @@ func TestNamedServiceServesTheRequestAlone(t *testing.T) {
 	if response.Code != 200 || strings.Join(hosts, ",") != "mly.example" {
 		t.Fatalf("pinned discovery: status %d hosts %v body %s", response.Code, hosts, response.Body)
 	}
-	if ids := gjson.Get(response.Body.String(), "data.#.id").String(); ids != `["other"]` {
+	if ids := ojson.Get(response.Body.String(), "data.#.id").String(); ids != `["other"]` {
 		t.Fatalf("pinned discovery listed %s", ids)
 	}
 }

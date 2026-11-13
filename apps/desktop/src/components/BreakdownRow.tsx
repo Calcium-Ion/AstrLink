@@ -173,3 +173,95 @@ export function breakdownShare(value: number, values: number[]): number {
   if (max <= 0 || value <= 0) return 0;
   return Math.round((value / max) * 100);
 }
+
+/**
+ * One line of a compact breakdown: a name, its share bar, the figure, and a
+ * quiet note, on a single line with a thin rule under it. For breakdowns
+ * that sit beside other content, where BreakdownRow's two lines take too
+ * much height. A null `share` leaves the bar out and gives its room to the
+ * name. The `dense` size lists counts in a narrow column: no rules between
+ * lines, a longer name and a short figure.
+ */
+export function BreakdownLine({
+  label,
+  labelTitle,
+  note,
+  noteTitle,
+  share,
+  size = "compact",
+  value,
+  valueTitle,
+}: {
+  label: ReactNode;
+  labelTitle?: string;
+  note?: ReactNode;
+  noteTitle?: string;
+  /** Bar length as a percentage of the largest line; null hides the bar. */
+  share: number | null;
+  size?: "compact" | "dense";
+  value: ReactNode;
+  valueTitle?: string;
+}) {
+  const bar = share !== null;
+  const dense = size === "dense";
+  return (
+    <DataRow
+      className={cn(
+        "grid min-w-0 items-center px-0 py-0",
+        dense
+          ? "h-5.25 gap-2 text-xs"
+          : "h-7 gap-3 border-b text-xs last:border-b-0",
+        // A narrow window takes room from the name and the note, not the bar.
+        dense
+          ? "grid-cols-[minmax(0,8rem)_minmax(0,1fr)_1.5rem]"
+          : bar
+            ? note != null
+              ? "grid-cols-[minmax(0,10rem)_minmax(0,1fr)_3.5rem_minmax(0,9rem)]"
+              : "grid-cols-[5.5rem_minmax(0,1fr)_3.5rem]"
+            : note != null
+              ? "grid-cols-[minmax(0,1fr)_3.5rem_minmax(0,9.5rem)]"
+              : "grid-cols-[minmax(0,1fr)_3.5rem]",
+      )}
+      data-slot="breakdown-line"
+    >
+      <span
+        className="flex min-w-0 items-baseline gap-2 truncate"
+        title={labelTitle}
+      >
+        {label}
+      </span>
+      {bar ? (
+        <span
+          aria-hidden="true"
+          className={cn("block min-w-0", dense ? "h-1" : "h-1.5")}
+        >
+          <span
+            className={cn(
+              "block h-full",
+              dense ? "rounded-full bg-tide" : "rounded-r-full bg-primary/40",
+            )}
+            data-slot="breakdown-line-share"
+            style={{ width: `${share}%` }}
+          />
+        </span>
+      ) : dense ? (
+        // The dense grid keeps its columns, so the figures stay in line.
+        <span aria-hidden="true" />
+      ) : null}
+      <span
+        className="text-right tabular-nums text-text-secondary"
+        title={valueTitle}
+      >
+        {value}
+      </span>
+      {note != null ? (
+        <span
+          className="truncate text-right text-muted-foreground"
+          title={noteTitle}
+        >
+          {note}
+        </span>
+      ) : null}
+    </DataRow>
+  );
+}

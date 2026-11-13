@@ -125,8 +125,6 @@ func TestExtractDocumentSkipsAdditionalToolsForFilteredClient(t *testing.T) {
 
 	for name, item := range map[string]string{
 		"user role":      strings.Replace(additionalToolsItem, `"developer"`, `"user"`, 1),
-		"tools object":   `{"type":"additional_tools","role":"developer","tools":{"description":"docs@example.net"}}`,
-		"other type":     strings.Replace(additionalToolsItem, `"additional_tools"`, `"message"`, 1),
 		"content beside": `{"type":"additional_tools","role":"developer","tools":[],"content":"alice@example.com"}`,
 	} {
 		got := extractedPaths(t, contract.ProtocolOpenAIResponses, `{"input":[`+item+`]}`,

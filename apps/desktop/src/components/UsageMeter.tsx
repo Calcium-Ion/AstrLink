@@ -214,3 +214,73 @@ export function UsageMeterRow({
     </div>
   );
 }
+
+/**
+ * One meter inside a line of text, such as a list row: the label, a short
+ * bar and the value. It is built from phrasing elements, so it can sit in a
+ * button that opens the row.
+ */
+export function UsageMeterInline({
+  label,
+  value,
+  valueLabel,
+  title,
+  tone,
+  className,
+}: {
+  label: string;
+  value: number;
+  valueLabel: string;
+  /** What the value measures against, for the hover title. */
+  title?: string;
+  /** `default` is a plain share in brand ink. */
+  tone: "default" | "warning" | "destructive";
+  className?: string;
+}) {
+  const percent = Number.isFinite(value) ? Math.max(0, value) : 0;
+  const filled = Math.min(100, percent);
+  return (
+    <span
+      className={cn(
+        "inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap",
+        className,
+      )}
+      data-slot="usage-meter-inline"
+      title={title}
+    >
+      <span>{label}</span>
+      <span
+        aria-label={label}
+        aria-valuemax={100}
+        aria-valuemin={0}
+        aria-valuenow={Math.round(filled)}
+        aria-valuetext={valueLabel}
+        className={cn(
+          "relative block h-1 w-14 overflow-hidden rounded-full",
+          tone === "default" ? "bg-primary/20" : "bg-muted",
+        )}
+        role="meter"
+      >
+        <span
+          className={cn(
+            "absolute inset-y-0 left-0 rounded-full transition-[width]",
+            tone === "default" && "bg-primary",
+            tone === "warning" && "bg-warning",
+            tone === "destructive" && "bg-destructive",
+          )}
+          style={{ width: `${filled}%` }}
+        />
+      </span>
+      <span
+        aria-hidden="true"
+        className={cn(
+          "font-medium tabular-nums text-foreground",
+          tone === "warning" && "text-warning-foreground",
+          tone === "destructive" && "text-destructive",
+        )}
+      >
+        {valueLabel}
+      </span>
+    </span>
+  );
+}

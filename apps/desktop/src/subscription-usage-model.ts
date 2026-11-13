@@ -463,8 +463,8 @@ const planTypeLabels: Record<SubscriptionProvider, Record<string, string>> = {
   },
   openai_codex: {
     plus: "Plus",
-    pro: "Pro 20×",
-    prolite: "Pro 5×",
+    pro: "Pro",
+    prolite: "ProLite",
     go: "Go",
     free: "Free",
     team: "Team",
@@ -546,6 +546,32 @@ export function formatResetCountdown(
   return i18n.t(key("resetInDays"), { count: days });
 }
 
+/**
+ * A reset as a clock time, for cards that show two windows: "17:18 重置"
+ * today, "周三 09:00 重置" within a week, the date after that.
+ */
+export function formatResetClock(at: number, now: Date): string {
+  const target = new Date(at);
+  const midnight = (date: Date) =>
+    new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  const days = Math.round((midnight(target) - midnight(now)) / 86_400_000);
+  const time = target.toLocaleTimeString(i18n.language, {
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  });
+  const when =
+    days <= 0
+      ? time
+      : days < 7
+        ? `${target.toLocaleDateString(i18n.language, { weekday: "short" })} ${time}`
+        : target.toLocaleDateString(i18n.language, {
+            month: "short",
+            day: "numeric",
+          });
+  return i18n.t("usage.resetsAt", { time: when });
+}
+
 export function formatQuotaExpiry(quota: UsageQuota, now: Date): string | null {
   if (!quota.expires_at) return null;
   const deltaMs = Date.parse(quota.expires_at) - now.getTime();
@@ -622,6 +648,32 @@ function rawErrorText(error: unknown): string {
     if (typeof message === "string" && message.trim()) return message.trim();
   }
   return "";
+}
+
+/**
+ * The reason a failed usage read names in its error details, such as
+ * `key_rejected`; undefined when the error carries none.
+ */
+export function usageFailureReason(error: unknown): string | undefined {
+  const own = (error as { reason?: unknown } | null)?.reason;
+  if (typeof own === "string" && own) return own;
+  const raw = rawErrorText(error);
+  const jsonStart = raw.indexOf("{");
+  if (jsonStart < 0) return undefined;
+  try {
+    const parsed = JSON.parse(raw.slice(jsonStart)) as {
+      error?: { details?: unknown };
+    };
+    const details = Array.isArray(parsed.error?.details)
+      ? (parsed.error.details as { reason?: unknown }[])
+      : [];
+    const reason = details.find(
+      (detail) => typeof detail?.reason === "string",
+    )?.reason;
+    return typeof reason === "string" && reason ? reason : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 export function resetOutcomeMessage(outcome: UsageResetOutcome): string {

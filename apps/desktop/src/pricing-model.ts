@@ -1,3 +1,9 @@
+import {
+  convertUSD,
+  displayCurrency,
+  formatCurrency,
+} from "./currency-display";
+
 export interface PriceBinding {
   provider: string;
   model: string;
@@ -51,6 +57,16 @@ export interface ServiceBilling {
   config: PricingConfig;
   periods: BillingPeriod[];
 }
+/** What a whole quota window holds at official API prices, estimated. */
+export interface QuotaWindowEstimate {
+  kind: "primary" | "secondary";
+  total_usd: string;
+}
+/** A service's windows with an estimate; services without one are left out. */
+export interface ServiceQuotaEstimate {
+  service_id: string;
+  windows: QuotaWindowEstimate[];
+}
 
 export const OFFICIAL_PROVIDERS: Record<string, string> = {
   openai: "OpenAI",
@@ -75,22 +91,30 @@ export const OFFICIAL_PROVIDERS: Record<string, string> = {
 };
 // Monetary fields stay decimal strings at the bridge boundary. Number is only
 // used for display and progress bars; Core owns all accounting arithmetic.
-export function formatUSD(value: string | undefined): string {
+// A dollar amount shows in the display currency; `short` drops the decimals
+// from 1,000 up, for tight spots.
+export function formatUSD(
+  value: string | undefined,
+  { short = false }: { short?: boolean } = {},
+): string {
   if (value == null) return "—";
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(Number(value));
+  const currency = displayCurrency();
+  const amount = convertUSD(Number(value), currency);
+  const digits = short && Math.abs(amount) >= 1000 ? 0 : currency.digits;
+  return formatCurrency(amount, digits, currency);
 }
-export function billingAmount(amounts: BillingAmounts | undefined): string {
+export function billingAmount(
+  amounts:
+    | Pick<BillingAmounts, "amount_usd" | "priced" | "unpriced" | "pending">
+    | undefined,
+  options: { short?: boolean } = {},
+): string {
   if (
     !amounts ||
     (amounts.priced === 0 && amounts.unpriced + amounts.pending > 0)
   )
     return "—";
-  return formatUSD(amounts.amount_usd);
+  return formatUSD(amounts.amount_usd, options);
 }
 export function currentBillingPeriod(
   periods: BillingPeriod[],
@@ -230,4 +254,18 @@ export function parseServiceBilling(value: unknown): ServiceBilling {
       };
     }),
   };
+}
+export function parseQuotaEstimates(value: unknown): ServiceQuotaEstimate[] {
+  return array(object(value).services, (value) => {
+    const o = object(value);
+    return {
+      service_id: str(o.service_id),
+      windows: array(o.windows, (value) => {
+        const w = object(value);
+        if (w.kind !== "primary" && w.kind !== "secondary")
+          throw new Error("Invalid quota window");
+        return { kind: w.kind, total_usd: decimal(w.total_usd) };
+      }),
+    };
+  });
 }

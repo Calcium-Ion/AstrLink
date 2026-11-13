@@ -196,6 +196,38 @@ func DefaultFactoryDroidCapabilities() []Capability {
 	}
 }
 
+// SubscriptionMode selects how a Claude subscription account signs in and
+// serves requests. Documents written before modes existed carry no mode and
+// are legacy.
+type SubscriptionMode string
+
+const (
+	// SubscriptionModeLegacy signs in through AstrLink's own OAuth client and
+	// forwards requests with the stored token.
+	SubscriptionModeLegacy SubscriptionMode = "legacy"
+	// SubscriptionModeOfficial serves requests through the user's own claude
+	// CLI, signed in with `claude auth login` in a per-account config
+	// directory. AstrLink stores no token for it.
+	SubscriptionModeOfficial SubscriptionMode = "official"
+)
+
+func (mode SubscriptionMode) Valid() bool {
+	return mode == "" || mode == SubscriptionModeLegacy || mode == SubscriptionModeOfficial
+}
+
+// SupportedBy reports whether provider offers mode. Only Claude Code has an
+// official mode; every provider is legacy.
+func (mode SubscriptionMode) SupportedBy(provider SubscriptionProvider) bool {
+	switch mode {
+	case "", SubscriptionModeLegacy:
+		return true
+	case SubscriptionModeOfficial:
+		return provider == SubscriptionProviderClaudeCode
+	default:
+		return false
+	}
+}
+
 // SubscriptionStatus is the non-sensitive authorization lifecycle state.
 type SubscriptionStatus string
 
@@ -249,8 +281,13 @@ type SubscriptionAccount struct {
 	DisplayName       string                `json:"display_name"`
 	AccountHint       string                `json:"account_hint,omitempty"`
 	ProviderAccountID string                `json:"provider_account_id,omitempty"`
-	CredentialRef     string                `json:"credential_ref,omitempty"`
-	Capabilities      []Capability          `json:"capabilities"`
+	// PlanType is the plan the last usage read reported for this provider
+	// account. Signing out or into another account clears it.
+	PlanType string `json:"plan_type,omitempty"`
+	// Mode is empty on accounts created before modes existed; they are legacy.
+	Mode          SubscriptionMode `json:"mode,omitempty"`
+	CredentialRef string           `json:"credential_ref,omitempty"`
+	Capabilities  []Capability     `json:"capabilities"`
 	// AuthorizationBoundary explains provider-controlled limits that affect
 	// whether interactive login can proceed. It never contains secrets.
 	AuthorizationBoundary string             `json:"authorization_boundary,omitempty"`
@@ -289,20 +326,20 @@ func (account SubscriptionAccount) Validate() error {
 	if containsCredentialLeak(account.ProviderAccountID) {
 		return fmt.Errorf("provider_account_id must not contain credential material")
 	}
-	switch account.Status {
-	case SubscriptionStatusConnected, SubscriptionStatusNeedsReauth, SubscriptionStatusAuthorizing:
-		if account.Status == SubscriptionStatusAuthorizing && account.CredentialRef == "" {
-			break
-		}
-		if err := ValidateCredentialRef(account.CredentialRef); err != nil {
-			return fmt.Errorf("connected subscription requires credential_ref: %w", err)
-		}
-		if account.CredentialRef != "local://subscription/"+string(account.ID) && !strings.HasPrefix(account.CredentialRef, "keyring://") {
-			return fmt.Errorf("subscription credential_ref must equal %q or use keyring://", "local://subscription/"+string(account.ID))
-		}
-	default:
+	if err := ValidatePlanType(account.PlanType); err != nil {
+		return err
+	}
+	if !account.Mode.Valid() || !account.Mode.SupportedBy(account.Provider) {
+		return fmt.Errorf("subscription mode %q is unsupported by provider", account.Mode)
+	}
+	if account.Mode == SubscriptionModeOfficial {
+		// The claude CLI keeps the login in its own config directory.
 		if account.CredentialRef != "" {
-			return fmt.Errorf("credential_ref is only valid for connected or needs_reauth accounts")
+			return fmt.Errorf("official subscription accounts keep no credential_ref")
+		}
+	} else {
+		if err := account.validateCredentialRef(); err != nil {
+			return err
 		}
 	}
 	if len(account.Capabilities) == 0 {
@@ -338,6 +375,32 @@ func (account SubscriptionAccount) Validate() error {
 		return fmt.Errorf("updated_at must not precede created_at")
 	}
 	return nil
+}
+
+// validateCredentialRef checks the stored-token reference of a legacy account.
+func (account SubscriptionAccount) validateCredentialRef() error {
+	switch account.Status {
+	case SubscriptionStatusConnected, SubscriptionStatusNeedsReauth, SubscriptionStatusAuthorizing:
+		if account.Status == SubscriptionStatusAuthorizing && account.CredentialRef == "" {
+			return nil
+		}
+		if err := ValidateCredentialRef(account.CredentialRef); err != nil {
+			return fmt.Errorf("connected subscription requires credential_ref: %w", err)
+		}
+		if account.CredentialRef != "local://subscription/"+string(account.ID) && !strings.HasPrefix(account.CredentialRef, "keyring://") {
+			return fmt.Errorf("subscription credential_ref must equal %q or use keyring://", "local://subscription/"+string(account.ID))
+		}
+	default:
+		if account.CredentialRef != "" {
+			return fmt.Errorf("credential_ref is only valid for connected or needs_reauth accounts")
+		}
+	}
+	return nil
+}
+
+// Official reports whether the account is served through the claude CLI.
+func (account SubscriptionAccount) Official() bool {
+	return account.Mode == SubscriptionModeOfficial
 }
 
 // DefaultOpenAICodexCapabilities is the fixed native capability set for Codex.
@@ -398,16 +461,33 @@ const (
 	AuthorizationFlowBrowser    AuthorizationFlow = "browser"
 	AuthorizationFlowDeviceCode AuthorizationFlow = "device_code"
 	AuthorizationFlowCode       AuthorizationFlow = "authorization_code"
+	// AuthorizationFlowClaudeCLI runs `claude auth login` for an official
+	// Claude account. The CLI may open the browser itself; the session also
+	// carries the page that shows a code to paste back.
+	AuthorizationFlowClaudeCLI AuthorizationFlow = "claude_cli"
 )
 
 func (flow AuthorizationFlow) Valid() bool {
-	return flow == AuthorizationFlowBrowser || flow == AuthorizationFlowDeviceCode || flow == AuthorizationFlowCode
+	return flow == AuthorizationFlowBrowser || flow == AuthorizationFlowDeviceCode || flow == AuthorizationFlowCode ||
+		flow == AuthorizationFlowClaudeCLI
+}
+
+// SupportedByMode narrows SupportedBy to one account mode: an official Claude
+// account signs in only through its CLI, a legacy one never does.
+func (flow AuthorizationFlow) SupportedByMode(provider SubscriptionProvider, mode SubscriptionMode) bool {
+	if provider == SubscriptionProviderClaudeCode {
+		if mode == SubscriptionModeOfficial {
+			return flow == AuthorizationFlowClaudeCLI
+		}
+		return flow == AuthorizationFlowCode
+	}
+	return flow.SupportedBy(provider)
 }
 
 func (flow AuthorizationFlow) SupportedBy(provider SubscriptionProvider) bool {
 	switch provider {
 	case SubscriptionProviderClaudeCode:
-		return flow == AuthorizationFlowCode
+		return flow == AuthorizationFlowCode || flow == AuthorizationFlowClaudeCLI
 	case SubscriptionProviderXAIGrok, SubscriptionProviderGitHubCopilot, SubscriptionProviderFactoryDroid:
 		return flow == AuthorizationFlowDeviceCode
 	case SubscriptionProviderAntigravity:
@@ -476,7 +556,7 @@ func (session AuthorizationSession) Validate() error {
 	}
 	if session.Status == AuthorizationSessionStatusPending {
 		switch session.Flow {
-		case AuthorizationFlowBrowser, AuthorizationFlowCode:
+		case AuthorizationFlowBrowser, AuthorizationFlowCode, AuthorizationFlowClaudeCLI:
 			if session.DeviceCode != nil {
 				return fmt.Errorf("browser authorization session must not include device_code")
 			}
@@ -565,6 +645,18 @@ type SubscriptionUsage struct {
 	Quota                 *UsageQuota            `json:"quota,omitempty"`
 }
 
+// ValidatePlanType checks a plan as a provider reports it. An empty plan is
+// valid: it is not known.
+func ValidatePlanType(planType string) error {
+	if utf8.RuneCountInString(planType) > maxUsagePlanTypeLength {
+		return fmt.Errorf("plan_type must be at most %d characters", maxUsagePlanTypeLength)
+	}
+	if containsCredentialLeak(planType) || strings.Contains(planType, "@") {
+		return fmt.Errorf("plan_type must not contain credential material")
+	}
+	return nil
+}
+
 func (usage SubscriptionUsage) Validate() error {
 	if err := usage.ServiceID.Validate(); err != nil {
 		return fmt.Errorf("service_id: %w", err)
@@ -572,13 +664,8 @@ func (usage SubscriptionUsage) Validate() error {
 	if usage.FetchedAt.IsZero() {
 		return fmt.Errorf("fetched_at is required")
 	}
-	if usage.PlanType != "" {
-		if utf8.RuneCountInString(usage.PlanType) > maxUsagePlanTypeLength {
-			return fmt.Errorf("plan_type must be at most %d characters", maxUsagePlanTypeLength)
-		}
-		if containsCredentialLeak(usage.PlanType) || strings.Contains(usage.PlanType, "@") {
-			return fmt.Errorf("plan_type must not contain credential material")
-		}
+	if err := ValidatePlanType(usage.PlanType); err != nil {
+		return err
 	}
 	if err := usage.Primary.validate("primary"); err != nil {
 		return err

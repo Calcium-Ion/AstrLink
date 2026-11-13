@@ -177,7 +177,9 @@ export function sessionSummary(detail: RequestSessionDetail): RequestSession {
 }
 
 /** A conversation with a call still running keeps its records until it ends. */
-export function sessionRunning(session: RequestSession): boolean {
+export function sessionRunning(
+  session: Pick<RequestSession, "status" | "active_request_starts">,
+): boolean {
   return (
     session.status === "pending" || session.active_request_starts.length > 0
   );

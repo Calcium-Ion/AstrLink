@@ -5,8 +5,6 @@ import { HelpPopover } from "@/components/HelpPopover";
 import { LiveTrendChart } from "@/components/LiveTrendChart";
 import { Metric, MetricGroup } from "@/components/Metric";
 import { Panel } from "@/components/Panel";
-import { ValueTransition } from "@/components/ValueTransition";
-import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 import { getRequestActivity } from "./bridge";
@@ -15,6 +13,7 @@ import {
   ACTIVITY_STEP_MS,
   ACTIVITY_WINDOW_MS,
   activitySince,
+  hasRecentActivity,
   summarizeActivity,
 } from "./request-activity-model";
 import type { RequestActivity } from "./request-record-model";
@@ -39,17 +38,21 @@ export function useRequestActivityFeed(
 }
 
 /**
- * Reads the calls of the last few minutes once a second. The gateway keeps
- * them, so the chart is whole however long the page was away; the last read
- * stays in the workspace snapshot so coming back paints it at once.
+ * Reads the calls of the last few minutes once a second while `enabled`. The
+ * gateway keeps them, so the chart is whole however long the page was away;
+ * the last read stays in the workspace snapshot so coming back paints it at
+ * once.
  */
-function useLiveActivity(coreSessionKey: string | null, isReady: boolean) {
+export function useRequestActivityPoll(
+  coreSessionKey: string | null,
+  enabled: boolean,
+): RequestActivity | null {
   const [activity, setActivity] = useWorkspaceSnapshot<RequestActivity | null>(
     activityKey(coreSessionKey),
     null,
   );
   useEffect(() => {
-    if (!isReady) return;
+    if (!enabled) return;
     let cancelled = false;
     let inFlight = false;
     const poll = async () => {
@@ -70,7 +73,12 @@ function useLiveActivity(coreSessionKey: string | null, isReady: boolean) {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [isReady, setActivity]);
+  }, [enabled, setActivity]);
+  return activity;
+}
+
+function useLiveActivity(coreSessionKey: string | null, isReady: boolean) {
+  const activity = useRequestActivityPoll(coreSessionKey, isReady);
   return useMemo(
     () => (activity ? summarizeActivity(activity) : null),
     [activity],
@@ -107,27 +115,25 @@ function HelpLabel({
 }
 
 /**
- * The live band above the request list: how many conversations are going on
- * right now, how many tokens the models put out, recent failures, and how the
- * count moved over the last five minutes. It covers every model call,
- * whatever the list below is filtered to.
+ * The live band above the request list: how many tokens the models put out
+ * and how many conversations went on at once over the last five minutes. It
+ * covers every model call, whatever the list below is filtered to, and stays
+ * away while nothing happened in that window; the poll keeps running so it
+ * comes back with the next call.
  */
 export function RequestActivityBoard({
   coreSessionKey,
   isReady,
-  onShowFailures,
 }: {
   coreSessionKey: string | null;
   isReady: boolean;
-  onShowFailures: () => void;
 }) {
   const t = useT();
   const live = useLiveActivity(coreSessionKey, isReady);
-  const snapshot = isReady ? (live?.snapshot ?? null) : null;
-  const points = live?.points ?? [];
-  const conversations = snapshot?.conversations ?? null;
+  if (!live || !hasRecentActivity(live)) return null;
+  const snapshot = isReady ? live.snapshot : null;
+  const points = live.points;
   const throughput = snapshot?.outputTokensPerSecond ?? null;
-  const failures = snapshot?.failures ?? 0;
   const peak = Math.max(0, ...points.map((sample) => sample.value));
   const timeFormat = new Intl.DateTimeFormat(currentLocale(), {
     hour: "numeric",
@@ -141,117 +147,73 @@ export function RequestActivityBoard({
   });
 
   return (
-    <Panel
-      aria-label={t("records.activityTitle")}
-      className="grid shrink-0 grid-cols-[minmax(0,auto)_minmax(10rem,1fr)]"
-      data-testid="request-activity"
-      role="region"
-    >
-      <MetricGroup className="grid-cols-[repeat(2,minmax(6.5rem,auto))] border-r @min-[640px]/workspace-surface:grid-cols-[repeat(3,minmax(6.5rem,auto))]">
-        <Metric
-          label={
-            <HelpLabel
-              help={t("records.activityInProgressHelp")}
-              hint={t("records.activityInProgressHint")}
-            >
-              {t("records.activityInProgress")}
-            </HelpLabel>
-          }
-          size="sm"
-          value={
-            <span data-testid="activity-conversations">
-              <ValueTransition valueKey={String(conversations)}>
-                {conversations ?? "—"}
-              </ValueTransition>
-              {conversations === null ? null : (
-                <Unit>
-                  {t("records.activityConversations", {
-                    count: conversations,
-                  })}
-                </Unit>
-              )}
-            </span>
-          }
-        />
-        <Metric
-          label={
-            <HelpLabel
-              help={t("records.activityThroughputHelp")}
-              hint={t("records.activityThroughputHint")}
-            >
-              {t("records.activityThroughput")}
-            </HelpLabel>
-          }
-          size="sm"
-          value={
-            // The average slides every second while tokens are in its window;
-            // fading each change would flicker.
-            <span data-testid="activity-throughput">
-              {throughput === null ? "—" : throughputFormat.format(throughput)}
-              {throughput === null ? null : <Unit>tok/s</Unit>}
-            </span>
-          }
-        />
-        <Metric
-          className="@max-[639px]/workspace-surface:hidden"
-          label={t("records.activityFailures")}
-          size="sm"
-          value={
-            failures > 0 ? (
-              <Button
-                aria-label={t("records.activityShowFailures", {
-                  count: failures,
-                })}
-                className="h-auto rounded-sm p-0 text-lg leading-6 font-semibold text-destructive"
-                data-testid="activity-failures"
-                onClick={onShowFailures}
-                type="button"
-                variant="link"
+    <div className="py-3 [@media(max-height:680px)]:py-2">
+      <Panel
+        aria-label={t("records.activityTitle")}
+        className="grid shrink-0 grid-cols-[minmax(0,auto)_minmax(10rem,1fr)]"
+        data-testid="request-activity"
+        role="region"
+      >
+        <MetricGroup className="grid-cols-[minmax(6.5rem,auto)] border-r @min-[640px]/workspace-surface:grid-cols-[minmax(6.5rem,auto)]">
+          <Metric
+            label={
+              <HelpLabel
+                help={t("records.activityThroughputHelp")}
+                hint={t("records.activityThroughputHint")}
               >
-                {failures}
-              </Button>
-            ) : (
-              <span data-testid="activity-failures">{snapshot ? 0 : "—"}</span>
-            )
+                {t("records.activityThroughput")}
+              </HelpLabel>
+            }
+            size="sm"
+            value={
+              // The average slides every second while tokens are in its
+              // window; fading each change would flicker.
+              <span data-testid="activity-throughput">
+                {throughput === null
+                  ? "—"
+                  : throughputFormat.format(throughput)}
+                {throughput === null ? null : <Unit>tok/s</Unit>}
+              </span>
+            }
+          />
+        </MetricGroup>
+        <LiveTrendChart
+          aside={t("records.activityWindow")}
+          breakdown={(sample) =>
+            sample.clients.length > 0 ? (
+              <ClientTypeCounts
+                clients={sample.clients}
+                data-testid="activity-clients"
+                label={clientList.format(
+                  sample.clients.map(({ clientType, count }) =>
+                    t("records.activityClient", {
+                      client: clientTypeName(clientType),
+                      count,
+                    }),
+                  ),
+                )}
+              />
+            ) : null
           }
+          className={cn("px-3 pt-2.5 pb-1.5", !isReady && "opacity-60")}
+          formatReadout={(point) =>
+            t("records.activityReadout", {
+              count: point.value,
+              time: timeFormat.format(point.at),
+            })
+          }
+          // Points sit one step apart across the window, so the line is whole.
+          gapMs={2 * ACTIVITY_STEP_MS}
+          label={t("records.activityChart", {
+            current: snapshot?.conversations ?? 0,
+            peak,
+          })}
+          nowMs={live.now}
+          points={points}
+          title={t("records.activityChartTitle")}
+          windowMs={ACTIVITY_WINDOW_MS}
         />
-      </MetricGroup>
-      <LiveTrendChart
-        aside={t("records.activityWindow")}
-        breakdown={(sample) =>
-          sample.clients.length > 0 ? (
-            <ClientTypeCounts
-              clients={sample.clients}
-              data-testid="activity-clients"
-              label={clientList.format(
-                sample.clients.map(({ clientType, count }) =>
-                  t("records.activityClient", {
-                    client: clientTypeName(clientType),
-                    count,
-                  }),
-                ),
-              )}
-            />
-          ) : null
-        }
-        className={cn("px-3 pt-2.5 pb-1.5", !isReady && "opacity-60")}
-        formatReadout={(point) =>
-          t("records.activityReadout", {
-            count: point.value,
-            time: timeFormat.format(point.at),
-          })
-        }
-        // Points sit one step apart across the window, so the line is whole.
-        gapMs={2 * ACTIVITY_STEP_MS}
-        label={t("records.activityChart", {
-          current: conversations ?? 0,
-          peak,
-        })}
-        nowMs={live?.now ?? Date.now()}
-        points={points}
-        title={t("records.activityChartTitle")}
-        windowMs={ACTIVITY_WINDOW_MS}
-      />
-    </Panel>
+      </Panel>
+    </div>
   );
 }

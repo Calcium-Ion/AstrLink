@@ -6,10 +6,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const bridgeMocks = vi.hoisted(() => ({
   getRequestAuditContent: vi.fn(),
+  getRequestContextTexts: vi.fn(),
 }));
 vi.mock("./bridge", () => bridgeMocks);
 
 import type { CopyFeedback } from "./copy-feedback";
+import { settleClosedLayer } from "./lib/test-layer-settle";
 import { RequestConversation } from "./RequestConversation";
 import {
   emptyTrajectoryFields,
@@ -274,6 +276,7 @@ describe("RequestConversation", () => {
     document.body.appendChild(container);
     root = createRoot(container);
     bridgeMocks.getRequestAuditContent.mockReset();
+    bridgeMocks.getRequestContextTexts.mockReset();
     bridgeMocks.getRequestAuditContent.mockImplementation(
       async (id: string) => {
         const found = contents[id];
@@ -1203,5 +1206,361 @@ describe("RequestConversation", () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+
+  it("notes compactions and summary calls, and folds calls that missed the cache", async () => {
+    render({
+      context: {
+        calls: [
+          { request_id: "req_1", tokens: 50_000 },
+          { request_id: "req_2", tokens: 60_000 },
+          { request_id: "req_3", tokens: 70_000 },
+          { request_id: "req_4", tokens: 80_000 },
+          { request_id: "req_5", tokens: 9_000 },
+        ],
+        compactions: [
+          {
+            request_id: "req_5",
+            summary_request_id: "req_4",
+            before_tokens: 80_000,
+            after_tokens: 9_000,
+            marked: false,
+          },
+        ],
+        cache_misses: [
+          {
+            request_id: "req_2",
+            reason: "model_changed",
+            rewritten_tokens: 50_000,
+            extra_usd: "0.120000000",
+          },
+        ],
+      },
+    });
+    await vi.waitFor(() => {
+      expect(container.textContent).toContain("都在。");
+    });
+    // The latest turn opens with the divider above its first call.
+    const divider = container.querySelector(
+      '[data-testid="conversation-compaction"]',
+    );
+    expect(divider?.textContent).toBe("上下文压缩8万 \u2192 9,000看摘要");
+    await openFirstTurn();
+    await vi.waitFor(() => {
+      expect(container.textContent).toContain("Read ×1 · Grep ×1 · Bash ×1");
+    });
+    const first = container.querySelectorAll(
+      '[data-testid="conversation-turn"]',
+    )[0]!;
+    // A call that missed the cache is routine: it folds into the run around
+    // it, and the miss stays in the context view.
+    expect(container.textContent).not.toContain("缓存没命中");
+    expect(
+      first.querySelector('[data-testid="conversation-run"]'),
+    ).not.toBeNull();
+    expect(
+      first.querySelector(
+        '[data-testid="conversation-inspect"][data-request-id="req_2"]',
+      ),
+    ).toBeNull();
+    const summaryCall = first.querySelector(
+      '[data-testid="conversation-summary-call"]',
+    );
+    expect(summaryCall?.textContent).toBe("写压缩摘要");
+    expect(
+      summaryCall?.closest('[data-testid="conversation-call"]')?.textContent,
+    ).toContain("第 4 次调用");
+  });
+
+  it("notes new memory, a marked compaction and an asked summary from the records", async () => {
+    const memoryPath = "~/.claude/projects/~-proj/memory/MEMORY.md";
+    const written = {
+      kind: "memory" as const,
+      name: "MEMORY.md",
+      path: memoryPath,
+    };
+    const turns = calls.map((call) => {
+      switch (call.id) {
+        case "req_2":
+          return {
+            ...call,
+            context: {
+              items: [],
+              memory_writes: [
+                {
+                  ...written,
+                  title: "No jitter-sensitive tests",
+                  entry: "no-jitter.md",
+                },
+              ],
+            },
+          };
+        case "req_3":
+          // The same history sent again repeats the write.
+          return {
+            ...call,
+            context: {
+              items: [],
+              memory_writes: [
+                {
+                  ...written,
+                  title: "No jitter-sensitive tests",
+                  entry: "no-jitter.md",
+                },
+              ],
+            },
+          };
+        case "req_4":
+          return {
+            ...call,
+            context: { items: [], memory_writes: [], summary: true },
+          };
+        case "req_5":
+          return {
+            ...call,
+            context: { items: [], memory_writes: [], compacted: "fp1_summary" },
+          };
+        default:
+          return call;
+      }
+    });
+    render({
+      turns,
+      context: {
+        calls: [
+          { request_id: "req_1", tokens: 50_000 },
+          { request_id: "req_2", tokens: 60_000 },
+          { request_id: "req_3", tokens: 70_000 },
+          { request_id: "req_4", tokens: 402_000 },
+          { request_id: "req_5", tokens: 35_000 },
+        ],
+        // The client marked the compaction; no summary call was matched.
+        compactions: [
+          {
+            request_id: "req_5",
+            before_tokens: 402_000,
+            after_tokens: 35_000,
+            marked: true,
+          },
+        ],
+        cache_misses: [],
+      },
+    });
+    await vi.waitFor(() => {
+      expect(container.textContent).toContain("都在。");
+    });
+    expect(
+      container.querySelector('[data-testid="conversation-compaction"]')
+        ?.textContent,
+    ).toBe("上下文压缩40.2万 \u2192 3.5万看摘要");
+    await openFirstTurn();
+    await vi.waitFor(() => {
+      expect(
+        container.querySelector('[data-testid="conversation-memory"]'),
+      ).not.toBeNull();
+    });
+    const lines = container.querySelectorAll<HTMLElement>(
+      '[data-testid="conversation-memory"]',
+    );
+    expect(lines).toHaveLength(1);
+    expect(lines[0]!.textContent).toBe(
+      "新增记忆「No jitter-sensitive tests」MEMORY.md看内容",
+    );
+    expect(lines[0]!.getAttribute("title")).toBe(memoryPath);
+    expect(
+      lines[0]!.closest('[data-testid="conversation-call"]')?.textContent,
+    ).toContain("第 2 次调用");
+    const summaryCall = container.querySelector(
+      '[data-testid="conversation-summary-call"]',
+    );
+    expect(
+      summaryCall?.closest('[data-testid="conversation-call"]')?.textContent,
+    ).toContain("第 4 次调用");
+  });
+
+  it("opens the new memory and the summary a captured call carried", async () => {
+    const memoryDir = "~/.claude/projects/~-proj/memory";
+    const turns = (captured: boolean) =>
+      calls.map((call) => ({
+        ...call,
+        audit: { ...audit, request_body_captured: captured },
+        ...(call.id === "req_2"
+          ? {
+              context: {
+                items: [],
+                memory_writes: [
+                  {
+                    kind: "memory" as const,
+                    name: "MEMORY.md",
+                    path: `${memoryDir}/MEMORY.md`,
+                    title: "No jitter-sensitive tests",
+                    entry: "no-jitter.md",
+                  },
+                ],
+              },
+            }
+          : {}),
+      }));
+    const context = {
+      calls: [
+        { request_id: "req_4", tokens: 402_000 },
+        { request_id: "req_5", tokens: 35_000 },
+      ],
+      compactions: [
+        {
+          request_id: "req_5",
+          before_tokens: 402_000,
+          after_tokens: 35_000,
+          marked: true,
+        },
+      ],
+      cache_misses: [],
+    };
+    bridgeMocks.getRequestContextTexts.mockImplementation(
+      async (requestId: string) =>
+        requestId === "req_5"
+          ? {
+              request_id: requestId,
+              items: [],
+              writes: [],
+              summary: "Fixed four issues; vet is clean.",
+            }
+          : {
+              request_id: requestId,
+              items: [],
+              writes: [
+                {
+                  kind: "memory",
+                  name: "no-jitter.md",
+                  path: `${memoryDir}/no-jitter.md`,
+                  content: "Wait on done channels, not sleeps.",
+                },
+              ],
+            },
+    );
+    const link = (label: string) =>
+      [...container.querySelectorAll("button")].find(
+        (button) => button.textContent === label,
+      );
+    const closeDialog = async () => {
+      await act(async () => {
+        document.dispatchEvent(
+          new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+        );
+      });
+      await settleClosedLayer();
+      expect(document.querySelector('[role="dialog"]')).toBeNull();
+    };
+
+    render({ turns: turns(true), context });
+    await vi.waitFor(() => {
+      expect(container.textContent).toContain("都在。");
+    });
+    // The summary is the history the call after the compaction started from.
+    await act(async () => link("看摘要")!.click());
+    await flush();
+    expect(bridgeMocks.getRequestContextTexts).toHaveBeenCalledWith("req_5");
+    let dialog = document.querySelector('[role="dialog"]');
+    expect(dialog?.querySelector("h2")?.textContent).toBe("压缩摘要");
+    expect(
+      dialog?.querySelector('[data-slot="code-block-content"]')?.textContent,
+    ).toBe("Fixed four issues; vet is clean.");
+    await closeDialog();
+
+    await openFirstTurn();
+    await vi.waitFor(() => {
+      expect(link("看内容")).toBeDefined();
+    });
+    await act(async () => link("看内容")!.click());
+    await flush();
+    expect(bridgeMocks.getRequestContextTexts).toHaveBeenLastCalledWith(
+      "req_2",
+    );
+    dialog = document.querySelector('[role="dialog"]');
+    expect(dialog?.querySelector("h2")?.textContent).toBe(
+      "新增记忆「No jitter-sensitive tests」",
+    );
+    expect(
+      dialog?.querySelector('[data-slot="code-block-content"]')?.textContent,
+    ).toBe("Wait on done channels, not sleeps.");
+    await closeDialog();
+
+    // Without the request body there is nothing to open.
+    render({ turns: turns(false), context });
+    await flush();
+    expect(
+      container.querySelector('[data-testid="conversation-compaction"]')
+        ?.textContent,
+    ).toBe("上下文压缩40.2万 \u2192 3.5万");
+    expect(
+      container.querySelector('[data-testid="conversation-memory"]')
+        ?.textContent,
+    ).toBe("新增记忆「No jitter-sensitive tests」MEMORY.md");
+  });
+
+  it("opens a new memory in the memory tab, a rules write in its text", async () => {
+    const onOpenMemory = vi.fn();
+    const turns = calls.map((call) =>
+      call.id === "req_2"
+        ? {
+            ...call,
+            client_type: "claude_code" as const,
+            project: "~/proj",
+            context: {
+              items: [],
+              memory_writes: [
+                {
+                  kind: "memory" as const,
+                  name: "MEMORY.md",
+                  title: "No jitter-sensitive tests",
+                  entry: "no-jitter.md",
+                },
+                { kind: "rules" as const, name: "AGENTS.md", title: "Run vet" },
+              ],
+            },
+          }
+        : call,
+    );
+    render({ turns, onOpenMemory });
+    await vi.waitFor(() => {
+      expect(container.textContent).toContain("都在。");
+    });
+    await openFirstTurn();
+    await vi.waitFor(() => {
+      expect(
+        container.querySelectorAll('[data-testid="conversation-memory"]'),
+      ).toHaveLength(2);
+    });
+    const [memoryLine, rulesLine] = container.querySelectorAll<HTMLElement>(
+      '[data-testid="conversation-memory"]',
+    );
+    // The memory opens without a captured body: the tab shows its history.
+    await act(async () => memoryLine!.querySelector("button")!.click());
+    expect(onOpenMemory).toHaveBeenCalledWith({
+      file: "no-jitter.md",
+      project: "~/proj",
+      clientType: "claude_code",
+    });
+    // A rules write has no memory to open; it shows the captured text.
+    bridgeMocks.getRequestContextTexts.mockResolvedValue({
+      request_id: "req_2",
+      items: [],
+      writes: [{ kind: "rules", name: "AGENTS.md", content: "Run vet." }],
+      reads: [],
+    });
+    await act(async () => rulesLine!.querySelector("button")!.click());
+    await flush();
+    expect(onOpenMemory).toHaveBeenCalledTimes(1);
+    expect(bridgeMocks.getRequestContextTexts).toHaveBeenCalledWith("req_2");
+    expect(
+      document.querySelector('[role="dialog"] [data-slot="code-block-content"]')
+        ?.textContent,
+    ).toBe("Run vet.");
+    await act(async () => {
+      document.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+      );
+    });
+    await settleClosedLayer();
   });
 });

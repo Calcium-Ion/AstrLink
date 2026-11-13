@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   parseBillingSummary,
+  parseQuotaEstimates,
   parseServiceBilling,
   parsePricingConfig,
   billingAmount,
@@ -35,6 +36,11 @@ describe("official pricing boundary", () => {
       ).toThrow();
     }
     expect(formatUSD("18.420000000")).toBe("$18.42");
+    // Short amounts drop the cents from $1,000 up.
+    expect(formatUSD("999.99", { short: true })).toBe("$999.99");
+    expect(formatUSD("1000", { short: true })).toBe("$1,000");
+    expect(formatUSD("12345.67", { short: true })).toBe("$12,346");
+    expect(formatUSD("12345.67")).toBe("$12,345.67");
   });
   it("does not accept non-finite money, counts, or fabricated plan prices", () => {
     const row = {
@@ -197,5 +203,38 @@ describe("official pricing boundary", () => {
       currentBillingPeriod(periods, Date.parse("2026-09-19T04:00:00Z")),
     ).toBe(primary);
     expect(currentBillingPeriod(periods, Date.parse(primary.end))).toBe(month);
+  });
+});
+describe("quota estimates", () => {
+  it("reads each service's estimated windows and rejects unknown ones", () => {
+    const estimates = {
+      services: [
+        {
+          service_id: "service_codex",
+          windows: [{ kind: "primary", total_usd: "40.00" }],
+        },
+      ],
+    };
+    expect(parseQuotaEstimates(estimates)).toEqual(estimates.services);
+    expect(() =>
+      parseQuotaEstimates({
+        services: [
+          {
+            service_id: "service_codex",
+            windows: [{ kind: "spark/primary", total_usd: "40.00" }],
+          },
+        ],
+      }),
+    ).toThrow("Invalid quota window");
+    expect(() =>
+      parseQuotaEstimates({
+        services: [
+          {
+            service_id: "service_codex",
+            windows: [{ kind: "primary", total_usd: "about 40" }],
+          },
+        ],
+      }),
+    ).toThrow("Invalid billing amount");
   });
 });

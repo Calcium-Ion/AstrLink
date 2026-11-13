@@ -16,6 +16,7 @@ import (
 
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/accountauth"
+	"github.com/QuantumNous/astrlink/core/internal/claudeofficial"
 	"github.com/QuantumNous/astrlink/core/internal/networkproxy"
 	"github.com/QuantumNous/astrlink/core/internal/providerapi"
 	"github.com/QuantumNous/astrlink/core/internal/secretstore"
@@ -37,6 +38,10 @@ var (
 	ErrCredentialUnavailable = errors.New("model discovery credential is unavailable")
 	ErrNotConnected          = errors.New("subscription service is not connected")
 	ErrUpstream              = errors.New("upstream model discovery failed")
+	// ErrUnreachable and ErrInvalidResponse ride along ErrUpstream and say
+	// why it failed: no HTTP answer, or an answer that is not a model list.
+	ErrUnreachable     = errors.New("upstream is unreachable")
+	ErrInvalidResponse = errors.New("upstream response is not a model list")
 )
 
 // Discovery is one model-list probe: the model ids, sorted, and the format
@@ -51,6 +56,8 @@ type Prober struct {
 	subscriptions *subscription.Manager
 	client        *http.Client
 	vertex        *vertexauth.Manager
+	// officialModels lists what an official Claude account's CLI offers.
+	officialModels func(context.Context, contract.ServiceID) ([]string, error)
 }
 
 func New(secrets secretstore.SecretStore, subscriptions *subscription.Manager, client *http.Client) *Prober {
@@ -69,6 +76,13 @@ func New(secrets secretstore.SecretStore, subscriptions *subscription.Manager, c
 
 func (prober *Prober) WithVertexTokens(tokens *vertexauth.Manager) *Prober {
 	prober.vertex = tokens
+	return prober
+}
+
+// WithOfficialClaudeModels lists the models of official Claude accounts with
+// models; without it they list none.
+func (prober *Prober) WithOfficialClaudeModels(models func(context.Context, contract.ServiceID) ([]string, error)) *Prober {
+	prober.officialModels = models
 	return prober
 }
 
@@ -177,6 +191,24 @@ func (prober *Prober) probeSubscription(
 	probeContext, err := prober.subscriptions.ProxyContext(probeContext, serviceID)
 	if err != nil {
 		return nil, err
+	}
+	if account, err := prober.subscriptions.Get(probeContext, serviceID); err == nil && account.Official() {
+		// Official Claude accounts are served by the claude CLI, which names
+		// the models it offers when it starts.
+		if protocol != contract.ProtocolOpenAIModels || prober.officialModels == nil {
+			return nil, ErrUnsupported
+		}
+		ids, err := prober.officialModels(probeContext, serviceID)
+		if err != nil {
+			if errors.Is(probeContext.Err(), context.DeadlineExceeded) {
+				return nil, context.DeadlineExceeded
+			}
+			if errors.Is(err, claudeofficial.ErrSignedOut) {
+				return nil, fmt.Errorf("%w: %v", ErrNotConnected, err)
+			}
+			return nil, fmt.Errorf("%w: %v", ErrUpstream, err)
+		}
+		return normalizeProbeIDs(ids)
 	}
 	tokens, err := prober.subscriptions.AccessToken(probeContext, serviceID)
 	if err != nil {
@@ -296,7 +328,7 @@ func (prober *Prober) probeHTTPPages(
 			if errors.Is(probeContext.Err(), context.DeadlineExceeded) {
 				return Discovery{}, context.DeadlineExceeded
 			}
-			return Discovery{}, fmt.Errorf("%w: request failed", ErrUpstream)
+			return Discovery{}, fmt.Errorf("%w: request failed: %w", ErrUpstream, ErrUnreachable)
 		}
 		remaining := maxResponseBytes - totalBytes
 		if remaining <= 0 {
@@ -362,7 +394,7 @@ func decodePage(body []byte, protocol contract.ProtocolID, anthropic bool) ([]li
 			NextPageToken string `json:"nextPageToken"`
 		}
 		if err := json.Unmarshal(body, &page); err != nil || page.Models == nil {
-			return nil, "", false, fmt.Errorf("%w: invalid Gemini response", ErrUpstream)
+			return nil, "", false, fmt.Errorf("%w: invalid Gemini response: %w", ErrUpstream, ErrInvalidResponse)
 		}
 		models := make([]listedModel, 0, len(page.Models))
 		for _, model := range page.Models {
@@ -379,7 +411,7 @@ func decodePage(body []byte, protocol contract.ProtocolID, anthropic bool) ([]li
 		LastID  string `json:"last_id"`
 	}
 	if err := json.Unmarshal(body, &page); err != nil || page.Data == nil {
-		return nil, "", false, fmt.Errorf("%w: invalid model response", ErrUpstream)
+		return nil, "", false, fmt.Errorf("%w: invalid model response: %w", ErrUpstream, ErrInvalidResponse)
 	}
 	models := make([]listedModel, 0, len(page.Data))
 	for _, model := range page.Data {

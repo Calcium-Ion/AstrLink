@@ -1,3 +1,4 @@
+import { useDisplayCurrency } from "./currency-display";
 import { isWebEdition } from "./edition";
 import { useBillingSummary, type BillingStatus } from "./BillingOverview";
 import {
@@ -19,7 +20,6 @@ import {
   CircleDollarSign,
   Copy,
   Plus,
-  RefreshCw,
   RotateCcw,
   Settings,
   SlidersHorizontal,
@@ -47,6 +47,12 @@ import { ModelBrandIcon } from "@/components/ModelBrandIcon";
 import { Panel, PanelHeader } from "@/components/Panel";
 import { OrderedList } from "@/components/OrderedList";
 import { useOverviewLayout, type OverviewModuleId } from "./overview-layout";
+import { STAR_TRAIL_RANGES } from "./star-trail-model";
+import { UsageStarTrail, UsageStarTrailSkeleton } from "./UsageStarTrail";
+import { LiveCrew } from "./LiveCrew";
+import { useInitialWindowFit } from "./main-window-fit";
+import { RequestSky } from "./RequestSky";
+import { useWorkspaceSnapshot } from "./workspace-snapshots";
 import { PaginatedList } from "@/components/PaginatedList";
 import { StatusBadge } from "@/components/StatusBadge";
 import { StatusDot } from "@/components/StatusDot";
@@ -87,12 +93,11 @@ import {
   formatExactNumber,
 } from "./format-compact-number";
 import type { CopyState } from "./copy-feedback";
-import { clientsUsing, useClientConfigs } from "./use-client-configs";
+import { useClientConfigs } from "./use-client-configs";
 import type { RecordsTarget } from "./request-live-model";
 import { statusLabel, type RequestStatus } from "./request-record-model";
 import { currentLocale, i18n, useT } from "./i18n";
 import { PageHeader } from "./PageHeader";
-import { ActionGroup } from "@/components/ActionGroup";
 import { ScrollWorkspace } from "@/components/ScrollWorkspace";
 import { placeFloatingCard } from "./place-floating-card";
 import type { Service } from "./service-model";
@@ -102,6 +107,7 @@ import {
   emptyUsageTotals,
   formatCacheHitPercent,
   hourlyUsageWindow,
+  localDayKey,
   mergeCatalogServiceUsage,
   modelUsageLabel,
   usageRangeKey,
@@ -146,9 +152,27 @@ const BREAKDOWN_LIST_HEIGHT = [
   "min-h-75",
 ] as const;
 
+type UsageView = "chart" | "heatmap" | "trail";
+
+/**
+ * The range `view` shows when `chosen` was picked by hand: that range when
+ * the view can show it, otherwise the view's own. A ring per model for a
+ * day, or per day for a week or a month, fits the star trail's disc; a
+ * calendar of one or seven days says less than a bar chart, so the heatmap
+ * opens on a year.
+ */
+function rangeForView(chosen: UsageRange, view: UsageView): UsageRange {
+  if (view === "trail") {
+    return STAR_TRAIL_RANGES.some((range) => range === chosen) ? chosen : "1d";
+  }
+  if (view === "heatmap" && (chosen === "1d" || chosen === "7d")) return "1y";
+  return chosen;
+}
+
 export function Overview({
   catalog,
   copyState,
+  coreSessionKey = null,
   isNativeApp,
   isReady,
   isRestarting,
@@ -172,6 +196,8 @@ export function Overview({
 }: {
   catalog: ServiceCatalog;
   copyState: CopyState;
+  /** Keys the live request feed the sky flies comets from. */
+  coreSessionKey?: string | null;
   isNativeApp: boolean;
   isReady: boolean;
   isRestarting: boolean;
@@ -196,13 +222,27 @@ export function Overview({
   usageRange: UsageRange;
 }) {
   const t = i18n.t.bind(i18n);
-  const [view, setView] = useState<"chart" | "heatmap">(() =>
-    usageRange === "1d" || usageRange === "7d" ? "chart" : "heatmap",
+  // The star trail opens first; a view picked by hand stays for the session.
+  const [view, setView] = useWorkspaceSnapshot<UsageView>(
+    "overview-usage-view",
+    () =>
+      STAR_TRAIL_RANGES.some((range) => range === usageRange)
+        ? "trail"
+        : "heatmap",
+    "desktop",
+  );
+  // The range last picked by hand. A view that cannot show it borrows its
+  // own fallback while it is open, and the next view that can gets it back.
+  const [chosenRange, setChosenRange] = useWorkspaceSnapshot<UsageRange>(
+    "overview-usage-chosen-range",
+    () => usageRange,
+    "desktop",
   );
   const rangeKey = usageRangeKey(usageRange);
   const [editingLayout, setEditingLayout] = useState(false);
   const layout = useOverviewLayout();
   const footerRef = useRef<HTMLDivElement>(null);
+  useInitialWindowFit(footerRef, usage.status);
   useLayoutEffect(() => {
     if (!showOnboardingHint) return;
     const scroller = footerRef.current?.closest<HTMLElement>(
@@ -218,6 +258,9 @@ export function Overview({
   const visibleModules = layout.order.filter(
     (id) => id !== "system" && !layout.hidden.includes(id),
   );
+  // The usage range also sets the figures in the modules below, so its
+  // controls share the page header's row instead of taking one of their own.
+  const usageShown = visibleModules.includes("usage");
   const capabilities = snapshot?.capabilities ?? null;
   const conversionEngine = capabilities?.conversion_engine;
   const statusTone = snapshot ? phaseTone(snapshot.phase) : "neutral";
@@ -248,6 +291,24 @@ export function Overview({
     usage.status === "blocked" || usage.status === "error"
       ? undefined
       : summary?.totals;
+  // The star trail holds its numbers; built once per read so the trail
+  // keeps its own renders. Over a day, today's requests would repeat them.
+  const trailMetrics = useMemo(
+    () => (
+      <UsageMetrics
+        billing={billingSummary}
+        inline
+        status={usage.status}
+        today={
+          summary && !hourlyUsageWindow(summary.window)
+            ? todayRequests(summary)
+            : null
+        }
+        totals={totals}
+      />
+    ),
+    [billingSummary, summary, totals, usage.status],
+  );
   const serviceRows = mergeCatalogServiceUsage(
     catalog.items,
     summary?.by_service ?? [],
@@ -308,123 +369,60 @@ export function Overview({
   const systemDetails = systemDetailRows.filter((row) => row !== null);
 
   const moduleLabels: Record<OverviewModuleId, string> = {
+    "live-crew": t("overview.liveCrew.title"),
+    "request-sky": t("overview.sky"),
     usage: t("overview.usageSummary"),
     "providers-models": t("overview.providersAndModels"),
     tokens: t("overview.statusAndTokens"),
     access: t("overview.apiAddress"),
     system: t("overview.systemDetails"),
   };
+  // The sky shows these 30 days instead of reading them a second time.
+  const skyMonth =
+    usageRange !== "30d"
+      ? undefined
+      : summary?.window.preset === "30d"
+        ? summary
+        : usage.status === "error"
+          ? undefined
+          : null;
   const moduleContent: Record<OverviewModuleId, ReactNode> = {
+    "live-crew": (
+      <LiveCrew
+        coreSessionKey={coreSessionKey}
+        isReady={isReady}
+        todayTokens={summary ? todayTokens(summary) : null}
+      />
+    ),
+    "request-sky": (
+      <RequestSky
+        coreSessionKey={coreSessionKey}
+        isReady={isReady}
+        overviewMonth={skyMonth}
+        revision={summary}
+        services={catalog.items}
+      />
+    ),
     usage: (
       <section
         aria-labelledby="usage-heading"
         aria-busy={usage.status === "loading"}
         className="grid min-w-0 grid-cols-1 gap-3"
       >
-        <div
-          className="flex min-w-0 flex-wrap items-center justify-between gap-x-4 gap-y-2"
-          data-slot="overview-toolbar"
-        >
-          <div className="flex items-center gap-1.5">
-            <h2 className="text-sm font-medium" id="usage-heading">
-              {t("overview.usageSummary")}
-            </h2>
-            <HelpPopover label={t("overview.usageDetails")}>
-              <p>
-                {t(
-                  usageRange === "1d"
-                    ? "overview.hourlyUsageNote"
-                    : "overview.usageNote",
-                )}
-              </p>
-              <p className="mt-2">{t("overview.heatmapNote")}</p>
-            </HelpPopover>
-          </div>
-          <ActionGroup className="gap-4">
-            <SegmentedControl
-              label={t("overview.viewLabel")}
-              variant="line"
-              value={view}
-              onValueChange={(next) => {
-                setView(next);
-                if (
-                  next === "heatmap" &&
-                  (usageRange === "1d" || usageRange === "7d")
-                )
-                  onUsageRangeChange("1y");
-              }}
-              options={[
-                { value: "heatmap", label: t("overview.heatmap") },
-                { value: "chart", label: t("overview.chart") },
-              ]}
-            />
-            <span aria-hidden="true" className="h-4 w-px bg-border" />
-            <UsageRangePicker
-              ariaLabel={t("overview.rangeLabel")}
-              className="min-w-24"
-              onChange={(next) => {
-                if (next !== null) onUsageRangeChange(next);
-              }}
-              // A calendar of one or seven days says less than a bar chart.
-              presets={
-                view === "heatmap"
-                  ? USAGE_RANGE_PRESETS.filter(
-                      (preset) => preset !== "1d" && preset !== "7d",
-                    )
-                  : USAGE_RANGE_PRESETS
-              }
-              value={usageRange}
-            />
-          </ActionGroup>
-        </div>
+        <h2 className="sr-only" id="usage-heading">
+          {t("overview.usageSummary")}
+        </h2>
         {usage.status === "loading" && !summary ? (
-          <UsagePanelSkeleton />
+          <UsagePanelSkeleton trail={view === "trail"} />
         ) : (
           <div className="relative grid min-w-0 grid-cols-1 gap-3">
-            <MetricGroup className={USAGE_METRIC_GRID}>
-              <UsageMetric
-                icon={<Activity />}
-                label={t("overview.requests")}
-                metric={compactMetric(totals?.requests, usage.status)}
+            {view === "trail" ? null : (
+              <UsageMetrics
+                billing={billingSummary}
+                status={usage.status}
+                totals={totals}
               />
-              <UsageMetric
-                detail={
-                  totals && totals.input_tokens + totals.output_tokens > 0 ? (
-                    <TokenSplit
-                      input={totals.input_tokens}
-                      output={totals.output_tokens}
-                    />
-                  ) : undefined
-                }
-                icon={<Boxes />}
-                label={t("overview.totalTokens")}
-              >
-                <CompactCount
-                  value={usageCountValue(totals?.total_tokens, usage.status)}
-                />
-              </UsageMetric>
-              <UsageMetric
-                icon={<SquareStack />}
-                label={t("overview.cacheHits")}
-                metric={{
-                  text: cacheHitMetric(totals, usage.status),
-                  title: null,
-                }}
-              />
-              <UsageMetric
-                detail={
-                  billingSummary
-                    ? billingNoteText(t, billingSummary) || undefined
-                    : undefined
-                }
-                icon={<CircleDollarSign />}
-                label={t("pricing.officialAmount")}
-                metric={{
-                  text: billingSummary ? billingAmount(billingSummary) : "—",
-                  title: t("overview.costNote"),
-                }}
-              />
-            </MetricGroup>
+            )}
             <Panel aria-labelledby="activity-heading">
               <h3 className="sr-only" id="activity-heading">
                 {t("overview.activity")}
@@ -433,6 +431,12 @@ export function Overview({
                 <UsageHeatmap
                   points={summary?.by_day ?? []}
                   status={usage.status}
+                />
+              ) : view === "trail" ? (
+                <UsageStarTrail
+                  metrics={trailMetrics}
+                  status={usage.status}
+                  summary={summary}
                 />
               ) : (
                 <UsageDayChart
@@ -830,25 +834,10 @@ export function Overview({
                     <SlidersHorizontal aria-hidden="true" />
                   )}
                 </IconButton>
-                <Button
-                  disabled={!isReady || usage.status === "loading"}
-                  onClick={onRefresh}
-                  size="icon-sm"
-                  type="button"
-                  variant="ghost"
-                  aria-label={t("common.refresh")}
-                >
-                  <RefreshCw
-                    aria-hidden="true"
-                    className={cn(
-                      usage.status === "loading" &&
-                        "animate-spin motion-reduce:animate-none",
-                    )}
-                  />
-                </Button>
-                <StatusBadge tone={statusTone}>
-                  {isReady ? t("overview.gatewayHealthy") : statusLabel}
-                </StatusBadge>
+                {/* The sidebar already says the gateway is ready. */}
+                {isReady ? null : (
+                  <StatusBadge tone={statusTone}>{statusLabel}</StatusBadge>
+                )}
                 {isNativeApp && (!isReady || snapshot?.restart_pending) ? (
                   <Button
                     variant="outline"
@@ -864,10 +853,80 @@ export function Overview({
                         : t("overview.restartGateway")}
                   </Button>
                 ) : null}
+                {/* The range picker is the widest control, so it ends the row. */}
+                {usageShown ? (
+                  <div
+                    className="flex min-w-0 flex-wrap items-center justify-end gap-x-4 gap-y-2"
+                    data-slot="overview-toolbar"
+                  >
+                    <SegmentedControl
+                      label={t("overview.viewLabel")}
+                      variant="line"
+                      value={view}
+                      onValueChange={(next) => {
+                        setView(next);
+                        const shown = rangeForView(chosenRange, next);
+                        if (usageRangeKey(shown) !== rangeKey)
+                          onUsageRangeChange(shown);
+                      }}
+                      options={[
+                        { value: "trail", label: t("overview.starTrail") },
+                        { value: "heatmap", label: t("overview.heatmap") },
+                        { value: "chart", label: t("overview.chart") },
+                      ]}
+                    />
+                    <span aria-hidden="true" className="h-4 w-px bg-border" />
+                    <UsageRangePicker
+                      ariaLabel={t("overview.rangeLabel")}
+                      className="min-w-24"
+                      custom={view !== "trail"}
+                      onChange={(next) => {
+                        if (next === null) return;
+                        setChosenRange(next);
+                        onUsageRangeChange(next);
+                      }}
+                      // A calendar of one or seven days says less than a bar
+                      // chart.
+                      presets={
+                        view === "heatmap"
+                          ? USAGE_RANGE_PRESETS.filter(
+                              (preset) => preset !== "1d" && preset !== "7d",
+                            )
+                          : view === "trail"
+                            ? STAR_TRAIL_RANGES
+                            : USAGE_RANGE_PRESETS
+                      }
+                      value={usageRange}
+                    />
+                  </div>
+                ) : null}
               </>
             }
+            actionsClassName="shrink"
             className="mb-0 border-0 py-0"
             title={t("overview.title")}
+            titleSuffix={
+              usageShown ? (
+                <HelpPopover label={t("overview.usageDetails")}>
+                  <p>
+                    {t(
+                      usageRange === "1d"
+                        ? "overview.hourlyUsageNote"
+                        : "overview.usageNote",
+                    )}
+                  </p>
+                  <p className="mt-2">
+                    {t(
+                      view !== "trail"
+                        ? "overview.heatmapNote"
+                        : usageRange === "1d"
+                          ? "overview.starTrailModelNote"
+                          : "overview.starTrailNote",
+                    )}
+                  </p>
+                </HelpPopover>
+              ) : null
+            }
             variant="compact"
           />
           <InferencePortNotice snapshot={snapshot} />
@@ -1075,7 +1134,9 @@ function TokenUsagePanel({
   usage: UsageSummary | null;
 }) {
   const t = i18n.t.bind(i18n);
-  const { configs: clientConfigs } = useClientConfigs(inferenceURL);
+  useDisplayCurrency();
+  const { configs: clientConfigs, available: clientModels } =
+    useClientConfigs(inferenceURL);
   const rows = useMemo(
     () => mergeTokenUsageRows(tokenCatalog, usage, billingSummary),
     [billingSummary, tokenCatalog, usage],
@@ -1229,8 +1290,11 @@ function TokenUsagePanel({
                         {row.name}
                       </span>
                       <TokenClientMarks
+                        available={clientModels}
                         className="pointer-events-auto"
-                        clients={clientsUsing(clientConfigs, row.id)}
+                        configs={clientConfigs}
+                        tokenId={row.id}
+                        tokenName={row.name}
                       />
                     </span>
                     <span className="pointer-events-none relative text-right text-sm font-semibold tabular-nums">
@@ -1328,8 +1392,18 @@ const DAY_STACK_BARS = [
   },
 ] as const;
 
-function UsagePanelSkeleton() {
+function UsagePanelSkeleton({ trail = false }: { trail?: boolean }) {
   const t = i18n.t.bind(i18n);
+  if (trail)
+    return (
+      <Panel
+        aria-label={t("overview.aggregating")}
+        data-slot="usage-skeleton"
+        role="status"
+      >
+        <UsageStarTrailSkeleton />
+      </Panel>
+    );
   return (
     <div
       aria-label={t("overview.aggregating")}
@@ -2487,6 +2561,7 @@ function UsageBreakdownRow({
   tokens: number;
 }) {
   const t = i18n.t.bind(i18n);
+  useDisplayCurrency();
   const requestMetric = compactMetric(requests, status);
   // An unpriced row has no amount to show; its title says why.
   const amount = cost && cost.priced > 0 ? billingAmount(cost) : null;
@@ -2516,29 +2591,118 @@ function UsageBreakdownRow({
   );
 }
 
-function UsageMetric({
-  children,
-  detail,
-  label,
-  metric,
-  icon,
-}: {
-  children?: ReactNode;
-  detail?: ReactNode;
-  label: string;
-  icon?: ReactNode;
-  metric?: CompactMetric;
-}) {
-  return (
-    <Metric
-      detail={detail}
-      icon={icon}
-      label={label}
-      title={metric?.title ?? undefined}
-      value={children ?? metric?.text}
-    />
-  );
+/** Today's totals when the range reaches today, otherwise null. */
+function todayTotals(summary: UsageSummary): UsageTotals | null {
+  const now = new Date();
+  const at = now.getTime();
+  if (
+    at < Date.parse(summary.window.from) ||
+    at >= Date.parse(summary.window.to)
+  )
+    return null;
+  const today = localDayKey(now);
+  return summary.by_day.find((day) => day.date === today) ?? emptyUsageTotals();
 }
+
+/** Today's requests when the range reaches today, otherwise null. */
+function todayRequests(summary: UsageSummary): number | null {
+  return todayTotals(summary)?.requests ?? null;
+}
+
+/** Today's tokens when the range reaches today, otherwise null. */
+function todayTokens(summary: UsageSummary): number | null {
+  return todayTotals(summary)?.total_tokens ?? null;
+}
+
+/**
+ * Requests, tokens, cache hits and cost for the range: four tiles above the
+ * heatmap and chart, or one bare row inside the star trail's panel.
+ */
+const UsageMetrics = memo(function UsageMetrics({
+  billing,
+  inline = false,
+  status,
+  today = null,
+  totals,
+}: {
+  billing: BillingSummary | null;
+  inline?: boolean;
+  status: UsageStatus;
+  /** Today's requests, shown under the total while the range reaches today. */
+  today?: number | null;
+  totals: UsageTotals | undefined;
+}) {
+  const t = useT();
+  useDisplayCurrency();
+  const size = inline ? "inline" : undefined;
+  // The panel's columns are narrow: fewer decimals as numbers grow.
+  const short = inline;
+  const requests = compactMetric(totals?.requests, status, short);
+  const tokens = usageCountValue(totals?.total_tokens, status);
+  const amount = billing ? billingAmount(billing, { short }) : "—";
+  const exactAmount = billing ? billingAmount(billing) : "—";
+  const note = billing ? billingNoteText(t, billing) || undefined : undefined;
+  return (
+    <MetricGroup
+      className={inline ? undefined : USAGE_METRIC_GRID}
+      variant={inline ? "inline" : "tiles"}
+    >
+      <Metric
+        detail={
+          totals && today !== null
+            ? t("overview.requestsToday", {
+                count: formatCompactNumber(today, { short }),
+              })
+            : undefined
+        }
+        icon={inline ? undefined : <Activity />}
+        label={t("overview.requests")}
+        size={size}
+        title={requests.title ?? undefined}
+        value={requests.text}
+      />
+      <Metric
+        detail={
+          totals && totals.input_tokens + totals.output_tokens > 0 ? (
+            inline ? (
+              <TokenLine
+                input={totals.input_tokens}
+                output={totals.output_tokens}
+              />
+            ) : (
+              <TokenSplit
+                input={totals.input_tokens}
+                output={totals.output_tokens}
+              />
+            )
+          ) : undefined
+        }
+        icon={inline ? undefined : <Boxes />}
+        label={t("overview.totalTokens")}
+        size={size}
+        value={<CompactCount short={short} value={tokens} />}
+      />
+      <Metric
+        icon={inline ? undefined : <SquareStack />}
+        label={t("overview.cacheHits")}
+        size={size}
+        value={cacheHitMetric(totals, status)}
+      />
+      <Metric
+        detail={inline && note ? <span title={note}>{note}</span> : note}
+        icon={inline ? undefined : <CircleDollarSign />}
+        label={t("pricing.officialAmount")}
+        size={size}
+        title={
+          amount === exactAmount
+            ? t("overview.costNote")
+            : `${exactAmount}\n${t("overview.costNote")}`
+        }
+        value={amount}
+      />
+    </MetricGroup>
+  );
+});
 
 /**
  * Input and output under the total. A narrow tile stacks them, and the
@@ -2554,6 +2718,21 @@ function TokenSplit({ input, output }: { input: number; output: number }) {
       <span className="relative whitespace-nowrap before:absolute before:-left-2 before:content-['·']">
         {t("overview.output")} <CompactCount value={output} />
       </span>
+    </span>
+  );
+}
+
+/** Input and output on one line, cut short with the exact split on hover. */
+function TokenLine({ input, output }: { input: number; output: number }) {
+  const t = useT();
+  const part = (label: string, value: number, short: boolean) =>
+    `${label} ${short ? formatCompactNumber(value, { short }) : formatExactNumber(value)}`;
+  return (
+    <span
+      title={`${part(t("overview.input"), input, false)} · ${part(t("overview.output"), output, false)}`}
+    >
+      {part(t("overview.input"), input, true)} ·{" "}
+      {part(t("overview.output"), output, true)}
     </span>
   );
 }
@@ -2599,11 +2778,12 @@ function usageCountValue(
 function compactMetric(
   value: number | undefined,
   status: UsageStatus,
+  short = false,
 ): CompactMetric {
   if (value === undefined || status === "blocked" || status === "error") {
     return { text: "—", title: null };
   }
-  const text = formatCompactNumber(value);
+  const text = formatCompactNumber(value, { short });
   const exact = formatExactNumber(value);
   return { text, title: exact === text ? null : exact };
 }

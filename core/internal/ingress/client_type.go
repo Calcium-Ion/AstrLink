@@ -30,6 +30,11 @@ func detectClientType(headers http.Header) contract.ClientType {
 	if normalizedClientHeader(headers.Get("X-Interaction-Type")) != "" {
 		return contract.ClientCopilot
 	}
+	// Goose sends no User-Agent; its session header is the only trace, on the
+	// OpenAI, Responses and Anthropic engines alike.
+	if normalizedClientHeader(headers.Get("Agent-Session-Id")) != "" {
+		return contract.ClientGoose
+	}
 	return contract.ClientUnknown
 }
 

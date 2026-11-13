@@ -24,8 +24,9 @@ func (store *Store) GetUsageSummary(ctx context.Context, options storage.UsageSu
 
 func getUsageSummary(ctx context.Context, reader historyReader, options storage.UsageSummaryOptions) (storage.UsageSummary, error) {
 	result := storage.UsageSummary{
-		ByDay: []storage.UsageTimeBucket{}, ByHour: []storage.UsageTimeBucket{},
+		ByDay: []storage.UsageTimeBucket{}, ByHour: []storage.UsageTimeBucket{}, ByHourModel: []storage.UsageHourModelBucket{},
 		ByService: []storage.UsageGroup{}, ByModel: []storage.UsageGroup{}, ByToken: []storage.UsageGroup{},
+		ByClient: []storage.UsageGroup{}, ByRoute: []storage.UsageRoute{},
 	}
 	zone, err := options.Validate()
 	if err != nil {
@@ -45,11 +46,17 @@ func getUsageSummary(ctx context.Context, reader historyReader, options storage.
 	// desktop, where a recorded "blocked" is its own outcome rather than a
 	// failure, and where a legacy row stored as succeeded with a 4xx/5xx
 	// counts as failed.
+	withDetail := options.To.Sub(options.From) <= storage.UsageDetailMaxSpan
+	routeColumns := noGatewayRewriteColumns
+	if withDetail {
+		routeColumns = gatewayRewriteColumns("request_records")
+	}
 	rows, err := reader.QueryContext(ctx, `SELECT started_at, status, http_status,
     service_id, COALESCE(
         NULLIF(json_extract(NULLIF(recovery_json, ''), '$.upstream_model'), ''),
         NULLIF(json_extract(NULLIF(model_redirect_json, ''), '$.to'), ''),
-        requested_model), local_access_token_id, usage_json, latency_ms
+        requested_model), local_access_token_id, usage_json, latency_ms, client_type,
+    `+routeColumns+`
 FROM request_records
 WHERE parent_request_id IS NULL AND started_at >= ? AND started_at < ?
   AND input_protocol NOT IN (?, ?)`,
@@ -61,13 +68,18 @@ WHERE parent_request_id IS NULL AND started_at >= ? AND started_at < ?
 	defer rows.Close()
 	days, hours := map[string]*storage.UsageTimeBucket{}, map[string]*storage.UsageTimeBucket{}
 	services, models, tokens := map[string]*storage.UsageGroup{}, map[string]*storage.UsageGroup{}, map[string]*storage.UsageGroup{}
+	clients := map[string]*storage.UsageGroup{}
+	hourModels := map[usageHourModelKey]*storage.UsageHourModelBucket{}
+	routes := map[string]*storage.UsageRoute{}
 	performance := map[string]*servicePerformance{}
 	tokenPerformance := map[string]*servicePerformance{}
 	var startedAt, status string
 	var httpStatus, latency sql.NullInt64
-	var service, model, localAccessTokenID, usageJSON sql.NullString
+	var service, model, localAccessTokenID, usageJSON, clientType sql.NullString
+	var rewritten gatewayRewriteRow
 	for rows.Next() {
-		if err := rows.Scan(&startedAt, &status, &httpStatus, &service, &model, &localAccessTokenID, &usageJSON, &latency); err != nil {
+		if err := rows.Scan(append([]any{&startedAt, &status, &httpStatus, &service, &model, &localAccessTokenID, &usageJSON, &latency, &clientType},
+			rewritten.targets()...)...); err != nil {
 			return result, fmt.Errorf("scan usage summary: %w", err)
 		}
 		switch contract.RequestStatus(status) {
@@ -111,6 +123,7 @@ WHERE parent_request_id IS NULL AND started_at >= ? AND started_at < ?
 		targets = append(targets,
 			usageGroupTotals(services, service.String),
 			usageGroupTotals(models, model.String),
+			usageGroupTotals(clients, usageClientID(clientType)),
 		)
 		if localAccessTokenID.Valid {
 			if _, ok := tokenWhitelist[localAccessTokenID.String]; ok {
@@ -123,7 +136,11 @@ WHERE parent_request_id IS NULL AND started_at >= ? AND started_at < ?
 		// or a call stored as succeeded that came back 4xx/5xx. A failure
 		// consumes no tokens and is not a request here, so it only ever adds to
 		// FailedRequests.
-		if status == "failed" || (httpStatus.Valid && httpStatus.Int64 >= 400) {
+		failed := status == "failed" || (httpStatus.Valid && httpStatus.Int64 >= 400)
+		if withDetail {
+			usageRouteFor(routes, usageClientID(clientType), service, rewritten, failed).Requests++
+		}
+		if failed {
 			result.StatusCounts.Failed++
 			for _, target := range targets {
 				target.FailedRequests++
@@ -149,6 +166,11 @@ WHERE parent_request_id IS NULL AND started_at >= ? AND started_at < ?
 			}
 			tokenPerformance[localAccessTokenID.String].observe(usage, latency)
 		}
+		if withDetail {
+			bucket := usageHourModelBucket(hourModels, date, local.Hour(), model.String)
+			bucket.Requests++
+			bucket.TotalTokens += int64(usage.TotalTokens)
+		}
 		for _, target := range targets {
 			target.Requests++
 			target.InputTokens += int64(usage.InputTokens)
@@ -171,10 +193,27 @@ WHERE parent_request_id IS NULL AND started_at >= ? AND started_at < ?
 	for _, hour := range hours {
 		result.ByHour = append(result.ByHour, *hour)
 	}
+	for _, bucket := range hourModels {
+		result.ByHourModel = append(result.ByHourModel, *bucket)
+	}
 	sort.Slice(result.ByDay, func(i, j int) bool { return result.ByDay[i].Date < result.ByDay[j].Date })
 	sort.Slice(result.ByHour, func(i, j int) bool {
 		a, b := result.ByHour[i], result.ByHour[j]
 		return a.Date < b.Date || (a.Date == b.Date && *a.Hour < *b.Hour)
+	})
+	sort.Slice(result.ByHourModel, func(i, j int) bool {
+		a, b := result.ByHourModel[i], result.ByHourModel[j]
+		if a.Date != b.Date || a.Hour != b.Hour {
+			return a.Date < b.Date || (a.Date == b.Date && a.Hour < b.Hour)
+		}
+		if a.TotalTokens != b.TotalTokens {
+			return a.TotalTokens > b.TotalTokens
+		}
+		if a.Requests != b.Requests {
+			return a.Requests > b.Requests
+		}
+		// A null model sorts first, like the empty key it is grouped under.
+		return b.Model != nil && (a.Model == nil || *a.Model < *b.Model)
 	})
 	for id, group := range services {
 		group.Performance = performance[id].summary()
@@ -185,7 +224,90 @@ WHERE parent_request_id IS NULL AND started_at >= ? AND started_at < ?
 	result.ByService = sortedUsageGroups(services)
 	result.ByModel = sortedUsageGroups(models)
 	result.ByToken = sortedUsageGroups(tokens)
+	result.ByClient = sortedUsageGroups(clients)
+	result.ByRoute = sortedUsageRoutes(routes)
 	return result, nil
+}
+
+// usageRouteFor finds or adds the route of one call. A failover target equal
+// to the call's own provider cannot happen; it is dropped all the same.
+func usageRouteFor(routes map[string]*storage.UsageRoute, client string, service sql.NullString, rewritten gatewayRewriteRow, failed bool) *storage.UsageRoute {
+	rewrites := rewritten.rewrites()
+	from := rewritten.failedService
+	if from.Valid && service.Valid && from.String == service.String {
+		from = sql.NullString{}
+	}
+	parts := []string{client, service.String, from.String, fmt.Sprint(failed)}
+	for _, rewrite := range rewrites {
+		parts = append(parts, string(rewrite))
+	}
+	key := strings.Join(parts, "\x00")
+	if routes[key] == nil {
+		route := &storage.UsageRoute{Failed: failed, Rewrites: rewrites}
+		if client != "" {
+			route.ClientType = &client
+		}
+		if service.Valid && service.String != "" {
+			id := service.String
+			route.ServiceID = &id
+		}
+		if from.Valid && from.String != "" {
+			id := from.String
+			route.FailedServiceID = &id
+		}
+		routes[key] = route
+	}
+	return routes[key]
+}
+
+// sortedUsageRoutes lists the busiest routes first, then by their fields so
+// equal counts keep one order.
+func sortedUsageRoutes(routes map[string]*storage.UsageRoute) []storage.UsageRoute {
+	keys := make([]string, 0, len(routes))
+	for key := range routes {
+		keys = append(keys, key)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		a, b := routes[keys[i]], routes[keys[j]]
+		if a.Requests != b.Requests {
+			return a.Requests > b.Requests
+		}
+		return keys[i] < keys[j]
+	})
+	sorted := make([]storage.UsageRoute, 0, len(keys))
+	for _, key := range keys {
+		sorted = append(sorted, *routes[key])
+	}
+	return sorted
+}
+
+type usageHourModelKey struct {
+	date  string
+	hour  int
+	model string
+}
+
+func usageHourModelBucket(buckets map[usageHourModelKey]*storage.UsageHourModelBucket, date string, hour int, model string) *storage.UsageHourModelBucket {
+	model = strings.TrimSpace(model)
+	key := usageHourModelKey{date: date, hour: hour, model: model}
+	if buckets[key] == nil {
+		bucket := &storage.UsageHourModelBucket{Date: date, Hour: hour}
+		if model != "" {
+			bucket.Model = &model
+		}
+		buckets[key] = bucket
+	}
+	return buckets[key]
+}
+
+// usageClientID folds unknown clients, historical records without one, and a
+// label this build does not recognize into the null group.
+func usageClientID(clientType sql.NullString) string {
+	client := contract.ClientType(clientType.String)
+	if !clientType.Valid || client == contract.ClientUnknown || !client.Valid() {
+		return ""
+	}
+	return string(client)
 }
 
 func usageGroupTotals(groups map[string]*storage.UsageGroup, id string) *storage.UsageTotals {

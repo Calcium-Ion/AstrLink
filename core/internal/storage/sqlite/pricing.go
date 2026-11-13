@@ -98,11 +98,23 @@ func (s *Store) SavePricingConfig(ctx context.Context, id contract.ServiceID, c 
 	return err
 }
 
+// notClaudeCLICall excludes the claude CLI's own calls, which recordBilling
+// leaves to the request they served.
+func notClaudeCLICall(table string) string {
+	return "COALESCE(json_extract(NULLIF(" + table + ".routing_decision_json, ''), '$.selected'), '') <> '" +
+		string(contract.RoutingSelectionClaudeCLI) + "'"
+}
+
 // recordBilling shares the request-record transaction: a log commit and its
 // accounting checkpoint succeed together. The key follows the logical root and
 // attempt number when a retry moves the earlier attempt into a child record.
 func recordBilling(ctx context.Context, tx *sql.Tx, r contract.RequestRecord, revalue bool) error {
 	if r.ServiceID == nil || r.Status == contract.RequestStatusBlocked {
+		return nil
+	}
+	if r.RoutingDecision != nil && r.RoutingDecision.Selected == contract.RoutingSelectionClaudeCLI {
+		// The claude CLI's own calls are billed once, on the request they
+		// served.
 		return nil
 	}
 	if r.AttemptIndex < 1 && !revalue {
@@ -259,7 +271,8 @@ func (s *Store) PriceUnpriced(ctx context.Context) (int, error) {
 	result, err := s.db.ExecContext(ctx, `UPDATE billing_ledger SET amount_usd='0.000000000',tier='',reason='priced',revalued=1
 WHERE terminal=1 AND reason<>'priced' AND COALESCE(usage_json,'null')='null' AND EXISTS (SELECT 1 FROM request_records r
 WHERE r.attempt_index=billing_ledger.attempt AND r.status IN ('failed','cancelled')
-AND (r.id=billing_ledger.root_id OR r.parent_request_id=billing_ledger.root_id))`)
+AND (r.id=billing_ledger.root_id OR r.parent_request_id=billing_ledger.root_id)
+AND `+notClaudeCLICall("r")+`)`)
 	if err != nil {
 		return 0, err
 	}
@@ -367,7 +380,8 @@ func (s *Store) BackfillPricing(ctx context.Context, id contract.ServiceID) (int
 	if _, err := s.GetService(ctx, id); err != nil {
 		return 0, err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id,parent_request_id,attempt_index,started_at,status,requested_model,recovery_json,usage_json,local_access_token_id FROM request_records WHERE service_id=? AND status NOT IN ('pending','blocked')`, id)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,parent_request_id,attempt_index,started_at,status,requested_model,recovery_json,usage_json,local_access_token_id FROM request_records WHERE service_id=? AND status NOT IN ('pending','blocked')
+AND `+notClaudeCLICall("request_records"), id)
 	if err != nil {
 		return 0, err
 	}

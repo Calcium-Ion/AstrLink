@@ -10,7 +10,11 @@ type RequestActivityCall struct {
 	// started it.
 	ParentSessionID *SessionID `json:"parent_session_id,omitempty"`
 	// ClientType is the inbound client; absent on historical records.
-	ClientType  ClientType    `json:"client_type,omitempty"`
+	ClientType ClientType `json:"client_type,omitempty"`
+	// Model is the model the call ran with, as usage counts it: the one the
+	// provider served, else a routing redirect's target, else the client's.
+	// Absent when none is known.
+	Model       string        `json:"model,omitempty"`
 	StartedAt   time.Time     `json:"started_at"`
 	CompletedAt *time.Time    `json:"completed_at"`
 	Status      RequestStatus `json:"status"`
@@ -20,6 +24,13 @@ type RequestActivityCall struct {
 	// reasoning included. Absent while the call runs, when no usage came back,
 	// and when the stream stopped before its usage was final.
 	OutputTokens int `json:"output_tokens,omitempty"`
+	// ServiceID is the provider of the call's last attempt, FailedServiceID
+	// the one that failed before it took the call over, and Rewrites what the
+	// gateway changed, in the order it applies them. All three are set once
+	// the call has ended.
+	ServiceID       *ServiceID       `json:"service_id,omitempty"`
+	FailedServiceID *ServiceID       `json:"failed_service_id,omitempty"`
+	Rewrites        []GatewayRewrite `json:"rewrites,omitempty"`
 }
 
 // RequestActivity lists the model calls that overlap a recent window, for the

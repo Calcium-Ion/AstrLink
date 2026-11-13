@@ -84,6 +84,45 @@ describe("web command transport", () => {
       }),
     );
   });
+  it("escapes a package ID as one path segment and merge-patches its strategy", async () => {
+    respond({
+      id: "subscription:claude:max_20x",
+      kind: "subscription",
+      provider: "claude_code",
+      plan_type: "max_20x",
+      service_ids: ["svc_one"],
+      strategy: "auto",
+    });
+    await webInvoke("update_service_package", {
+      packageId: "subscription:claude:max_20x",
+      strategy: "auto",
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/control/v1/service-packages/subscription%3Aclaude%3Amax_20x",
+      expect.objectContaining({
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/merge-patch+json",
+          "X-AstrLink-Console": "1",
+        },
+        body: '{"strategy":"auto"}',
+      }),
+    );
+    respond({ packages: [] });
+    await webInvoke("get_service_packages");
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      "/control/v1/service-packages",
+      expect.objectContaining({ method: "GET" }),
+    );
+    fetchMock.mockClear();
+    await expect(
+      webInvoke("update_service_package", {
+        packageId: "../services/svc_one",
+        strategy: "auto",
+      }),
+    ).rejects.toThrow("Invalid package ID");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
   it("keeps repeated token and model query parameters and encodes cursors", async () => {
     respond({ items: [] });
     await webInvoke("list_request_sessions", {
@@ -96,6 +135,36 @@ describe("web command transport", () => {
     });
     expect(fetchMock.mock.calls[0][0]).toBe(
       "/control/v1/request-sessions?local_access_token_id=token_a&local_access_token_id=token_b&model=claude-opus-5-5&model=gpt-6.1%2Fsol&cursor=x%2By&kind=agent",
+    );
+  });
+  it("reads a project's memory and the texts a call carried", async () => {
+    respond({ projects: [] });
+    await webInvoke("get_project_memory", {
+      query: {
+        project: "~/GolandProjects/astrlink 项目",
+        client_type: "claude_code",
+        day_start: "2026-10-26T00:00:00+08:00",
+      },
+    });
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "/control/v1/request-memory?project=%7E%2FGolandProjects%2Fastrlink+%E9%A1%B9%E7%9B%AE&client_type=claude_code&day_start=2026-10-26T00%3A00%3A00%2B08%3A00",
+    );
+    respond({ projects: [] });
+    await webInvoke("get_project_memory", { query: { no_project: true } });
+    expect(fetchMock.mock.calls[1][0]).toBe(
+      "/control/v1/request-memory?no_project=true",
+    );
+    respond({ entry: {}, events: [] });
+    await webInvoke("get_project_memory_entry", {
+      query: { project: "~/proj", file: "no jitter.md" },
+    });
+    expect(fetchMock.mock.calls[2][0]).toBe(
+      "/control/v1/request-memory/entry?project=%7E%2Fproj&file=no+jitter.md",
+    );
+    respond({ request_id: "request_one", items: [], writes: [], reads: [] });
+    await webInvoke("get_request_context_texts", { requestId: "request_one" });
+    expect(fetchMock.mock.calls[3][0]).toBe(
+      "/control/v1/requests/request_one/audit/context",
     );
   });
   it.each(["POST", "PUT", "PATCH", "DELETE"] as const)(
@@ -117,6 +186,20 @@ describe("web command transport", () => {
     );
     expect(listener).toHaveBeenCalledOnce();
     window.removeEventListener(CONSOLE_SIGNED_OUT, listener);
+  });
+  it("keeps the reason a quota read failed", async () => {
+    respond(
+      {
+        error: {
+          code: "subscription_usage_failed",
+          details: [{ reason: "key_rejected" }],
+        },
+      },
+      502,
+    );
+    await expect(
+      webInvoke("get_service_usage", { serviceId: "svc_kimi" }),
+    ).rejects.toMatchObject({ reason: "key_rejected" });
   });
   it("adapts raw proofs and refusals without retrying or signing out", async () => {
     respond({ error: { code: "raw_password_invalid" } }, 403);

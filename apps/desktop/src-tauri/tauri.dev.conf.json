@@ -10,6 +10,9 @@
       "icons/dev/icon.png",
       "icons/dev/icon.icns",
       "icons/dev/icon.ico"
-    ]
+    ],
+    "macOS": {
+      "entitlements": "Entitlements.dev.plist"
+    }
   }
 }

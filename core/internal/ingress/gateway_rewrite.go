@@ -6,9 +6,9 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/systemprompt"
-	"github.com/tidwall/gjson"
 )
 
 // gatewayRewrite holds the Routing settings that edit inference requests:
@@ -54,7 +54,8 @@ func rewritesProtocol(protocol contract.ProtocolID) bool {
 	}
 }
 
-// gatewayReasoning is what the reasoning settings did to one attempt.
+// gatewayReasoning is what the reasoning settings and the global system
+// prompt did to one attempt.
 type gatewayReasoning struct {
 	// effort is the level sent when the settings changed the body; empty
 	// keeps the client's level.
@@ -62,6 +63,8 @@ type gatewayReasoning struct {
 	// diagnostic explains the decision for the request record; empty when
 	// the settings leave reasoning to the client.
 	diagnostic string
+	// systemPrompt is set when the global system prompt was added.
+	systemPrompt bool
 }
 
 // applyGatewayRewrite applies the reasoning settings and adds the global
@@ -102,7 +105,7 @@ func (handler *Handler) applyGatewayRewrite(
 		return gatewayReasoning{}, err
 	}
 	body, result := raw, gatewayReasoning{}
-	if gjson.ValidBytes(raw) && gjson.ParseBytes(raw).IsObject() {
+	if ojson.ValidBytes(raw) && ojson.ParseBytes(raw).IsObject() {
 		// The signals are read before the prompt adds a system message.
 		if target, ok := reasoningTargetFor(rewrite.reasoning, protocol, body); ok {
 			model := upstreamRequestModel(request, protocol, body)
@@ -124,6 +127,7 @@ func (handler *Handler) applyGatewayRewrite(
 			}{{rewrite.prefix, systemprompt.Prepend}, {rewrite.suffix, systemprompt.Append}} {
 				if updated, changed, editErr := edit.add(protocol, body, edit.text); editErr == nil && changed {
 					body = updated
+					result.systemPrompt = true
 				}
 			}
 		}
@@ -136,7 +140,7 @@ func (handler *Handler) applyGatewayRewrite(
 // in the path, the other protocols in the body.
 func upstreamRequestModel(request *http.Request, protocol contract.ProtocolID, body []byte) string {
 	if protocol != contract.ProtocolGoogleGenerateContent {
-		return gjson.GetBytes(body, "model").Str
+		return ojson.GetBytes(body, "model").Str
 	}
 	path := request.URL.Path
 	if index := strings.LastIndex(path, "/models/"); index >= 0 {
@@ -165,8 +169,8 @@ func (cache *codexCatalogModels) remember(entries []discoveryEntry) {
 			continue
 		}
 		var model codexModel
-		for _, level := range gjson.GetBytes(entry.codexCatalog, "supported_reasoning_levels.#.effort").Array() {
-			if level.Type == gjson.String && reasoningRank(level.Str) >= 0 {
+		for _, level := range ojson.GetBytes(entry.codexCatalog, "supported_reasoning_levels.#.effort").Array() {
+			if level.Type == ojson.String && reasoningRank(level.Str) >= 0 {
 				model.levels = append(model.levels, strings.ToLower(level.Str))
 			}
 		}

@@ -299,6 +299,37 @@ describe("service model", () => {
     ).toThrow(/provider does not match service kind/);
   });
 
+  it("parses the Claude subscription mode", () => {
+    const claude = {
+      id: "service_claude_official",
+      name: "Claude Code",
+      kind: "claude_subscription",
+      enabled: true,
+      models: [],
+      capabilities: [],
+      subscription: {
+        provider: "claude_code",
+        status: "connected",
+        mode: "official",
+      },
+      created_at: createdAt,
+      updated_at: createdAt,
+    };
+    expect(parseService(claude).subscription?.mode).toBe("official");
+    expect(
+      parseService({
+        ...claude,
+        subscription: { provider: "claude_code", status: "connected" },
+      }).subscription?.mode,
+    ).toBeUndefined();
+    expect(() =>
+      parseService({
+        ...claude,
+        subscription: { ...claude.subscription, mode: "cli" },
+      }),
+    ).toThrow(/unknown subscription mode/);
+  });
+
   it("parses Copilot subscription services and keeps Responses off WebSocket", () => {
     const copilot = parseService({
       id: "service_copilot_personal",
@@ -388,6 +419,16 @@ describe("service model", () => {
     expect(serviceBuiltinRedirects("copilot_subscription")).toContainEqual({
       from: "claude-sonnet-4-6",
       defaultTo: "claude-sonnet-4.6",
+      defaultEnabled: true,
+    });
+    expect(serviceBuiltinRedirects("copilot_subscription")[0]).toEqual({
+      from: "claude-fable-5-2",
+      defaultTo: "claude-fable-5.2",
+      defaultEnabled: true,
+    });
+    expect(serviceBuiltinRedirects("copilot_subscription")).toContainEqual({
+      from: "claude-haiku-5-5",
+      defaultTo: "claude-haiku-5.5",
       defaultEnabled: true,
     });
     expect(serviceBuiltinRedirects("openai")).toEqual([]);

@@ -1,3 +1,4 @@
+import { defaultModel } from "./client-delivery-model";
 import { serviceModelFormats, type Service } from "./service-model";
 
 export const serviceTestProtocols = [
@@ -31,7 +32,7 @@ export interface ServiceTestResult extends ServiceTestInput {
 
 export function testableCapabilities(
   service: Service,
-  model = service.models[0] ?? "",
+  model = defaultModel(service.models, [service]),
 ) {
   if (service.kind === "vertex") {
     const preferred = vertexTestProtocol(service, model);

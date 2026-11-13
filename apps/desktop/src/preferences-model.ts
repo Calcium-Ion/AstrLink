@@ -1,5 +1,9 @@
 import { parseUpdatePreferences, type UpdatePreferences } from "./update-model";
 import { isQuotaDisplayMode, type QuotaDisplayMode } from "./quota-display";
+import {
+  isDisplayCurrencyChoice,
+  type DisplayCurrencyChoice,
+} from "./currency-display";
 import { isLocale, type Locale } from "./i18n/locale";
 import { isThemePreference, type ThemePreference } from "./theme-model";
 
@@ -105,6 +109,7 @@ export interface Preferences {
   locale: Locale;
   theme: ThemePreference;
   quota_display_mode: QuotaDisplayMode;
+  display_currency: DisplayCurrencyChoice;
   tray: TrayPreferences;
   updates: UpdatePreferences;
 }
@@ -252,6 +257,7 @@ export function parseSettingsSnapshot(value: unknown): SettingsSnapshot {
       "locale",
       "theme",
       "quota_display_mode",
+      "display_currency",
       "tray",
       "updates",
     ],
@@ -259,6 +265,9 @@ export function parseSettingsSnapshot(value: unknown): SettingsSnapshot {
   );
   if (!isQuotaDisplayMode(values.quota_display_mode)) {
     invalid("$.values.quota_display_mode", "unknown quota display mode");
+  }
+  if (!isDisplayCurrencyChoice(values.display_currency)) {
+    invalid("$.values.display_currency", "unknown display currency");
   }
   parseTrayPreferences(values.tray, "$.values.tray");
   parseUpdatePreferences(values.updates);

@@ -77,6 +77,7 @@ import {
   type ServiceManagerView,
 } from "./ServiceManager";
 import { ProviderImportDialog } from "./ProviderImportDialog";
+import { LocalImportDialog } from "./LocalImportDialog";
 import { useProviderImport } from "./use-provider-import";
 import { notify } from "./notify";
 import type { Service } from "./service-model";
@@ -327,6 +328,11 @@ export default function App() {
   const [pendingPage, setPendingPage] = useState<WorkspacePage | null>(null);
   // Overview and the guide add providers through the same type picker as the list.
   const [serviceKindPickerOpen, setServiceKindPickerOpen] = useState(false);
+  const [localImportOpen, setLocalImportOpen] = useState(false);
+  // Local agent tool configs exist only beside the desktop app.
+  const startLocalImport = isWebEdition
+    ? undefined
+    : () => setLocalImportOpen(true);
   const [copyState, setCopyState] = useState<CopyState>("idle");
   const editorDirtyRef = useRef(false);
   const requestGateRef = useRef<RequestGate | null>(null);
@@ -412,7 +418,14 @@ export default function App() {
       ? `${snapshot.pid ?? "none"}|${snapshot.ready.control_url}|${snapshot.ready.inference_url}`
       : null;
   const rawSealing = useRawSealingStatus(coreSessionKey, isReady);
-  const onboarding = useOnboarding({ isReady, catalog, tokenCatalog, usage });
+  const onboarding = useOnboarding({
+    isReady,
+    catalog,
+    tokenCatalog,
+    usage,
+    inferenceURL: snapshot?.ready?.client_inference_url ?? "",
+    enabled: !isWebEdition,
+  });
 
   // Silent refreshes read the rendered state to stay out of a visible load.
   const catalogRef = useRef(catalog);
@@ -802,6 +815,16 @@ export default function App() {
     if (!isWebEdition && onboarding.active) setPage({ kind: "overview" });
   };
 
+  const handleTokenUpdated = (token: AccessTokenSummary) => {
+    tokenCatalogGeneration.current += 1;
+    setTokenCatalog((current) => ({
+      status: "ready",
+      items: current.items.map((item) => (item.id === token.id ? token : item)),
+      error: null,
+      stale: false,
+    }));
+  };
+
   const handleTokenDeleted = (tokenId: string) => {
     tokenCatalogGeneration.current += 1;
     setTokenCatalog((current) => ({
@@ -1081,6 +1104,7 @@ export default function App() {
               <Overview
                 catalog={catalog}
                 copyState={copyState}
+                coreSessionKey={coreSessionKey}
                 isNativeApp={isNativeApp}
                 isReady={isReady}
                 isRestarting={isRestarting}
@@ -1125,6 +1149,9 @@ export default function App() {
                 onRefresh={() => void refreshAccessTokens()}
                 onTokenCreated={handleTokenCreated}
                 onTokenDeleted={handleTokenDeleted}
+                onTokenUpdated={handleTokenUpdated}
+                services={catalog.items}
+                servicesReady={catalog.status === "ready" && !catalog.stale}
               />
             ) : page.kind === "safety" ? (
               <SafetyPolicy
@@ -1192,7 +1219,9 @@ export default function App() {
                 onRefresh={() => void refreshServices()}
                 onServiceRemoved={handleServiceRemoved}
                 onServiceSaved={handleServiceSaved}
+                accessTokens={tokenCatalog.items}
                 onViewChange={(next) => navigate(next)}
+                onLocalImport={startLocalImport}
                 protocols={protocols}
                 services={catalog.items}
                 view={page}
@@ -1202,6 +1231,7 @@ export default function App() {
         </ValueTransition>
       </WorkspaceSnapshotProvider>
       <ServiceKindPickerDialog
+        onLocalImport={startLocalImport}
         onOpenChange={setServiceKindPickerOpen}
         onSelect={(serviceKind) => navigate({ kind: "create", serviceKind })}
         open={serviceKindPickerOpen}
@@ -1226,6 +1256,14 @@ export default function App() {
           plan={providerImport.active.plan}
           onAdded={handleProviderImported}
           onClose={providerImport.close}
+        />
+      )}
+      {localImportOpen && (
+        <LocalImportDialog
+          onClose={() => setLocalImportOpen(false)}
+          onImported={rememberService}
+          protocols={protocols}
+          services={catalog.items}
         />
       )}
     </AppShell>

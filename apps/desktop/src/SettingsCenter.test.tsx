@@ -31,9 +31,11 @@ vi.mock("./notify", () => ({ notify: notifyMocks }));
 
 import { applyLocale } from "./i18n";
 import type { AppSnapshot } from "./core-model";
+import { settleClosedLayer } from "./lib/test-layer-settle";
 import { defaultTrayPreferences } from "./preferences-model";
 import { SettingsCenter } from "./SettingsCenter";
 import { applyQuotaDisplayMode } from "./quota-display";
+import { applyDisplayCurrency, USD_DISPLAY } from "./currency-display";
 import { SubscriptionQuotaMeter } from "./components/SubscriptionQuotaMeter";
 import { applyTheme } from "./theme";
 
@@ -66,6 +68,7 @@ const settings = {
     max_request_body_mib: 0,
     theme: "system" as const,
     quota_display_mode: "remaining" as const,
+    display_currency: "auto" as const,
     locale: "zh-CN" as const,
     tray: defaultTrayPreferences(),
     updates: defaultUpdatePreferences(),
@@ -125,16 +128,99 @@ describe("SettingsCenter", () => {
     container.remove();
   });
 
-  it("keeps forwarding identity controls in Routing instead of desktop settings", async () => {
-    await act(async () =>
+  const render = async (
+    props: Partial<Parameters<typeof SettingsCenter>[0]> = {},
+  ) =>
+    act(async () => {
       root.render(
         <SettingsCenter
+          onCoreSnapshot={vi.fn()}
+          onDirtyChange={vi.fn()}
           snapshot={snapshot}
-          onCoreSnapshot={() => {}}
-          onDirtyChange={() => {}}
+          {...props}
         />,
-      ),
+      );
+      await Promise.resolve();
+    });
+
+  const buttonNamed = (text: string, scope: ParentNode = container) =>
+    [...scope.querySelectorAll<HTMLButtonElement>("button")].find(
+      (button) => button.textContent === text,
     );
+
+  /** Radix activates a tab on mouse down, not on click. */
+  const openTab = async (label: string) => {
+    const trigger = [
+      ...container.querySelectorAll<HTMLButtonElement>('[role="tab"]'),
+    ].find((node) => node.textContent === label);
+    if (!trigger) throw new Error(`missing tab ${label}`);
+    await act(async () => {
+      trigger.dispatchEvent(
+        new MouseEvent("mousedown", { bubbles: true, button: 0 }),
+      );
+      await Promise.resolve();
+    });
+  };
+
+  const option = (label: string) => {
+    const node = [
+      ...container.querySelectorAll<HTMLButtonElement>('[role="radio"]'),
+    ].find((item) => item.textContent === label);
+    if (!node) throw new Error(`missing option ${label}`);
+    return node;
+  };
+
+  const switchNamed = (label: string) => {
+    const name = [...container.querySelectorAll("label")].find(
+      (node) => node.textContent === label,
+    );
+    const toggle = container.querySelector<HTMLButtonElement>(
+      `[role="switch"][id="${name?.htmlFor}"]`,
+    );
+    if (!toggle) throw new Error(`missing switch ${label}`);
+    return toggle;
+  };
+
+  const numberInput = (label: string) => {
+    const input = container.querySelector<HTMLInputElement>(
+      `input[aria-label="${label}"]`,
+    );
+    if (!input) throw new Error(`missing input ${label}`);
+    return input;
+  };
+
+  const portInput = () => {
+    const name = [...container.querySelectorAll("label")].find(
+      (node) => node.textContent === "端口",
+    );
+    const input = container.querySelector<HTMLInputElement>(
+      `input[id="${name?.htmlFor}"]`,
+    );
+    if (!input) throw new Error("missing port input");
+    return input;
+  };
+
+  const edit = async (input: HTMLInputElement, value: string) =>
+    act(async () => {
+      Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value",
+      )?.set?.call(input, value);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+
+  const save = async () => {
+    const button = buttonNamed("保存");
+    if (!button) throw new Error("missing save button");
+    await act(async () => {
+      button.click();
+      await Promise.resolve();
+    });
+  };
+
+  it("keeps forwarding identity controls in Routing instead of desktop settings", async () => {
+    await render();
     expect(bridge.getRoutingSettings).not.toHaveBeenCalled();
     expect(
       container.querySelector('[data-testid="upstream-identity-settings"]'),
@@ -153,15 +239,7 @@ describe("SettingsCenter", () => {
         { name: "notes.bak", size_bytes: 512, modified_unix: null },
       ],
     });
-    await act(async () =>
-      root.render(
-        <SettingsCenter
-          snapshot={snapshot}
-          onCoreSnapshot={() => {}}
-          onDirtyChange={() => {}}
-        />,
-      ),
-    );
+    await render();
     expect(container.textContent).toContain(
       "数据目录中有 2 个备份文件（共 2.0 GB",
     );
@@ -205,62 +283,127 @@ describe("SettingsCenter", () => {
     const message = "桌面程序长时间未响应，请完全退出 AstrLink 后重新打开。";
     bridge.getPreferences.mockRejectedValueOnce(new Error(message));
 
-    await act(async () =>
-      root.render(
-        <SettingsCenter
-          snapshot={snapshot}
-          onCoreSnapshot={vi.fn()}
-          onDirtyChange={vi.fn()}
-        />,
-      ),
-    );
+    await render();
 
     expect(container.textContent).toContain("无法加载设置");
     expect(container.textContent).toContain(message);
     expect(container.textContent).not.toContain("正在读取桌面与系统设置");
   });
 
-  it("shows active and saved ports truthfully and saves a validated draft", async () => {
+  it("keeps window settings in General and the gateway in its own tab", async () => {
+    await render({ snapshot: { ...snapshot, restart_pending: false } });
+    expect(
+      [...container.querySelectorAll('[role="tab"]')].map(
+        (node) => node.textContent,
+      ),
+    ).toEqual(["常规", "网关与网络", "托盘面板", "同步与备份"]);
+    expect(
+      [...container.querySelectorAll("h2")].map((node) => node.textContent),
+    ).toEqual(["外观", "窗口与启动"]);
+    expect(container.textContent).toContain(
+      "跟随系统时随系统的浅色和深色模式切换。",
+    );
+    expect(container.textContent).not.toContain("使用系统代理");
+
+    await openTab("网关与网络");
+    expect(
+      [...container.querySelectorAll("h2")].map((node) => node.textContent),
+    ).toEqual(["网关", "连接与请求"]);
+    expect(container.querySelector('[data-tone="positive"]')?.textContent).toBe(
+      "已就绪",
+    );
+    expect(container.textContent).toContain("请求处理");
+    expect(container.textContent).toContain("以上修改点保存后，重启网关生效。");
+    // A running gateway offers stop and restart; start waits for a stop.
+    expect(buttonNamed("启动")).toBeUndefined();
+    expect(buttonNamed("停止")?.disabled).toBe(false);
+    expect(buttonNamed("重启")?.disabled).toBe(false);
+
+    await openTab("托盘面板");
+    expect(container.textContent).toContain(
+      "点击托盘图标（左键或右键）展开这个面板。",
+    );
+  });
+
+  it("starts, stops, and restarts the gateway with busy labels and recovery details", async () => {
+    let finishStop: (next: AppSnapshot) => void = () => {};
+    bridge.stopCore.mockReset().mockImplementation(
+      () =>
+        new Promise<AppSnapshot>((resolve) => {
+          finishStop = resolve;
+        }),
+    );
+    bridge.startCore.mockReset().mockResolvedValue(snapshot);
+    const onCoreSnapshot = vi.fn();
+    await render({ onCoreSnapshot });
+    await openTab("网关与网络");
+
+    await act(async () => buttonNamed("停止")!.click());
+    expect(bridge.stopCore).toHaveBeenCalledTimes(1);
+    expect(buttonNamed("停止中…")?.disabled).toBe(true);
+    expect(buttonNamed("重启")?.disabled).toBe(true);
+    const stopped = {
+      ...snapshot,
+      phase: "error",
+      ready: null,
+      recovery_attempt: 2,
+      recovery_scheduled_in_ms: 4_200,
+      last_error: "core exited with status 1",
+    } as AppSnapshot;
+    await act(async () => {
+      finishStop(stopped);
+      await Promise.resolve();
+    });
+    expect(onCoreSnapshot).toHaveBeenCalledWith(stopped);
+    expect(notifyMocks.success).toHaveBeenCalledWith("网关已停止。");
+
+    await render({ onCoreSnapshot, snapshot: stopped });
+    expect(container.querySelector('[data-tone="negative"]')?.textContent).toBe(
+      "需要处理",
+    );
+    expect(container.textContent).toContain("第 2/5 次恢复将在约 5 秒后进行");
+    expect(container.querySelector("code")?.textContent).toBe(
+      "core exited with status 1",
+    );
+    expect(buttonNamed("停止")).toBeUndefined();
+    await act(async () => {
+      buttonNamed("启动")!.click();
+      await Promise.resolve();
+    });
+    expect(bridge.startCore).toHaveBeenCalledTimes(1);
+    expect(notifyMocks.success).toHaveBeenCalledWith("网关正在启动。");
+  });
+
+  it("shows the port in use beside a pending one and saves a validated draft", async () => {
     const onDirtyChange = vi.fn();
     const onCoreSnapshot = vi.fn();
-    await act(async () => {
-      root.render(
-        <SettingsCenter
-          onCoreSnapshot={onCoreSnapshot}
-          onDirtyChange={onDirtyChange}
-          snapshot={{ ...snapshot, restart_pending: true }}
-        />,
-      );
-      await Promise.resolve();
+    await render({
+      onCoreSnapshot,
+      onDirtyChange,
+      snapshot: { ...snapshot, restart_pending: true },
     });
-    expect(container.textContent).toMatch(/正在使用[\s\S]*8317/);
-    expect(container.textContent).toMatch(/已保存[\s\S]*9000/);
+    await openTab("网关与网络");
+    expect(container.textContent).toContain(
+      "正在使用 8317。保存并重启网关后改用 9000。",
+    );
     expect(container.textContent).toContain("已保存的设置要重启网关后生效");
 
-    const input = container.querySelector<HTMLInputElement>(
-      'input[type="number"]',
+    const input = portInput();
+    expect(input.getAttribute("aria-describedby")).toBeTruthy();
+    await edit(input, "9123");
+    expect(container.textContent).toContain(
+      "正在使用 8317。保存并重启网关后改用 9123。",
     );
-    if (!input) throw new Error("missing port input");
-    await act(async () => {
-      const setter = Object.getOwnPropertyDescriptor(
-        HTMLInputElement.prototype,
-        "value",
-      )?.set;
-      setter?.call(input, "9123");
-      input.dispatchEvent(new Event("input", { bubbles: true }));
-      input.dispatchEvent(new Event("change", { bubbles: true }));
-    });
-    const save = [...container.querySelectorAll("button")].find(
-      (button) => button.textContent === "保存",
+    expect(container.textContent).toContain(
+      "有未保存的修改。保存后重启网关生效。",
     );
-    if (!save) throw new Error("missing save button");
-    await act(async () => {
-      save.click();
-      await Promise.resolve();
-    });
+    // The footer offers the restart only once nothing waits to be saved.
+    expect(buttonNamed("立即重启")).toBeUndefined();
+    await save();
     expect(bridge.updatePreferences).toHaveBeenCalledWith(
       expect.objectContaining({
         inference_port: 9123,
+        use_system_proxy: true,
         max_concurrent_inspections: 16,
       }),
     );
@@ -278,16 +421,11 @@ describe("SettingsCenter", () => {
 
   it("offers the restart a saved launch setting is waiting for", async () => {
     const onCoreSnapshot = vi.fn();
-    await act(async () => {
-      root.render(
-        <SettingsCenter
-          onCoreSnapshot={onCoreSnapshot}
-          onDirtyChange={vi.fn()}
-          snapshot={{ ...snapshot, restart_pending: true }}
-        />,
-      );
-      await Promise.resolve();
+    await render({
+      onCoreSnapshot,
+      snapshot: { ...snapshot, restart_pending: true },
     });
+    await openTab("网关与网络");
     const restartButtons = () =>
       [...container.querySelectorAll("button")].filter(
         (button) => button.textContent === "立即重启",
@@ -301,119 +439,64 @@ describe("SettingsCenter", () => {
     expect(onCoreSnapshot).toHaveBeenCalledWith(snapshot);
 
     // Nothing waits on a restart: the footer goes back to its usual hint.
-    await act(async () => {
-      root.render(
-        <SettingsCenter
-          onCoreSnapshot={onCoreSnapshot}
-          onDirtyChange={vi.fn()}
-          snapshot={snapshot}
-        />,
-      );
-      await Promise.resolve();
-    });
+    await render({ onCoreSnapshot });
     expect(container.textContent).not.toContain("已保存的设置要重启网关后生效");
+    expect(container.textContent).toContain("以上修改点保存后，重启网关生效。");
     expect(restartButtons()).toHaveLength(0);
   });
 
   it("says a launch setting saved while the gateway is stopped applies at the next start", async () => {
-    await act(async () => {
-      root.render(
-        <SettingsCenter
-          onCoreSnapshot={vi.fn()}
-          onDirtyChange={vi.fn()}
-          snapshot={{ ...snapshot, phase: "stopped" }}
-        />,
-      );
-      await Promise.resolve();
-    });
-    const input = container.querySelector<HTMLInputElement>(
-      'input[aria-label="检查并发"]',
-    );
-    if (!input) throw new Error("missing concurrency input");
-    await act(async () => {
-      const setter = Object.getOwnPropertyDescriptor(
-        HTMLInputElement.prototype,
-        "value",
-      )?.set;
-      setter?.call(input, "32");
-      input.dispatchEvent(new Event("input", { bubbles: true }));
-      input.dispatchEvent(new Event("change", { bubbles: true }));
-    });
-    const save = [...container.querySelectorAll("button")].find(
-      (button) => button.textContent === "保存",
-    );
-    if (!save) throw new Error("missing save button");
-    await act(async () => {
-      save.click();
-      await Promise.resolve();
-    });
+    await render({ snapshot: { ...snapshot, phase: "stopped" } });
+    await openTab("网关与网络");
+    await edit(numberInput("同时分析的请求数"), "32");
+    await save();
     expect(notifyMocks.success).toHaveBeenCalledWith(
       "已保存，下次启动网关时生效。",
     );
     expect(bridge.getCoreStatus).not.toHaveBeenCalled();
   });
 
-  it("opens to every interface only after the consequences are confirmed", async () => {
+  it("opens to the same network only after the consequences are confirmed", async () => {
     const onDirtyChange = vi.fn();
-    await act(async () => {
-      root.render(
-        <SettingsCenter
-          onCoreSnapshot={vi.fn()}
-          onDirtyChange={onDirtyChange}
-          snapshot={snapshot}
-        />,
-      );
-      await Promise.resolve();
-    });
-    const radio = (label: string) =>
-      container.querySelector<HTMLButtonElement>(
-        `[role="radio"][aria-label="${label}"]`,
-      )!;
-    expect(radio("仅本机").getAttribute("aria-checked")).toBe("true");
+    await render({ onDirtyChange });
+    await openTab("网关与网络");
+    expect(option("仅这台电脑").getAttribute("aria-checked")).toBe("true");
     expect(container.textContent).not.toContain("网关正在对网络开放");
 
-    await act(async () => radio("全部网卡").click());
+    await act(async () => option("同一网络的设备").click());
     const dialog = document.querySelector('[role="alertdialog"]');
     if (!dialog) throw new Error("missing confirmation dialog");
-    expect(dialog.textContent).toContain("对网络开放推理入口？");
+    expect(dialog.textContent).toContain("允许同一网络的设备连接？");
     expect(dialog.textContent).toContain("端口 9000");
     expect(dialog.textContent).toContain("访问令牌");
     // Nothing changes while the question is open.
-    expect(radio("仅本机").getAttribute("aria-checked")).toBe("true");
+    expect(option("仅这台电脑").getAttribute("aria-checked")).toBe("true");
     expect(onDirtyChange).not.toHaveBeenCalledWith(true);
 
-    const keep = [...dialog.querySelectorAll("button")].find(
-      (button) => button.textContent === "保持仅本机",
-    );
+    const keep = buttonNamed("保持仅这台电脑", dialog);
     if (!keep) throw new Error("missing keep button");
     await act(async () => {
       keep.click();
       await Promise.resolve();
     });
-    expect(radio("仅本机").getAttribute("aria-checked")).toBe("true");
+    await settleClosedLayer();
+    expect(option("仅这台电脑").getAttribute("aria-checked")).toBe("true");
     expect(bridge.updatePreferences).not.toHaveBeenCalled();
 
-    await act(async () => radio("全部网卡").click());
-    const confirm = [
-      ...document.querySelectorAll<HTMLButtonElement>(
-        '[role="alertdialog"] button',
-      ),
-    ].find((button) => button.textContent === "对网络开放");
+    await act(async () => option("同一网络的设备").click());
+    const confirm = buttonNamed(
+      "对网络开放",
+      document.querySelector('[role="alertdialog"]')!,
+    );
     if (!confirm) throw new Error("missing confirm button");
     await act(async () => {
       confirm.click();
       await Promise.resolve();
     });
-    expect(radio("全部网卡").getAttribute("aria-checked")).toBe("true");
+    await settleClosedLayer();
+    expect(option("同一网络的设备").getAttribute("aria-checked")).toBe("true");
     expect(onDirtyChange).toHaveBeenCalledWith(true);
-    const save = [...container.querySelectorAll("button")].find(
-      (button) => button.textContent === "保存",
-    );
-    if (!save) throw new Error("missing save button");
-    await act(async () => {
-      save.click();
-      await Promise.resolve();
-    });
+    await save();
     expect(bridge.updatePreferences).toHaveBeenCalledWith(
       expect.objectContaining({
         inference_listen: "all_interfaces",
@@ -437,27 +520,21 @@ describe("SettingsCenter", () => {
     bridge.getPreferences.mockResolvedValue(exposedSettings);
     bridge.updatePreferences.mockResolvedValue(settings);
     const onCoreSnapshot = vi.fn();
-    await act(async () => {
-      root.render(
-        <SettingsCenter
-          onCoreSnapshot={onCoreSnapshot}
-          onDirtyChange={vi.fn()}
-          snapshot={{ ...snapshot, inference_listen_active: "all_interfaces" }}
-        />,
-      );
-      await Promise.resolve();
+    await render({
+      onCoreSnapshot,
+      snapshot: { ...snapshot, inference_listen_active: "all_interfaces" },
     });
     await act(async () => {
       await Promise.resolve();
     });
+    await openTab("网关与网络");
+    expect(option("同一网络的设备").getAttribute("aria-checked")).toBe("true");
     expect(container.textContent).toContain("网关正在对网络开放，端口 8317");
     expect(container.textContent).toContain("http://192.168.1.20:8317");
     expect(container.textContent).toContain("http://[fd7a:115c:a1e0::1]:8317");
     expect(bridge.listNetworkAddresses).toHaveBeenCalledTimes(1);
 
-    const revert = [...container.querySelectorAll("button")].find(
-      (button) => button.textContent === "改回仅本机",
-    );
+    const revert = buttonNamed("改回仅这台电脑");
     if (!revert) throw new Error("missing revert button");
     await act(async () => {
       revert.click();
@@ -473,64 +550,61 @@ describe("SettingsCenter", () => {
   });
 
   it("explains a fallback without claiming the saved port is a pending edit", async () => {
-    await act(async () =>
-      root.render(
-        <SettingsCenter
-          snapshot={{
-            ...snapshot,
-            inference_port_fallback: {
-              requested_port: 9000,
-              active_port: 8317,
-            },
-          }}
-          onCoreSnapshot={vi.fn()}
-          onDirtyChange={vi.fn()}
-        />,
-      ),
-    );
+    await render({
+      snapshot: {
+        ...snapshot,
+        inference_port_fallback: {
+          requested_port: 9000,
+          active_port: 8317,
+        },
+      },
+    });
     expect(container.textContent).toContain("端口 9000 已被占用");
     // Clients are told the address AstrLink writes for them.
     expect(container.textContent).toContain("http://localhost:8317");
     expect(container.textContent).toContain("请同步修改客户端 API 地址");
+    await openTab("网关与网络");
+    expect(container.textContent).toContain(
+      "客户端填写的地址是 http://localhost:8317。",
+    );
+    expect(container.textContent).not.toContain("改用 9000");
     expect(container.textContent).not.toContain("已保存的设置要重启网关后生效");
     expect(bridge.updatePreferences).not.toHaveBeenCalled();
   });
 
   it("applies desktop and core preferences immediately", async () => {
     const onDirtyChange = vi.fn();
-    bridge.updatePreferences.mockResolvedValue({
+    bridge.updatePreferences.mockImplementation(async (values) => ({
       ...settings,
-      values: { ...settings.values, autostart: true },
-      autostart_actual: true,
-    });
+      values,
+      autostart_actual: values.autostart,
+    }));
+    await render({ onDirtyChange });
 
     await act(async () => {
-      root.render(
-        <SettingsCenter
-          onCoreSnapshot={vi.fn()}
-          onDirtyChange={onDirtyChange}
-          snapshot={snapshot}
-        />,
-      );
+      switchNamed("开机自动启动").click();
       await Promise.resolve();
     });
-
-    const toggles =
-      container.querySelectorAll<HTMLButtonElement>('[role="switch"]');
-    const autostart = toggles[0];
-    if (!autostart) throw new Error("missing autostart toggle");
-
-    await act(async () => {
-      autostart.click();
-      await Promise.resolve();
-    });
-
-    expect(bridge.updatePreferences).toHaveBeenCalledWith(
-      expect.objectContaining({
-        autostart: true,
-        inference_port: 9000,
-      }),
+    expect(bridge.updatePreferences).toHaveBeenLastCalledWith(
+      expect.objectContaining({ autostart: true, inference_port: 9000 }),
     );
+
+    await openTab("网关与网络");
+    for (const [label, key] of [
+      ["随 AstrLink 启动网关", "core_auto_start"],
+      ["异常退出后自动重启", "core_auto_recover"],
+    ] as const) {
+      const toggle = switchNamed(label);
+      expect(toggle.getAttribute("aria-describedby")).toBeTruthy();
+      await act(async () => {
+        toggle.click();
+        await Promise.resolve();
+      });
+      expect(bridge.updatePreferences).toHaveBeenLastCalledWith(
+        expect.objectContaining({ [key]: false, inference_port: 9000 }),
+      );
+      expect(toggle.getAttribute("aria-checked")).toBe("false");
+    }
     expect(onDirtyChange).not.toHaveBeenCalledWith(true);
   });
 
@@ -540,25 +614,14 @@ describe("SettingsCenter", () => {
       values,
       autostart_actual: values.autostart,
     }));
-    await act(async () => {
-      root.render(
-        <SettingsCenter
-          onCoreSnapshot={vi.fn()}
-          onDirtyChange={vi.fn()}
-          snapshot={snapshot}
-        />,
-      );
-    });
+    await render();
 
-    const switches =
-      container.querySelectorAll<HTMLButtonElement>('[role="switch"]');
-    const autostart = switches[0];
-    const hidden = switches[1];
-    if (!autostart || !hidden) throw new Error("missing startup switches");
-    expect(hidden.labels?.[0]?.textContent).toContain("自启动时隐藏到托盘");
+    const autostart = switchNamed("开机自动启动");
+    const hidden = switchNamed("自动启动时不显示主窗口");
+    expect(hidden.labels?.[0]?.textContent).toBe("自动启动时不显示主窗口");
     expect(hidden.disabled).toBe(true);
     expect(hidden.getAttribute("aria-checked")).toBe("false");
-    expect(container.textContent).toContain("手动打开应用仍显示主窗口");
+    expect(container.textContent).toContain("手动打开 AstrLink 时照常显示窗口");
     await act(async () => hidden.click());
     expect(bridge.updatePreferences).not.toHaveBeenCalled();
 
@@ -586,6 +649,20 @@ describe("SettingsCenter", () => {
     );
   });
 
+  it("applies the close behavior immediately", async () => {
+    bridge.updatePreferences.mockImplementation(async (values) => ({
+      ...settings,
+      values,
+    }));
+    await render();
+    expect(option("隐藏到托盘").getAttribute("aria-checked")).toBe("true");
+    await act(async () => option("退出 AstrLink").click());
+    expect(bridge.updatePreferences).toHaveBeenLastCalledWith(
+      expect.objectContaining({ close_behavior: "quit" }),
+    );
+    expect(option("退出 AstrLink").getAttribute("aria-checked")).toBe("true");
+  });
+
   it("switches the interface language immediately", async () => {
     bridge.updatePreferences.mockImplementation(async (values) => ({
       ...settings,
@@ -593,25 +670,12 @@ describe("SettingsCenter", () => {
       autostart_actual: settings.autostart_actual,
     }));
 
-    await act(async () => {
-      root.render(
-        <SettingsCenter
-          onCoreSnapshot={vi.fn()}
-          onDirtyChange={vi.fn()}
-          snapshot={snapshot}
-        />,
-      );
-      await Promise.resolve();
-    });
-    expect(container.textContent).toContain("推理入口");
+    await render();
+    expect(container.textContent).toContain("外观");
     expect(container.textContent).toContain("日本語");
 
-    const english = [...container.querySelectorAll('[role="radio"]')].find(
-      (node) => node.getAttribute("aria-label") === "English",
-    );
-    if (!english) throw new Error("missing English language option");
     await act(async () => {
-      english.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      option("English").click();
       await Promise.resolve();
       await Promise.resolve();
     });
@@ -619,7 +683,8 @@ describe("SettingsCenter", () => {
     expect(bridge.updatePreferences).toHaveBeenCalledWith(
       expect.objectContaining({ locale: "en" }),
     );
-    expect(container.textContent).toContain("Inference entry");
+    expect(container.textContent).toContain("Appearance");
+    expect(container.textContent).toContain("Gateway & network");
     await applyLocale("zh-CN");
   });
 
@@ -629,36 +694,17 @@ describe("SettingsCenter", () => {
       ...settings,
       values,
     }));
-    await act(async () =>
-      root.render(
-        <SettingsCenter
-          snapshot={snapshot}
-          onCoreSnapshot={vi.fn()}
-          onDirtyChange={vi.fn()}
-        />,
-      ),
-    );
-    const input = container.querySelector<HTMLInputElement>(
-      'input[type="number"]',
-    )!;
-    await act(async () => {
-      Object.getOwnPropertyDescriptor(
-        HTMLInputElement.prototype,
-        "value",
-      )?.set?.call(input, "9123");
-      input.dispatchEvent(new Event("input", { bubbles: true }));
-      input.dispatchEvent(new Event("change", { bubbles: true }));
-    });
-    await act(async () =>
-      container
-        .querySelector<HTMLButtonElement>('[role="radio"][aria-label="暗色"]')!
-        .click(),
-    );
+    await render();
+    await openTab("网关与网络");
+    await edit(portInput(), "9123");
+    await openTab("常规");
+    await act(async () => option("暗色").click());
     expect(bridge.updatePreferences).toHaveBeenCalledWith(
       expect.objectContaining({ theme: "dark", inference_port: 9000 }),
     );
     expect(document.documentElement.dataset.theme).toBe("dark");
-    expect(input.value).toBe("9123");
+    await openTab("网关与网络");
+    expect(portInput().value).toBe("9123");
     expect(bridge.restartCore).not.toHaveBeenCalled();
   });
 
@@ -679,14 +725,10 @@ describe("SettingsCenter", () => {
         </>,
       ),
     );
-    const radio = (label: string) =>
-      container.querySelector<HTMLButtonElement>(
-        `[role="radio"][aria-label="${label}"]`,
-      )!;
     const meter = () => container.querySelector('[role="progressbar"]')!;
-    expect(radio("剩余百分比").getAttribute("aria-checked")).toBe("true");
+    expect(option("剩余百分比").getAttribute("aria-checked")).toBe("true");
     expect(meter().getAttribute("aria-valuetext")).toBe("剩余 15%");
-    await act(async () => radio("已用百分比").click());
+    await act(async () => option("已用百分比").click());
     expect(bridge.updatePreferences).toHaveBeenLastCalledWith(
       expect.objectContaining({ quota_display_mode: "used" }),
     );
@@ -694,12 +736,66 @@ describe("SettingsCenter", () => {
     bridge.updatePreferences.mockRejectedValueOnce(
       new Error("无法保存额度显示设置"),
     );
-    await act(async () => radio("剩余百分比").click());
-    expect(radio("已用百分比").getAttribute("aria-checked")).toBe("true");
+    await act(async () => option("剩余百分比").click());
+    expect(option("已用百分比").getAttribute("aria-checked")).toBe("true");
     expect(meter().getAttribute("aria-valuetext")).toBe("已用 85%");
     expect(container.textContent).toContain("无法保存额度显示设置");
-    await act(async () => radio("剩余百分比").click());
+    await act(async () => option("剩余百分比").click());
     expect(meter().getAttribute("aria-valuetext")).toBe("剩余 15%");
+  });
+
+  it("saves the display currency and shows the rate in use", async () => {
+    bridge.updatePreferences.mockImplementation(async (values) => ({
+      ...settings,
+      values,
+    }));
+    applyDisplayCurrency({
+      code: "CNY",
+      symbol: "¥",
+      digits: 2,
+      per_usd: 6.6564,
+      rate_date: "2026-11-01",
+      wanted: "CNY",
+      system: "CNY",
+    });
+    try {
+      await render();
+      const trigger = container.querySelector<HTMLButtonElement>(
+        'button[role="combobox"][aria-label="货币"]',
+      )!;
+      expect(trigger.textContent).toBe("跟随系统（人民币）");
+      expect(container.textContent).toContain(
+        "按 11月1日 汇率，1 美元 ≈ ¥6.66",
+      );
+      await act(async () => {
+        trigger.dispatchEvent(
+          new PointerEvent("pointerdown", {
+            bubbles: true,
+            button: 0,
+            pointerType: "mouse",
+          }),
+        );
+        await Promise.resolve();
+      });
+      const item = [
+        ...document.querySelectorAll<HTMLElement>('[role="option"]'),
+      ].find((candidate) => candidate.textContent?.trim() === "日元 JPY")!;
+      await act(async () => {
+        item.click();
+        await Promise.resolve();
+      });
+      await settleClosedLayer();
+      expect(bridge.updatePreferences).toHaveBeenLastCalledWith(
+        expect.objectContaining({ display_currency: "JPY" }),
+      );
+      // Host pushes the new currency once it has a rate; until then dollars.
+      await act(async () =>
+        applyDisplayCurrency({ ...USD_DISPLAY, wanted: "JPY", system: "CNY" }),
+      );
+      expect(container.textContent).toContain("还没取到汇率，暂按美元显示。");
+    } finally {
+      applyDisplayCurrency(USD_DISPLAY);
+    }
   });
 
   it("retains the active theme and selection if saving fails", async () => {
@@ -709,57 +805,54 @@ describe("SettingsCenter", () => {
       values: { ...settings.values, theme: "dark" },
     });
     bridge.updatePreferences.mockRejectedValue(new Error("无法保存外观设置"));
-    await act(async () =>
-      root.render(
-        <SettingsCenter
-          snapshot={snapshot}
-          onCoreSnapshot={vi.fn()}
-          onDirtyChange={vi.fn()}
-        />,
-      ),
-    );
-    await act(async () =>
-      container
-        .querySelector<HTMLButtonElement>('[role="radio"][aria-label="浅色"]')!
-        .click(),
-    );
+    await render();
+    await act(async () => option("浅色").click());
     expect(document.documentElement.dataset.theme).toBe("dark");
-    expect(
-      container
-        .querySelector('[role="radio"][aria-label="暗色"]')
-        ?.getAttribute("aria-checked"),
-    ).toBe("true");
+    expect(option("暗色").getAttribute("aria-checked")).toBe("true");
     expect(container.textContent).toContain("无法保存外观设置");
   });
 
-  it("persists the system proxy switch without interrupting the running gateway", async () => {
+  it("saves the system proxy switch with the other launch settings", async () => {
     bridge.restartCore.mockReset();
     bridge.updatePreferences.mockImplementation(async (values) => ({
       ...settings,
       values,
     }));
-    await act(async () =>
-      root.render(
-        <SettingsCenter
-          snapshot={snapshot}
-          onCoreSnapshot={vi.fn()}
-          onDirtyChange={vi.fn()}
-        />,
-      ),
+    const onDirtyChange = vi.fn();
+    await render({ onDirtyChange });
+    await openTab("网关与网络");
+    const proxy = () => switchNamed("使用系统代理");
+    expect(proxy().getAttribute("aria-checked")).toBe("true");
+    expect(proxy().getAttribute("aria-describedby")).toBeTruthy();
+
+    await act(async () => proxy().click());
+    expect(bridge.updatePreferences).not.toHaveBeenCalled();
+    expect(proxy().getAttribute("aria-checked")).toBe("false");
+    expect(onDirtyChange).toHaveBeenLastCalledWith(true);
+    expect(container.textContent).toContain(
+      "有未保存的修改。保存后重启网关生效。",
     );
-    const label = [...container.querySelectorAll("label")].find((node) =>
-      node.textContent?.startsWith("使用系统代理"),
+
+    // An instant setting saves the stored proxy value, not the draft.
+    await act(async () => switchNamed("随 AstrLink 启动网关").click());
+    expect(bridge.updatePreferences).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        core_auto_start: false,
+        use_system_proxy: true,
+      }),
     );
-    const toggle = container.querySelector<HTMLButtonElement>(
-      `[id="${label?.htmlFor}"]`,
+    expect(proxy().getAttribute("aria-checked")).toBe("false");
+
+    await save();
+    expect(bridge.updatePreferences).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        core_auto_start: false,
+        use_system_proxy: false,
+        inference_port: 9000,
+      }),
     );
-    if (!toggle) throw new Error("missing system proxy toggle");
-    expect(toggle.getAttribute("aria-checked")).toBe("true");
-    await act(async () => toggle.click());
-    expect(bridge.updatePreferences).toHaveBeenCalledWith(
-      expect.objectContaining({ use_system_proxy: false }),
-    );
-    expect(toggle.getAttribute("aria-checked")).toBe("false");
+    expect(proxy().getAttribute("aria-checked")).toBe("false");
+    expect(onDirtyChange).toHaveBeenLastCalledWith(false);
     expect(bridge.restartCore).not.toHaveBeenCalled();
     expect(notifyMocks.success).toHaveBeenCalledWith(
       "已保存，重启网关后生效。",
@@ -767,43 +860,22 @@ describe("SettingsCenter", () => {
     );
 
     bridge.updatePreferences.mockRejectedValueOnce(new Error("write failed"));
-    await act(async () => toggle.click());
-    expect(toggle.getAttribute("aria-checked")).toBe("false");
+    await act(async () => proxy().click());
+    await save();
     expect(container.textContent).toContain("write failed");
+    // The failed draft stays for another try.
+    expect(proxy().getAttribute("aria-checked")).toBe("true");
+    expect(onDirtyChange).toHaveBeenLastCalledWith(true);
   });
 
   it("saves a higher inspection concurrency for the next gateway start", async () => {
-    await act(async () => {
-      root.render(
-        <SettingsCenter
-          onCoreSnapshot={vi.fn()}
-          onDirtyChange={vi.fn()}
-          snapshot={snapshot}
-        />,
-      );
-      await Promise.resolve();
-    });
-    const input = container.querySelector<HTMLInputElement>(
-      'input[aria-label="检查并发"]',
-    );
-    if (!input) throw new Error("missing concurrency input");
-    await act(async () => {
-      const setter = Object.getOwnPropertyDescriptor(
-        HTMLInputElement.prototype,
-        "value",
-      )?.set;
-      setter?.call(input, "32");
-      input.dispatchEvent(new Event("input", { bubbles: true }));
-      input.dispatchEvent(new Event("change", { bubbles: true }));
-    });
-    const save = [...container.querySelectorAll("button")].find(
-      (button) => button.textContent === "保存",
-    );
-    if (!save) throw new Error("missing save button");
-    await act(async () => {
-      save.click();
-      await Promise.resolve();
-    });
+    await render();
+    await openTab("网关与网络");
+    const input = numberInput("同时分析的请求数");
+    expect(input.min).toBe("4");
+    expect(input.max).toBe("128");
+    await edit(input, "32");
+    await save();
     expect(bridge.updatePreferences).toHaveBeenCalledWith(
       expect.objectContaining({
         inference_port: 9000,
@@ -812,38 +884,11 @@ describe("SettingsCenter", () => {
     );
   });
 
-  it("saves an explicit response-header wait for the next gateway start", async () => {
-    await act(async () => {
-      root.render(
-        <SettingsCenter
-          onCoreSnapshot={vi.fn()}
-          onDirtyChange={vi.fn()}
-          snapshot={snapshot}
-        />,
-      );
-      await Promise.resolve();
-    });
-    const input = container.querySelector<HTMLInputElement>(
-      'input[aria-label="响应头等待"]',
-    );
-    if (!input) throw new Error("missing response-header wait input");
-    await act(async () => {
-      const setter = Object.getOwnPropertyDescriptor(
-        HTMLInputElement.prototype,
-        "value",
-      )?.set;
-      setter?.call(input, "300");
-      input.dispatchEvent(new Event("input", { bubbles: true }));
-      input.dispatchEvent(new Event("change", { bubbles: true }));
-    });
-    const save = [...container.querySelectorAll("button")].find(
-      (button) => button.textContent === "保存",
-    );
-    if (!save) throw new Error("missing save button");
-    await act(async () => {
-      save.click();
-      await Promise.resolve();
-    });
+  it("saves an explicit provider reply wait for the next gateway start", async () => {
+    await render();
+    await openTab("网关与网络");
+    await edit(numberInput("等待提供商回复"), "300");
+    await save();
     expect(bridge.updatePreferences).toHaveBeenCalledWith(
       expect.objectContaining({
         inference_port: 9000,
@@ -851,64 +896,43 @@ describe("SettingsCenter", () => {
       }),
     );
   });
+
   it("saves a body limit, preserves the draft during instant changes, and restores unlimited", async () => {
     const onDirtyChange = vi.fn();
     bridge.updatePreferences.mockImplementation(async (values) => ({
       ...settings,
       values,
     }));
-    await act(async () =>
-      root.render(
-        <SettingsCenter
-          snapshot={snapshot}
-          onCoreSnapshot={vi.fn()}
-          onDirtyChange={onDirtyChange}
-        />,
-      ),
-    );
-    const input = container.querySelector<HTMLInputElement>(
-      'input[aria-label="请求体大小上限（MiB）"]',
-    );
-    const save = [...container.querySelectorAll("button")].find(
-      (button) => button.textContent === "保存",
-    );
-    if (!input || !save) throw new Error("missing body limit controls");
+    await render({ onDirtyChange });
+    await openTab("网关与网络");
+    const input = numberInput("单个请求大小上限");
+    const saveButton = buttonNamed("保存");
+    if (!saveButton) throw new Error("missing save button");
     expect(input.value).toBe("0");
-    expect(container.textContent).toContain("不限制");
-    const edit = async (value: string) =>
-      act(async () => {
-        Object.getOwnPropertyDescriptor(
-          HTMLInputElement.prototype,
-          "value",
-        )?.set?.call(input, value);
-        input.dispatchEvent(new Event("input", { bubbles: true }));
-        input.dispatchEvent(new Event("change", { bubbles: true }));
-      });
-    await edit("64");
+    expect(input.getAttribute("aria-invalid")).toBeNull();
+    await edit(input, "64");
     expect(onDirtyChange).toHaveBeenCalledWith(true);
-    const toggle =
-      container.querySelector<HTMLButtonElement>('[role="switch"]')!;
-    await act(async () => toggle.click());
+    await act(async () => switchNamed("随 AstrLink 启动网关").click());
     expect(bridge.updatePreferences).toHaveBeenLastCalledWith(
       expect.objectContaining({ max_request_body_mib: 0 }),
     );
     expect(input.value).toBe("64");
-    await act(async () => save.click());
+    await act(async () => saveButton.click());
     expect(bridge.updatePreferences).toHaveBeenLastCalledWith(
       expect.objectContaining({ max_request_body_mib: 64 }),
     );
-    expect(container.textContent).toContain("64 MiB");
+    expect(input.value).toBe("64");
     expect(onDirtyChange).toHaveBeenLastCalledWith(false);
     for (const invalid of ["-1", "1.5", "4294967296"]) {
-      await edit(invalid);
-      expect(save.disabled).toBe(true);
+      await edit(input, invalid);
+      expect(saveButton.disabled).toBe(true);
       expect(input.getAttribute("aria-invalid")).toBe("true");
     }
-    await edit("0");
-    await act(async () => save.click());
+    await edit(input, "0");
+    expect(input.getAttribute("aria-invalid")).toBeNull();
+    await act(async () => saveButton.click());
     expect(bridge.updatePreferences).toHaveBeenLastCalledWith(
       expect.objectContaining({ max_request_body_mib: 0 }),
     );
-    expect(container.textContent).toContain("不限制");
   });
 });

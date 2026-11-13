@@ -26,12 +26,14 @@ import {
 /**
  * Picks a usage range: one of `presets`, or whole days typed in below them.
  * With `allLabel` it also offers no range, which `value` reports as null.
+ * Without `custom` it offers the presets only.
  */
 export function UsageRangePicker({
   align = "end",
   allLabel,
   ariaLabel,
   className,
+  custom = true,
   disabled,
   label,
   onChange,
@@ -42,6 +44,7 @@ export function UsageRangePicker({
   allLabel?: string;
   ariaLabel: string;
   className?: string;
+  custom?: boolean;
   disabled?: boolean;
   /** A muted prefix in the trigger, as the list filters beside it show. */
   label?: string;
@@ -141,62 +144,64 @@ export function UsageRangePicker({
             option(preset, t(`overview.range.${preset}`), preset),
           )}
         </div>
-        <form
-          aria-labelledby={`${fieldId}-custom`}
-          className="mt-1.5 grid gap-2 border-t px-2 pt-2.5 pb-1"
-          noValidate
-          onSubmit={(event) => {
-            event.preventDefault();
-            setChecked(true);
-            if (problem === null) choose({ ...draft });
-          }}
-        >
-          <span
-            className="text-micro font-medium text-muted-foreground"
-            id={`${fieldId}-custom`}
+        {custom ? (
+          <form
+            aria-labelledby={`${fieldId}-custom`}
+            className="mt-1.5 grid gap-2 border-t px-2 pt-2.5 pb-1"
+            noValidate
+            onSubmit={(event) => {
+              event.preventDefault();
+              setChecked(true);
+              if (problem === null) choose({ ...draft });
+            }}
           >
-            {t("usageRange.custom")}
-          </span>
-          <div className="grid grid-cols-2 gap-2">
-            <label className="grid min-w-0 gap-1 text-micro text-muted-foreground">
-              {t("usageRange.start")}
-              <Input
-                aria-invalid={checked && problem !== null}
-                className="h-7 px-1.5 text-xs"
-                max={today}
-                onChange={(event) => {
-                  const from = event.currentTarget.value;
-                  setDraft((current) => ({ ...current, from }));
-                }}
-                type="date"
-                value={draft.from}
-              />
-            </label>
-            <label className="grid min-w-0 gap-1 text-micro text-muted-foreground">
-              {t("usageRange.end")}
-              <Input
-                aria-invalid={checked && problem !== null}
-                className="h-7 px-1.5 text-xs"
-                max={today}
-                min={draft.from || undefined}
-                onChange={(event) => {
-                  const to = event.currentTarget.value;
-                  setDraft((current) => ({ ...current, to }));
-                }}
-                type="date"
-                value={draft.to}
-              />
-            </label>
-          </div>
-          {checked && problem !== null ? (
-            <p className="text-micro text-danger-foreground" role="alert">
-              {t(`usageRange.problem.${problem}`)}
-            </p>
-          ) : null}
-          <Button className="justify-self-end" size="sm" type="submit">
-            {t("usageRange.apply")}
-          </Button>
-        </form>
+            <span
+              className="text-micro font-medium text-muted-foreground"
+              id={`${fieldId}-custom`}
+            >
+              {t("usageRange.custom")}
+            </span>
+            <div className="grid grid-cols-2 gap-2">
+              <label className="grid min-w-0 gap-1 text-micro text-muted-foreground">
+                {t("usageRange.start")}
+                <Input
+                  aria-invalid={checked && problem !== null}
+                  className="h-7 px-1.5 text-xs"
+                  max={today}
+                  onChange={(event) => {
+                    const from = event.currentTarget.value;
+                    setDraft((current) => ({ ...current, from }));
+                  }}
+                  type="date"
+                  value={draft.from}
+                />
+              </label>
+              <label className="grid min-w-0 gap-1 text-micro text-muted-foreground">
+                {t("usageRange.end")}
+                <Input
+                  aria-invalid={checked && problem !== null}
+                  className="h-7 px-1.5 text-xs"
+                  max={today}
+                  min={draft.from || undefined}
+                  onChange={(event) => {
+                    const to = event.currentTarget.value;
+                    setDraft((current) => ({ ...current, to }));
+                  }}
+                  type="date"
+                  value={draft.to}
+                />
+              </label>
+            </div>
+            {checked && problem !== null ? (
+              <p className="text-micro text-danger-foreground" role="alert">
+                {t(`usageRange.problem.${problem}`)}
+              </p>
+            ) : null}
+            <Button className="justify-self-end" size="sm" type="submit">
+              {t("usageRange.apply")}
+            </Button>
+          </form>
+        ) : null}
       </PopoverContent>
     </Popover>
   );

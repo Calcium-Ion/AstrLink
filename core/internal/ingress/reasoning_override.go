@@ -7,10 +7,10 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/jsonedit"
 	"github.com/QuantumNous/astrlink/core/internal/relaykitbridge"
-	"github.com/tidwall/gjson"
 )
 
 // reasoningRanks orders reasoning levels from least to most reasoning.
@@ -85,18 +85,18 @@ func (signals adaptiveSignals) hits() int {
 
 func requestSignals(protocol contract.ProtocolID, body []byte) adaptiveSignals {
 	var signals adaptiveSignals
-	var messages gjson.Result
+	var messages ojson.Result
 	content := "content"
 	switch protocol {
 	case contract.ProtocolOpenAIChat, contract.ProtocolAnthropicMessages:
-		messages = gjson.GetBytes(body, "messages")
+		messages = ojson.GetBytes(body, "messages")
 	case contract.ProtocolOpenAIResponses, contract.ProtocolOpenAIResponsesCompact:
-		messages = gjson.GetBytes(body, "input")
-		if messages.Type == gjson.String {
+		messages = ojson.GetBytes(body, "input")
+		if messages.Type == ojson.String {
 			signals.messages, signals.lastUserChars = 1, textLength(messages.Str)
 		}
 	case contract.ProtocolGoogleGenerateContent:
-		messages, content = gjson.GetBytes(body, "contents"), "parts"
+		messages, content = ojson.GetBytes(body, "contents"), "parts"
 	}
 	if messages.IsArray() {
 		items := messages.Array()
@@ -108,7 +108,7 @@ func requestSignals(protocol contract.ProtocolID, body []byte) adaptiveSignals {
 			if !items[index].IsObject() || !user {
 				continue
 			}
-			if value := items[index].Get(content); value.Type == gjson.String {
+			if value := items[index].Get(content); value.Type == ojson.String {
 				signals.lastUserChars = textLength(value.Str)
 			} else if value.Exists() {
 				signals.lastUserChars = jsonLength(value, 0)
@@ -116,7 +116,7 @@ func requestSignals(protocol contract.ProtocolID, body []byte) adaptiveSignals {
 			break
 		}
 	}
-	tools := gjson.GetBytes(body, "tools")
+	tools := ojson.GetBytes(body, "tools")
 	if !tools.IsArray() {
 		return signals
 	}
@@ -160,9 +160,9 @@ const maxSignalDepth = 64
 // jsonLength is the length of value as compact JSON in UTF-16 code units, as
 // JavaScript's JSON.stringify writes it, with inline base64 images left out
 // of its strings.
-func jsonLength(value gjson.Result, depth int) int {
+func jsonLength(value ojson.Result, depth int) int {
 	switch {
-	case value.Type == gjson.String:
+	case value.Type == ojson.String:
 		return quotedLength(inlineImage.ReplaceAllString(value.Str, ""))
 	case depth >= maxSignalDepth:
 		return len(value.Raw)
@@ -177,7 +177,7 @@ func jsonLength(value gjson.Result, depth int) int {
 		return length
 	case value.IsObject():
 		length, first := 2, true
-		value.ForEach(func(key, item gjson.Result) bool {
+		value.ForEach(func(key, item ojson.Result) bool {
 			if !first {
 				length++
 			}
@@ -372,7 +372,7 @@ func (edit *reasoningEdit) set(path string, value any) {
 }
 
 func (edit *reasoningEdit) remove(path string) {
-	if edit.err != nil || !gjson.GetBytes(edit.body, path).Exists() {
+	if edit.err != nil || !ojson.GetBytes(edit.body, path).Exists() {
 		return
 	}
 	updated, err := jsonedit.Delete(edit.body, path)
@@ -504,8 +504,8 @@ func cappedEffort(level, asked string) string {
 	return "high"
 }
 
-func namedLevel(value gjson.Result) string {
-	if value.Type != gjson.String {
+func namedLevel(value ojson.Result) string {
+	if value.Type != ojson.String {
 		return ""
 	}
 	return strings.ToLower(strings.TrimSpace(value.Str))
@@ -513,14 +513,14 @@ func namedLevel(value gjson.Result) string {
 
 func chatReasoning(body []byte, model string, target reasoningTarget, info openAIReasoning) reasoningEdit {
 	edit := reasoningEdit{body: body, outside: !info.known}
-	effort := namedLevel(gjson.GetBytes(body, "reasoning_effort"))
-	nested := gjson.GetBytes(body, "reasoning")
+	effort := namedLevel(ojson.GetBytes(body, "reasoning_effort"))
+	nested := ojson.GetBytes(body, "reasoning")
 	nestedEffort := namedLevel(nested.Get("effort"))
 	nestedBudget := nested.Get("max_tokens")
 	nestedEnabled := nested.Get("enabled")
-	off := (effort != "" && reasoningRank(effort) == 0) || nestedEnabled.Type == gjson.False ||
+	off := (effort != "" && reasoningRank(effort) == 0) || nestedEnabled.Type == ojson.False ||
 		(nestedEffort != "" && reasoningRank(nestedEffort) == 0) ||
-		(nestedBudget.Type == gjson.Number && nestedBudget.Int() == 0)
+		(nestedBudget.Type == ojson.Number && nestedBudget.Int() == 0)
 	switch {
 	case off:
 		edit.asked = "none"
@@ -528,10 +528,10 @@ func chatReasoning(body []byte, model string, target reasoningTarget, info openA
 		edit.asked = effort
 	case nestedEffort != "":
 		edit.asked = nestedEffort
-	case nestedBudget.Type == gjson.Number && nestedBudget.Int() > 0:
+	case nestedBudget.Type == ojson.Number && nestedBudget.Int() > 0:
 		edit.asked = budgetLevel(int(nestedBudget.Int()))
 	}
-	asks := !off && (edit.asked != "" || (nested.IsObject() && nestedEnabled.Type == gjson.True))
+	asks := !off && (edit.asked != "" || (nested.IsObject() && nestedEnabled.Type == ojson.True))
 	if !info.known && !asks {
 		return edit
 	}
@@ -546,7 +546,7 @@ func chatReasoning(body []byte, model string, target reasoningTarget, info openA
 		edit.set("reasoning.effort", want)
 		// The level replaces a token budget; providers take one or the other.
 		edit.remove("reasoning.max_tokens")
-		if want != "none" && nestedEnabled.Type == gjson.False {
+		if want != "none" && nestedEnabled.Type == ojson.False {
 			edit.remove("reasoning.enabled")
 		}
 	}
@@ -559,7 +559,7 @@ func chatReasoning(body []byte, model string, target reasoningTarget, info openA
 
 func responsesReasoning(body []byte, model string, target reasoningTarget, info openAIReasoning) reasoningEdit {
 	edit := reasoningEdit{body: body, outside: !info.known}
-	reasoning := gjson.GetBytes(body, "reasoning")
+	reasoning := ojson.GetBytes(body, "reasoning")
 	edit.asked = namedLevel(reasoning.Get("effort"))
 	if !info.known && (!reasoning.IsObject() || reasoningRank(edit.asked) == 0) {
 		return edit
@@ -594,12 +594,12 @@ func (edit *reasoningEdit) dropOpenAISampling(model, effort string, fields ...st
 
 // claudeAsked is the level a Messages request asks for: none when thinking
 // is off, the effort it names, or the level of its manual budget.
-func claudeAsked(thinking gjson.Result, effort string) string {
+func claudeAsked(thinking ojson.Result, effort string) string {
 	switch thinking.Get("type").Str {
 	case "disabled", "between_tools":
 		return "none"
 	case "enabled":
-		if budget := thinking.Get("budget_tokens"); effort == "" && budget.Type == gjson.Number {
+		if budget := thinking.Get("budget_tokens"); effort == "" && budget.Type == ojson.Number {
 			return budgetLevel(int(budget.Int()))
 		}
 	}
@@ -612,13 +612,13 @@ func claudeAsked(thinking gjson.Result, effort string) string {
 // skipped when the Messages API would then reject the request.
 func claudeReasoning(body []byte, model string, target reasoningTarget) reasoningEdit {
 	edit := reasoningEdit{body: body}
-	thinking := gjson.GetBytes(body, "thinking")
-	absent := !thinking.Exists() || thinking.Type == gjson.Null
+	thinking := ojson.GetBytes(body, "thinking")
+	absent := !thinking.Exists() || thinking.Type == ojson.Null
 	if !absent && !thinking.IsObject() {
 		return edit
 	}
 	thinkingType := thinking.Get("type").Str
-	clientEffort := namedLevel(gjson.GetBytes(body, "output_config.effort"))
+	clientEffort := namedLevel(ojson.GetBytes(body, "output_config.effort"))
 	edit.asked = claudeAsked(thinking, clientEffort)
 	on := thinkingType == "enabled" || thinkingType == "adaptive" ||
 		(absent && relaykitbridge.ClaudeDefaultLevel(model) != "none")
@@ -632,9 +632,9 @@ func claudeReasoning(body []byte, model string, target reasoningTarget) reasonin
 			return edit
 		}
 	}
-	maxTokens := gjson.GetBytes(body, "max_tokens")
+	maxTokens := ojson.GetBytes(body, "max_tokens")
 	limit, limitMissing := int(maxTokens.Int()), false
-	if maxTokens.Type != gjson.Number || limit <= 0 {
+	if maxTokens.Type != ojson.Number || limit <= 0 {
 		limit, limitMissing = claudeDefaultMaxTokens, true
 	}
 	rendered, err := relaykitbridge.RenderClaudeThinking(model, target.level, target.budget, clientEffort, &limit, claudeDisplay(thinking))
@@ -661,9 +661,9 @@ func claudeReasoning(body []byte, model string, target reasoningTarget) reasonin
 // added and off leaves the request alone.
 func unknownClaudeReasoning(body []byte, model string, target reasoningTarget) reasoningEdit {
 	edit := reasoningEdit{body: body, outside: true}
-	thinking := gjson.GetBytes(body, "thinking")
+	thinking := ojson.GetBytes(body, "thinking")
 	thinkingType := thinking.Get("type").Str
-	clientEffort := namedLevel(gjson.GetBytes(body, "output_config.effort"))
+	clientEffort := namedLevel(ojson.GetBytes(body, "output_config.effort"))
 	edit.asked = claudeAsked(thinking, clientEffort)
 	if target.level == "none" {
 		return edit
@@ -679,15 +679,15 @@ func unknownClaudeReasoning(body []byte, model string, target reasoningTarget) r
 		// Adaptive thinking takes its strength from effort alone.
 		return setEffort()
 	case thinking.IsObject() && thinkingType == "enabled":
-	case (!thinking.Exists() || thinking.Type == gjson.Null) && clientEffort != "" && reasoningRank(clientEffort) != 0:
+	case (!thinking.Exists() || thinking.Type == ojson.Null) && clientEffort != "" && reasoningRank(clientEffort) != 0:
 		// Effort alone still sets how much the model spends.
 		return setEffort()
 	default:
 		return edit
 	}
-	maxTokens := gjson.GetBytes(body, "max_tokens")
+	maxTokens := ojson.GetBytes(body, "max_tokens")
 	limit, limitMissing := int(maxTokens.Int()), false
-	if maxTokens.Type != gjson.Number || limit <= 0 {
+	if maxTokens.Type != ojson.Number || limit <= 0 {
 		limit, limitMissing = claudeDefaultMaxTokens, true
 	}
 	rendered, err := relaykitbridge.RenderClaudeThinking(model, target.level, target.budget, "", &limit, claudeDisplay(thinking))
@@ -703,16 +703,16 @@ func unknownClaudeReasoning(body []byte, model string, target reasoningTarget) r
 // setClaudeEffort sets output_config.effort, creating output_config when the
 // request has none. An output_config of another type is left alone.
 func (edit *reasoningEdit) setClaudeEffort(effort string) {
-	config := gjson.GetBytes(edit.body, "output_config")
+	config := ojson.GetBytes(edit.body, "output_config")
 	switch {
 	case config.IsObject():
 		edit.set("output_config.effort", effort)
-	case !config.Exists() || config.Type == gjson.Null:
+	case !config.Exists() || config.Type == ojson.Null:
 		edit.set("output_config", map[string]string{"effort": effort})
 	}
 }
 
-func claudeDisplay(thinking gjson.Result) *bool {
+func claudeDisplay(thinking ojson.Result) *bool {
 	switch thinking.Get("display").Str {
 	case "summarized":
 		value := true
@@ -729,7 +729,7 @@ func claudeDisplay(thinking gjson.Result) *bool {
 // for the new thinking, and an effort it takes none of is removed. A model
 // outside the table keeps its own effort and sampling.
 func (edit *reasoningEdit) applyClaudeThinking(
-	thinking gjson.Result,
+	thinking ojson.Result,
 	rendered relaykitbridge.ClaudeThinking,
 	limitMissing bool,
 	limit int,
@@ -741,7 +741,7 @@ func (edit *reasoningEdit) applyClaudeThinking(
 	}
 	switch {
 	case rendered.Type == "":
-	case !thinking.Exists() || thinking.Type == gjson.Null:
+	case !thinking.Exists() || thinking.Type == ojson.Null:
 		object := struct {
 			Type         string `json:"type"`
 			BudgetTokens *int   `json:"budget_tokens,omitempty"`
@@ -755,7 +755,7 @@ func (edit *reasoningEdit) applyClaudeThinking(
 			edit.set("thinking.type", rendered.Type)
 		}
 		if rendered.Type == "enabled" {
-			if current := thinking.Get("budget_tokens"); current.Type != gjson.Number || int(current.Int()) != budget {
+			if current := thinking.Get("budget_tokens"); current.Type != ojson.Number || int(current.Int()) != budget {
 				edit.set("thinking.budget_tokens", budget)
 			}
 		} else {
@@ -766,7 +766,7 @@ func (edit *reasoningEdit) applyClaudeThinking(
 			edit.remove("thinking.display")
 		}
 	}
-	switch config := gjson.GetBytes(edit.body, "output_config"); {
+	switch config := ojson.GetBytes(edit.body, "output_config"); {
 	case rendered.Effort != "":
 		if config.Get("effort").Str != rendered.Effort {
 			edit.setClaudeEffort(rendered.Effort)
@@ -794,7 +794,7 @@ func (edit *reasoningEdit) applyClaudeThinking(
 	} else if rendered.ConstrainSampling {
 		edit.remove("temperature")
 		edit.remove("top_k")
-		if topP := gjson.GetBytes(edit.body, "top_p"); topP.Exists() && (topP.Type != gjson.Number || topP.Float() < 0.95 || topP.Float() > 1) {
+		if topP := ojson.GetBytes(edit.body, "top_p"); topP.Exists() && (topP.Type != ojson.Number || topP.Float() < 0.95 || topP.Float() > 1) {
 			edit.remove("top_p")
 		}
 	}
@@ -805,11 +805,11 @@ func (edit *reasoningEdit) applyClaudeThinking(
 // tool call in the last assistant turn that no thinking block precedes. It
 // is empty when thinking can be turned on.
 func claudeThinkingGuard(body []byte) string {
-	switch gjson.GetBytes(body, "tool_choice.type").Str {
+	switch ojson.GetBytes(body, "tool_choice.type").Str {
 	case "any", "tool":
 		return "forced tool choice"
 	}
-	messages := gjson.GetBytes(body, "messages").Array()
+	messages := ojson.GetBytes(body, "messages").Array()
 	if len(messages) == 0 {
 		return ""
 	}
@@ -844,16 +844,16 @@ func claudeThinkingGuard(body []byte) string {
 func geminiReasoning(body []byte, model string, target reasoningTarget) reasoningEdit {
 	edit := reasoningEdit{body: body}
 	generation := "generationConfig"
-	if !gjson.GetBytes(body, generation).Exists() && gjson.GetBytes(body, "generation_config").Exists() {
+	if !ojson.GetBytes(body, generation).Exists() && ojson.GetBytes(body, "generation_config").Exists() {
 		generation = "generation_config"
 	}
 	configPath := generation + ".thinkingConfig"
-	if !gjson.GetBytes(body, configPath).Exists() && gjson.GetBytes(body, generation+".thinking_config").Exists() {
+	if !ojson.GetBytes(body, configPath).Exists() && ojson.GetBytes(body, generation+".thinking_config").Exists() {
 		configPath = generation + ".thinking_config"
 	}
-	config := gjson.GetBytes(body, configPath)
-	if (config.Exists() && config.Type != gjson.Null && !config.IsObject()) ||
-		(gjson.GetBytes(body, generation).Exists() && !gjson.GetBytes(body, generation).IsObject()) {
+	config := ojson.GetBytes(body, configPath)
+	if (config.Exists() && config.Type != ojson.Null && !config.IsObject()) ||
+		(ojson.GetBytes(body, generation).Exists() && !ojson.GetBytes(body, generation).IsObject()) {
 		return edit
 	}
 	levelKey, budgetKey := "thinkingLevel", "thinkingBudget"
@@ -869,9 +869,9 @@ func geminiReasoning(body []byte, model string, target reasoningTarget) reasonin
 	clientLevel := namedLevel(config.Get(levelKey))
 	clientBudget := config.Get(budgetKey)
 	switch {
-	case clientBudget.Type == gjson.Number && clientBudget.Int() < 0:
+	case clientBudget.Type == ojson.Number && clientBudget.Int() < 0:
 		edit.asked = "dynamic"
-	case clientBudget.Type == gjson.Number:
+	case clientBudget.Type == ojson.Number:
 		edit.asked = budgetLevel(int(clientBudget.Int()))
 	default:
 		edit.asked = clientLevel

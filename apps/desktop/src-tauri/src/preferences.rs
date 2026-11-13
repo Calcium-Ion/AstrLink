@@ -242,6 +242,9 @@ pub struct Preferences {
     pub locale: Locale,
     pub theme: ThemePreference,
     pub quota_display_mode: QuotaDisplayMode,
+    /// What amounts estimated at official API prices are shown in: `auto`
+    /// for the system region's currency, or a code from `currency.rs`.
+    pub display_currency: String,
     pub tray: TrayPreferences,
     pub updates: crate::updates::UpdatePreferences,
 }
@@ -263,6 +266,7 @@ impl Default for Preferences {
             locale: Locale::En,
             theme: ThemePreference::System,
             quota_display_mode: QuotaDisplayMode::Remaining,
+            display_currency: crate::currency::AUTO.to_string(),
             tray: TrayPreferences::default(),
             updates: crate::updates::UpdatePreferences::default(),
         }
@@ -275,6 +279,13 @@ impl Preferences {
             return Err(i18n::t(self.locale, "host.preferences.portRange", &[]));
         }
         self.tray.validate(self.locale)?;
+        if !crate::currency::is_choice(&self.display_currency) {
+            return Err(i18n::t(
+                self.locale,
+                "host.preferences.currencyUnknown",
+                &[],
+            ));
+        }
         if !(MIN_MAX_CONCURRENT_INSPECTIONS..=MAX_MAX_CONCURRENT_INSPECTIONS)
             .contains(&self.max_concurrent_inspections)
         {
@@ -958,6 +969,25 @@ mod tests {
             ThemePreference::Dark.native_theme(),
             Some(tauri::Theme::Dark)
         );
+    }
+
+    #[test]
+    fn display_currency_defaults_to_auto_and_rejects_unknown_codes() {
+        // Files saved before the setting existed follow the system region.
+        let saved: Preferences = serde_json::from_str(r#"{"theme":"dark"}"#).unwrap();
+        assert_eq!(saved.display_currency, "auto");
+        for (code, valid) in [
+            ("auto", true),
+            ("CNY", true),
+            ("cny", false),
+            ("THB", false),
+        ] {
+            let values = Preferences {
+                display_currency: code.into(),
+                ..Preferences::default()
+            };
+            assert_eq!(values.validate().is_ok(), valid, "{code}");
+        }
     }
 
     #[test]

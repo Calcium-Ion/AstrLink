@@ -91,7 +91,7 @@ describe("subscription usage summary", () => {
         },
       ],
     });
-    expect(labels(container)).toEqual(["7 天", "Extra"]);
+    expect(labels(container)).toEqual(["每周", "Extra"]);
     expect(container.querySelector("button")?.getAttribute("aria-label")).toBe(
       "查看全部（4）",
     );

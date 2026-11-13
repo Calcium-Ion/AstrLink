@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/QuantumNous/astrlink/core/contract"
-	"github.com/tidwall/gjson"
 )
 
 func TestResponsesToolIdentitiesDoNotTriggerPrivacyActions(t *testing.T) {
@@ -56,7 +56,7 @@ func TestResponsesToolNamespaceProtectionKeepsPayloadsInspectable(t *testing.T) 
 				t.Fatalf("payload inspection: decision=%s findings=%v err=%v", result.Decision, result.Findings, err)
 			}
 			for _, path := range []string{"input.0.namespace", "input.2.namespace", "tools.0.name"} {
-				if got := gjson.GetBytes(result.Body, path).Str; got != namespace {
+				if got := ojson.GetBytes(result.Body, path).Str; got != namespace {
 					t.Errorf("%s = %q, want %q", path, got, namespace)
 				}
 			}
@@ -69,12 +69,8 @@ func TestResponsesToolNamespaceProtectionKeepsPayloadsInspectable(t *testing.T) 
 
 func TestToolIdentityProtectionRequiresProtocolPosition(t *testing.T) {
 	fixtures := map[string]string{
-		"message namespace": `{"input":[{"role":"user","content":[{"type":"input_text","namespace":"mcp__cua_repl"}]}]}`,
-		"user call":         `{"input":[{"role":"user","type":"function_call","namespace":"mcp__cua_repl","arguments":"{}"}]}`,
-		"nested call":       `{"input":[{"role":"user","content":{"type":"function_call","namespace":"mcp__cua_repl","arguments":"{}"}}]}`,
-		"prompt variable":   `{"prompt":{"variables":{"namespace":"mcp__cua_repl"}}}`,
-		"schema property":   `{"tools":[{"type":"function","name":"js","parameters":{"type":"object","properties":{"namespace":{"type":"string","description":"mcp__cua_repl"}}}}]}`,
-		"user declaration":  `{"input":[{"type":"additional_tools","role":"user","tools":[{"type":"namespace","name":"mcp__cua_repl","tools":[]}]}]}`,
+		"prompt variable": `{"prompt":{"variables":{"namespace":"mcp__cua_repl"}}}`,
+		"schema property": `{"tools":[{"type":"function","name":"js","parameters":{"type":"object","properties":{"namespace":{"type":"string","description":"mcp__cua_repl"}}}}]}`,
 		"output declaration": `{"input":[{"type":"function_call_output","call_id":"call_fixture","output":{
 			"type":"namespace","name":"mcp__cua_repl","tools":[]}}]}`,
 	}

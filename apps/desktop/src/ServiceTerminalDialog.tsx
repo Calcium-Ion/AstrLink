@@ -23,12 +23,13 @@ import {
 } from "@/components/ui/select";
 
 import {
+  getClientCatalog,
   getClientConfigStatus,
   listTerminalApps,
   openServiceTerminal,
   pickTerminalDirectory,
 } from "./bridge";
-import { clientSetupClients } from "./ClientSetupDialog";
+import { clientSetupClients } from "./client-setup-clients";
 import { useT } from "./i18n";
 import { notify } from "./notify";
 import type { Service } from "./service-model";
@@ -84,20 +85,25 @@ export function ServiceTerminalDialog({
       (choices) => active.current && setTerminals(choices),
       () => active.current && setTerminals([]),
     );
-    void getClientConfigStatus(null).then(
-      (overview) =>
-        active.current &&
-        setInstalled(
-          terminalClients.filter((id) =>
-            overview.clients.some(
-              (status) =>
-                status.client === id && status.wsl === null && status.detected,
+    void Promise.resolve()
+      .then(() => getClientCatalog())
+      .then((catalog) => getClientConfigStatus(null, catalog))
+      .then(
+        (overview) =>
+          active.current &&
+          setInstalled(
+            terminalClients.filter((id) =>
+              overview.clients.some(
+                (status) =>
+                  status.client === id &&
+                  status.wsl === null &&
+                  status.detected,
+              ),
             ),
           ),
-        ),
-      // An unreadable status says nothing about the clients; offer both.
-      () => active.current && setInstalled([...terminalClients]),
-    );
+        // An unreadable status says nothing about the clients; offer both.
+        () => active.current && setInstalled([...terminalClients]),
+      );
     return () => {
       active.current = false;
     };

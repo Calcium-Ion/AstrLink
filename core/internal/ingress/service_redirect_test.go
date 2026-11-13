@@ -8,11 +8,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/endpoint"
 	"github.com/QuantumNous/astrlink/core/internal/storage"
 	"github.com/QuantumNous/astrlink/core/internal/transport"
-	"github.com/tidwall/gjson"
 )
 
 type redirectServices []contract.Service
@@ -54,7 +54,7 @@ func TestClaudeCodeModelFailsOverToCopilotUnderItsDottedName(t *testing.T) {
 		Forwarder: transport.New(roundTripFunc(func(request *http.Request) (*http.Response, error) {
 			body, _ := io.ReadAll(request.Body)
 			hosts = append(hosts, request.URL.Host)
-			models = append(models, gjson.GetBytes(body, "model").String())
+			models = append(models, ojson.GetBytes(body, "model").String())
 			if request.URL.Host == "api.anthropic.com" {
 				return jsonResponse(http.StatusServiceUnavailable, `{"type":"error","error":{"type":"overloaded_error","message":"busy"}}`), nil
 			}

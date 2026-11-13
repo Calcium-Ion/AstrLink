@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Shared with the desktop widget (macos-widget/). Team-prefixed, so
+	     Developer ID signing needs no provisioning profile. -->
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>7XWQYGN832.com.astrlink.desktop</string>
+	</array>
+</dict>
+</plist>

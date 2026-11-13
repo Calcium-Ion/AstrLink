@@ -1,7 +1,9 @@
 import {
+  createContext,
   isValidElement,
   memo,
   useCallback,
+  useContext,
   useEffect,
   useId,
   useLayoutEffect,
@@ -15,6 +17,7 @@ import {
 import {
   ArrowDown,
   ArrowUpRight,
+  Bookmark,
   Boxes,
   ChevronRight,
   Copy,
@@ -76,10 +79,16 @@ import {
   type TokenUsage,
 } from "./request-conversation-model";
 import { formatDuration } from "./request-live-model";
+import {
+  callMarkers,
+  memoryWriteLine,
+  type CallMarkers,
+} from "./request-context-model";
 import type {
   AuditContent,
   RequestRecord,
   RequestSession,
+  SessionContext,
 } from "./request-record-model";
 import {
   requestServiceIdentity,
@@ -94,6 +103,11 @@ import {
   type TrajectoryTone,
 } from "./request-trajectory-model";
 import { TrajectoryInspector } from "./TrajectoryInspector";
+import {
+  ContextTextDialog,
+  type ContextTextTarget,
+} from "./RequestContextText";
+import { memoryEntryFile, type MemoryFocus } from "./request-memory-model";
 import { useDetachedInspector } from "./trajectory-inspector-window";
 import {
   useConversationContent,
@@ -130,6 +144,8 @@ export function RequestConversation({
   onUnlockRaw,
   outlineOpen,
   contentCache,
+  context,
+  onOpenMemory,
 }: {
   session: RequestSession;
   turns: RequestRecord[];
@@ -146,6 +162,10 @@ export function RequestConversation({
   outlineOpen: boolean;
   /** What earlier views read, so reopening paints it at once. */
   contentCache?: ConversationContentCache;
+  /** Where the context was compacted, from the detail. */
+  context?: SessionContext;
+  /** Opens a memory a call wrote in the memory tab. */
+  onOpenMemory?: (focus: MemoryFocus) => void;
 }) {
   const t = useT();
   const sessionPending =
@@ -155,9 +175,13 @@ export function RequestConversation({
     `${session.id}:${rawSealing?.unlocked ? "unlocked" : "locked"}`,
     contentCache,
   );
+  const markers = useMemo(() => callMarkers(context, turns), [context, turns]);
+  const marked = useMemo(() => new Set(markers.keys()), [markers]);
+  const [textTarget, setTextTarget] = useState<ContextTextTarget | null>(null);
   const model = useMemo(
-    () => conversationTurns(turns, childrenByRoot, content.parsed, nowMs),
-    [turns, childrenByRoot, content.parsed, nowMs],
+    () =>
+      conversationTurns(turns, childrenByRoot, content.parsed, nowMs, marked),
+    [turns, childrenByRoot, content.parsed, nowMs, marked],
   );
   const latestTurnId = model[model.length - 1]?.id ?? null;
 
@@ -487,31 +511,40 @@ export function RequestConversation({
               {t("conversation.uncapturedNotice")}
             </FormMessage>
           ) : null}
-          <ol>
-            {model.map((turn) => (
-              <TurnView
-                call={selectedCall}
-                copyFeedback={copyFeedback}
-                inspectorOpen={showInspector}
-                key={turn.id}
-                onSelectCall={selectCall}
-                onToggle={toggleTurn}
-                onToggleRun={toggleRun}
-                onToggleShowAll={toggleShowAll}
-                open={turnOpen(turn)}
-                openRuns={openRuns}
-                reading={content.reading}
-                refFor={(element) => {
-                  if (element) turnRefs.current.set(turn.id, element);
-                  else turnRefs.current.delete(turn.id);
-                }}
-                services={services}
-                session={session}
-                showAll={showAllTurns.has(turn.id)}
-                turn={turn}
-              />
-            ))}
-          </ol>
+          <OpenContextText.Provider value={setTextTarget}>
+            <OpenMemory.Provider value={onOpenMemory ?? null}>
+              <ol>
+                {model.map((turn) => (
+                  <TurnView
+                    call={selectedCall}
+                    copyFeedback={copyFeedback}
+                    inspectorOpen={showInspector}
+                    key={turn.id}
+                    markers={markers}
+                    onSelectCall={selectCall}
+                    onToggle={toggleTurn}
+                    onToggleRun={toggleRun}
+                    onToggleShowAll={toggleShowAll}
+                    open={turnOpen(turn)}
+                    openRuns={openRuns}
+                    reading={content.reading}
+                    refFor={(element) => {
+                      if (element) turnRefs.current.set(turn.id, element);
+                      else turnRefs.current.delete(turn.id);
+                    }}
+                    services={services}
+                    session={session}
+                    showAll={showAllTurns.has(turn.id)}
+                    turn={turn}
+                  />
+                ))}
+              </ol>
+            </OpenMemory.Provider>
+          </OpenContextText.Provider>
+          <ContextTextDialog
+            onClose={() => setTextTarget(null)}
+            target={textTarget}
+          />
         </div>
         {!atBottom && (newTurns > 0 || sessionPending) ? (
           <Button
@@ -675,6 +708,7 @@ const TurnView = memo(function TurnView({
   call,
   inspectorOpen,
   copyFeedback,
+  markers,
   refFor,
   onToggle,
   onToggleShowAll,
@@ -691,6 +725,8 @@ const TurnView = memo(function TurnView({
   call: ConversationCall | null;
   inspectorOpen: boolean;
   copyFeedback: CopyFeedback;
+  /** Notes beside single calls: compactions, summaries, memory written. */
+  markers: ReadonlyMap<string, CallMarkers>;
   refFor: (element: HTMLElement | null) => void;
   onToggle: (turn: ConversationTurn) => void;
   onToggleShowAll: (turnId: string) => void;
@@ -900,10 +936,11 @@ const TurnView = memo(function TurnView({
                   services={services}
                 />
               ) : (
-                <CallRow
+                <CallWithMarkers
                   call={segment.call}
                   copyFeedback={copyFeedback}
                   key={segment.call.record.id}
+                  marker={markers.get(segment.call.record.id)}
                   onSelect={onSelectCall}
                   reply={segment.call.reply ? reply : undefined}
                   selected={selectedId === segment.call.record.id}
@@ -1155,6 +1192,65 @@ const RunRow = memo(function RunRow({
   );
 });
 
+/**
+ * Opens the text a captured call carried. Rows deep in the list reach the
+ * one dialog through it.
+ */
+const OpenContextText = createContext<(target: ContextTextTarget) => void>(
+  () => {},
+);
+
+/** Opens a memory in the memory tab, when the page offers one. */
+const OpenMemory = createContext<((focus: MemoryFocus) => void) | null>(null);
+
+/**
+ * A call with what the context view knows about it: the compaction just
+ * before it as a divider, and its own notes on its row.
+ */
+function CallWithMarkers({ marker, ...props }: ComponentProps<typeof CallRow>) {
+  const t = useT();
+  const openText = useContext(OpenContextText);
+  const compaction = marker?.compactionBefore;
+  return (
+    <>
+      {compaction ? (
+        <li
+          className="my-1.5 flex items-center gap-3 text-xs text-muted-foreground"
+          data-testid="conversation-compaction"
+        >
+          <span aria-hidden="true" className="h-px flex-1 bg-border" />
+          <span className="font-medium text-text-secondary">
+            {t("sessionContext.compaction")}
+          </span>
+          <span className="tabular-nums">
+            {`${formatCompactNumber(compaction.before_tokens)} \u2192 ${formatCompactNumber(compaction.after_tokens)}`}
+          </span>
+          {/* The summary opens the history of the call after it. */}
+          {props.call.record.audit.request_body_captured ? (
+            <Button
+              className="h-auto px-0 text-xs"
+              onClick={() =>
+                openText({
+                  kind: "summary",
+                  requestId: props.call.record.id,
+                  title: t("memoryView.summaryTitle"),
+                  description: t("memoryView.summaryDialog"),
+                })
+              }
+              type="button"
+              variant="link"
+            >
+              {t("memoryView.viewSummary")}
+            </Button>
+          ) : null}
+          <span aria-hidden="true" className="h-px flex-1 bg-border" />
+        </li>
+      ) : null}
+      <CallRow marker={marker} {...props} />
+    </>
+  );
+}
+
 const CallRow = memo(function CallRow({
   call,
   selected,
@@ -1162,6 +1258,7 @@ const CallRow = memo(function CallRow({
   nested = false,
   reply,
   copyFeedback,
+  marker,
   onSelect,
 }: {
   call: ConversationCall;
@@ -1172,9 +1269,13 @@ const CallRow = memo(function CallRow({
   /** The turn's reply when this call wrote it. */
   reply?: ConversationTurn["reply"];
   copyFeedback?: CopyFeedback;
+  /** What the context view notes about this call. */
+  marker?: CallMarkers;
   onSelect: (record: RequestRecord) => void;
 }) {
   const t = useT();
+  const openText = useContext(OpenContextText);
+  const openMemory = useContext(OpenMemory);
   const service = requestServiceIdentity(call.record, services);
   const replyText = reply?.text ?? null;
   const details =
@@ -1222,6 +1323,14 @@ const CallRow = memo(function CallRow({
             <span className="hidden truncate text-muted-foreground @min-[560px]/conversation:inline">
               {service.name}
             </span>
+            {marker?.summary ? (
+              <span
+                className="truncate text-muted-foreground"
+                data-testid="conversation-summary-call"
+              >
+                {t("sessionContext.summaryCall")}
+              </span>
+            ) : null}
             {call.reason ? (
               <span
                 className={cn(
@@ -1274,6 +1383,54 @@ const CallRow = memo(function CallRow({
           <ArrowUpRight aria-hidden="true" className="size-3" />
         </IconButton>
       </div>
+      {marker?.memory?.map((write) => {
+        // A memory opens in the memory tab, with what happened to it since;
+        // a rules file or an index line without a memory, in its text.
+        const file = memoryEntryFile(write);
+        const view =
+          file && openMemory && call.record.client_type
+            ? {
+                file,
+                project: call.record.project,
+                clientType: call.record.client_type,
+              }
+            : null;
+        return (
+          <p
+            className="ml-6 flex min-w-0 items-center gap-1.5 pb-1 text-xs text-text-secondary"
+            data-testid="conversation-memory"
+            key={`${write.kind}:${write.path ?? write.name}:${write.title ?? ""}`}
+            title={write.path}
+          >
+            <Bookmark
+              animateOnHover={false}
+              aria-hidden="true"
+              className="size-3 shrink-0 text-primary"
+            />
+            <span className="min-w-0 truncate">{memoryWriteLine(write)}</span>
+            <span className="shrink-0 text-muted-foreground">{write.name}</span>
+            {view || call.record.audit.request_body_captured ? (
+              <Button
+                className="h-auto shrink-0 px-0 text-xs"
+                onClick={() =>
+                  view
+                    ? openMemory?.(view)
+                    : openText({
+                        kind: "write",
+                        requestId: call.record.id,
+                        title: memoryWriteLine(write),
+                        write,
+                      })
+                }
+                type="button"
+                variant="link"
+              >
+                {t("memoryView.viewContent")}
+              </Button>
+            ) : null}
+          </p>
+        );
+      })}
       {details && open ? (
         <>
           {call.narration.map((text, index) => (

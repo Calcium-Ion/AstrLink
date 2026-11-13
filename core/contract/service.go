@@ -169,16 +169,21 @@ func (connection HTTPConnection) Validate(serviceID ServiceID) error {
 // SubscriptionConnection is the non-secret lifecycle state for a
 // browser-authorized subscription. OAuth tokens never enter this document.
 type SubscriptionConnection struct {
-	Provider              SubscriptionProvider `json:"provider"`
-	Status                SubscriptionStatus   `json:"status"`
-	AccountHint           string               `json:"account_hint,omitempty"`
-	ProviderAccountID     string               `json:"provider_account_id,omitempty"`
-	CredentialRef         string               `json:"credential_ref,omitempty"`
-	AuthorizationBoundary string               `json:"authorization_boundary,omitempty"`
-	TokenExpiresAt        *time.Time           `json:"token_expires_at,omitempty"`
-	LastRefreshAt         *time.Time           `json:"last_refresh_at,omitempty"`
-	LastError             *SubscriptionError   `json:"last_error,omitempty"`
-	Risk                  *SubscriptionRisk    `json:"risk,omitempty"`
+	Provider          SubscriptionProvider `json:"provider"`
+	Status            SubscriptionStatus   `json:"status"`
+	AccountHint       string               `json:"account_hint,omitempty"`
+	ProviderAccountID string               `json:"provider_account_id,omitempty"`
+	// PlanType is the plan the last usage read reported, kept so the account
+	// stays in its plan's package after a restart. It never leaves the device.
+	PlanType string `json:"plan_type,omitempty"`
+	// Mode is empty on documents written before modes existed; they are legacy.
+	Mode                  SubscriptionMode   `json:"mode,omitempty"`
+	CredentialRef         string             `json:"credential_ref,omitempty"`
+	AuthorizationBoundary string             `json:"authorization_boundary,omitempty"`
+	TokenExpiresAt        *time.Time         `json:"token_expires_at,omitempty"`
+	LastRefreshAt         *time.Time         `json:"last_refresh_at,omitempty"`
+	LastError             *SubscriptionError `json:"last_error,omitempty"`
+	Risk                  *SubscriptionRisk  `json:"risk,omitempty"`
 }
 
 func (connection SubscriptionConnection) Validate(serviceID ServiceID) error {
@@ -189,6 +194,8 @@ func (connection SubscriptionConnection) Validate(serviceID ServiceID) error {
 		DisplayName:           "service",
 		AccountHint:           connection.AccountHint,
 		ProviderAccountID:     connection.ProviderAccountID,
+		PlanType:              connection.PlanType,
+		Mode:                  connection.Mode,
 		CredentialRef:         connection.CredentialRef,
 		Capabilities:          connection.Provider.Capabilities(),
 		AuthorizationBoundary: connection.AuthorizationBoundary,
@@ -232,12 +239,16 @@ type Service struct {
 }
 
 // copilotClaudeRedirects maps the model ids Claude Code sends to the dotted
-// ids GitHub Copilot lists. Keep it in step with serviceBuiltinRedirects in
+// ids GitHub Copilot lists, newest first. Ids without a dot (claude-opus-5)
+// need no rule. Keep it in step with serviceBuiltinRedirects in
 // apps/desktop/src/service-model.ts.
 var copilotClaudeRedirects = []ModelRedirect{
+	{From: "claude-fable-5-2", To: "claude-fable-5.2", Enabled: true},
 	{From: "claude-fable-5-1", To: "claude-fable-5.1", Enabled: true},
 	{From: "claude-opus-5-5", To: "claude-opus-5.5", Enabled: true},
 	{From: "claude-sonnet-5-5", To: "claude-sonnet-5.5", Enabled: true},
+	{From: "claude-haiku-5-5", To: "claude-haiku-5.5", Enabled: true},
+	{From: "claude-opus-4-8", To: "claude-opus-4.8", Enabled: true},
 	{From: "claude-opus-4-6", To: "claude-opus-4.6", Enabled: true},
 	{From: "claude-sonnet-4-6", To: "claude-sonnet-4.6", Enabled: true},
 	{From: "claude-opus-4-5", To: "claude-opus-4.5", Enabled: true},
@@ -511,7 +522,8 @@ func ServiceFromSubscriptionAccount(account SubscriptionAccount) Service {
 		Capabilities: append([]Capability(nil), account.Capabilities...),
 		Subscription: &SubscriptionConnection{
 			Provider: account.Provider, Status: account.Status, AccountHint: account.AccountHint,
-			ProviderAccountID: account.ProviderAccountID, CredentialRef: account.CredentialRef,
+			ProviderAccountID: account.ProviderAccountID, PlanType: account.PlanType, Mode: account.Mode,
+			CredentialRef:         account.CredentialRef,
 			AuthorizationBoundary: account.AuthorizationBoundary, TokenExpiresAt: account.TokenExpiresAt,
 			LastRefreshAt: account.LastRefreshAt, LastError: account.LastError, Risk: account.Risk,
 		},
@@ -527,6 +539,8 @@ func (service Service) SubscriptionAccountView() (SubscriptionAccount, error) {
 		ID: service.ID, Provider: service.Subscription.Provider, Status: service.Subscription.Status,
 		DisplayName: service.Name, AccountHint: service.Subscription.AccountHint,
 		ProviderAccountID:     service.Subscription.ProviderAccountID,
+		PlanType:              service.Subscription.PlanType,
+		Mode:                  service.Subscription.Mode,
 		CredentialRef:         service.Subscription.CredentialRef,
 		Capabilities:          append([]Capability(nil), service.Capabilities...),
 		AuthorizationBoundary: service.Subscription.AuthorizationBoundary,

@@ -4,6 +4,7 @@ import {
   ACTIVE_GRACE_MS,
   activitySince,
   conversationActivity,
+  hasRecentActivity,
   laneAction,
   laneTrail,
   LANE_TRAIL_STEPS,
@@ -121,7 +122,7 @@ function call(
 }
 
 describe("summarizeActivity", () => {
-  it("counts conversations and recent failures at the gateway's now", () => {
+  it("counts conversations in progress at the gateway's now", () => {
     const { now, snapshot } = summarizeActivity({
       now: at(0),
       calls: [
@@ -137,11 +138,10 @@ describe("summarizeActivity", () => {
       ],
     });
     expect(now).toBe(NOW);
-    // g recovered after its failure, so it counts as in progress, not failed.
+    // g called again after its failure, so it is still in progress.
     expect(snapshot).toEqual({
       conversations: 4,
       outputTokensPerSecond: 0,
-      failures: 1,
       clients: [{ clientType: "unknown", count: 4 }],
     });
   });
@@ -252,18 +252,27 @@ describe("summarizeActivity", () => {
     expect(points.at(-1)?.value).toBe(2);
   });
 
-  it("reads a conversation's failure from its latest call, subagents included", () => {
-    const { snapshot } = summarizeActivity({
+  it("has recent activity while a call is in the window", () => {
+    const quiet = summarizeActivity({ now: at(0), calls: [] });
+    expect(hasRecentActivity(quiet)).toBe(false);
+    // Its grace ran out within the window, which still charts it.
+    const earlier = summarizeActivity({
       now: at(0),
-      calls: [
-        call("parent", -60_000, -50_000),
-        call("child", -40_000, -30_000, {
-          parent_session_id: "parent",
-          status: "failed",
-        }),
-      ],
+      calls: [call("a", -250_000, -240_000)],
     });
-    expect(snapshot.failures).toBe(1);
+    expect(earlier.snapshot.conversations).toBe(0);
+    expect(hasRecentActivity(earlier)).toBe(true);
+    // Ended before the window, grace included.
+    const gone = summarizeActivity({
+      now: at(0),
+      calls: [call("a", -370_000, -361_000)],
+    });
+    expect(hasRecentActivity(gone)).toBe(false);
+    const running = summarizeActivity({
+      now: at(0),
+      calls: [call("a", -1_000, null)],
+    });
+    expect(hasRecentActivity(running)).toBe(true);
   });
 
   it("averages the output tokens of the last minute over it", () => {

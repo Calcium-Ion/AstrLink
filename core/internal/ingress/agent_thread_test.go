@@ -348,3 +348,54 @@ func TestDeepSeekHarnessForkIsNotMergedIntoItsParent(t *testing.T) {
 	assertNewSession(t, first, fork)
 	assertParent(t, fork, first)
 }
+
+func TestDeepSeekHarnessSubagentOverResponsesLinksByParentID(t *testing.T) {
+	const (
+		root  = "session-eae2d618-52ee-4fcc-981a-984a4a17b467"
+		child = "4f14da9d-4dce-4a8d-88c4-381283f5e1c7"
+		fork  = "73aeb0e8-4da1-4815-9a9f-1b84844767d7"
+	)
+	harness := newSessionHarness(t, contract.ProtocolOpenAIResponses, "/v1/responses", sessionHarnessOptions{auditBlobs: &memoryAuditBlobs{}})
+	harness.headers = http.Header{}
+	harness.headers.Set("User-Agent", "deepseek-harness/0.2.1-rc.2 (darwin; arm64)")
+	opening := textMessage("user", "Read the Go sources and the tests with two subagents")
+	main := harness.serve(codexBody(t, root, opening, deepSeekRuntimeNote()), codexTestReply)
+	assertTurn(t, main, 1)
+
+	note := func(parent string) map[string]any {
+		return map[string]any{"type": "input_text", "text": `Your parent agent id is "` + parent + `". Before you finish, send your result to that agent with send_message({ agent_id: "` + parent + `", message: "<self-contained result>" }).`}
+	}
+	childOpener := map[string]any{"role": "user", "content": []any{
+		map[string]any{"type": "input_text", "text": "Read every tracked Go source"}, note(root),
+	}}
+	sub := harness.serve(codexBody(t, child, childOpener, deepSeekRuntimeNote()), codexTestReply)
+	assertNewSession(t, main, sub)
+	assertParent(t, sub, main)
+	subLoop := harness.serve(codexBody(t, child, childOpener, deepSeekRuntimeNote(),
+		map[string]any{"type": "function_call", "call_id": "call_4131493c1c154de58a6d3a7b7c6a8fc2", "name": "shell", "arguments": "{}"},
+		map[string]any{"type": "function_call_output", "call_id": "call_4131493c1c154de58a6d3a7b7c6a8fc2", "output": "ok"}), codexTestReply)
+	assertSameSession(t, sub, subLoop)
+	assertParent(t, subLoop, main)
+
+	// A nested subagent names the subagent that started it.
+	nested := harness.serve(codexBody(t, "9c2e41b7-0d3f-4a58-b6e1-7f20c9d84a13", map[string]any{"role": "user", "content": []any{
+		map[string]any{"type": "input_text", "text": "Read internal/sidecar"}, note(child),
+	}}), codexTestReply)
+	assertNewSession(t, sub, nested)
+	assertParent(t, nested, sub)
+
+	// A fork replays the parent's turn; its own id and the newest note
+	// make it a child.
+	forked := harness.serve(codexBody(t, fork, opening, deepSeekRuntimeNote(), textMessage("assistant", "Done."),
+		textMessage("user", "Summarize the tests"), map[string]any{"role": "user", "content": []any{note(root)}}), codexTestReply)
+	assertNewSession(t, main, forked)
+	assertParent(t, forked, main)
+
+	mainNext := harness.serve(codexBody(t, root, opening, deepSeekRuntimeNote(),
+		map[string]any{"type": "function_call", "call_id": "call_26aa58af53d64371a51d10db8af7ef52", "name": "subagent", "arguments": "{}"},
+		map[string]any{"type": "function_call_output", "call_id": "call_26aa58af53d64371a51d10db8af7ef52", "output": "started subagent " + child}), codexTestReply)
+	assertSameSession(t, main, mainNext)
+	if mainNext.ParentSessionID != nil {
+		t.Fatalf("main conversation got a parent %v", *mainNext.ParentSessionID)
+	}
+}

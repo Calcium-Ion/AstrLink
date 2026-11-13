@@ -11,10 +11,10 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/accountauth"
 	"github.com/QuantumNous/astrlink/core/internal/jsonedit"
-	"github.com/tidwall/gjson"
 )
 
 // codexSubscriptionUnsupportedFields are rejected by the ChatGPT Codex backend.
@@ -194,9 +194,9 @@ func scopeCodexSessions(header http.Header, body map[string]json.RawMessage, sco
 			mapped[value] = accountauth.ScopedSessionID(scope, value)
 		}
 	}
-	noteMetadata := func(metadata gjson.Result) {
+	noteMetadata := func(metadata ojson.Result) {
 		for _, field := range codexSessionIDFields {
-			if value := metadata.Get(field); value.Type == gjson.String {
+			if value := metadata.Get(field); value.Type == ojson.String {
 				note(value.Str)
 			}
 		}
@@ -204,11 +204,11 @@ func scopeCodexSessions(header http.Header, body map[string]json.RawMessage, sco
 	for _, name := range codexSessionHeaders {
 		note(header.Get(name))
 	}
-	noteMetadata(gjson.Parse(header.Get(codexTurnMetadataHeader)))
-	clientMetadata := gjson.ParseBytes(body["client_metadata"])
+	noteMetadata(ojson.Parse(header.Get(codexTurnMetadataHeader)))
+	clientMetadata := ojson.ParseBytes(body["client_metadata"])
 	if clientMetadata.IsObject() {
 		noteMetadata(clientMetadata)
-		noteMetadata(gjson.Parse(clientMetadata.Get("x-codex-turn-metadata").String()))
+		noteMetadata(ojson.Parse(clientMetadata.Get("x-codex-turn-metadata").String()))
 	}
 	if len(mapped) == 0 {
 		return false
@@ -330,7 +330,7 @@ func withCodexWebSearchHistoryTool(body []byte, header http.Header) ([]byte, boo
 	if !bytes.Contains(body, []byte(`"web_search_call"`)) {
 		return body, false
 	}
-	input := gjson.GetBytes(body, "input")
+	input := ojson.GetBytes(body, "input")
 	if !input.IsArray() {
 		return body, false
 	}
@@ -351,7 +351,7 @@ func withCodexWebSearchHistoryTool(body []byte, header http.Header) ([]byte, boo
 			}
 		}
 	}
-	tools := gjson.GetBytes(body, "tools")
+	tools := ojson.GetBytes(body, "tools")
 	if !replayed || codexDeclaresWebSearch(tools) {
 		return body, false
 	}
@@ -379,7 +379,7 @@ func withCodexWebSearchHistoryTool(body []byte, header http.Header) ([]byte, boo
 		declared, err = jsonedit.Insert(body, "input", at, item)
 	case tools.IsArray():
 		declared, err = jsonedit.Insert(body, path, len(tools.Array()), codexWebSearchHistoryTool)
-	case !tools.Exists() || tools.Type == gjson.Null:
+	case !tools.Exists() || tools.Type == ojson.Null:
 		declared, err = jsonedit.Set(body, path, []any{codexWebSearchHistoryTool})
 	default:
 		// A malformed tools value is left for the upstream to judge.
@@ -390,9 +390,9 @@ func withCodexWebSearchHistoryTool(body []byte, header http.Header) ([]byte, boo
 	}
 	if !offered {
 		// Only a choice among no tools is pinned; any other is the caller's.
-		choice := gjson.GetBytes(declared, "tool_choice")
+		choice := ojson.GetBytes(declared, "tool_choice")
 		mode := strings.ToLower(strings.TrimSpace(choice.Str))
-		if !choice.Exists() || choice.Type == gjson.Null || choice.Type == gjson.String && (mode == "" || mode == "auto" || mode == "none") {
+		if !choice.Exists() || choice.Type == ojson.Null || choice.Type == ojson.String && (mode == "" || mode == "auto" || mode == "none") {
 			if declared, err = jsonedit.Set(declared, "tool_choice", "none"); err != nil {
 				return body, false
 			}
@@ -402,7 +402,7 @@ func withCodexWebSearchHistoryTool(body []byte, header http.Header) ([]byte, boo
 }
 
 // codexDeclaresWebSearch reports a web_search tool of any version in tools.
-func codexDeclaresWebSearch(tools gjson.Result) bool {
+func codexDeclaresWebSearch(tools ojson.Result) bool {
 	if !tools.IsArray() {
 		return false
 	}
@@ -416,7 +416,7 @@ func codexDeclaresWebSearch(tools gjson.Result) bool {
 
 func codexResponsesLite(header http.Header, body []byte) bool {
 	return strings.EqualFold(strings.TrimSpace(header.Get(codexResponsesLiteHeader)), "true") ||
-		strings.EqualFold(strings.TrimSpace(gjson.GetBytes(body, "client_metadata."+codexResponsesLiteMetadata).String()), "true")
+		strings.EqualFold(strings.TrimSpace(ojson.GetBytes(body, "client_metadata."+codexResponsesLiteMetadata).String()), "true")
 }
 
 func isJSONNull(value json.RawMessage) bool {

@@ -1231,5 +1231,116 @@ WHERE kind IN ('password', 'biometric')`,
 			`ALTER TABLE request_records ADD COLUMN parent_session_id TEXT`,
 			`CREATE INDEX request_records_parent_session_idx ON request_records(parent_session_id) WHERE parent_session_id IS NOT NULL`,
 		}},
+		// What each call carried to the model, read from its request body. A
+		// root call keeps its own facts in context_json: how its input splits
+		// by source as the body estimates it, the digests of its system prompt
+		// and tools, its marks, and the memory files its history shows written
+		// and read and the skills it shows loaded. Retries repeat their root's
+		// body and carry none.
+		//
+		// The project a call named, its client and the rules, memory, skills
+		// and MCP tools it carried change rarely, so context_sets keeps each
+		// such set once, keyed by the SHA-256 of its items, and calls point at
+		// it. Their item versions and the calls that carried them first and
+		// last come from the sets through request_records_context_set_idx. A
+		// set goes with the last call that points at it.
+		//
+		// The first call to end with a set fills in what the set says beyond
+		// its items, and marks it derived: the skills' descriptions and the MCP
+		// tools' names go to context_catalogs, one row per content that sets
+		// share, and the lines of a memory index the project's client had not
+		// carried before go to memory_entries, one row per project, client and
+		// file. An entry the index already listed when the client's calls
+		// first carried it is preexisting; one a later index drops is removed.
+		// A catalog goes with the last set that points at it, a client's
+		// entries with its last set, and a removed entry once no call kept
+		// started before it was removed.
+		{Version: 57, Name: "request_context_memory", Statements: []string{
+			`CREATE TABLE context_catalogs (
+    id INTEGER PRIMARY KEY,
+    catalog_key BLOB NOT NULL UNIQUE,
+    catalog_json TEXT NOT NULL
+)`,
+			`CREATE TABLE context_sets (
+    id INTEGER PRIMARY KEY,
+    project TEXT NOT NULL,
+    client_type TEXT NOT NULL,
+    items_key BLOB NOT NULL,
+    items_json TEXT NOT NULL,
+    catalog_id INTEGER,
+    derived INTEGER NOT NULL DEFAULT 0,
+    UNIQUE (project, client_type, items_key)
+)`,
+			`CREATE INDEX context_sets_catalog_idx ON context_sets(catalog_id) WHERE catalog_id IS NOT NULL`,
+			`CREATE TABLE memory_entries (
+    project TEXT NOT NULL,
+    client_type TEXT NOT NULL,
+    file TEXT NOT NULL,
+    title TEXT NOT NULL,
+    hook TEXT NOT NULL,
+    first_seen_at TEXT NOT NULL,
+    first_request_id TEXT NOT NULL,
+    preexisting INTEGER NOT NULL,
+    removed_at TEXT,
+    PRIMARY KEY (project, client_type, file)
+) WITHOUT ROWID`,
+			`ALTER TABLE request_records ADD COLUMN context_json TEXT`,
+			`ALTER TABLE request_records ADD COLUMN context_set_id INTEGER`,
+			`CREATE INDEX request_records_context_set_idx ON request_records(context_set_id, started_at)
+WHERE context_set_id IS NOT NULL`,
+			`CREATE INDEX request_records_context_activity_idx ON request_records(context_set_id, started_at)
+WHERE ` + ContextActivityFilter,
+			`CREATE TRIGGER request_context_set_delete AFTER DELETE ON request_records
+WHEN OLD.context_set_id IS NOT NULL BEGIN
+    DELETE FROM context_sets WHERE id = OLD.context_set_id
+      AND NOT EXISTS (SELECT 1 FROM request_records WHERE context_set_id = OLD.context_set_id);
+END`,
+			`CREATE TRIGGER request_context_set_update AFTER UPDATE OF context_set_id ON request_records
+WHEN OLD.context_set_id IS NOT NULL AND OLD.context_set_id IS NOT NEW.context_set_id BEGIN
+    DELETE FROM context_sets WHERE id = OLD.context_set_id
+      AND NOT EXISTS (SELECT 1 FROM request_records WHERE context_set_id = OLD.context_set_id);
+END`,
+			`CREATE TRIGGER context_set_derived_delete AFTER DELETE ON context_sets BEGIN
+    DELETE FROM context_catalogs WHERE id = OLD.catalog_id
+      AND NOT EXISTS (SELECT 1 FROM context_sets WHERE catalog_id = OLD.catalog_id);
+    DELETE FROM memory_entries WHERE project = OLD.project AND client_type = OLD.client_type
+      AND (NOT EXISTS (SELECT 1 FROM context_sets WHERE project = OLD.project AND client_type = OLD.client_type)
+        OR removed_at <= (SELECT MIN((SELECT MIN(started_at) FROM request_records WHERE context_set_id = sets.id))
+          FROM context_sets sets WHERE sets.project = OLD.project AND sets.client_type = OLD.client_type));
+END`,
+		}},
+		// A token limited to selected API providers keeps the list here. The
+		// update trigger on local_access_tokens already logs both columns for
+		// sync. A provider deleted later stays listed and matches nothing, so
+		// the token never widens to every provider.
+		{Version: 58, Name: "access_token_service_scope", Statements: []string{
+			`ALTER TABLE local_access_tokens ADD COLUMN service_scope TEXT NOT NULL DEFAULT 'all'
+    CHECK(service_scope IN ('all', 'selected'))`,
+			`ALTER TABLE local_access_tokens ADD COLUMN service_ids_json TEXT NOT NULL DEFAULT '[]'
+    CHECK(json_valid(service_ids_json) AND json_type(service_ids_json) = 'array')`,
+		}},
+		// Request image compression adds up what it did to forwarded
+		// requests in this one row. Deleting, purging or expiring request
+		// records leaves it alone. since is when counting began: this
+		// upgrade, or the install. Earlier requests are not counted.
+		{Version: 59, Name: "image_compression_totals", Statements: []string{
+			`CREATE TABLE image_compression_totals (
+    id INTEGER PRIMARY KEY CHECK(id = 1),
+    since TEXT NOT NULL,
+    requests INTEGER NOT NULL DEFAULT 0 CHECK(requests >= 0),
+    images INTEGER NOT NULL DEFAULT 0 CHECK(images >= 0),
+    compressed INTEGER NOT NULL DEFAULT 0 CHECK(compressed >= 0),
+    original_bytes INTEGER NOT NULL DEFAULT 0 CHECK(original_bytes >= 0),
+    sent_bytes INTEGER NOT NULL DEFAULT 0 CHECK(sent_bytes >= 0)
+)`,
+			`INSERT INTO image_compression_totals (id, since) VALUES (1, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))`,
+		}},
 	}
 }
+
+// ContextActivityFilter picks the root calls whose history shows a memory
+// file written or read, or a skill loaded. Queries that look them up repeat
+// it word for word, so SQLite can use request_records_context_activity_idx.
+const ContextActivityFilter = `(json_type(context_json, '$.memory_writes') IS NOT NULL
+    OR json_type(context_json, '$.memory_reads') IS NOT NULL
+    OR json_type(context_json, '$.skills_used') IS NOT NULL)`

@@ -4,7 +4,11 @@ import {
 } from "./components/BuiltinToolsEditor";
 import { useWorkspaceSnapshot } from "./workspace-snapshots";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { getRoutingSettings, updateRoutingSettings } from "./bridge";
+import {
+  getImageCompressionTotals,
+  getRoutingSettings,
+  updateRoutingSettings,
+} from "./bridge";
 import { controlErrorMessage } from "./control-error";
 import { ChannelStickinessEditor } from "./components/ChannelStickinessEditor";
 import { FailurePolicyEditor } from "./components/FailurePolicyEditor";
@@ -36,6 +40,7 @@ import {
   type RoutingSettings,
 } from "./failure-policy-model";
 import { currentLocale, useT } from "./i18n";
+import type { ImageCompressionTotals } from "./image-compression-totals-model";
 import { PageHeader } from "./PageHeader";
 import type { RoutableService } from "./service-model";
 import { ThinkingPromptSettings } from "./ThinkingPromptSettings";
@@ -43,6 +48,8 @@ import { UpstreamIdentitySettings } from "./UpstreamIdentitySettings";
 import { useGatewayResponseTimeout } from "./use-gateway-response-timeout";
 
 export const routingAutosaveDelay = 500;
+/** How often the open rewrite tab rereads the image compression totals. */
+export const imageTotalsRefreshInterval = 30_000;
 
 const routingSettingKeys = [
   "default_failure_policy",
@@ -200,6 +207,9 @@ export function RoutingSettingsPanel({
   draftRef.current = draft;
   const [reload, setReload] = useState(0);
   const [showRedirectIssues, setShowRedirectIssues] = useState(false);
+  const [imageTotals, setImageTotals] = useState<ImageCompressionTotals | null>(
+    null,
+  );
   const dirty = draft !== null && JSON.stringify(draft) !== baseline;
   const plan = useMemo(
     () =>
@@ -256,6 +266,25 @@ export function RoutingSettingsPanel({
       active = false;
     };
   }, [ready, reload, t, setSettings]);
+
+  // The totals keep counting while the tab is open; a failed read keeps the
+  // last figures rather than blanking them.
+  useEffect(() => {
+    if (!ready || tab !== "rewrite") return;
+    let active = true;
+    const load = () =>
+      void getImageCompressionTotals()
+        .then((totals) => {
+          if (active) setImageTotals(totals);
+        })
+        .catch(() => undefined);
+    load();
+    const timer = setInterval(load, imageTotalsRefreshInterval);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, [ready, tab]);
 
   const changeDraft = (next: RoutingSettings) => {
     setError(null);
@@ -404,6 +433,7 @@ export function RoutingSettingsPanel({
               <fieldset disabled={!ready} className="grid min-w-0 gap-3">
                 <ImageCompressionEditor
                   value={draft.image_compression ?? defaultImageCompression()}
+                  totals={imageTotals}
                   disabled={!ready}
                   onChange={(image_compression) =>
                     changeDraft({ ...draft, image_compression })

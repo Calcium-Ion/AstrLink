@@ -25,7 +25,8 @@ func TestUsageSummaryAPI(t *testing.T) {
 	query := "?from=2026-09-18T15:00:00Z&to=2026-09-19T15:00:00Z&time_zone=Asia%2FTokyo&bucket=hour"
 	response := accessTokenRequest(t, handler, http.MethodGet, UsageSummaryPath+query, "", "")
 	var summary storage.UsageSummary
-	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &summary) != nil || summary.ByDay == nil || summary.ByModel == nil {
+	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &summary) != nil || summary.ByDay == nil || summary.ByModel == nil ||
+		summary.ByHourModel == nil || summary.ByClient == nil || summary.ByRoute == nil {
 		t.Fatalf("empty status=%d body=%s", response.Code, response.Body.String())
 	}
 	for _, valid := range []string{

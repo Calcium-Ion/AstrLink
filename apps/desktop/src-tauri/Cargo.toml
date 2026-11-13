@@ -34,6 +34,10 @@ serde_json = "=1.0.145"
 sha2 = "=0.10.9"
 sys-locale = "=0.3.2"
 toml_edit = "=0.22.22"
+# YAML client configs: yaml-edit edits in place, keeping comments and layout;
+# yaml_serde re-reads every result to check it before a write.
+yaml-edit = { version = "=0.3.6", default-features = false }
+yaml_serde = "=0.10.7"
 # macos-private-api: the tray popover is a transparent window with its own
 # rounded panel; macOS only allows a transparent NSWindow through this flag.
 tauri = { version = "=2.11.5", features = ["macos-private-api", "tray-icon"] }
@@ -56,6 +60,8 @@ zeroize = { version = "=1.9.0", features = ["serde"] }
 # objc2 crates are the ones AppKit is bound with, already in the tree.
 block2 = "=0.6.2"
 core-foundation = "=0.10.1"
+# tao applies window sizes on the main dispatch queue; reads queue behind them.
+dispatch2 = "=0.3.1"
 mac-notification-sys = "=0.6.15"
 objc2 = "=0.6.4"
 objc2-foundation = { version = "=0.3.2", default-features = false, features = [
@@ -63,6 +69,7 @@ objc2-foundation = { version = "=0.3.2", default-features = false, features = [
   "block2",
   "NSDistributedNotificationCenter",
   "NSError",
+  "NSLocale",
   "NSNotification",
   "NSOperation",
   "NSString",
@@ -87,6 +94,7 @@ libc = "=0.2.189"
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "=0.61.2", features = [
   "Win32_Foundation",
+  "Win32_Globalization",
   "Win32_Graphics_Gdi",
   "Win32_Security",
   "Win32_Storage_FileSystem",

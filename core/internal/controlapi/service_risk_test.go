@@ -79,14 +79,19 @@ func TestClearServiceRiskReleasesRouteCooldown(t *testing.T) {
 		kind     contract.ServiceKind
 		protocol contract.ProtocolID
 		code     string
+		mode     contract.SubscriptionMode
 	}{
-		{contract.ServiceKindCodexSubscription, contract.ProtocolOpenAIResponses, contract.RiskCodeUsageLimitReached},
-		{contract.ServiceKindClaudeSubscription, contract.ProtocolAnthropicMessages, contract.RiskCodeRateLimit7d},
+		{contract.ServiceKindCodexSubscription, contract.ProtocolOpenAIResponses, contract.RiskCodeUsageLimitReached, ""},
+		{contract.ServiceKindClaudeSubscription, contract.ProtocolAnthropicMessages, contract.RiskCodeRateLimit7d, contract.SubscriptionModeLegacy},
 	} {
 		t.Run(string(test.kind), func(t *testing.T) {
 			store, handler := newServiceHandler(t, "service_risk_cooldown")
+			mode := ""
+			if test.mode != "" {
+				mode = fmt.Sprintf(`,"subscription_mode":%q`, test.mode)
+			}
 			service := createServiceForTest(t, handler, fmt.Sprintf(
-				`{"name":"Risk cooldown","kind":%q,"models":["test-model"]}`, test.kind,
+				`{"name":"Risk cooldown","kind":%q%s,"models":["test-model"]}`, test.kind, mode,
 			))
 			connectSubscriptionForTest(t, store, accountauth.NewMemoryCredentialStore(), service.ID)
 			resolver, err := endpoint.NewStoreResolver(store)

@@ -61,6 +61,7 @@ x-astrlink-implementation:
     - GET /control/v1/pricing/catalog
     - POST /control/v1/pricing/sync
     - GET /control/v1/pricing/summary
+    - GET /control/v1/pricing/estimates
     - GET /control/v1/pricing/services/{service_id}
     - PUT /control/v1/pricing/services/{service_id}
     - POST /control/v1/pricing/services/{service_id}/backfill
@@ -84,12 +85,16 @@ x-astrlink-implementation:
     - POST /control/v1/services/{service_id}/usage/reset
     - POST /control/v1/services/{service_id}/risk/clear
     - GET /control/v1/services/{service_id}/risk-events
+    - GET /control/v1/service-packages
+    - PATCH /control/v1/service-packages/{package_id}
     - GET /control/v1/access-tokens
     - GET /control/v1/access-token-usage
     - GET /control/v1/usage-summary
     - GET /control/v1/privacy-summary
+    - GET /control/v1/image-compression-totals
     - POST /control/v1/access-tokens
     - GET /control/v1/access-tokens/{token_id}/secret
+    - PATCH /control/v1/access-tokens/{token_id}
     - DELETE /control/v1/access-tokens/{token_id}
     - GET /control/v1/policies
     - GET /control/v1/policies/{policy_id}
@@ -252,6 +257,29 @@ paths:
           {
             description: Price synchronization failed; last valid catalog retained.,
           }
+  /control/v1/pricing/estimates:
+    get:
+      x-astrlink-role: observer
+      x-astrlink-implementation-status: implemented
+      tags: [Services]
+      operationId: getQuotaEstimates
+      summary: Estimate what each whole official quota window holds at official API prices.
+      description: >-
+        For each service, the priced calls recorded in its signed-in account's
+        primary or secondary windows of the last seven days, divided by the
+        share of those windows the provider reported used. A window counts only
+        when every call in it was priced; windows that began before billing
+        started recording are left out. A window kind gets an estimate once
+        the windows read add up to at least 10% used. Usage outside the
+        gateway counts toward the share but not the cost, so the estimate can
+        run low.
+      responses:
+        "200":
+          description: Local reference pricing result, denominated in USD.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/QuotaEstimates" }
+        "401": { description: Local control authentication required. }
   /control/v1/pricing/services/{service_id}:
     get:
       x-astrlink-role: observer
@@ -713,7 +741,7 @@ paths:
       summary: Start provider-specific OAuth for this subscription service only.
       requestBody:
         required: false
-        description: Omit the body only for legacy browser-flow callers; JSON bodies must include an explicit flow.
+        description: Omit the body only for legacy browser-flow callers and official Claude Code accounts, which then start claude_cli; JSON bodies must include an explicit flow.
         content:
           application/json:
             schema:
@@ -743,6 +771,7 @@ paths:
       tags: [Services]
       operationId: completeServiceAuthorization
       summary: Exchange a Claude authorization code for the active service session.
+      description: For a claude_cli session the code goes to the waiting `claude auth login`, which exchanges it itself; the response is the session once the CLI finishes, or still pending after two minutes.
       requestBody:
         required: true
         content:
@@ -758,7 +787,7 @@ paths:
                   minLength: 1
                   maxLength: 8192
                   writeOnly: true
-                  description: Short-lived code#state from the registered Claude callback page. Never persisted or returned.
+                  description: Short-lived code#state from the registered Claude callback page, or the code the claude_cli sign-in page shows. Never persisted or returned.
               additionalProperties: false
       responses:
         "200":
@@ -813,6 +842,42 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /control/v1/claude-cli:
+    get:
+      x-astrlink-role: observer
+      x-astrlink-implementation-status: implemented
+      tags: [Services]
+      operationId: getClaudeCLI
+      summary: Read the claude CLI that official Claude Code accounts run.
+      description: Core looks for the executable named by ASTRLINK_CLAUDE_BIN, else claude on PATH, the official installer's locations and, in the server edition, the install directory in the data volume. Reading the version runs `claude --version`; nothing contacts Anthropic.
+      responses:
+        "200":
+          description: The located CLI and the progress of the last install.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClaudeCLIStatus"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /control/v1/claude-cli/install:
+    post:
+      x-astrlink-role: operator
+      x-astrlink-implementation-status: implemented
+      tags: [Services]
+      operationId: installClaudeCLI
+      summary: Run Anthropic's official claude installer in the server edition.
+      description: Runs `curl -fsSL https://claude.ai/install.sh | bash` with HOME set to the data directory's claude-cli folder, so the CLI survives image updates. Only on request; the image never contains the CLI. Poll getClaudeCLI for the outcome. The desktop answers 409 and links to the official instructions instead.
+      responses:
+        "202":
+          description: Install started.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClaudeCLIStatus"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
         "409":
           $ref: "#/components/responses/Conflict"
   /control/v1/services/{service_id}/logout:
@@ -882,7 +947,7 @@ paths:
         "422":
           $ref: "#/components/responses/UnprocessableEntity"
         "502":
-          $ref: "#/components/responses/BadGateway"
+          $ref: "#/components/responses/ModelDiscoveryFailed"
         "504":
           $ref: "#/components/responses/GatewayTimeout"
   /control/v1/service-proxy-probes:
@@ -975,7 +1040,7 @@ paths:
         "422":
           $ref: "#/components/responses/UnprocessableEntity"
         "502":
-          $ref: "#/components/responses/BadGateway"
+          $ref: "#/components/responses/ModelDiscoveryFailed"
         "504":
           $ref: "#/components/responses/GatewayTimeout"
   /control/v1/services/{service_id}/test:
@@ -1092,6 +1157,11 @@ paths:
         stops asking that host, for every service on it, until the provider's
         `Retry-After` (5 minutes when it sends none), answering 429
         `subscription_usage_rate_limited` meanwhile.
+
+        A failed API-key plan lookup answers 502 `subscription_usage_failed`
+        with one detail whose `reason` names the cause: `key_rejected`,
+        `no_plan`, `wrong_address`, `unreachable`, `timeout`,
+        `provider_down`, `unexpected_reply`, `no_quota` or `provider_error`.
       parameters:
         - name: refresh
           in: query
@@ -1267,6 +1337,8 @@ paths:
         counts; token usage is accumulated only for successful requests. No
         pagination cap applies.
         Calendar buckets use the supplied IANA zone, including DST transitions.
+        Windows of at most 32 days also include hour-by-model buckets of
+        successful requests, whatever the bucket parameter.
       parameters:
         - name: from
           in: query
@@ -1348,6 +1420,37 @@ paths:
                 $ref: "#/components/schemas/PrivacySummary"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+  /control/v1/image-compression-totals:
+    x-astrlink-implementation-status: implemented
+    get:
+      x-astrlink-role: observer
+      tags: [Requests]
+      operationId: getImageCompressionTotals
+      summary: Read what request image compression has saved since counting began.
+      description: >-
+        Adds up the inline images of every inference request an upstream
+        received with image compression on. A request counts once, from the
+        first attempt an upstream answered; its retries and failovers add
+        nothing. Requests rejected before they left, requests that reached no
+        upstream, and requests without inline images are not counted. Each
+        model call of a built-in tool loop is a request of its own and counts
+        separately. Sizes are decoded image bytes. An image sent as it was,
+        because its WebP was not smaller, adds the same size to
+        original_bytes and sent_bytes. The totals are kept apart from request
+        records: deleting, purging or expiring records does not lower them.
+        Counting began at `since`, the upgrade that added it or the install;
+        earlier requests are not counted.
+      responses:
+        "200":
+          description: The image compression totals.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImageCompressionTotals"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "500":
@@ -1477,6 +1580,40 @@ paths:
     x-astrlink-implementation-status: implemented
     parameters:
       - $ref: "#/components/parameters/AccessTokenId"
+    patch:
+      x-astrlink-role: operator
+      tags: [Access Tokens]
+      operationId: updateAccessToken
+      summary: Rename a local inference access token and replace the API providers it may use.
+      description: |
+        The token value stays the same, so clients keep working. A changed
+        provider scope applies to the next request made with the token.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AccessTokenUpdate"
+      responses:
+        "200":
+          description: The updated token metadata.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccessToken"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
     delete:
       x-astrlink-role: operator
       tags: [Access Tokens]
@@ -2422,6 +2559,68 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "422":
           $ref: "#/components/responses/UnprocessableEntity"
+  /control/v1/service-packages:
+    x-astrlink-implementation-status: implemented
+    get:
+      x-astrlink-role: observer
+      tags: [Routes]
+      operationId: listServicePackages
+      summary: List service packages in routing order.
+      description: Every configured service, disabled ones included, grouped the way routing groups them. Subscription accounts with the same provider and the same plan form one package. The plan is the one the account's last usage read reported; it is kept across restarts and cleared when the account signs out or into another provider account. An account whose plan is not known yet joins its provider's unknown package. Every other service is a package of its own. Membership is derived on every read and never stored. A package sits where its earliest member is in the service order.
+      responses:
+        "200":
+          description: Packages in routing order; service_ids keep the service order.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ServicePackageList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          description: Service packages are unavailable.
+  /control/v1/service-packages/{package_id}:
+    x-astrlink-implementation-status: implemented
+    parameters:
+      - name: package_id
+        in: path
+        required: true
+        description: Package ID, URL-escaped, for example subscription%3Aclaude%3Amax_20x.
+        schema:
+          $ref: "#/components/schemas/ServicePackageId"
+    patch:
+      x-astrlink-role: operator
+      tags: [Routes]
+      operationId: updateServicePackage
+      summary: Choose how routing orders the accounts of one package.
+      description: The strategy is saved in the routing settings and applies to new requests. Choosing auto removes the saved entry. Only packages the current services form can be changed, and saving drops the saved strategies of packages they no longer form.
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema:
+              $ref: "#/components/schemas/ServicePackagePatch"
+      responses:
+        "200":
+          description: The package with its new strategy.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ServicePackage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "415":
+          description: Content-Type must be application/merge-patch+json.
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "503":
+          description: Service packages are unavailable.
   /control/v1/client-identities:
     x-astrlink-implementation-status: implemented
     get:
@@ -2587,6 +2786,13 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+        - name: client_type
+          in: query
+          description: |
+            Restrict to root records recognized as this client. Historical records
+            without a client label never match. Not supported on request sessions.
+          schema:
+            $ref: "#/components/schemas/ClientType"
       responses:
         "200":
           description: Request-record page.
@@ -2687,6 +2893,60 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AuditContent"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+  /control/v1/requests/{request_id}/audit/context:
+    x-astrlink-implementation-status: implemented
+    parameters:
+      - $ref: "#/components/parameters/RequestId"
+    get:
+      x-astrlink-role: observer
+      tags: [Requests]
+      operationId: getRequestContextTexts
+      summary: Read the rules, memory and compaction summary a captured call carried, as text.
+      description: |
+        Reads the call's captured client request body and returns the rules
+        files, memory files and skills catalogs it carried, the compaction
+        summary its history starts from, and what the tool calls its history
+        ends with wrote to and read from memory and rules files. The body is opened under the
+        same rules as `GET /control/v1/requests/{request_id}/audit`: the same
+        `view` values, roles, raw access grants and raw lock. When the body was
+        not captured or may not be read in the view, the response is 200 with
+        `withheld` set and empty lists. This response must not be logged,
+        cached, included in diagnostics, or exported as ordinary configuration.
+      parameters:
+        - name: view
+          in: query
+          description: Which parts may be read. Unknown values are rejected.
+          schema:
+            $ref: "#/components/schemas/AuditContentView"
+        - name: X-AstrLink-Raw-Grant
+          in: header
+          description: Token of an approved raw access grant, as for the audit content.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+      responses:
+        "200":
+          description: The texts the call carried, or why they are withheld.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RequestContextTexts"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -3367,6 +3627,130 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+  /control/v1/request-memory:
+    x-astrlink-implementation-status: implemented
+    get:
+      x-astrlink-role: observer
+      tags: [Requests]
+      operationId: getProjectMemory
+      summary: Read what one client's agents remembered in one project.
+      description: |
+        Derived from the context metadata of the calls that passed through the
+        gateway; no local file is read. Returns every project the calls named,
+        and for one project and client: the memories the index lists with
+        their daily reads over 14 days, the newest memories noted with what
+        the user said in that turn, the rules files the newest main call
+        carried, and the skills and MCP tools carried and used over 30 days.
+        Without `project` or `no_project` the project of the most recent call
+        is shown; a project no call named returns only the project list.
+        Titles, descriptions and prompts are cleaned like input_preview and
+        absent when the record may not show the client's text. Does not return
+        request or response bodies.
+      parameters:
+        - name: project
+          in: query
+          description: The project directory, as `project` on the request records.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 512
+        - name: no_project
+          in: query
+          description: Show the calls that named no project. Cannot be combined with `project`.
+          schema:
+            type: string
+            enum: ["true"]
+        - name: client_type
+          in: query
+          description: Show one client's calls; the client that called in the project last without it.
+          schema:
+            $ref: "#/components/schemas/ClientType"
+        - name: day_start
+          in: query
+          description: When the caller's day began, so the daily read counts follow its time zone. It must lie within the last 49 hours; local midnight of the gateway without it.
+          schema:
+            type: string
+            format: date-time
+      responses:
+        "200":
+          description: The project's memory.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectMemory"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "405":
+          description: Only GET is supported.
+  /control/v1/request-memory/entry:
+    x-astrlink-implementation-status: implemented
+    get:
+      x-astrlink-role: observer
+      tags: [Requests]
+      operationId: getProjectMemoryEntry
+      summary: Read one memory and each turn that noted or read it.
+      description: |
+        The same project and client as `GET /control/v1/request-memory`, for
+        the memory file `file` names. Lists the call that noted it and the
+        newest turns that read it, with what the user said in each. The file's
+        text is read separately, from a captured call through
+        `GET /control/v1/requests/{request_id}/audit/context`.
+      parameters:
+        - name: project
+          in: query
+          description: The project directory, as `project` on the request records.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 512
+        - name: no_project
+          in: query
+          description: Show the calls that named no project. Cannot be combined with `project`.
+          schema:
+            type: string
+            enum: ["true"]
+        - name: client_type
+          in: query
+          description: Show one client's calls; the client that called in the project last without it.
+          schema:
+            $ref: "#/components/schemas/ClientType"
+        - name: day_start
+          in: query
+          description: When the caller's day began, so the daily read counts follow its time zone. It must lie within the last 49 hours; local midnight of the gateway without it.
+          schema:
+            type: string
+            format: date-time
+        - name: file
+          in: query
+          required: true
+          description: The memory file, as `file` on the entries. Matched without regard to case.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+      responses:
+        "200":
+          description: The memory and what happened to it.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MemoryEntryDetail"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          description: Only GET is supported.
   /control/v1/request-sessions:
     x-astrlink-implementation-status: implemented
     get:
@@ -3727,6 +4111,22 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
+    ModelDiscoveryFailed:
+      description: >-
+        The upstream model list could not be read (code
+        upstream_model_discovery_failed). When known, details[0].reason says
+        why: upstream_unauthorized (HTTP 401 or 403), upstream_not_found (404,
+        405 or 501), upstream_rate_limited (429), upstream_unavailable (other
+        5xx), upstream_status (another HTTP status), upstream_unreachable (no
+        HTTP response), or upstream_invalid_response (the response is not a
+        model list).
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
     GatewayTimeout:
       description: The upstream model-discovery request exceeded its deadline.
       headers:
@@ -3964,6 +4364,37 @@ components:
       properties:
         processed: { type: integer, minimum: 0 }
       additionalProperties: false
+    QuotaEstimates:
+      type: object
+      required: [services]
+      properties:
+        services:
+          type: array
+          description: Services with at least one estimated window, by service ID.
+          items:
+            type: object
+            required: [service_id, windows]
+            properties:
+              service_id: { type: string, minLength: 3, maxLength: 96 }
+              windows:
+                type: array
+                minItems: 1
+                maxItems: 2
+                items:
+                  type: object
+                  required: [kind, total_usd]
+                  properties:
+                    kind:
+                      type: string
+                      enum: [primary, secondary]
+                      description: The usage window of the same name.
+                    total_usd:
+                      type: string
+                      pattern: '^[0-9]+\.[0-9]{2}$'
+                      description: What the whole window holds, in USD.
+                  additionalProperties: false
+            additionalProperties: false
+      additionalProperties: false
     ReadyEvent:
       type: object
       required:
@@ -4061,6 +4492,66 @@ components:
             date: { type: string, format: date }
             hour: { type: integer, minimum: 0, maximum: 23 }
       unevaluatedProperties: false
+    UsageHourModelBucket:
+      type: object
+      additionalProperties: false
+      description: >-
+        Successful root inference requests of one model in one local hour.
+        model is null when no model was recorded.
+      required: [date, hour, model, requests, total_tokens]
+      properties:
+        date: { type: string, format: date }
+        hour: { type: integer, minimum: 0, maximum: 23 }
+        model: { type: [string, "null"] }
+        requests: { type: integer, minimum: 1 }
+        total_tokens: { type: integer, minimum: 0 }
+    GatewayRewrite:
+      type: string
+      description: >-
+        A change the gateway made to a request before it left for the
+        provider. global_prompt, reasoning_effort and client_identity are
+        known only for requests recorded since they were noted; older requests
+        never list them.
+      enum:
+        [
+          model_redirect,
+          privacy,
+          image_compression,
+          global_prompt,
+          reasoning_effort,
+          conversion,
+          client_identity,
+        ]
+    UsageRoute:
+      type: object
+      additionalProperties: false
+      description: >-
+        Succeeded and failed root inference requests that took one way through
+        the gateway.
+      required:
+        [client_type, service_id, failed_service_id, failed, rewrites, requests]
+      properties:
+        client_type:
+          type: [string, "null"]
+          description: >-
+            Detected client type; null for unknown clients and historical
+            requests without one.
+        service_id:
+          type: [string, "null"]
+          description: >-
+            Provider of the request's last attempt; null when it never reached
+            one.
+        failed_service_id:
+          type: [string, "null"]
+          description: >-
+            Provider whose failed attempt the request failed over from: the
+            newest failed attempt at another provider than service_id.
+        failed: { type: boolean }
+        rewrites:
+          type: array
+          description: In the order the gateway applies them.
+          items: { $ref: "#/components/schemas/GatewayRewrite" }
+        requests: { type: integer, minimum: 1 }
     UsageGroup:
       allOf:
         - $ref: "#/components/schemas/UsageTotals"
@@ -4104,6 +4595,9 @@ components:
           by_service,
           by_model,
           by_token,
+          by_hour_model,
+          by_client,
+          by_route,
           scanned_records,
         ]
       properties:
@@ -4127,6 +4621,25 @@ components:
         by_token:
           type: array
           items: { $ref: "#/components/schemas/UsageGroup" }
+        by_hour_model:
+          type: array
+          description: >-
+            Sparse local hours with successful requests, split by model and
+            ordered by date, hour, then tokens. Empty when the window spans
+            more than 32 days.
+          items: { $ref: "#/components/schemas/UsageHourModelBucket" }
+        by_client:
+          type: array
+          description: >-
+            Groups by detected client type. Unknown clients and historical
+            requests without a client share the null id.
+          items: { $ref: "#/components/schemas/UsageGroup" }
+        by_route:
+          type: array
+          description: >-
+            Routes from client to provider with their rewrites and failovers,
+            busiest first. Empty when the window spans more than 32 days.
+          items: { $ref: "#/components/schemas/UsageRoute" }
         scanned_records: { type: integer, minimum: 0 }
     PrivacyTotals:
       type: object
@@ -4216,6 +4729,41 @@ components:
       properties:
         kind: { type: string }
         count: { type: integer, minimum: 1 }
+    ImageCompressionTotals:
+      type: object
+      additionalProperties: false
+      required:
+        [since, requests, images, compressed, original_bytes, sent_bytes]
+      properties:
+        since:
+          type: string
+          format: date-time
+          description: When counting began.
+        requests:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Requests that went upstream with at least one inline image.
+        images:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Inline images in those requests.
+        compressed:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Images sent as a smaller WebP.
+        original_bytes:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Decoded size of every image as the client sent it.
+        sent_bytes:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Decoded size of every image as it went upstream; original_bytes minus sent_bytes is what compression saved.
     PrivacySummary:
       type: object
       additionalProperties: false
@@ -4275,7 +4823,7 @@ components:
                 $ref: "#/components/schemas/ServicePerformance"
     AccessToken:
       type: object
-      required: [id, name, hint, source, created_at]
+      required: [id, name, hint, source, created_at, service_scope, service_ids]
       properties:
         id:
           $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
@@ -4297,7 +4845,26 @@ components:
         created_at:
           type: string
           format: date-time
+        service_scope:
+          $ref: "#/components/schemas/AccessTokenServiceScope"
+        service_ids:
+          type: array
+          maxItems: 200
+          uniqueItems: true
+          items:
+            $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+          description: |
+            The API providers a selected token may use; empty for all. It may
+            list providers deleted since, which match nothing.
       additionalProperties: false
+    AccessTokenServiceScope:
+      type: string
+      enum: [all, selected]
+      description: |
+        all: the token may use every enabled API provider, including ones
+        added later. selected: only the providers in service_ids. A request
+        outside the scope fails with HTTP 403 and error code
+        access_token_scope.
     AccessTokenCreate:
       type: object
       required: [name]
@@ -4306,6 +4873,33 @@ components:
           type: string
           minLength: 1
           maxLength: 64
+        service_scope:
+          $ref: "#/components/schemas/AccessTokenServiceScope"
+        service_ids:
+          type: array
+          maxItems: 200
+          uniqueItems: true
+          items:
+            $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+          description: Required and non-empty when service_scope is selected; every ID must name an existing API provider.
+      additionalProperties: false
+    AccessTokenUpdate:
+      type: object
+      required: [name, service_scope, service_ids]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 64
+        service_scope:
+          $ref: "#/components/schemas/AccessTokenServiceScope"
+        service_ids:
+          type: array
+          maxItems: 200
+          uniqueItems: true
+          items:
+            $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+          description: Empty for all; non-empty for selected, naming existing API providers.
       additionalProperties: false
     AccessTokenSecret:
       type: object
@@ -4873,6 +5467,81 @@ components:
           minimum: 1
           maximum: 20
       additionalProperties: false
+    ServicePackageId:
+      type: string
+      maxLength: 104
+      pattern: "^(?:service:[a-z][a-z0-9_-]{2,95}|subscription:(?:codex|claude|grok|antigravity|copilot|droid):\\S(?:.*\\S)?)$"
+      description: service:<service_id> for a single service, or subscription:<provider>:<plan> for subscription accounts, where provider is codex, claude, grok, antigravity, copilot or droid and plan is the lowercase plan key, up to 64 characters, or unknown.
+      examples:
+        [
+          "subscription:claude:max_20x",
+          "subscription:codex:unknown",
+          "service:svc_openai",
+        ]
+    ServicePackageList:
+      type: object
+      additionalProperties: false
+      required: [packages]
+      properties:
+        packages:
+          type: array
+          description: Every package in routing order.
+          items:
+            $ref: "#/components/schemas/ServicePackage"
+    ServicePackage:
+      type: object
+      additionalProperties: false
+      required: [id, kind, service_ids, strategy]
+      properties:
+        id:
+          $ref: "#/components/schemas/ServicePackageId"
+        kind:
+          type: string
+          enum: [subscription, service]
+          description: subscription groups the accounts of one provider and plan; service is one other service.
+        provider:
+          type: string
+          enum:
+            [
+              openai_codex,
+              claude_code,
+              xai_grok,
+              antigravity,
+              github_copilot,
+              factory_droid,
+            ]
+          description: Subscription provider. Present only for subscription packages.
+        plan_type:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: Plan the accounts' last usage read reported, lowercase and trimmed. Omitted for service packages and while the plan is not known.
+        service_ids:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          description: Member services in the service order, disabled ones included.
+          items:
+            $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+        strategy:
+          $ref: "#/components/schemas/ServicePackageStrategy"
+    ServicePackageStrategy:
+      type: string
+      enum: [auto, soonest_reset, most_remaining]
+      default: auto
+      description: |
+        How routing orders the accounts of a package. It reads only each account's last cached usage and never contacts a provider. An account's binding window is its 5-hour or weekly window with less left; a window whose reset time has passed counts as unused.
+        - soonest_reset: the account whose binding window resets first goes first.
+        - most_remaining: the account with the most left goes first.
+        - auto: accounts with more than 10% left go first by soonest reset, then accounts with 10% or less by most remaining.
+        In every strategy, accounts at their limit follow the accounts with quota left, earliest reset first, and accounts without cached usage come last in the service order. Ties keep the service order. Exclusions and rate-limit cooldowns still apply, and a conversation bound to an account stays on it.
+    ServicePackagePatch:
+      type: object
+      additionalProperties: false
+      required: [strategy]
+      properties:
+        strategy:
+          $ref: "#/components/schemas/ServicePackageStrategy"
     RequestRecovery:
       type: object
       required: [delay_ms]
@@ -5000,6 +5669,11 @@ components:
         provider_account_id:
           type: string
           maxLength: 256
+        mode:
+          type: string
+          enum: [legacy, official]
+          readOnly: true
+          description: How a Claude Code account signs in and serves requests, fixed when the service is created. official runs the user's own claude CLI, signed in with `claude auth login` in a config directory of its own, and has no credential_ref; provider_account_id is the organization and email `claude auth status` reports. legacy, or no mode on services created before modes existed, signs in through AstrLink's OAuth client and stores the token. Other providers have no mode.
         credential_ref:
           type: string
           maxLength: 512
@@ -5223,6 +5897,10 @@ components:
           $ref: "#/components/schemas/ServiceModels"
         http:
           $ref: "#/components/schemas/HTTPServiceConnectionInput"
+        subscription_mode:
+          type: string
+          enum: [legacy, official]
+          description: Subscription services only. claude_subscription defaults to official, which signs in through the user's claude CLI; legacy keeps AstrLink's own OAuth sign-in. Other providers accept only legacy, stored as no mode.
         capabilities:
           type: array
           description: Required for HTTP services. Subscription services default to the provider's fixed native capabilities; when supplied, the list must keep those unchanged and may only add native-mode local conversions whose convert_to is a protocol the provider serves (openai.responses for Codex, anthropic.messages for Claude, openai.responses or openai.chat for Grok, anthropic.messages, openai.responses or openai.chat for GitHub Copilot and Factory Droid).
@@ -5247,6 +5925,8 @@ components:
             kind:
               $ref: ./protocol-capabilities.schema.json#/$defs/HTTPServiceKind
           required: [http, capabilities]
+          not:
+            required: [subscription_mode]
     HTTPServiceConnectionPatch:
       type: object
       minProperties: 1
@@ -6644,6 +7324,7 @@ components:
           mistral_vibe,
           zed,
           cherry_studio,
+          goose,
         ]
       description: Best-effort client label from original inbound headers, before upstream identity rewriting. Display metadata only; never an authenticated identity. Unknown means no recognized signature. Historical records omit this field.
     RequestRecord:
@@ -6836,6 +7517,15 @@ components:
           allOf:
             - $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
           description: The conversation that started this record's session as a subagent. Absent for a top-level conversation.
+        context:
+          allOf:
+            - $ref: "#/components/schemas/RequestContext"
+          description: What the call carried to the model, read from its request body. Absent on retry attempts, on calls whose body was not read, and on records from before it was kept.
+        project:
+          type: string
+          minLength: 1
+          maxLength: 512
+          description: The working directory the agent named, moved up to the root its project rules sit in, with the home directory written as ~. Absent when the request does not say.
         cursors:
           type: [array, "null"]
           maxItems: 48
@@ -7090,6 +7780,7 @@ components:
           websocket_connection,
           failover,
           client_pin,
+          claude_cli,
         ]
       description: |
         Why the attempt used service_id. Absent when no provider could be selected.
@@ -7099,6 +7790,7 @@ components:
         websocket_connection: the provider the Responses WebSocket connection is bound to.
         failover: an earlier provider of this request was rejected or failed.
         client_pin: the provider the request named in X-AstrLink-Service; no other provider could serve it.
+        claude_cli: a call an official Claude account's claude CLI made while serving the parent request; the parent counts and bills its usage.
     RoutingSkip:
       type: object
       additionalProperties: false
@@ -7123,6 +7815,7 @@ components:
           rate_limited,
           websocket_disabled,
           websocket_unsupported,
+          access_token_scope,
         ]
       description: |
         disabled: the provider is turned off.
@@ -7136,6 +7829,7 @@ components:
         rate_limited: the upstream answered HTTP 429 for this model and its retry delay has not passed.
         websocket_disabled: Responses WebSocket is turned off for the provider.
         websocket_unsupported: the provider cannot serve this model over a native Responses WebSocket.
+        access_token_scope: the request's access token may not use the provider.
     RequestEvent:
       type: object
       required: [kind, started_at, ended_at, status, summary, attempt_index]
@@ -7221,6 +7915,14 @@ components:
           description: Set on a subagent's calls; the conversation that started it.
         client_type:
           $ref: "#/components/schemas/ClientType"
+        model:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: >-
+            Model the call ran with, as usage counts it: the one the provider
+            served, else a routing redirect's target, else the client's.
+            Absent when none is known.
         started_at:
           type: string
           format: date-time
@@ -7239,6 +7941,24 @@ components:
             Tokens the upstream reported the call generated, reasoning
             included. Absent while the call runs, when no usage came back, and
             when the stream stopped before its usage was final.
+        service_id:
+          allOf:
+            - $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+          description: >-
+            Provider of the call's last attempt; set once the call has ended
+            and reached a provider.
+        failed_service_id:
+          allOf:
+            - $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+          description: >-
+            Provider the call failed over from; set once the call has ended.
+        rewrites:
+          type: array
+          minItems: 1
+          description: >-
+            What the gateway changed, in the order it applies them; set once
+            the call has ended and only when something changed.
+          items: { $ref: "#/components/schemas/GatewayRewrite" }
       additionalProperties: false
     RequestSession:
       type: object
@@ -7332,7 +8052,722 @@ components:
         subagent_count:
           type: integer
           minimum: 1
-          description: How many conversations this one started as subagents. Absent when it started none.
+          description: How many conversations this one started as subagents, theirs included. Absent when it started none.
+        tool_duration_ms:
+          type: [integer, "null"]
+          minimum: 0
+          description: Time between calls of the same turn, when tools ran. Null when a call's turn or end is unknown.
+        average_ttft_ms:
+          type: [number, "null"]
+          minimum: 0
+          description: Average time to the first token over streamed calls; null when none streamed.
+        output_tokens_per_second:
+          type: [number, "null"]
+          minimum: 0
+          description: Output tokens over the duration of the calls that reported complete usage; null when none did.
+        context_tokens:
+          type: integer
+          minimum: 0
+          description: The context the newest main call sent, its input tokens with cache reads and writes. Helper calls such as a title are left out. Absent when no main call reported usage.
+        compaction_point_tokens:
+          type: integer
+          minimum: 0
+          description: Where the client compacts the context, inferred from the larger context before its last two compactions. Absent before the first compaction.
+        context_window_tokens:
+          type: integer
+          minimum: 1
+          description: The context window of the official model the newest priced main call reached, from the pricing catalog. Absent when unknown.
+        compaction_count:
+          type: integer
+          minimum: 1
+          description: How many times the context was compacted. Absent when it never was.
+        usage:
+          $ref: "#/components/schemas/SessionUsage"
+        cost:
+          allOf:
+            - $ref: "#/components/schemas/SessionCost"
+          description: The conversation valued at official API prices. Only a session's detail carries it; lists leave it out.
+        failed_repeats:
+          allOf:
+            - $ref: "#/components/schemas/FailedRepeats"
+          description: Set while the newest main call's history ends with one tool call repeated with the same arguments, failing each time.
+      additionalProperties: false
+    RequestContext:
+      type: object
+      description: |
+        What one call sent the model, read from its request body on arrival.
+        Metadata only: token estimates per source, the rules, memory, skills
+        and MCP tools it carried by kind, path and keyed hash, and a few marks.
+        Never their text, except memory titles cleaned like input_preview.
+      properties:
+        parts:
+          allOf:
+            - $ref: "#/components/schemas/ContextParts"
+          description: Where the input came from. Absent when the body only held what is new since a response the provider keeps.
+        items:
+          type: array
+          maxItems: 32
+          description: The rules files, memory files, skills catalog and MCP tools the call carried, in the order they appeared.
+          items:
+            $ref: "#/components/schemas/ContextItem"
+        system_hash:
+          type: string
+          maxLength: 64
+          description: Keyed digest of the system prompt the call opened with, less the items inside it.
+        tools_hash:
+          type: string
+          maxLength: 64
+          description: Keyed digest of the tool definitions.
+        summary:
+          type: boolean
+          description: True on a call that asked the model to summarize the conversation for a compaction.
+        compacted:
+          type: string
+          maxLength: 64
+          description: Keyed digest of the compaction summary the call's history starts from. Each compaction changes it.
+        helper:
+          type: boolean
+          description: True on a helper call of the conversation, such as a title.
+        memory_writes:
+          type: array
+          maxItems: 16
+          description: Memory and rules files the tool calls of the previous response wrote, as this call's history shows them succeed.
+          items:
+            $ref: "#/components/schemas/MemoryWrite"
+        memory_reads:
+          type: array
+          maxItems: 16
+          description: Memory files the tool calls of the previous response read, the index left out.
+          items:
+            $ref: "#/components/schemas/MemoryRead"
+        skills_used:
+          type: array
+          maxItems: 16
+          description: Skills those tool calls loaded.
+          items:
+            type: string
+            minLength: 1
+            maxLength: 128
+        failed_repeats:
+          $ref: "#/components/schemas/FailedRepeats"
+      additionalProperties: false
+    ContextParts:
+      type: object
+      description: Token estimates of where a call's input came from. Once the call reports usage they are scaled to sum to its input tokens.
+      required: [history, tool_results, tools, system, memory, other]
+      properties:
+        history:
+          type: integer
+          minimum: 0
+          description: Messages, reasoning and tool calls.
+        tool_results:
+          type: integer
+          minimum: 0
+          description: What the tools returned.
+        tools:
+          type: integer
+          minimum: 0
+          description: Tool definitions, MCP tools included.
+        system:
+          type: integer
+          minimum: 0
+          description: The system prompt, less the rules and memory inside it.
+        memory:
+          type: integer
+          minimum: 0
+          description: Rules files, memory files and the skills catalog; the items other than MCP sum to it.
+        other:
+          type: integer
+          minimum: 0
+          description: Images, documents and encrypted reasoning.
+      additionalProperties: false
+    ContextItem:
+      type: object
+      required: [kind, tokens]
+      properties:
+        kind:
+          type: string
+          enum: [rules, memory, skills, mcp]
+        name:
+          type: string
+          maxLength: 128
+          description: The file name, such as AGENTS.md. Absent for skills and MCP.
+        path:
+          type: string
+          maxLength: 512
+          description: Where the file lives, with the home directory written as ~. Absent when the request does not say.
+        scope:
+          type: string
+          enum: [global, project, local]
+          description: Whose a rules file is. Absent when unknown.
+        count:
+          type: integer
+          minimum: 0
+          description: Entries the item lists, the lines of a memory index, the skills of a catalog, the MCP tools.
+        servers:
+          type: array
+          maxItems: 16
+          description: The MCP servers whose tools the call carried.
+          items:
+            type: string
+            minLength: 1
+            maxLength: 64
+        tokens:
+          type: integer
+          minimum: 0
+        hash:
+          type: string
+          maxLength: 64
+          description: Keyed digest of the item's content; equal hashes mean it did not change.
+      additionalProperties: false
+    MemoryWrite:
+      type: object
+      required: [kind, name]
+      properties:
+        kind:
+          type: string
+          enum: [rules, memory]
+          description: memory for a memory index or file, rules for a rules file.
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+          description: The file written, such as MEMORY.md.
+        path:
+          type: string
+          maxLength: 512
+        title:
+          type: string
+          maxLength: 80
+          description: The entry the write added, cleaned like input_preview. Absent when the record may not show the client's text.
+        entry:
+          type: string
+          maxLength: 128
+          description: The memory file a line added to a memory index points to.
+        hook:
+          type: string
+          maxLength: 80
+          description: What that line says after the link, cleaned like title.
+      additionalProperties: false
+    MemoryRead:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+          description: The memory file read.
+        path:
+          type: string
+          maxLength: 512
+      additionalProperties: false
+    FailedRepeats:
+      type: object
+      description: One tool call an agent repeated with the same arguments, failing each time.
+      required: [tool, count]
+      properties:
+        tool:
+          type: string
+          minLength: 1
+          maxLength: 64
+        count:
+          type: integer
+          minimum: 3
+        command:
+          type: boolean
+          description: True when the tool runs shell commands.
+      additionalProperties: false
+    ProjectMemory:
+      type: object
+      description: What one client's agents remembered in one project, read from the calls that passed through the gateway.
+      required:
+        - projects
+        - day_start
+        - recent
+        - entries
+        - stories
+        - rules
+        - toolbox
+        - has_memory
+        - has_rules
+      properties:
+        projects:
+          type: array
+          description: Every project the calls named, the most recent first.
+          items:
+            $ref: "#/components/schemas/MemoryProject"
+        project:
+          type: string
+          minLength: 1
+          maxLength: 512
+          description: The project shown. Absent for the calls that named none, and when no call named any.
+        client_type:
+          allOf:
+            - $ref: "#/components/schemas/ClientType"
+          description: The client shown. Absent when no call named the project.
+        day_start:
+          type: string
+          format: date-time
+          description: When the newest day of the read counts began; each day before it is 24 hours earlier.
+        recent:
+          type: integer
+          minimum: 0
+          description: Entries noted in the last 7 days.
+        entries:
+          type: array
+          description: The memories the newest index lists, and those an agent wrote since its calls last carried the index; the newest noted first.
+          items:
+            $ref: "#/components/schemas/MemoryEntry"
+        stories:
+          type: array
+          maxItems: 10
+          description: The newest memories an agent noted, the newest first.
+          items:
+            $ref: "#/components/schemas/MemoryStory"
+        rules:
+          type: array
+          description: The rules files the client's newest main call carried.
+          items:
+            $ref: "#/components/schemas/MemoryRules"
+        toolbox:
+          $ref: "#/components/schemas/MemoryToolbox"
+        has_memory:
+          type: boolean
+          description: True when the calls carried a memory index or wrote a memory.
+        has_rules:
+          type: boolean
+          description: True when the calls carried a rules file.
+      additionalProperties: false
+    MemoryProject:
+      type: object
+      required: [client_types, last_seen_at]
+      properties:
+        project:
+          type: string
+          minLength: 1
+          maxLength: 512
+          description: The project directory, the home directory written as ~. Absent for the calls that named none.
+        client_types:
+          type: array
+          description: The clients whose calls named it, the most recent first.
+          items:
+            $ref: "#/components/schemas/ClientType"
+        last_seen_at:
+          type: string
+          format: date-time
+      additionalProperties: false
+    MemoryEntry:
+      type: object
+      description: One memory, a file the index links.
+      required: [file, reads, total_reads]
+      properties:
+        file:
+          type: string
+          minLength: 1
+          maxLength: 128
+          description: The file the index line links, relative to the index.
+        path:
+          type: string
+          maxLength: 512
+          description: Where the file lives, the home directory written as ~. Absent when the calls did not say where the index is.
+        title:
+          type: string
+          maxLength: 80
+          description: Cleaned like input_preview. Absent when no record may show the client's text.
+        hook:
+          type: string
+          maxLength: 80
+          description: What the index line says after the link, cleaned like title.
+        noted_at:
+          type: string
+          format: date-time
+          description: When an agent noted it. Absent when the index already listed it when the gateway first saw the index.
+        reads:
+          type: array
+          minItems: 14
+          maxItems: 14
+          description: Turns that read the file per day, the oldest of 14 days first and the day of day_start last.
+          items:
+            type: integer
+            minimum: 0
+        total_reads:
+          type: integer
+          minimum: 0
+          description: Turns that read the file over the records kept.
+      additionalProperties: false
+    MemoryStory:
+      type: object
+      description: A memory an agent noted, at the call that shows it.
+      required: [file, at]
+      properties:
+        file:
+          type: string
+          minLength: 1
+          maxLength: 128
+        title:
+          type: string
+          maxLength: 80
+        hook:
+          type: string
+          maxLength: 80
+        at:
+          type: string
+          format: date-time
+        request_id:
+          allOf:
+            - $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+          description: The call that shows it. Absent when the memory shows only in the index the calls carried.
+        session_id:
+          $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+        prompt:
+          type: string
+          maxLength: 80
+          description: What the user said to open that turn, as its input_preview.
+      additionalProperties: false
+    MemoryRules:
+      type: object
+      description: A rules file the newest main call carried, with its latest change.
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+        path:
+          type: string
+          maxLength: 512
+        scope:
+          type: string
+          enum: [global, project, local]
+        first_seen_at:
+          type: string
+          format: date-time
+          description: When a call first carried the file in any version.
+        changed_at:
+          type: string
+          format: date-time
+          description: When a call first carried the current version, once an earlier version was seen.
+        request_id:
+          allOf:
+            - $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+          description: The earliest call still kept that carried the current version.
+        session_id:
+          $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+        before_request_id:
+          allOf:
+            - $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+          description: The last call that carried the version before.
+        captured:
+          type: boolean
+          description: True when both calls' request bodies were captured, so the versions can be compared.
+      additionalProperties: false
+    MemoryToolbox:
+      type: object
+      description: The skills and MCP tools the newest main call carried, and those the calls used in the last 30 days.
+      required: [skills, mcp, idle_tokens]
+      properties:
+        skills:
+          type: array
+          description: The skills used, the most used first, then those not used in catalog order.
+          items:
+            $ref: "#/components/schemas/ToolboxSkill"
+        mcp:
+          type: array
+          description: The MCP servers, in the order the calls carried them.
+          items:
+            $ref: "#/components/schemas/ToolboxServer"
+        idle_tokens:
+          type: integer
+          minimum: 0
+          description: Estimated tokens the skills and MCP tools not used add to each call.
+      additionalProperties: false
+    ToolboxSkill:
+      type: object
+      required: [name, uses, carried]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+        description:
+          type: string
+          maxLength: 80
+          description: The catalog's, cleaned like input_preview. Absent when no record may show the client's text.
+        uses:
+          type: integer
+          minimum: 0
+          description: Turns that loaded the skill.
+        carried:
+          type: boolean
+          description: True when the newest main call's catalog lists it.
+      additionalProperties: false
+    ToolboxServer:
+      type: object
+      required: [server, tools]
+      properties:
+        server:
+          type: string
+          minLength: 1
+          maxLength: 64
+        tools:
+          type: array
+          items:
+            $ref: "#/components/schemas/ToolboxTool"
+      additionalProperties: false
+    ToolboxTool:
+      type: object
+      required: [name, uses, carried]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+        uses:
+          type: integer
+          minimum: 0
+          description: Calls that made it.
+        carried:
+          type: boolean
+      additionalProperties: false
+    MemoryEntryDetail:
+      type: object
+      required: [entry, events]
+      properties:
+        entry:
+          $ref: "#/components/schemas/MemoryEntry"
+        events:
+          type: array
+          maxItems: 51
+          description: The oldest first; the note, then the newest 50 reads.
+          items:
+            $ref: "#/components/schemas/MemoryEvent"
+      additionalProperties: false
+    MemoryEvent:
+      type: object
+      description: One note or read, at the call whose history shows it.
+      required: [kind, at, request_id]
+      properties:
+        kind:
+          type: string
+          enum: [noted, read]
+          description: "`noted` is the call whose history shows the memory written; `read` a turn whose calls read the file."
+        at:
+          type: string
+          format: date-time
+        request_id:
+          $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+        session_id:
+          $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+        prompt:
+          type: string
+          maxLength: 80
+          description: What the user said to open that turn, as its input_preview.
+        captured:
+          type: boolean
+          description: True when the call's request body was captured, so the file's text can be read.
+      additionalProperties: false
+    RequestContextTexts:
+      type: object
+      description: What one captured call carried, as text. Never log, cache, diagnose, or include in ordinary exports.
+      required: [request_id, items, writes, reads]
+      properties:
+        request_id:
+          $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+        withheld:
+          type: boolean
+          description: True when the body cannot be read in this view, and the lists are empty. reason says why; it is absent when the body was not captured.
+        reason:
+          $ref: "#/components/schemas/AuditWithheldReason"
+        truncated:
+          type: boolean
+          description: True when capture kept only the start of the body, so texts may be missing.
+        items:
+          type: array
+          description: The rules files, memory files and skills catalogs the call carried, as the request records name them.
+          items:
+            $ref: "#/components/schemas/ContextItemText"
+        summary:
+          type: string
+          description: The compaction summary the call's history starts from.
+        writes:
+          type: array
+          description: What the tool calls the history ends with wrote to memory and rules files.
+          items:
+            $ref: "#/components/schemas/MemoryWriteText"
+        reads:
+          type: array
+          description: The memory files those tool calls read, as the tools returned them.
+          items:
+            $ref: "#/components/schemas/MemoryReadText"
+      additionalProperties: false
+    ContextItemText:
+      type: object
+      required: [kind, text]
+      properties:
+        kind:
+          type: string
+          enum: [rules, memory, skills]
+        name:
+          type: string
+          maxLength: 128
+        path:
+          type: string
+          maxLength: 512
+        text:
+          type: string
+      additionalProperties: false
+    MemoryWriteText:
+      type: object
+      required: [kind, name, content]
+      properties:
+        kind:
+          type: string
+          enum: [rules, memory]
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+        path:
+          type: string
+          maxLength: 512
+        content:
+          type: string
+          description: The file a write created, or the text an edit or patch added.
+      additionalProperties: false
+    MemoryReadText:
+      type: object
+      required: [name, content]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+        path:
+          type: string
+          maxLength: 512
+        content:
+          type: string
+          description: The file as the read tool returned it, without line numbers.
+      additionalProperties: false
+    SessionUsage:
+      type: object
+      description: Tokens of every call of a conversation, retry attempts included. input_tokens counts cache reads and writes, as in Usage.
+      required:
+        [input_tokens, output_tokens, cache_read_tokens, cache_write_tokens]
+      properties:
+        input_tokens: { type: integer, minimum: 0 }
+        output_tokens: { type: integer, minimum: 0 }
+        cache_read_tokens: { type: integer, minimum: 0 }
+        cache_write_tokens: { type: integer, minimum: 0 }
+        cache_hit_ratio:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: Cache reads over the input of the calls that reported their cache use. Absent when none did.
+      additionalProperties: false
+    SessionCost:
+      type: object
+      description: A conversation valued at official API prices, as the billing ledger records each attempt.
+      required: [amount_usd, priced, unpriced, pending]
+      properties:
+        amount_usd:
+          type: string
+          pattern: "^(0|[1-9][0-9]*)(\\.[0-9]{1,9})?$"
+          description: Sum of the priced attempts in US dollars.
+        priced: { type: integer, minimum: 0 }
+        unpriced:
+          type: integer
+          minimum: 0
+          description: Attempts the catalog could not price.
+        pending:
+          type: integer
+          minimum: 0
+          description: Attempts still running.
+      additionalProperties: false
+    SessionContext:
+      type: object
+      description: What a conversation sent the model call by call, derived when the detail is read and never stored.
+      required: [calls, compactions, cache_misses]
+      properties:
+        calls:
+          type: array
+          description: Main calls with usage, oldest first. Helper calls such as a title are left out.
+          items:
+            $ref: "#/components/schemas/ContextCall"
+        compactions:
+          type: array
+          description: Where the context was compacted, oldest first.
+          items:
+            $ref: "#/components/schemas/ContextCompaction"
+        cache_misses:
+          type: array
+          description: Main calls that rewrote the prompt cache the previous main call built, oldest first. The rebuild after a compaction is expected and not listed.
+          items:
+            $ref: "#/components/schemas/CacheMiss"
+      additionalProperties: false
+    ContextCall:
+      type: object
+      required: [request_id, tokens]
+      properties:
+        request_id:
+          $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+        tokens:
+          type: integer
+          minimum: 0
+          description: Input tokens of the call, cache reads and writes included.
+      additionalProperties: false
+    ContextCompaction:
+      type: object
+      required: [request_id, before_tokens, after_tokens, marked]
+      properties:
+        request_id:
+          allOf:
+            - $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+          description: The first main call after the compaction, whose context dropped.
+        summary_request_id:
+          allOf:
+            - $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+          description: The call that wrote the summary, when the client marked one.
+        before_tokens: { type: integer, minimum: 0 }
+        after_tokens: { type: integer, minimum: 0 }
+        marked:
+          type: boolean
+          description: True when the client marked the compaction in what it sent; false when only the drop in context showed it.
+      additionalProperties: false
+    CacheMiss:
+      type: object
+      description: A main call that read less than half of the prompt cache the previous main call built.
+      required: [request_id, reason, rewritten_tokens]
+      properties:
+        request_id:
+          $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+        reason:
+          type: string
+          enum:
+            [provider_changed, model_changed, expired, prefix_changed, unknown]
+          description: The first explanation that holds, in this order. provider_changed covers another service or subscription account; expired a gap longer than the cache lifetime; prefix_changed a changed system prompt, tool definitions, or rules or memory file.
+        changed:
+          type: string
+          minLength: 1
+          maxLength: 128
+          description: What changed for prefix_changed, "system", "tools", "skills" for the skills catalog, or the rules or memory file such as AGENTS.md.
+        idle_ms:
+          type: integer
+          minimum: 0
+          description: The gap before the call, for expired.
+        ttl_ms:
+          type: integer
+          minimum: 0
+          description: The cache lifetime the gap outlasted, for expired.
+        rewritten_tokens:
+          type: integer
+          minimum: 0
+          description: The cached prefix the call had to send again.
+        extra_usd:
+          type: string
+          pattern: "^(0|[1-9][0-9]*)(\\.[0-9]{1,9})?$"
+          description: What the rewrite cost over a cache hit at official prices. Absent when the call has no price.
       additionalProperties: false
     RequestSessionPage:
       type: object
@@ -7357,10 +8792,36 @@ components:
                 $ref: "#/components/schemas/RequestRecord"
             subagents:
               type: array
-              description: The conversations this one started as subagents, oldest first. Absent when it started none.
+              description: |
+                The conversations this one started as subagents, theirs
+                included. Each comes right after the one that started it
+                (its parent_session_id); siblings are oldest first. Absent
+                when it started none.
               items:
                 $ref: "#/components/schemas/RequestSession"
+            context:
+              $ref: "#/components/schemas/SessionContext"
+            with_subagents:
+              $ref: "#/components/schemas/SessionTotals"
           additionalProperties: false
+    SessionTotals:
+      type: object
+      description: |
+        Sums a conversation together with every subagent under it: their
+        calls, retries included, and the tokens those calls reported, in the
+        Usage accounting. Absent when the conversation started no subagents.
+      required: [call_count, input_tokens, output_tokens]
+      properties:
+        call_count:
+          type: integer
+          minimum: 1
+        input_tokens:
+          type: integer
+          minimum: 0
+        output_tokens:
+          type: integer
+          minimum: 0
+      additionalProperties: false
     Usage:
       type: object
       description: |
@@ -8365,8 +9826,36 @@ components:
       additionalProperties: false
     AuthorizationFlow:
       type: string
-      enum: [browser, device_code, authorization_code]
-      description: Codex supports browser and device_code. Claude Code supports authorization_code with PKCE and a manual code#state callback. Grok (xai_grok) supports device_code only (RFC 8628 against auth.x.ai). Antigravity supports browser authorization with Google OAuth and a loopback callback. GitHub Copilot (github_copilot) supports device_code only (RFC 8628 against github.com with the OpenCode OAuth app). Factory Droid (factory_droid) supports device_code only (RFC 8628 against WorkOS with the Droid CLI's public client).
+      enum: [browser, device_code, authorization_code, claude_cli]
+      description: Codex supports browser and device_code. Legacy Claude Code accounts support authorization_code with PKCE and a manual code#state callback; official ones support claude_cli only, where Core runs `claude auth login --claudeai` in the account's config directory, authorization_url is the sign-in page the CLI shows (on a desktop the CLI also opens it and finishes by itself), and the code that page shows is submitted with completeServiceAuthorization. Grok (xai_grok) supports device_code only (RFC 8628 against auth.x.ai). Antigravity supports browser authorization with Google OAuth and a loopback callback. GitHub Copilot (github_copilot) supports device_code only (RFC 8628 against github.com with the OpenCode OAuth app). Factory Droid (factory_droid) supports device_code only (RFC 8628 against WorkOS with the Droid CLI's public client).
+    ClaudeCLIStatus:
+      type: object
+      required:
+        [installed, supported, minimum_version, install_available, installing]
+      additionalProperties: false
+      properties:
+        installed:
+          type: boolean
+          description: An executable was found, even one older than minimum_version.
+        supported:
+          type: boolean
+          description: The found executable is at least minimum_version.
+        path:
+          type: string
+          description: The found executable.
+        version:
+          type: string
+        minimum_version:
+          type: string
+          description: Oldest CLI official accounts run.
+        install_available:
+          type: boolean
+          description: Core installs the CLI on request (the server edition).
+        installing:
+          type: boolean
+        install_error:
+          type: string
+          description: Why the last install failed; cleared by the next one.
     AuthorizationStartRequest:
       type: object
       required: [flow]
@@ -8442,7 +9931,7 @@ components:
               status:
                 const: pending
               flow:
-                enum: [browser, authorization_code]
+                enum: [browser, authorization_code, claude_cli]
             required: [status, flow]
           then:
             required: [authorization_url]

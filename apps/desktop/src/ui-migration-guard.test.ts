@@ -56,8 +56,10 @@ function readSource(relativePath: string): string {
  * sweeps a fading band through text, and the scroll edge fade is an alpha
  * mask. Each stays inside its own utility.
  */
+// Effects that may paint a gradient: the shimmer text, the scroll fades and
+// the request sky's night backdrop, an illustration rather than UI chrome.
 const gradientEffects =
-  /^@utility (?:shimmer|scroll-fade-[xy]) \{$[\s\S]*?^\}$/gm;
+  /^@utility (?:shimmer|scroll-fade-[xy]) \{$[\s\S]*?^\}$|^ {2}--sky-bg: radial-gradient\([\s\S]*?^ {2}\);$/gm;
 
 function productionSources(): Array<[string, string]> {
   return readdirSync(srcDirectory)
@@ -138,14 +140,13 @@ describe("paper/hairline design system", () => {
     expect(globals).toContain("--color-violet: var(--violet);");
   });
 
-  it("keeps the logo's own indigo/tide, the UI on a separate blue, and bans gradients", () => {
+  it("keeps the logo palette separate from the UI blue and bans UI gradients", () => {
     const globals = readSource("styles/globals.css");
     const logo = readSource("assets/astrlink-logo.svg");
 
-    // Logo art stays indigo / periwinkle. UI brand ink is an independent
-    // pure blue and must not be retied to those logo stops.
-    expect(logo).toContain("#304074");
-    expect(logo).toContain("#7F8FE8");
+    // The logo navy and orbit colours are independent of the UI brand ink.
+    expect(logo).toContain("#1F3C7D");
+    expect(logo).toContain("#AFA8FE");
     expect(globals).toContain("--primary: #1d4d87;");
     expect(globals).toContain("--tide: #3b82f6;");
     expect(globals).toContain("--color-tide: var(--tide);");

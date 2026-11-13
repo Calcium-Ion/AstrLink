@@ -2,8 +2,10 @@
 // barrel, its `modelMappings`, and each brand's index module also attach
 // Avatar/Combine variants that pull in every other brand, `@lobehub/ui`, and
 // `antd-style`, which nearly doubles the production bundle.
+export { default as AmpColor } from "@lobehub/icons/es/Amp/components/Color";
 export { default as AnthropicMono } from "@lobehub/icons/es/Anthropic/components/Mono";
 export { default as AntigravityColor } from "@lobehub/icons/es/Antigravity/components/Color";
+export { default as BaiduColor } from "@lobehub/icons/es/Baidu/components/Color";
 export { default as ByteDanceColor } from "@lobehub/icons/es/ByteDance/components/Color";
 export { default as CherryStudioColor } from "@lobehub/icons/es/CherryStudio/components/Color";
 export { default as ClaudeCodeColor } from "@lobehub/icons/es/ClaudeCode/components/Color";
@@ -18,20 +20,25 @@ export { default as DoubaoColor } from "@lobehub/icons/es/Doubao/components/Colo
 export { default as GeminiColor } from "@lobehub/icons/es/Gemini/components/Color";
 export { default as GemmaColor } from "@lobehub/icons/es/Gemma/components/Color";
 export { default as GithubCopilotMono } from "@lobehub/icons/es/GithubCopilot/components/Mono";
+export { default as GooseMono } from "@lobehub/icons/es/Goose/components/Mono";
 export { default as GrokMono } from "@lobehub/icons/es/Grok/components/Mono";
 export { default as HunyuanColor } from "@lobehub/icons/es/Hunyuan/components/Color";
 export { default as KiloCodeMono } from "@lobehub/icons/es/KiloCode/components/Mono";
 export { default as KimiMono } from "@lobehub/icons/es/Kimi/components/Mono";
+export { default as LobeHubColor } from "@lobehub/icons/es/LobeHub/components/Color";
 export { default as MetaColor } from "@lobehub/icons/es/Meta/components/Color";
 export { default as MinimaxColor } from "@lobehub/icons/es/Minimax/components/Color";
 export { default as MistralColor } from "@lobehub/icons/es/Mistral/components/Color";
 export { default as OpenAIMono } from "@lobehub/icons/es/OpenAI/components/Mono";
-export { default as OpenCodeMono } from "@lobehub/icons/es/OpenCode/components/Mono";
 export { default as OpenClawColor } from "@lobehub/icons/es/OpenClaw/components/Color";
+export { default as OpenCodeMono } from "@lobehub/icons/es/OpenCode/components/Mono";
 export { PiColor } from "./PiColor";
+export { default as QoderColor } from "@lobehub/icons/es/Qoder/components/Color";
 export { default as QwenColor } from "@lobehub/icons/es/Qwen/components/Color";
 export { default as RooCodeMono } from "@lobehub/icons/es/RooCode/components/Mono";
 export { default as StepfunMono } from "@lobehub/icons/es/Stepfun/components/Mono";
+export { default as TencentColor } from "@lobehub/icons/es/Tencent/components/Color";
+export { default as TraeColor } from "@lobehub/icons/es/Trae/components/Color";
 export { default as VertexAIColor } from "@lobehub/icons/es/VertexAI/components/Color";
 export { default as WenxinColor } from "@lobehub/icons/es/Wenxin/components/Color";
 export { default as XiaomiMiMoMono } from "@lobehub/icons/es/XiaomiMiMo/components/Mono";

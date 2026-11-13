@@ -25,7 +25,7 @@ export const ACTIVE_GRACE_MS = 60_000;
  */
 export const TOOL_WAIT_MS = 30 * 60_000;
 
-/** The span the live board charts and counts recent failures over. */
+/** The span the live board charts; it hides once nothing went on in it. */
 export const ACTIVITY_WINDOW_MS = 5 * 60_000;
 
 /** The chart reads the count once per step across the window. */
@@ -114,7 +114,7 @@ export function conversationActivity(
  * for, at most `TOOL_WAIT_MS`, or for the grace. `own` is the conversation's
  * calls, oldest first.
  */
-function busyUntil(
+export function busyUntil(
   call: RequestActivityCall,
   own: readonly RequestActivityCall[],
 ): number {
@@ -140,8 +140,6 @@ export interface ActivitySnapshot {
    * `THROUGHPUT_WINDOW_MS`, from the calls that reported them.
    */
   outputTokensPerSecond: number;
-  /** Conversations whose latest call failed within the window. */
-  failures: number;
   /** The clients those conversations come from, busiest first. */
   clients: ActivityClient[];
 }
@@ -176,7 +174,7 @@ const byStart = (left: RequestActivityCall, right: RequestActivityCall) =>
  * subagent links `parentOf` knows; one it does not know, or one in a loop of
  * links, is its own root.
  */
-function rootOf(
+export function rootOf(
   parentOf: ReadonlyMap<string, string>,
   sessionId: string,
 ): string {
@@ -242,31 +240,33 @@ export function summarizeActivity(
   }
   const current = sampleAt(now);
   points.push(current);
-
-  // A conversation failed when its latest call did, within the window.
-  const latest = new Map<string, RequestActivity["calls"][number]>();
-  for (const call of activity.calls) {
-    const root = rootOf(parentOf, call.session_id);
-    const known = latest.get(root);
-    if (!known || Date.parse(call.started_at) > Date.parse(known.started_at)) {
-      latest.set(root, call);
-    }
-  }
-  let failures = 0;
-  for (const call of latest.values()) {
-    const ended = parseTime(call.completed_at);
-    if (call.status === "failed" && now - ended < windowMs) failures += 1;
-  }
   return {
     now,
     snapshot: {
       conversations: current.value,
       outputTokensPerSecond: outputThroughput(activity.calls, now),
-      failures,
       clients: [...current.clients],
     },
     points,
   };
+}
+
+/**
+ * Whether anything went on within the board's window: a conversation in
+ * progress at any sampled moment, or tokens still in the throughput average.
+ */
+export function hasRecentActivity({
+  snapshot,
+  points,
+}: {
+  snapshot: ActivitySnapshot;
+  points: readonly ActivitySample[];
+}): boolean {
+  return (
+    snapshot.conversations > 0 ||
+    snapshot.outputTokensPerSecond > 0 ||
+    points.some((point) => point.value > 0)
+  );
 }
 
 /**
@@ -323,7 +323,9 @@ export type LaneAction =
   /** Between calls, from a call that recorded no output. */
   | { kind: "idle" };
 
-export function laneAction(session: RequestSession): LaneAction {
+export function laneAction(
+  session: Pick<RequestSession, "status" | "active_request_starts" | "output">,
+): LaneAction {
   const output = session.output;
   if (sessionRunning(session)) {
     if (!output) return { kind: "waiting" };

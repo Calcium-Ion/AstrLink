@@ -22,12 +22,17 @@ const bridgeMocks = vi.hoisted(() => ({
   getAgentDebugStatus: vi.fn(),
   getAuditSettings: vi.fn(),
   getCoreStatus: vi.fn(),
+  // A browser test has no native window to fit to the overview.
+  hasNativeBridge: () => false,
   getLocalDataStatus: vi.fn(),
   getPreferences: vi.fn(),
   getTrayState: vi
     .fn()
     .mockRejectedValue(new Error("tray unavailable in tests")),
   trayAction: vi.fn().mockRejectedValue(new Error("tray unavailable in tests")),
+  getImageCompressionTotals: vi
+    .fn()
+    .mockRejectedValue(new Error("totals unavailable in tests")),
   getRoutingSettings: vi.fn(),
   getServiceOrder: vi
     .fn()
@@ -35,13 +40,20 @@ const bridgeMocks = vi.hoisted(() => ({
   updateServiceOrder: vi.fn(),
   installAgentDebug: vi.fn(),
   isCCSwitchInstalled: vi.fn().mockResolvedValue(false),
+  applyClientConfigs: vi.fn(),
+  checkClientProxy: vi.fn(),
+  getClientCatalog: vi.fn(),
+  openClientImportLink: vi.fn(),
+  previewClientConfigChanges: vi.fn(),
+  removeClientConfig: vi.fn(),
   getClientConfigStatus: vi.fn().mockResolvedValue({
     clients: [],
     wsl_unchecked: [],
     wsl_localhost: false,
-    cc_switch_wsl: { claude: null, codex: null },
   }),
-  previewClientConfigSnippet: vi.fn().mockResolvedValue("{}"),
+  previewClientConfigSnippet: vi
+    .fn()
+    .mockResolvedValue([{ path: "~/.claude/settings.json", contents: "{}" }]),
   copyClientConfigSnippet: vi.fn(),
   uninstallAgentDebug: vi.fn(),
   getService: vi.fn(),
@@ -57,6 +69,7 @@ const bridgeMocks = vi.hoisted(() => ({
   listRawAccess: vi.fn().mockResolvedValue([]),
   listAccessTokenUsage: vi.fn().mockResolvedValue({ items: [] }),
   listServices: vi.fn(),
+  getServicePackages: vi.fn().mockResolvedValue([]),
   listPrivacyModelInstallations: vi.fn(),
   listPrivacyPolicies: vi.fn(),
   listRequestRecords: vi.fn(),
@@ -135,6 +148,119 @@ import { defaultFailurePolicy } from "./failure-policy-model";
 import { defaultPrivacyKindRules } from "./privacy-policy-model";
 import { ONBOARDING_STORAGE_KEY } from "./use-onboarding";
 import { settleClosedLayer } from "./lib/test-layer-settle";
+import {
+  parseClientConfigOverview,
+  type ClientCatalog,
+  type ClientConfigItem,
+  type ClientConfigOverview,
+  type ClientConfigStatus,
+} from "./client-config-model";
+import { notify } from "./notify";
+
+/**
+ * Claude Code, the one client this computer has, set up by `tokenId`:
+ * written by AstrLink, or pasted by hand from its manual setup.
+ */
+function claudeOverview(
+  tokenId: string | null,
+  setUp: "configured" | "manual" = "configured",
+): ClientConfigOverview {
+  const claude: ClientConfigStatus = {
+    client: "claude",
+    wsl: null,
+    target: null,
+    detected: true,
+    home: "/Users/me",
+    dir: "/Users/me/.claude",
+    paths: ["/Users/me/.claude/settings.json"],
+    exists: [tokenId !== null],
+    state: tokenId === null ? "not_configured" : setUp,
+    token_id: tokenId,
+    models: {},
+    notes: [],
+    paste_since_unix: null,
+    paste_into: [],
+  };
+  return {
+    clients: [claude],
+    wsl_unchecked: [],
+    wsl_localhost: false,
+    installed: [],
+  };
+}
+
+/**
+ * Makes writing a client report success and later status reads list what
+ * the write named, like the host's config record.
+ */
+function recordClientWrites(): void {
+  bridgeMocks.getClientConfigStatus.mockResolvedValue(claudeOverview(null));
+  bridgeMocks.applyClientConfigs.mockImplementation(
+    async ({
+      tokenId,
+      items,
+    }: {
+      tokenId: string;
+      items: ClientConfigItem[];
+    }) => {
+      bridgeMocks.getClientConfigStatus.mockResolvedValue(
+        claudeOverview(tokenId),
+      );
+      return {
+        status: "done",
+        results: items.map((item) => ({
+          client: item.client,
+          wsl: item.wsl,
+          target: item.target,
+          action: item.action,
+          ok: true,
+          error: null,
+        })),
+      };
+    },
+  );
+}
+
+/** The bootstrap token and one created later, listed newest first. */
+const defaultToken = {
+  id: "access_token_bootstrap",
+  name: "默认令牌",
+  hint: "astr_…B00T",
+  source: "system_default",
+  created_at: "2026-10-24T08:00:00Z",
+};
+const laptopToken = {
+  id: "token_laptop",
+  name: "Work laptop",
+  hint: "astr_…L4PT",
+  source: "user",
+  created_at: "2026-10-25T08:00:00Z",
+};
+
+/** Lets the bridge calls a step started settle. */
+async function settle(): Promise<void> {
+  await act(async () => {
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  });
+}
+
+function dialogButton(label: string): HTMLButtonElement {
+  const match = [
+    ...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button'),
+  ].find((candidate) => candidate.textContent?.trim() === label);
+  if (!match) throw new Error(`Missing dialog button: ${label}`);
+  return match;
+}
+
+function tokenRow(name: string): HTMLElement {
+  const match = [
+    ...document.querySelectorAll<HTMLElement>(
+      '[data-testid="access-token-row"]',
+    ),
+  ].find((row) => row.textContent?.includes(name));
+  if (!match) throw new Error(`Missing token row: ${name}`);
+  return match;
+}
 
 const readySnapshot: AppSnapshot = {
   app_version: "0.1.0",
@@ -223,6 +349,19 @@ async function setInput(selector: string, value: string): Promise<void> {
   await act(async () => {
     valueSetter.call(input, value);
     input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+}
+
+/** Radix activates a tab on mouse down, not on click. */
+async function openTab(label: string): Promise<void> {
+  const tab = [
+    ...document.querySelectorAll<HTMLButtonElement>('[role="tab"]'),
+  ].find((candidate) => candidate.textContent === label);
+  if (!tab) throw new Error(`Missing tab: ${label}`);
+  await act(async () => {
+    tab.dispatchEvent(
+      new MouseEvent("mousedown", { bubbles: true, button: 0 }),
+    );
   });
 }
 
@@ -486,6 +625,32 @@ describe("App workspace navigation", () => {
       ],
     });
     bridgeMocks.listPrivacyModelInstallations.mockResolvedValue({ items: [] });
+    bridgeMocks.getClientCatalog.mockResolvedValue({
+      clients: [
+        {
+          id: "claude",
+          name: "Claude Code",
+          kind: "file",
+          targets: [],
+          protocols: ["anthropic.messages"],
+          list: false,
+        },
+      ],
+    });
+    bridgeMocks.getClientConfigStatus.mockResolvedValue({
+      clients: [],
+      wsl_unchecked: [],
+      wsl_localhost: false,
+    });
+    bridgeMocks.previewClientConfigChanges.mockResolvedValue({
+      files: [],
+      replaced: 0,
+      restored: 0,
+    });
+    bridgeMocks.checkClientProxy.mockResolvedValue({
+      client: { route: "direct" },
+      numeric: null,
+    });
     bridgeMocks.listRequestRecords.mockResolvedValue({
       items: [],
       next_cursor: null,
@@ -510,9 +675,12 @@ describe("App workspace navigation", () => {
       },
       by_day: [],
       by_hour: [],
+      by_hour_model: [],
       by_service: [],
       by_model: [],
       by_token: [],
+      by_client: [],
+      by_route: [],
       scanned_records: 0,
       capped: false,
     }));
@@ -926,7 +1094,7 @@ describe("App workspace navigation", () => {
     await renderApp();
     expect(
       container.querySelector('[aria-current="step"]')?.textContent,
-    ).toContain("创建访问令牌");
+    ).toContain("确认访问令牌");
     await act(async () => button("前往创建访问令牌").click());
     await act(async () => button("创建令牌").click());
     await setInput("#access-token-name", "My assistant");
@@ -943,13 +1111,197 @@ describe("App workspace navigation", () => {
       container.querySelector('[aria-current="step"]')?.textContent,
     ).toContain("连接客户端");
     expect(button("配置客户端")).toBeTruthy();
+    expect(
+      container.querySelector('[data-slot="onboarding-token"]')?.textContent,
+    ).toContain("My assistant");
     expect(bridgeMocks.previewClientConfigSnippet).toHaveBeenLastCalledWith(
       expect.objectContaining({ tokenId: "token_setup", client: "claude" }),
     );
     expect(container.textContent).not.toContain("test-secret");
   });
 
-  it("uses protocol-specific client URLs and only completes after success", async () => {
+  it("sets clients up with the default token, which the token list then marks", async () => {
+    localStorage.setItem(ONBOARDING_STORAGE_KEY, "active");
+    const success = vi.spyOn(notify, "success");
+    // Listed newest first, as right after creating a token.
+    bridgeMocks.listAccessTokens.mockResolvedValue({
+      items: [laptopToken, defaultToken],
+      next_cursor: null,
+    });
+    recordClientWrites();
+    await renderApp();
+    await settle();
+
+    expect(
+      container.querySelector('[aria-current="step"]')?.textContent,
+    ).toContain("连接客户端");
+    expect(
+      container.querySelector('[data-slot="onboarding-token"]')?.textContent,
+    ).toContain("默认令牌");
+    expect(bridgeMocks.previewClientConfigSnippet).toHaveBeenLastCalledWith(
+      expect.objectContaining({ tokenId: defaultToken.id, client: "claude" }),
+    );
+
+    await act(async () => button("配置客户端").click());
+    await settle();
+    await act(async () => dialogButton("写入 1 个客户端").click());
+    await settle();
+    expect(bridgeMocks.applyClientConfigs).toHaveBeenCalledWith(
+      expect.objectContaining({ tokenId: defaultToken.id }),
+    );
+    // The write results stay readable until the dialog closes.
+    expect(workspaceHeading().textContent).toBe("开始使用 AstrLink");
+    expect(localStorage.getItem(ONBOARDING_STORAGE_KEY)).toBe("active");
+    await act(async () => dialogButton("完成").click());
+    await settleClosedLayer();
+    await settle();
+    expect(localStorage.getItem(ONBOARDING_STORAGE_KEY)).toBe("complete");
+    expect(workspaceHeading().textContent).toBe("运行概览");
+    expect(success).toHaveBeenCalledWith("首次接入已完成");
+
+    await act(async () => button("令牌").click());
+    await settle();
+    expect(
+      tokenRow("默认令牌").querySelector('[aria-label="已配置到 Claude Code"]'),
+    ).not.toBeNull();
+    expect(
+      tokenRow("Work laptop").querySelector('[aria-label^="已配置到"]'),
+    ).toBeNull();
+  });
+
+  it("finishes the guide when the token list sets a client up with another token", async () => {
+    localStorage.setItem(ONBOARDING_STORAGE_KEY, "active");
+    bridgeMocks.listAccessTokens.mockResolvedValue({
+      items: [defaultToken, laptopToken],
+      next_cursor: null,
+    });
+    recordClientWrites();
+    const focus = vi.fn();
+    window.addEventListener("focus", focus);
+    try {
+      await renderApp();
+      await settle();
+      expect(container.textContent).toContain("已完成 2 / 3 步");
+
+      await act(async () => button("令牌").click());
+      await settle();
+      expect(
+        container.querySelector('[data-slot="onboarding-return"]')?.textContent,
+      ).toContain("连接客户端");
+      await act(async () => button("为“Work laptop”配置客户端").click());
+      await settle();
+      await act(async () => dialogButton("写入 1 个客户端").click());
+      await settle();
+      expect(bridgeMocks.applyClientConfigs).toHaveBeenCalledWith(
+        expect.objectContaining({ tokenId: laptopToken.id }),
+      );
+
+      expect(
+        container.querySelector('[data-slot="onboarding-return"]'),
+      ).toBeNull();
+      expect(localStorage.getItem(ONBOARDING_STORAGE_KEY)).toBe("complete");
+      expect(
+        tokenRow("Work laptop").querySelector(
+          '[aria-label="已配置到 Claude Code"]',
+        ),
+      ).not.toBeNull();
+      await act(async () => dialogButton("完成").click());
+      await settleClosedLayer();
+      await act(async () => button("概览").click());
+      await settle();
+      expect(workspaceHeading().textContent).toBe("运行概览");
+      expect(focus).not.toHaveBeenCalled();
+    } finally {
+      window.removeEventListener("focus", focus);
+    }
+  });
+
+  it("finishes the guide once a config pasted from the manual setup appears", async () => {
+    localStorage.setItem(ONBOARDING_STORAGE_KEY, "active");
+    bridgeMocks.listAccessTokens.mockResolvedValue({
+      items: [defaultToken, laptopToken],
+      next_cursor: null,
+    });
+    bridgeMocks.getClientConfigStatus.mockResolvedValue(claudeOverview(null));
+    const success = vi.spyOn(notify, "success");
+    await renderApp();
+    await settle();
+    expect(container.textContent).toContain("已完成 2 / 3 步");
+
+    // The user pastes the snippet into Claude Code and comes back. The
+    // host's answer goes through the same check as a real one.
+    bridgeMocks.getClientConfigStatus.mockImplementation(
+      async (_url: string | null, catalog: ClientCatalog) =>
+        parseClientConfigOverview(
+          claudeOverview(defaultToken.id, "manual"),
+          catalog,
+        ),
+    );
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    await settle();
+    expect(localStorage.getItem(ONBOARDING_STORAGE_KEY)).toBe("complete");
+    expect(workspaceHeading().textContent).toBe("运行概览");
+    expect(success).toHaveBeenCalledWith("首次接入已完成");
+
+    await act(async () => button("令牌").click());
+    await settle();
+    expect(
+      tokenRow("默认令牌").querySelector('[aria-label="已配置到 Claude Code"]'),
+    ).not.toBeNull();
+    expect(
+      tokenRow("Work laptop").querySelector('[aria-label^="已配置到"]'),
+    ).toBeNull();
+  });
+
+  it("closes a guide left open by an earlier run once its steps are done", async () => {
+    // An older build kept the guide open until a request succeeded, even
+    // after a client was set up.
+    localStorage.setItem(ONBOARDING_STORAGE_KEY, "active");
+    bridgeMocks.listAccessTokens.mockResolvedValue({
+      items: [defaultToken],
+      next_cursor: null,
+    });
+    bridgeMocks.getClientConfigStatus.mockResolvedValue(
+      claudeOverview(defaultToken.id),
+    );
+    const success = vi.spyOn(notify, "success");
+    await renderApp();
+    await settle();
+
+    expect(localStorage.getItem(ONBOARDING_STORAGE_KEY)).toBe("complete");
+    expect(workspaceHeading().textContent).toBe("运行概览");
+    expect(success).toHaveBeenCalledWith("首次接入已完成");
+  });
+
+  it("keeps a guide reopened after setup open until the user leaves it", async () => {
+    localStorage.setItem(ONBOARDING_STORAGE_KEY, "complete");
+    bridgeMocks.listAccessTokens.mockResolvedValue({
+      items: [defaultToken],
+      next_cursor: null,
+    });
+    bridgeMocks.getClientConfigStatus.mockResolvedValue(
+      claudeOverview(defaultToken.id),
+    );
+    const success = vi.spyOn(notify, "success");
+    await renderApp();
+    await settle();
+    expect(workspaceHeading().textContent).toBe("运行概览");
+
+    await act(async () => button("上手引导").click());
+    await settle();
+    expect(workspaceHeading().textContent).toBe("开始使用 AstrLink");
+    expect(container.textContent).toContain("已完成 3 / 3 步");
+    expect(localStorage.getItem(ONBOARDING_STORAGE_KEY)).toBe("active");
+    expect(success).not.toHaveBeenCalledWith("首次接入已完成");
+
+    await act(async () => button("进入运行概览").click());
+    expect(localStorage.getItem(ONBOARDING_STORAGE_KEY)).toBe("complete");
+    expect(workspaceHeading().textContent).toBe("运行概览");
+  });
+
+  it("uses protocol-specific client URLs and completes by itself after a success", async () => {
     localStorage.setItem(ONBOARDING_STORAGE_KEY, "active");
     await renderApp();
     await act(async () => button("其他工具").click());
@@ -965,15 +1317,13 @@ describe("App workspace navigation", () => {
     });
     await act(async () => button("检查连接结果").click());
     expect(container.textContent).toContain("已收到请求，但尚未成功");
-    expect(container.textContent).not.toContain("进入运行概览");
+    expect(localStorage.getItem(ONBOARDING_STORAGE_KEY)).toBe("active");
     bridgeMocks.getUsageSummary.mockResolvedValue({
       ...summary,
       scanned_records: 2,
       totals: { ...summary.totals, requests: 1, failed_requests: 1 },
     });
     await act(async () => button("检查连接结果").click());
-    expect(container.textContent).toContain("第一条请求已成功");
-    await act(async () => button("进入运行概览").click());
     expect(localStorage.getItem(ONBOARDING_STORAGE_KEY)).toBe("complete");
     expect(workspaceHeading().textContent).toBe("运行概览");
   });
@@ -1059,8 +1409,27 @@ describe("App workspace navigation", () => {
     bridgeMocks.previewClientConfigSnippet.mockImplementation(
       async ({ client }: { client: string }) =>
         client === "codex"
-          ? 'model_provider = "astrlink"\n'
-          : '{ "env": { "ANTHROPIC_AUTH_TOKEN": "astr_…abcd" } }',
+          ? [
+              {
+                path: "~/.codex/config.toml",
+                contents: 'model_provider = "astrlink"\n',
+              },
+            ]
+          : client === "pi"
+            ? [
+                { path: "~/.pi/agent/models.json", contents: "{}\n" },
+                {
+                  path: "~/.pi/agent/settings.json",
+                  contents: '{ "defaultProvider": "astrlink" }\n',
+                },
+              ]
+            : [
+                {
+                  path: "~/.claude/settings.json",
+                  contents:
+                    '{ "env": { "ANTHROPIC_AUTH_TOKEN": "astr_…abcd" } }',
+                },
+              ],
     );
     bridgeMocks.copyClientConfigSnippet.mockResolvedValue(true);
     await renderApp();
@@ -1074,14 +1443,26 @@ describe("App workspace navigation", () => {
       models: { model: "gpt-5" },
       inferenceUrl: "http://localhost:8317",
     });
-    await act(async () => button("复制配置").click());
+    await act(async () => button("复制配置：~/.codex/config.toml").click());
     expect(bridgeMocks.copyClientConfigSnippet).toHaveBeenCalledExactlyOnceWith(
       {
         tokenId: "token_01",
         client: "codex",
         models: { model: "gpt-5" },
         inferenceUrl: "http://localhost:8317",
+        file: 0,
       },
+    );
+
+    // A client with two files gets a block and a copy button for each.
+    await act(async () => button("Pi").click());
+    expect(container.textContent).toContain("~/.pi/agent/models.json");
+    expect(container.textContent).toContain('"defaultProvider": "astrlink"');
+    await act(async () =>
+      button("复制配置：~/.pi/agent/settings.json").click(),
+    );
+    expect(bridgeMocks.copyClientConfigSnippet).toHaveBeenLastCalledWith(
+      expect.objectContaining({ client: "pi", file: 1 }),
     );
   });
 
@@ -1164,6 +1545,7 @@ describe("App workspace navigation", () => {
         locale: "zh-CN",
         theme: "system",
         quota_display_mode: "remaining" as const,
+        display_currency: "auto" as const,
         tray: defaultTrayPreferences(),
         updates: defaultUpdatePreferences(),
       },
@@ -1176,6 +1558,7 @@ describe("App workspace navigation", () => {
     bridgeMocks.getPreferences.mockResolvedValue(preferences);
     await renderApp();
     await act(async () => button("设置").click());
+    await openTab("网关与网络");
     await setInput('input[type="number"]', "9123");
     await act(async () => button("概览").click());
     await act(async () => button("放弃修改并离开").click());
@@ -1186,6 +1569,7 @@ describe("App workspace navigation", () => {
       }),
     );
     await act(async () => button("设置").click());
+    await openTab("网关与网络");
     const port = container.querySelector<HTMLInputElement>(
       'input[type="number"]',
     );
@@ -1265,7 +1649,7 @@ describe("App workspace navigation", () => {
     expect(container.textContent).toContain("API 地址");
     expect(container.textContent).toContain("用量概览");
     expect(
-      container.querySelector("[data-slot='activity-heatmap']"),
+      container.querySelector("[data-slot='usage-star-trail']"),
     ).not.toBeNull();
     expect(container.textContent).toContain("按 API 提供商");
     expect(container.textContent).toContain("按模型");
@@ -1299,7 +1683,7 @@ describe("App workspace navigation", () => {
     expect(
       document.querySelector('[aria-current="page"]')?.textContent,
     ).toContain("提供商");
-    expect(workspaceHeading().textContent).toBe("API 提供商");
+    expect(workspaceHeading().textContent).toBe("提供商");
     expect(container.textContent).toContain("Primary gateway");
     expect(container.textContent).toContain("Codex 订阅");
     expect(
@@ -1310,7 +1694,7 @@ describe("App workspace navigation", () => {
     await act(async () => {
       button("添加 API 提供商").click();
     });
-    expect(workspaceHeading().textContent).toBe("API 提供商");
+    expect(workspaceHeading().textContent).toBe("提供商");
     await chooseKindCard("New API");
     expect(workspaceHeading().textContent).toBe("添加 API 提供商");
     expect(
@@ -1331,7 +1715,7 @@ describe("App workspace navigation", () => {
     await act(async () => {
       back?.click();
     });
-    expect(workspaceHeading().textContent).toBe("API 提供商");
+    expect(workspaceHeading().textContent).toBe("提供商");
   });
 
   it("opens a provider's requests from its usage row and its settings from the gear", async () => {
@@ -1435,7 +1819,7 @@ describe("App workspace navigation", () => {
     expect(
       document.querySelector('[aria-current="page"]')?.textContent,
     ).toContain("提供商");
-    expect(workspaceHeading().textContent).toBe("API 提供商");
+    expect(workspaceHeading().textContent).toBe("提供商");
     expect(container.textContent).toContain("Codex 订阅");
     expect(
       container.querySelector('[aria-label="更多 Codex 订阅 操作"]'),
@@ -1460,6 +1844,7 @@ describe("App workspace navigation", () => {
         locale: "zh-CN",
         theme: "system",
         quota_display_mode: "remaining" as const,
+        display_currency: "auto" as const,
         tray: defaultTrayPreferences(),
         updates: defaultUpdatePreferences(),
       },
@@ -1479,9 +1864,9 @@ describe("App workspace navigation", () => {
       await Promise.resolve();
     });
     expect(workspaceHeading().textContent).toBe("设置");
-    expect(container.textContent).toContain("推理入口");
-    expect(container.textContent).toContain("检查并发");
-    expect(container.textContent).toContain("响应头等待");
+    expect(container.textContent).toContain("外观");
+    expect(container.textContent).toContain("关闭主窗口时");
+    expect(container.textContent).toContain("网关与网络");
     expect(container.textContent).not.toContain("工具接入");
     expect(
       container.querySelector('[data-slot="local-data-notice"]'),
@@ -1504,6 +1889,7 @@ describe("App workspace navigation", () => {
         locale: "zh-CN",
         theme: "system",
         quota_display_mode: "remaining" as const,
+        display_currency: "auto" as const,
         tray: defaultTrayPreferences(),
         updates: defaultUpdatePreferences(),
       },
@@ -1536,7 +1922,7 @@ describe("App workspace navigation", () => {
       button("前往提供商").click();
       await Promise.resolve();
     });
-    expect(workspaceHeading().textContent).toBe("API 提供商");
+    expect(workspaceHeading().textContent).toBe("提供商");
 
     await openSettings();
     await act(async () => {
@@ -1570,8 +1956,10 @@ describe("App workspace navigation", () => {
     expect(workspaceHeading().textContent).toBe("Agent 工具");
     expect(container.textContent).toContain("工具接入");
     expect(container.textContent).toContain("Cursor");
-    expect(container.textContent).toContain("Claude Code");
     expect(container.textContent).toContain("Codex");
+    // Claude Code is not detected, so it folds away until opened.
+    expect(container.textContent).toContain("未检测到的工具");
+    expect(container.textContent).not.toContain("Claude Code");
     expect(bridgeMocks.getAgentDebugStatus).toHaveBeenCalled();
   });
 
@@ -1591,6 +1979,7 @@ describe("App workspace navigation", () => {
         locale: "zh-CN",
         theme: "system",
         quota_display_mode: "remaining" as const,
+        display_currency: "auto" as const,
         tray: defaultTrayPreferences(),
         updates: defaultUpdatePreferences(),
       },
@@ -1605,6 +1994,7 @@ describe("App workspace navigation", () => {
       button("设置").click();
       await Promise.resolve();
     });
+    await openTab("网关与网络");
     const port = container.querySelector<HTMLInputElement>(
       'input[type="number"]',
     );
@@ -1662,29 +2052,25 @@ describe("App workspace navigation", () => {
     expect(bridgeMocks.getUsageSummary).toHaveBeenCalledTimes(requestCalls);
   });
 
-  it("summarizes usage over the default yearly window", async () => {
+  it("reads the last 24 hours once when the overview first opens", async () => {
     await renderApp();
+    await act(async () => {
+      await Promise.resolve();
+    });
 
+    // The request sky is hidden by default and reads nothing.
+    expect(container.querySelector('[data-slot="request-sky"]')).toBeNull();
     const query = bridgeMocks.getUsageSummary.mock.calls[0]?.[0];
     expect(bridgeMocks.getUsageSummary).toHaveBeenCalledTimes(1);
     expect(bridgeMocks.listRequestRecords).not.toHaveBeenCalled();
-    expect(query).toMatchObject({ preset: "1y" });
+    expect(query).toMatchObject({ preset: "1d" });
     const from = new Date(query.from as string);
     const to = new Date(query.to as string);
-    expect(from.getHours()).toBe(0);
-    expect(from.getMinutes()).toBe(0);
-    expect(to.getHours()).toBe(0);
-    // 365 inclusive local days, ending today.
-    expect(Math.round((to.getTime() - from.getTime()) / 86_400_000)).toBe(365);
-
-    const today = new Date();
-    expect(to.getDate()).toBe(
-      new Date(
-        today.getFullYear(),
-        today.getMonth(),
-        today.getDate() + 1,
-      ).getDate(),
-    );
+    // 24 local hours, ending with the current one.
+    expect(to.getTime() - from.getTime()).toBe(24 * 3_600_000);
+    expect(to.getMinutes()).toBe(0);
+    expect(from.getTime()).toBeLessThanOrEqual(Date.now());
+    expect(to.getTime()).toBeGreaterThan(Date.now());
   });
 
   it("revalidates the overview silently on return, on a timer, and when shown again", async () => {
@@ -1754,19 +2140,6 @@ describe("App workspace navigation", () => {
       services: before.services + 1,
       tokens: before.tokens + 1,
     });
-  });
-
-  it("refreshes services and tokens with the usage from the overview header", async () => {
-    await renderApp();
-    const usage = bridgeMocks.getUsageSummary.mock.calls.length;
-    const services = bridgeMocks.listServices.mock.calls.length;
-    const tokens = bridgeMocks.listAccessTokens.mock.calls.length;
-
-    await act(async () => button("刷新").click());
-
-    expect(bridgeMocks.getUsageSummary).toHaveBeenCalledTimes(usage + 1);
-    expect(bridgeMocks.listServices).toHaveBeenCalledTimes(services + 1);
-    expect(bridgeMocks.listAccessTokens).toHaveBeenCalledTimes(tokens + 1);
   });
 
   it("navigates to the request records page", async () => {
@@ -1875,6 +2248,12 @@ describe("App workspace navigation", () => {
       },
       etag: `"sha256:${"b".repeat(64)}"`,
     });
+    // Saving without models lists the upstream's first.
+    bridgeMocks.probeDraftServiceModels.mockResolvedValue({
+      service_id: "",
+      protocol: "openai.models",
+      model_ids: ["gpt-5"],
+    });
     await renderApp();
 
     await act(async () => button("提供商").click());
@@ -1890,12 +2269,14 @@ describe("App workspace navigation", () => {
     );
     await act(async () => {
       button("保存 API 提供商").click();
-      await Promise.resolve();
-      await Promise.resolve();
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
     });
 
     expect(bridgeMocks.createService).toHaveBeenCalledOnce();
-    expect(workspaceHeading().textContent).toBe("API 提供商");
+    expect(bridgeMocks.createService.mock.calls[0]?.[0].models).toEqual([
+      "gpt-5",
+    ]);
+    expect(workspaceHeading().textContent).toBe("提供商");
     expect(container.textContent).not.toContain("放弃未保存的修改？");
     expect(document.querySelector('[role="alertdialog"]')).toBeNull();
   });

@@ -23,7 +23,11 @@ export type AuthorizationSessionStatus =
 export type AuthorizationFlow =
   | "browser"
   | "device_code"
-  | "authorization_code";
+  | "authorization_code"
+  | "claude_cli";
+
+/** How a Claude subscription signs in; mirrors contract.SubscriptionMode. */
+export type SubscriptionMode = "legacy" | "official";
 
 export interface SubscriptionError {
   code: string;
@@ -78,7 +82,7 @@ export const providerAuthorizationFlows: Record<
   readonly AuthorizationFlow[]
 > = {
   openai_codex: ["browser", "device_code"],
-  claude_code: ["authorization_code"],
+  claude_code: ["claude_cli", "authorization_code"],
   xai_grok: ["device_code"],
   antigravity: ["browser"],
   github_copilot: ["device_code"],
@@ -91,6 +95,22 @@ export function flowSupportedByProvider(
 ): boolean {
   return providerAuthorizationFlows[provider].includes(flow);
 }
+
+/**
+ * Login transports an account accepts: official Claude accounts sign in
+ * through the user's claude CLI only, legacy ones through AstrLink's own
+ * OAuth; mirrors contract.AuthorizationFlow.SupportedByMode.
+ */
+export function accountAuthorizationFlows(
+  provider: SubscriptionProvider,
+  mode: SubscriptionMode | undefined,
+): readonly AuthorizationFlow[] {
+  const flows = providerAuthorizationFlows[provider];
+  if (provider !== "claude_code") return flows;
+  return mode === "official"
+    ? flows.filter((flow) => flow === "claude_cli")
+    : flows.filter((flow) => flow !== "claude_cli");
+}
 const authorizationSessionStatuses = new Set<AuthorizationSessionStatus>([
   "pending",
   "completed",
@@ -101,6 +121,7 @@ const authorizationSessionStatuses = new Set<AuthorizationSessionStatus>([
 const authorizationFlows = new Set<AuthorizationFlow>([
   "authorization_code",
   "browser",
+  "claude_cli",
   "device_code",
 ]);
 
@@ -287,7 +308,9 @@ export function parseAuthorizationSession(
     : undefined;
   if (
     status === "pending" &&
-    (flow === "browser" || flow === "authorization_code")
+    (flow === "browser" ||
+      flow === "authorization_code" ||
+      flow === "claude_cli")
   ) {
     if (!authorizationURL) {
       invalid(
@@ -355,4 +378,69 @@ export function parseBeginCodexAuthorizationResult(
     };
   }
   invalid("$.kind", "unknown begin authorization result kind");
+}
+
+/** The claude CLI official Claude accounts run; mirrors contract.ClaudeCLIStatus. */
+export interface ClaudeCLIStatus {
+  installed: boolean;
+  supported: boolean;
+  path?: string;
+  version?: string;
+  minimum_version: string;
+  /** Core installs the CLI on request (the server edition). */
+  install_available: boolean;
+  installing: boolean;
+  install_error?: string;
+}
+
+export function parseClaudeCLIStatus(value: unknown): ClaudeCLIStatus {
+  const status = objectAt(value, "$");
+  keysAt(
+    status,
+    [
+      "installed",
+      "supported",
+      "minimum_version",
+      "install_available",
+      "installing",
+    ],
+    ["path", "version", "install_error"],
+    "$",
+  );
+  for (const key of [
+    "installed",
+    "supported",
+    "install_available",
+    "installing",
+  ] as const) {
+    if (typeof status[key] !== "boolean")
+      invalid(`$.${key}`, "expected a boolean");
+  }
+  const result: ClaudeCLIStatus = {
+    installed: status.installed as boolean,
+    supported: status.supported as boolean,
+    minimum_version: stringAt(
+      status.minimum_version,
+      "$.minimum_version",
+      1,
+      64,
+    ),
+    install_available: status.install_available as boolean,
+    installing: status.installing as boolean,
+  };
+  if (Object.hasOwn(status, "path")) {
+    result.path = stringAt(status.path, "$.path", 1, 4096);
+  }
+  if (Object.hasOwn(status, "version")) {
+    result.version = stringAt(status.version, "$.version", 1, 64);
+  }
+  if (Object.hasOwn(status, "install_error")) {
+    result.install_error = stringAt(
+      status.install_error,
+      "$.install_error",
+      1,
+      4096,
+    );
+  }
+  return result;
 }

@@ -108,6 +108,7 @@ func TestControlRoleMatrix(t *testing.T) {
 		{http.MethodGet, PoliciesPath, "", RoleObserver},
 		{http.MethodGet, AccessTokensPath, "", RoleObserver},
 		{http.MethodGet, ServiceOrderPath, "", RoleObserver},
+		{http.MethodGet, ServicePackagesPath, "", RoleObserver},
 		{http.MethodGet, LocalDataPath, "", RoleObserver},
 		{http.MethodGet, ClientIdentitiesPath, "", RoleObserver},
 		{http.MethodGet, ModelMetadataPath + "?model=gpt-5.6", "", RoleObserver},
@@ -139,6 +140,7 @@ func TestControlRoleMatrix(t *testing.T) {
 		{http.MethodPut, BuiltinToolsPath + "web_search/credential", `{"secret":"x"}`, RoleOperator},
 		{http.MethodPatch, PoliciesPath + "/" + string(contract.DefaultPrivacyPolicyID), `{}`, RoleOperator},
 		{http.MethodPut, ServiceOrderPath, `{}`, RoleOperator},
+		{http.MethodPatch, ServicePackagesPath + "/service:service_missing", `{"strategy":"auto"}`, RoleOperator},
 		{http.MethodPost, ShutdownPath, "", RoleOperator},
 	}
 	for _, route := range routes {

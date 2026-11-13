@@ -3,6 +3,8 @@ package storage
 import (
 	"fmt"
 	"time"
+
+	"github.com/QuantumNous/astrlink/core/contract"
 )
 
 type UsageSummaryOptions struct {
@@ -71,14 +73,54 @@ type UsageTimeBucket struct {
 	UsageTotals
 }
 
+// UsageDetailMaxSpan is the longest window that gets hour-by-model buckets
+// and routes: a month of local days with room for a DST shift. Longer windows
+// leave them empty, so a year of history never ships thousands of buckets.
+const UsageDetailMaxSpan = 32 * 24 * time.Hour
+
+// UsageHourModelBucket counts one model's successful calls in one local hour.
+// Model is null when no model was recorded, matching the by_model null group.
+type UsageHourModelBucket struct {
+	Date        string  `json:"date"`
+	Hour        int     `json:"hour"`
+	Model       *string `json:"model"`
+	Requests    int64   `json:"requests"`
+	TotalTokens int64   `json:"total_tokens"`
+}
+
+// UsageRoute counts the calls that took one way through the gateway: from a
+// client, with the same rewrites, to the provider that answered. Failed calls
+// count too. ClientType is null for unknown and historical clients.
+type UsageRoute struct {
+	ClientType *string `json:"client_type"`
+	// ServiceID is the provider of the call's last attempt; null when the call
+	// never reached one.
+	ServiceID *string `json:"service_id"`
+	// FailedServiceID is the provider that failed before ServiceID took the
+	// call over.
+	FailedServiceID *string                   `json:"failed_service_id"`
+	Failed          bool                      `json:"failed"`
+	Rewrites        []contract.GatewayRewrite `json:"rewrites"`
+	Requests        int64                     `json:"requests"`
+}
+
 // UsageSummary contains sparse calendar buckets; clients can pad empty periods.
 type UsageSummary struct {
-	Totals         UsageTotals       `json:"totals"`
-	StatusCounts   UsageStatusCounts `json:"status_counts"`
-	ByDay          []UsageTimeBucket `json:"by_day"`
-	ByHour         []UsageTimeBucket `json:"by_hour"`
-	ByService      []UsageGroup      `json:"by_service"`
-	ByModel        []UsageGroup      `json:"by_model"`
-	ByToken        []UsageGroup      `json:"by_token"`
-	ScannedRecords int64             `json:"scanned_records"`
+	Totals       UsageTotals       `json:"totals"`
+	StatusCounts UsageStatusCounts `json:"status_counts"`
+	ByDay        []UsageTimeBucket `json:"by_day"`
+	ByHour       []UsageTimeBucket `json:"by_hour"`
+	// ByHourModel holds every local hour with successful calls, split by model,
+	// for windows up to UsageDetailMaxSpan regardless of Bucket.
+	ByHourModel []UsageHourModelBucket `json:"by_hour_model"`
+	ByService   []UsageGroup           `json:"by_service"`
+	ByModel     []UsageGroup           `json:"by_model"`
+	ByToken     []UsageGroup           `json:"by_token"`
+	// ByClient groups by detected client; unknown and historical records
+	// without a client share the null group.
+	ByClient []UsageGroup `json:"by_client"`
+	// ByRoute holds the routes of succeeded and failed calls for windows up to
+	// UsageDetailMaxSpan, busiest first.
+	ByRoute        []UsageRoute `json:"by_route"`
+	ScannedRecords int64        `json:"scanned_records"`
 }

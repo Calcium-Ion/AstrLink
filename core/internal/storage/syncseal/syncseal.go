@@ -20,13 +20,13 @@ import (
 	"bytes"
 	"crypto/rand"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"unicode/utf8"
 
+	"github.com/MoeForge/moego/base64"
 	"golang.org/x/crypto/argon2"
 
 	"github.com/QuantumNous/astrlink/core/internal/storage"

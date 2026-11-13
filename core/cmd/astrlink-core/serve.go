@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -22,6 +21,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/MoeForge/moego/base64"
 	"github.com/QuantumNous/astrlink/core/internal/buildinfo"
 	"github.com/QuantumNous/astrlink/core/internal/console"
 	"github.com/QuantumNous/astrlink/core/internal/coreapp"
@@ -167,6 +167,7 @@ func serve(
 		ControlHandler:   core.control,
 		RetentionSweep:   core.retentionSweep,
 		Listening: func(address net.Addr) {
+			core.claudeOfficial.listening(address.String())
 			logf("listening on %s for the client API and the web console", address)
 			if status, err := core.rawVault.Status(ctx); err == nil && !status.PasswordSet {
 				logf("no password is set yet: open the web console within %d minutes of start to set it; after that, restart to reopen setup",
@@ -201,6 +202,7 @@ func serveCoreOptions(
 		maxConcurrentInspections: ingress.DefaultMaxConcurrentInspections,
 		responseStartTimeout:     time.Duration(ingress.DefaultResponseStartTimeoutSeconds) * time.Second,
 		noLoopbackCallback:       true,
+		installClaudeCLI:         true,
 		consoleSessions:          sessions,
 		rawBackoffCap:            serveRawBackoffCap,
 		testNetwork:              config.testNetwork,
