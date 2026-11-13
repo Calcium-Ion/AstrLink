@@ -28,5 +28,6 @@ func init() {
 		CopilotCLI,
 		VSCodeCopilot,
 		KiloCode,
+		Crush,
 	)
 }
