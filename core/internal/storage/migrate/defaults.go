@@ -1336,6 +1336,13 @@ END`,
 			`INSERT INTO image_compression_totals (id, since) VALUES (1, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))`,
 		}},
 		{Version: 60, Name: "plugins_request_metadata_extension_points_and_tasks", Statements: []string{
+			// An early test build of the plugins created plugin_settings and
+			// plugin_credentials without recording a migration, and a
+			// database it ran on still has them. No recorded migration
+			// creates them before this one, so what is there is that
+			// build's and goes before they are created again.
+			`DROP TABLE IF EXISTS plugin_credentials`,
+			`DROP TABLE IF EXISTS plugin_settings`,
 			// The user's choices for each plugin. Plugins come from the
 			// builtin set and the plugin directory; a row exists once the
 			// user changed something, and a plugin without one is disabled.
