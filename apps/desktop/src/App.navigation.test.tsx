@@ -255,6 +255,14 @@ function dialogButton(label: string): HTMLButtonElement {
   return match;
 }
 
+function dialogCheckbox(label: string): HTMLButtonElement {
+  const match = document.querySelector<HTMLButtonElement>(
+    `[role="dialog"] [role="checkbox"][aria-label="${label}"]`,
+  );
+  if (!match) throw new Error(`Missing dialog checkbox: ${label}`);
+  return match;
+}
+
 function tokenRow(name: string): HTMLElement {
   const match = [
     ...document.querySelectorAll<HTMLElement>(
@@ -1185,6 +1193,8 @@ describe("App workspace navigation", () => {
 
     await act(async () => button("配置客户端").click());
     await settle();
+    // Nothing starts checked for a client this token has not set up.
+    await act(async () => dialogCheckbox("写入 Claude Code 的配置").click());
     await act(async () => dialogButton("写入 1 个客户端").click());
     await settle();
     expect(bridgeMocks.applyClientConfigs).toHaveBeenCalledWith(
@@ -1231,6 +1241,7 @@ describe("App workspace navigation", () => {
       ).toContain("连接客户端");
       await act(async () => button("为“Work laptop”配置客户端").click());
       await settle();
+      await act(async () => dialogCheckbox("写入 Claude Code 的配置").click());
       await act(async () => dialogButton("写入 1 个客户端").click());
       await settle();
       expect(bridgeMocks.applyClientConfigs).toHaveBeenCalledWith(

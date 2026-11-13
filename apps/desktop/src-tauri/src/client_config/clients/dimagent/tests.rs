@@ -380,9 +380,9 @@ fn unsupported_and_oversized_stores_stay_untouched_and_do_not_hide_other_clients
     assert!(store::write(&path, Some("{}"), Some(&desired("rust").to_string())).is_err());
     assert_eq!(
         db.query_row("SELECT length(record) FROM providers", [], |r| r
-            .get::<_, usize>(0))
+            .get::<_, i64>(0))
             .unwrap(),
-        large.len()
+        large.len() as i64
     );
     drop(db);
     fs::remove_dir_all(home).unwrap();
