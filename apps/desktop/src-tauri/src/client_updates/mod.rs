@@ -855,9 +855,10 @@ fn npm_command(
 }
 
 /// Whether updates here are guarded against leaving a client that no longer
-/// starts: npm installs into a staging prefix, running clients are left
-/// alone, and broken installations are reported with a repair. Windows only;
-/// elsewhere npm and the standalone updaters replace files safely.
+/// starts: npm installs into a staging prefix that replaces the live files
+/// only once it works, and broken installations are reported with a repair.
+/// Windows only; elsewhere npm and the standalone updaters replace files
+/// safely.
 fn guarded(environment: &Environment) -> bool {
     environment.windows() || guarded_in_test(environment)
 }

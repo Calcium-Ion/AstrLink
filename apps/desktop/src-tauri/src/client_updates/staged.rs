@@ -8,6 +8,10 @@
 //! Only a staged client that starts and reports the new version replaces the
 //! live files, by renames that are undone on any failure and, after a crash,
 //! on the next check.
+//!
+//! Windows moves a running program like any other file but deletes it only
+//! once it exits. A running client keeps working from its moved files, the
+//! next start finds the new version, and a later check deletes the old files.
 
 use std::{
     fs, io,
@@ -192,10 +196,6 @@ impl Layout {
     fn shim(&self) -> PathBuf {
         self.bins.join(&self.shims[0])
     }
-    /// The live packages, where a running client's files are.
-    pub(super) fn roots(&self, id: ClientId) -> Vec<PathBuf> {
-        id.packages().iter().map(|p| self.package(p)).collect()
-    }
 }
 
 /// The npm prefix whose `bins` directory is `directory`, with links
@@ -308,7 +308,8 @@ impl Swap {
         }
         Ok(())
     }
-    /// Keeps the placed entries and deletes the retired ones.
+    /// Keeps the placed entries and deletes the retired ones. A running
+    /// program among them stays until a check after it exits.
     fn finish(self) {
         let _ = fs::remove_file(self.work.join(JOURNAL));
         for (_, saved) in &self.journal.retired {
@@ -495,7 +496,6 @@ pub(super) fn update(
     let result = (|| {
         recover(&work)?;
         let layout = Layout::new(environment, prefix, id);
-        running::refuse(&layout.roots(id))?;
         let stage = run.join("stage");
         fs::create_dir_all(&stage).map_err(|e| ClientError::new("command", e))?;
         let command = npm_command(environment, id, prefix, &stage, latest)?;
@@ -507,8 +507,6 @@ pub(super) fn update(
                 format!("{}\n{}", error.detail, output.trim()).trim(),
             )
         })?;
-        // The client may have been started while npm ran.
-        running::refuse(&layout.roots(id))?;
         let mut journal = Journal {
             run: run.clone(),
             ..Journal::default()
@@ -581,12 +579,18 @@ fn swap(
 ) -> Result<ClientVersion, ClientError> {
     let swap = Swap::begin(work, journal)?;
     if let Err(error) = swap.apply() {
-        let code = if error.kind() == io::ErrorKind::PermissionDenied {
-            "permission"
-        } else {
-            "command"
+        // A running program moves, but not a file some program opened
+        // without letting others move it.
+        let moved = swap.journal.retired.iter().chain(&swap.journal.placed);
+        let paths: Vec<PathBuf> = moved.flat_map(|(a, b)| [a.clone(), b.clone()]).collect();
+        let (code, detail) = match running::refuse(&paths) {
+            Err(running) => ("running", format!("{error}\n{}", running.detail)),
+            Ok(()) if error.kind() == io::ErrorKind::PermissionDenied => {
+                ("permission", error.to_string())
+            }
+            Ok(()) => ("command", error.to_string()),
         };
-        return Err(swap.abort(code, error));
+        return Err(swap.abort(code, detail));
     }
     // npm's cache of the global tree now describes the old files.
     let _ = fs::remove_file(layout.modules.join(".package-lock.json"));
@@ -896,9 +900,6 @@ fn put_back(
         return Err(ClientError::new("changed", "Client installation changed"));
     }
     let layout = Layout::new(environment, prefix, id);
-    let mut roots = layout.roots(id);
-    roots.push(restore.from.clone());
-    running::refuse(&roots)?;
     fs::create_dir_all(run).map_err(|e| ClientError::new("command", e))?;
     let mut journal = Journal {
         run: run.to_path_buf(),
@@ -1078,6 +1079,91 @@ mod tests {
         swapped.recover_all();
         assert_eq!(swapped.live(), ["claude=old shim", "pkg/version=old"]);
         assert!(!swapped.prefix.join(WORK).exists());
+    }
+
+    #[cfg(windows)]
+    fn environment(home: &Path, prefix: &Path) -> Environment {
+        Environment {
+            home: home.into(),
+            path: std::env::join_paths([prefix]).unwrap(),
+            use_system_proxy: false,
+            proxy_env: None,
+            wsl: None,
+        }
+    }
+
+    /// A running client moves aside with its files, keeps running, and
+    /// its old files go at the first check after it exits.
+    #[cfg(windows)]
+    #[test]
+    fn swaps_a_running_client_and_deletes_its_files_once_it_exits() {
+        let root = std::env::temp_dir().join(format!(
+            "astrlink-running-swap-{}-{}",
+            std::process::id(),
+            now()
+        ));
+        let prefix = root.join("prefix");
+        let work = work_dir(&prefix, ClientId::Claude);
+        let program = prefix.join(r"pkg\bin\claude.exe");
+        fs::create_dir_all(program.parent().unwrap()).unwrap();
+        let system = std::env::var_os("SystemRoot").unwrap();
+        fs::copy(Path::new(&system).join(r"System32\PING.EXE"), &program).unwrap();
+        fs::write(prefix.join("claude.cmd"), "old shim").unwrap();
+        let mut client = std::process::Command::new(&program)
+            .args(["-n", "60", "127.0.0.1"])
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+
+        let claim = Claim::hold(&work).unwrap();
+        let run = work.join("1");
+        fs::create_dir_all(run.join(r"stage\pkg")).unwrap();
+        fs::write(run.join(r"stage\pkg\version"), "new").unwrap();
+        fs::write(run.join(r"stage\claude.cmd"), "new shim").unwrap();
+        let swap = Swap::begin(
+            &work,
+            Journal {
+                run: run.clone(),
+                retired: vec![
+                    (prefix.join("pkg"), run.join(r"previous\package-0")),
+                    (prefix.join("claude.cmd"), run.join(r"previous\claude.cmd")),
+                ],
+                placed: vec![
+                    (run.join(r"stage\pkg"), prefix.join("pkg")),
+                    (run.join(r"stage\claude.cmd"), prefix.join("claude.cmd")),
+                ],
+            },
+        )
+        .unwrap();
+        swap.apply().unwrap();
+        swap.finish();
+        finish_run(&prefix, ClientId::Claude, &run, claim);
+
+        let live: Vec<String> = tree(&prefix)
+            .into_iter()
+            .filter(|e| !e.starts_with(WORK))
+            .collect();
+        assert_eq!(live, ["claude.cmd=new shim", "pkg/version=new"]);
+        let running = client.try_wait().unwrap().is_none();
+        let moved = run.join(r"previous\package-0\bin\claude.exe");
+        let kept = moved.exists();
+        // A check meanwhile leaves it, and the new files, alone.
+        recover_all(&environment(&root, &prefix), ClientId::Claude);
+        let kept_by_check = moved.exists() && prefix.join("pkg").join("version").exists();
+        let still_running = client.try_wait().unwrap().is_none();
+        let _ = client.kill();
+        let _ = client.wait();
+        assert!(running && still_running, "the client stopped");
+        assert!(kept, "the running program was not moved aside");
+        assert!(
+            kept_by_check,
+            "a check removed the running program or the new files"
+        );
+
+        recover_all(&environment(&root, &prefix), ClientId::Claude);
+        let left = prefix.join(WORK).exists();
+        let _ = fs::remove_dir_all(&root);
+        assert!(!left, "the old files outlived the client");
     }
 
     /// An undo that could not move a new entry out tries again later and

@@ -1,6 +1,5 @@
-//! Finds running processes started from a client's installation. Windows
-//! cannot delete a running program, so updating one leaves a half-replaced
-//! installation behind; other systems replace files in place safely.
+//! Finds running processes started from a client's installation, to name
+//! them when an update cannot move the client's files.
 
 use std::path::{Path, PathBuf};
 
