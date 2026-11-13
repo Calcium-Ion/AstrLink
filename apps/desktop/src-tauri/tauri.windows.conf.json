@@ -8,7 +8,11 @@
       }
     },
     "resources": {
-      "binaries/DirectML.dll": "DirectML.dll"
+      "binaries/DirectML.dll": "DirectML.dll",
+      "binaries/onnxruntime-1.23.2-LICENSE.txt": null,
+      "binaries/onnxruntime-1.23.2-ThirdPartyNotices.txt": null,
+      "binaries/onnxruntime-1.31.0-LICENSE.txt": "notices/onnxruntime-1.31.0/LICENSE.txt",
+      "binaries/onnxruntime-1.31.0-ThirdPartyNotices.txt": "notices/onnxruntime-1.31.0/ThirdPartyNotices.txt"
     }
   }
 }

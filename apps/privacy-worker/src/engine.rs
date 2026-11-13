@@ -4,7 +4,7 @@ use std::{
     ffi::OsStr,
     fs, io,
     path::Path,
-    sync::{Arc, OnceLock},
+    sync::{Mutex, OnceLock, PoisonError},
 };
 
 #[cfg(any(target_os = "linux", target_os = "macos", test))]
@@ -17,8 +17,7 @@ use ort::{
         Session, SessionInputValue,
         builder::{GraphOptimizationLevel, SessionBuilder},
     },
-    tensor::TensorElementType,
-    value::Tensor,
+    value::{Tensor, TensorElementType},
 };
 use tokenizers::{Encoding, Tokenizer};
 
@@ -239,15 +238,21 @@ impl PrivacyEngine {
             ExecutionProvider::Directml => directml::check_platform()?,
             ExecutionProvider::Cpu => {}
         }
-        initialize_onnx_runtime(provider == ExecutionProvider::Coreml)?;
+        let environment = initialize_onnx_runtime(provider == ExecutionProvider::Coreml)?;
         let model_path = manifest.resolve(model_directory, &manifest.model_path);
         let session = match provider {
-            ExecutionProvider::Coreml => {
-                coreml::commit_session(&manifest, model_directory, &model_path, intra_threads)?
+            ExecutionProvider::Coreml => coreml::commit_session(
+                environment,
+                &manifest,
+                model_directory,
+                &model_path,
+                intra_threads,
+            )?,
+            ExecutionProvider::Directml => {
+                directml::commit_session(environment, &model_path, intra_threads)?
             }
-            ExecutionProvider::Directml => directml::commit_session(&model_path, intra_threads)?,
             ExecutionProvider::Cpu => {
-                priority::lower_pool_threads(session_builder(intra_threads)?)?
+                priority::lower_pool_threads(session_builder(environment, intra_threads)?)?
                     .commit_from_file(model_path)?
             }
         };
@@ -512,14 +517,14 @@ fn prepare_model_window(
 
 // Without spinning, idle pool threads sleep between operators instead of
 // holding their cores while the main thread tokenizes and decodes.
-fn session_builder(intra_threads: usize) -> ort::Result<SessionBuilder> {
-    Session::builder()?
+fn session_builder(environment: &Environment, intra_threads: usize) -> ort::Result<SessionBuilder> {
+    Ok(Session::builder(environment)?
         .with_log_level(LogLevel::Error)?
         .with_intra_threads(intra_threads)?
         .with_intra_op_spinning(false)?
         .with_inter_threads(INTER_OP_THREADS)?
         .with_parallel_execution(false)?
-        .with_optimization_level(GraphOptimizationLevel::Level3)
+        .with_optimization_level(GraphOptimizationLevel::Level3)?)
 }
 
 fn pad_model_window(window: &mut ModelWindow, padding: StaticPadding) -> io::Result<()> {
@@ -555,6 +560,7 @@ mod coreml {
     };
 
     use ort::{
+        environment::Environment,
         ep::{self, ExecutionProvider},
         session::Session,
     };
@@ -633,6 +639,7 @@ mod coreml {
     /// and option set therefore gets its own subdirectory of the cache, and
     /// the others are removed.
     pub fn commit_session(
+        environment: &Environment,
         manifest: &ModelManifest,
         model_directory: &Path,
         model_path: &Path,
@@ -662,25 +669,22 @@ mod coreml {
             .with_compute_units(compute_units(units))
             .with_static_input_shapes(true)
             .with_model_cache_dir(cache_path);
-        if !provider
-            .is_available()
-            .map_err(|_| io::Error::other("coreml_unavailable"))?
-        {
+        if !ep::CoreML::is_available().map_err(|_| io::Error::other("coreml_unavailable"))? {
             return Err(io::Error::other("coreml_unavailable").into());
         }
         // Registration errors are fatal rather than silently leaving the
         // whole graph on the CPU. CPU comes second and takes only the nodes
         // Core ML does not claim.
-        let builder = session_builder(intra_threads)
+        let builder = session_builder(environment, intra_threads)
             .and_then(|builder| {
-                builder.with_execution_providers([
+                Ok(builder.with_execution_providers([
                     provider.build().error_on_failure(),
                     ep::CPU::default().build().error_on_failure(),
-                ])
+                ])?)
             })
             .map_err(|_| io::Error::other("coreml_unavailable"))?;
         Ok(priority::lower_pool_threads(builder)
-            .and_then(|builder| builder.commit_from_file(model_path))
+            .and_then(|mut builder| builder.commit_from_file(model_path))
             .map_err(|_| io::Error::other("coreml_session_failed"))?)
     }
 
@@ -855,7 +859,7 @@ mod coreml {
 mod coreml {
     use std::{io, path::Path};
 
-    use ort::session::Session;
+    use ort::{environment::Environment, session::Session};
 
     use crate::manifest::ModelManifest;
 
@@ -864,6 +868,7 @@ mod coreml {
     }
 
     pub fn commit_session(
+        _environment: &Environment,
         _manifest: &ModelManifest,
         _model_directory: &Path,
         _model_path: &Path,
@@ -889,6 +894,7 @@ mod directml {
 
     use ort::{
         AsPointer,
+        environment::Environment,
         ep::{self, ExecutionProvider},
         session::{Session, builder::SessionBuilder},
     };
@@ -906,29 +912,27 @@ mod directml {
     }
 
     pub fn commit_session(
+        environment: &Environment,
         model_path: &Path,
         intra_threads: usize,
     ) -> Result<Session, Box<dyn std::error::Error + Send + Sync>> {
         let unavailable = || io::Error::other("directml_unavailable");
-        if !ep::DirectML::default()
-            .is_available()
-            .map_err(|_| unavailable())?
-        {
+        if !ep::DirectML::is_available().map_err(|_| unavailable())? {
             return Err(unavailable().into());
         }
         // DirectML requires sequential execution, which session_builder
         // already sets, and no memory pattern. Registration errors are fatal
         // rather than silently leaving the whole graph on the CPU. CPU comes
         // second and takes only the nodes DirectML does not claim.
-        let mut builder = session_builder(intra_threads)
-            .and_then(|builder| builder.with_memory_pattern(false))
+        let mut builder = session_builder(environment, intra_threads)
+            .and_then(|builder| Ok(builder.with_memory_pattern(false)?))
             .map_err(|_| unavailable())?;
         append_directml(&mut builder).map_err(|_| unavailable())?;
         let builder = builder
             .with_execution_providers([ep::CPU::default().build().error_on_failure()])
             .map_err(|_| unavailable())?;
         Ok(priority::lower_pool_threads(builder)
-            .and_then(|builder| builder.commit_from_file(model_path))
+            .and_then(|mut builder| builder.commit_from_file(model_path))
             .map_err(|_| io::Error::other("directml_session_failed"))?)
     }
 
@@ -942,7 +946,7 @@ mod directml {
         // name, keys and values are NUL-terminated statics that ONNX Runtime
         // copies before it returns.
         unsafe {
-            ort::error::status_to_result((ort::api().SessionOptionsAppendExecutionProvider)(
+            ort::Error::result_from_status((ort::api().SessionOptionsAppendExecutionProvider)(
                 builder.ptr_mut(),
                 c"DML".as_ptr(),
                 keys.as_ptr(),
@@ -957,13 +961,14 @@ mod directml {
 mod directml {
     use std::{io, path::Path};
 
-    use ort::session::Session;
+    use ort::{environment::Environment, session::Session};
 
     pub fn check_platform() -> io::Result<()> {
         Err(io::Error::other("unsupported_execution_provider"))
     }
 
     pub fn commit_session(
+        _environment: &Environment,
         _model_path: &Path,
         _intra_threads: usize,
     ) -> Result<Session, Box<dyn std::error::Error + Send + Sync>> {
@@ -1029,11 +1034,24 @@ fn macos_runtime_name(coreml: bool) -> &'static str {
     }
 }
 
+/// ONNX Runtime allows one environment per process, and ort keeps only a weak
+/// reference to it. The worker builds it once, from the runtime the first
+/// model needs, and keeps it so a new default logger cannot race the previous
+/// environment's teardown.
 fn initialize_onnx_runtime(
     #[cfg_attr(not(target_os = "macos"), allow(unused_variables))] coreml: bool,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<&'static Environment, Box<dyn std::error::Error + Send + Sync>> {
+    static ENVIRONMENT: OnceLock<Environment> = OnceLock::new();
+    static INITIALIZING: Mutex<()> = Mutex::new(());
+    if let Some(environment) = ENVIRONMENT.get() {
+        return Ok(environment);
+    }
+    let _initializing = INITIALIZING.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some(environment) = ENVIRONMENT.get() {
+        return Ok(environment);
+    }
     #[cfg(target_os = "macos")]
-    {
+    let builder = {
         let executable = env::current_exe()?;
         let runtime = runtime_library_candidates(&executable, macos_runtime_name(coreml))
             .into_iter()
@@ -1045,33 +1063,21 @@ fn initialize_onnx_runtime(
                     io::Error::new(io::ErrorKind::NotFound, "onnx_runtime_not_installed")
                 }
             })?;
-        let _ = ort::init_from(runtime)?
-            .with_name("astrlink-privacy-worker")
-            .commit();
-    }
+        ort::init_from(runtime)?
+    };
     #[cfg(target_os = "linux")]
-    {
+    let builder = {
         const RUNTIME_NAME: &str = "libonnxruntime.so.1.23.2";
         let executable = env::current_exe()?;
         let configured = env::var_os(LINUX_ONNX_RUNTIME_PATH_ENV);
         let runtime =
             resolve_linux_runtime_library(&executable, configured.as_deref(), RUNTIME_NAME)?;
-        let _ = ort::init_from(runtime)?
-            .with_name("astrlink-privacy-worker")
-            .commit();
-    }
+        ort::init_from(runtime)?
+    };
     #[cfg(target_os = "windows")]
-    {
-        let _ = ort::init().with_name("astrlink-privacy-worker").commit();
-    }
-    // ort keeps only a weak reference. Retain the environment between sessions
-    // so a new default logger cannot race the previous environment's teardown.
-    static ENVIRONMENT: OnceLock<Arc<Environment>> = OnceLock::new();
-    if ENVIRONMENT.get().is_none() {
-        let environment = ort::environment::get_environment()?;
-        let _ = ENVIRONMENT.set(environment);
-    }
-    Ok(())
+    let builder = ort::init();
+    let environment = builder.with_name("astrlink-privacy-worker").build()?;
+    Ok(ENVIRONMENT.get_or_init(|| environment))
 }
 
 #[cfg(target_os = "linux")]
@@ -1118,12 +1124,31 @@ fn runtime_library_candidates(executable: &Path, runtime_name: &str) -> Vec<Path
         candidates.push(contents_directory.join("Frameworks").join(runtime_name));
     }
     #[cfg(test)]
-    if let Some(debug_directory) = executable_directory.parent()
-        && debug_directory
-            .file_name()
-            .is_some_and(|name| name == "debug")
-        && let Some(target_directory) = debug_directory.parent()
-    {
+    for candidate in test_runtime_library_candidates(executable_directory, runtime_name) {
+        if !candidates.contains(&candidate) {
+            candidates.push(candidate);
+        }
+    }
+    candidates
+}
+
+/// Test executables run from `target/debug/deps`, or, with Cargo's newer
+/// build-directory layout, from `target/debug/build/<package>/<hash>/out`.
+/// Either way the runtime staged for tests sits in `target/debug/deps`, and a
+/// release build leaves its copy in `target/release`.
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+fn test_runtime_library_candidates(
+    executable_directory: &Path,
+    runtime_name: &str,
+) -> Vec<PathBuf> {
+    let Some(debug_directory) = executable_directory
+        .ancestors()
+        .find(|directory| directory.file_name().is_some_and(|name| name == "debug"))
+    else {
+        return Vec::new();
+    };
+    let mut candidates = vec![debug_directory.join("deps").join(runtime_name)];
+    if let Some(target_directory) = debug_directory.parent() {
         candidates.push(target_directory.join("release").join(runtime_name));
     }
     candidates
@@ -1599,31 +1624,37 @@ mod tests {
             return;
         }
 
-        initialize_onnx_runtime(false).expect("initialize runtime");
-        let environment = ort::environment::get_environment().expect("get environment");
-        let weak = std::sync::Arc::downgrade(&environment);
-        drop(environment);
-        assert!(
-            weak.upgrade().is_some(),
-            "environment dropped before sessions"
-        );
-
+        // ONNX Runtime allows one environment per process, so threads that
+        // race to initialize it must all get the same one.
+        use ort::AsPointer;
         let start = std::sync::Barrier::new(8);
-        std::thread::scope(|scope| {
-            for _ in 0..8 {
-                scope.spawn(|| {
-                    start.wait();
-                    for _ in 0..256 {
-                        initialize_onnx_runtime(false).expect("reuse runtime");
-                        drop(Session::builder().expect("create concurrent session builder"));
-                    }
-                });
-            }
+        let environments = std::thread::scope(|scope| {
+            let threads = (0..8)
+                .map(|_| {
+                    scope.spawn(|| {
+                        start.wait();
+                        let mut environments = BTreeSet::new();
+                        for _ in 0..256 {
+                            let environment =
+                                initialize_onnx_runtime(false).expect("initialize runtime");
+                            environments.insert(environment.ptr().addr());
+                            drop(
+                                Session::builder(environment)
+                                    .expect("create concurrent session builder"),
+                            );
+                        }
+                        environments
+                    })
+                })
+                .collect::<Vec<_>>();
+            threads
+                .into_iter()
+                .flat_map(|thread| thread.join().expect("session thread"))
+                .collect::<BTreeSet<_>>()
         });
-        assert!(
-            weak.upgrade().is_some(),
-            "environment dropped after sessions"
-        );
+        assert_eq!(environments.len(), 1, "one environment for every session");
+        let environment = initialize_onnx_runtime(false).expect("reuse runtime");
+        assert!(environments.contains(&environment.ptr().addr()));
     }
 
     #[cfg(target_os = "macos")]
@@ -1692,6 +1723,49 @@ mod tests {
         );
 
         fs::remove_dir_all(directory).expect("remove runtime fixture directory");
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn test_runtime_lookup_covers_both_cargo_build_layouts() {
+        let target = Path::new("/workspace/apps/privacy-worker/target");
+        let name = "libonnxruntime.test";
+        let staged = target.join("debug").join("deps").join(name);
+        let release = target.join("release").join(name);
+        for executable_directory in [
+            target.join("debug").join("deps"),
+            target
+                .join("debug")
+                .join("build")
+                .join("astrlink-privacy-worker")
+                .join("0123456789abcdef")
+                .join("out"),
+        ] {
+            let executable = executable_directory.join("astrlink_privacy_worker-0123456789abcdef");
+            let mut expected = vec![executable_directory.join(name)];
+            #[cfg(target_os = "macos")]
+            expected.push(
+                executable_directory
+                    .parent()
+                    .expect("executable parent")
+                    .join("Frameworks")
+                    .join(name),
+            );
+            if !expected.contains(&staged) {
+                expected.push(staged.clone());
+            }
+            expected.push(release.clone());
+            assert_eq!(
+                runtime_library_candidates(&executable, name),
+                expected,
+                "{}",
+                executable.display()
+            );
+        }
+        assert!(
+            test_runtime_library_candidates(Path::new("/opt/AstrLink"), name).is_empty(),
+            "an installed worker has no development candidates"
+        );
     }
 
     #[cfg(target_os = "linux")]

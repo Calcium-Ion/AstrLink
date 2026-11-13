@@ -3,7 +3,7 @@ name = "astrlink-classifier-worker"
 version = "0.1.0-dev.1"
 description = "Local sequence-classification inference worker for AstrLink auto routing"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.92"
 license = "Apache-2.0"
 publish = false
 
@@ -16,21 +16,22 @@ unicode-normalization = "=0.1.24"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 libc = "=0.2.189"
-ort = { version = "=2.0.0-rc.11", default-features = false, features = [
+ort = { version = "=2.0.0-rc.15", default-features = false, features = [
   "load-dynamic",
   "std",
 ] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "=0.2.189"
-ort = { version = "=2.0.0-rc.11", default-features = false, features = [
+ort = { version = "=2.0.0-rc.15", default-features = false, features = [
   "load-dynamic",
   "std",
 ] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-ort = { version = "=2.0.0-rc.11", default-features = false, features = [
+ort = { version = "=2.0.0-rc.15", default-features = false, features = [
   "copy-dylibs",
+  "directml",
   "download-binaries",
   "std",
   "tls-rustls",
