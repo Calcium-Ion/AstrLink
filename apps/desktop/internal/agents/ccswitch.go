@@ -12,6 +12,10 @@ import (
 // overwrites it.
 func CCSwitchInstalled() bool { return opensLinks("ccswitch") }
 
+// OpensLinks reports whether the OS has an app registered for `scheme:`
+// links, as the client import links need.
+func OpensLinks(scheme string) bool { return opensLinks(scheme) }
+
 // ConfigDirs returns the configuration directories CC Switch's settings
 // move each app to, so agent installs and client configs reach the same
 // directories, inside WSL included. Missing or unreadable settings move

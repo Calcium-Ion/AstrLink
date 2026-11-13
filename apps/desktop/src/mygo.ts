@@ -4,6 +4,9 @@ import { call, event } from "mygo-runtime";
 
 // ---- Types ----
 
+/** Action is what an item does to its place. */
+export type Action = "write" | "remove";
+
 /** AppSnapshot is the app's version with Core's state. */
 export interface AppSnapshot {
   app_version: string;
@@ -30,6 +33,19 @@ export interface AppSnapshot {
   recovery_scheduled_in_ms: number | null;
 }
 
+/**
+ * ApplyItem is one place to write or remove, in the desktop user's home or
+ * a WSL one.
+ */
+export interface ApplyItem {
+  client: unknown;
+  wsl: string | null;
+  /** Target is one of the client's targets; nil for a client without. */
+  target: string | null;
+  action: Action;
+  models: Models | null;
+}
+
 /** AuthorizationStart is a started authorization session. */
 export interface AuthorizationStart {
   kind: string;
@@ -41,6 +57,87 @@ export interface CapabilitiesResponse {
   protocols: ProtocolDescriptor[];
   plan_types: PlanTypeDescriptor[];
   conversion_engine: ConversionEngineDescriptor;
+}
+
+/** CatalogEntry is one client the dialog lists. */
+export interface CatalogEntry {
+  id: string;
+  /** Name is the product name, never translated. */
+  name: string;
+  kind: Kind;
+  /**
+   * Targets are the write targets of a client with several; empty for
+   * one.
+   */
+  targets: string[];
+  /**
+   * Protocols are the gateway protocols the client can be written or
+   * filled with, preferred first.
+   */
+  protocols: string[];
+  /**
+   * List reports whether the client switches among a written list of
+   * models.
+   */
+  list: boolean;
+}
+
+/** ClientCatalog is every client the dialog lists. */
+export interface ClientCatalog {
+  clients: CatalogEntry[];
+}
+
+/**
+ * ClientOverview is client configs across the desktop user's home and WSL
+ * homes.
+ */
+export interface ClientOverview {
+  clients: ClientStatus[];
+  /** WSLUnchecked are WSL distributions whose clients were not checked. */
+  wsl_unchecked: string[];
+  /**
+   * WSLLocalhost reports whether WSL clients reach the gateway at
+   * `localhost`.
+   */
+  wsl_localhost: boolean;
+  /** Installed are the link clients installed on this computer. */
+  installed: string[];
+}
+
+/** ClientStatus is one place's config. */
+export interface ClientStatus {
+  client: unknown;
+  /**
+   * WSL is the WSL distribution the client runs in; nil for the desktop
+   * user's.
+   */
+  wsl: string | null;
+  /** Target is one of the client's targets; nil for a client without. */
+  target: string | null;
+  detected: boolean;
+  /** Home is the home the paths lie in, for showing them from `~`. */
+  home: string;
+  /**
+   * Dir is the client's config directory, where an install is looked
+   * for.
+   */
+  dir: string;
+  paths: string[];
+  /** Exists reports whether each of Paths exists now. */
+  exists: boolean[];
+  state: State;
+  token_id: string | null;
+  /** Models are the models a config AstrLink wrote holds now. */
+  models: CurrentModels;
+  /** Notes are situations the dialog explains for this place, by id. */
+  notes: string[];
+  /**
+   * PasteSinceUnix is, for a written client the token is pasted into,
+   * since when a request from it with the token shows the paste worked;
+   * PasteInto the names it is pasted under.
+   */
+  paste_since_unix: number | null;
+  paste_into: string[];
 }
 
 /** CloseBehavior is what closing the main window does. */
@@ -62,6 +159,20 @@ export interface ConversionEngineDescriptor {
 
 export type ConversionQuality = "good" | "fair" | "discouraged";
 
+/** CurrentModels are the models a client's config holds now. */
+export interface CurrentModels {
+  model?: string;
+  haikuModel?: string;
+  sonnetModel?: string;
+  opusModel?: string;
+  fableModel?: string;
+  subagentModel?: string;
+  reasoningEffort?: string;
+  models?: string[];
+  contextWindow?: number;
+  maxTokens?: number;
+}
+
 /**
  * DataBackupFile is a file in the data directory whose name matches
  * *.bak*. Such copies are made by hand, outside AstrLink, and can hold every
@@ -72,6 +183,28 @@ export interface DataBackupFile {
   name: string;
   size_bytes: number;
   modified_unix: number | null;
+}
+
+/** DiffLine is one line of a diff. */
+export interface DiffLine {
+  kind: LineKind;
+  text: string;
+}
+
+/** FileChanges is what a write or removal changes in one file. */
+export interface FileChanges {
+  path: string;
+  created: boolean;
+  deleted: boolean;
+  /** Changes counts the keys whose value changes. */
+  changes: number;
+  /** Unit is what a change counts: `line` for `.env`, else `key`. */
+  unit: string;
+  /**
+   * Lines show the token as its hint, and other secret values by their
+   * ends.
+   */
+  lines: DiffLine[];
 }
 
 export interface HealthResponse {
@@ -90,6 +223,12 @@ export interface InferencePortFallback {
   active_port: number;
 }
 
+/** Kind is how AstrLink reaches a client. */
+export type Kind = "file" | "paste" | "link" | "guide" | "unsupported";
+
+/** LineKind is what a diff line is. */
+export type LineKind = "context" | "add" | "remove" | "gap";
+
 /**
  * LocalKeyStorage is where Core's local key lives, shown as one status line
  * in Settings.
@@ -98,6 +237,35 @@ export type LocalKeyStorage = "keychain" | "file" | "keychain_unavailable";
 
 /** Locale is a language the interface is written in. */
 export type Locale = "en" | "zh-CN" | "ja";
+
+/** Models is what the dialog writes a client with. */
+export interface Models {
+  model?: string;
+  haikuModel?: string;
+  sonnetModel?: string;
+  opusModel?: string;
+  fableModel?: string;
+  /** SubagentModel is Claude Code's only: the model its subagents use. */
+  subagentModel?: string;
+  /** ReasoningEffort is Codex's only: one of its reasoning efforts. */
+  reasoningEffort?: string;
+  /**
+   * Models are, for clients that switch models, the models the client
+   * can switch among.
+   */
+  models?: string[];
+  /**
+   * ContextWindow and MaxTokens are Pi's only: the context window and
+   * output limit its entry for the default model names.
+   */
+  contextWindow?: number;
+  maxTokens?: number;
+  /**
+   * ModelProtocols is the gateway protocol each model is written with,
+   * one of the client's; a model left out takes the client's first.
+   */
+  modelProtocols?: Record<string, string>;
+}
 
 /** Phase is where Core is in its lifecycle. */
 export type Phase = "stopped" | "spawning" | "waiting_for_ready" | "handshaking" | "ready" | "stopping" | "exited" | "error";
@@ -150,6 +318,18 @@ export interface Preferences {
   updates: UpdatePreferences;
 }
 
+/** Preview is what writing or removing one place would change. */
+export interface Preview {
+  files: FileChanges[];
+  /**
+   * Replaced counts values AstrLink did not write that the write replaces
+   * or removes.
+   */
+  replaced: number;
+  /** Restored counts values a removal puts back. */
+  restored: number;
+}
+
 /**
  * ProofArg is the proof the dialog collected: a password, or a request for
  * Touch ID, so no key passes the webview.
@@ -188,6 +368,21 @@ export type ProtocolID = "openai.responses" | "openai.responses.compact" | "anth
 
 export type ProtocolPhase = "alpha" | "post_alpha";
 
+/** ProxyCheck is how a client reaches the gateway. */
+export interface ProxyCheck {
+  /**
+   * Client is the route to the address AstrLink writes into client
+   * configs.
+   */
+  client: Route;
+  /**
+   * Numeric is the route to `http://127.0.0.1:<port>` while the client
+   * address is localhost, for configs written by hand or by other tools
+   * before the switch.
+   */
+  numeric: Route | null;
+}
+
 /** QuotaDisplayMode is whether quotas show what remains or what is used. */
 export type QuotaDisplayMode = "remaining" | "used";
 
@@ -209,6 +404,17 @@ export interface ReadyEvent {
    */
   client_inference_url: string;
   control_url: string;
+}
+
+/**
+ * Route is how a system-proxy-aware client reaches one gateway address:
+ * "direct" when the system proxy does not apply, "proxied" when requests
+ * pass through Proxy and still reach the gateway, "blocked" when they pass
+ * through it and never do.
+ */
+export interface Route {
+  route: string;
+  proxy?: string;
 }
 
 /** ServiceOrder is the order services are tried in. */
@@ -243,6 +449,16 @@ export interface SettingsSnapshot {
   /** LocalKeyStorage is nil before the first Core start. */
   local_key_storage: LocalKeyStorage | null;
 }
+
+/** SnippetFile is one file of a manual setup. */
+export interface SnippetFile {
+  /** Path is where the file goes, from the home. */
+  path: string;
+  contents: string;
+}
+
+/** State is a place's config as the dialog shows it. */
+export type State = "not_configured" | "configured" | "outdated" | "elsewhere" | "modified" | "invalid";
 
 /** ThemePreference is the theme the user chose. */
 export type ThemePreference = "system" | "light" | "dark";
@@ -882,6 +1098,87 @@ export const Window = {
   /** WindowState returns the state of the window the call came from. */
   windowState(): Promise<WindowState> {
     return call("Window.WindowState");
+  },
+} as const;
+
+/**
+ * Clients writes and removes the config files of the coding clients,
+ * previews and copies their setups, and checks what reaches the gateway.
+ */
+export const Clients = {
+  /**
+   * ApplyClientConfigs writes and removes several clients' configs with one
+   * token. Without confirmed, nothing is written while any of them needs
+   * confirmation.
+   */
+  applyClientConfigs(tokenID: string | null, inferenceURL: string, items: ApplyItem[], confirmed: boolean): Promise<unknown> {
+    return call("Clients.ApplyClientConfigs", tokenID, inferenceURL, items, confirmed);
+  },
+  /**
+   * CCSwitchInstalled reports whether CC Switch is installed, whose provider
+   * switches overwrite the configs AstrLink writes.
+   */
+  ccSwitchInstalled(): Promise<boolean> {
+    return call("Clients.CCSwitchInstalled");
+  },
+  /**
+   * CheckClientProxy reports whether the system proxy keeps Codex from
+   * reaching the gateway. It only reads, and never changes proxy settings.
+   */
+  checkClientProxy(inferenceURL: string): Promise<ProxyCheck> {
+    return call("Clients.CheckClientProxy", inferenceURL);
+  },
+  /**
+   * ClientCatalog is every client the dialog lists, in its order: the ones
+   * AstrLink writes, then the ones it explains.
+   */
+  clientCatalog(): Promise<ClientCatalog> {
+    return call("Clients.ClientCatalog");
+  },
+  /**
+   * ClientConfigStatus is the client configs in the desktop user's home and
+   * in running WSL distributions. A WSL home that cannot be read is reported
+   * unchecked.
+   */
+  clientConfigStatus(inferenceURL: string | null): Promise<ClientOverview> {
+    return call("Clients.ClientConfigStatus", inferenceURL);
+  },
+  /**
+   * CopyClientConfigSnippet copies one file of the real snippet straight to
+   * the clipboard, like CopyAccessToken: the token never reaches the webview.
+   * false means the clipboard refused it.
+   */
+  copyClientConfigSnippet(tokenID: string, client: unknown, models: Models, inferenceURL: string, file: number): Promise<boolean> {
+    return call("Clients.CopyClientConfigSnippet", tokenID, client, models, inferenceURL, file);
+  },
+  /**
+   * OpenClientImportLink opens a client's import link with a token, which
+   * never reaches the webview. The link carries it, so neither it nor the
+   * opener's error is logged.
+   */
+  openClientImportLink(tokenID: string, client: string, protocol: string, inferenceURL: string): Promise<void> {
+    return call("Clients.OpenClientImportLink", tokenID, client, protocol, inferenceURL);
+  },
+  /**
+   * PreviewClientConfigChanges is what writing or removing one client's
+   * config would change, with the token shown as its hint.
+   */
+  previewClientConfigChanges(tokenID: string | null, client: unknown, target: string | null, distribution: string | null, action: Action, models: Models | null, inferenceURL: string): Promise<Preview | null> {
+    return call("Clients.PreviewClientConfigChanges", tokenID, client, target, distribution, action, models, inferenceURL);
+  },
+  /**
+   * PreviewClientConfigSnippet is the files ApplyClientConfigs would write
+   * for a client that has none, with the token shown as its hint.
+   */
+  previewClientConfigSnippet(tokenID: string, client: unknown, models: Models, inferenceURL: string): Promise<SnippetFile[]> {
+    return call("Clients.PreviewClientConfigSnippet", tokenID, client, models, inferenceURL);
+  },
+  /**
+   * RemoveClientConfig removes AstrLink's config from one client, putting
+   * back what it replaced.
+   */
+  removeClientConfig(client: unknown, target: string | null, distribution: string | null): Promise<void> {
+    return call("Clients.RemoveClientConfig", client, target, distribution);
   },
 } as const;
 

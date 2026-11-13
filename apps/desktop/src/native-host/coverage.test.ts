@@ -27,19 +27,6 @@ const pendingCommands: Record<string, string[]> = {
     "tray_state",
     "update_trajectory_inspector",
   ],
-  // Client configuration and CC Switch.
-  clients: [
-    "apply_client_configs",
-    "cc_switch_installed",
-    "check_client_proxy",
-    "client_catalog",
-    "client_config_status",
-    "copy_client_config_snippet",
-    "open_client_import_link",
-    "preview_client_config_changes",
-    "preview_client_config_snippet",
-    "remove_client_config",
-  ],
   // Agent tools, imports, terminals and local client updates.
   agents: [
     "agent_debug_status",
