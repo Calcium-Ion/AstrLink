@@ -24,5 +24,6 @@ func init() {
 		QwenCode,
 		KimiCode,
 		GrokBuild,
+		Droid,
 	)
 }

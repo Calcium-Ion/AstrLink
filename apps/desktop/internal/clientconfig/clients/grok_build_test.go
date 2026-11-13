@@ -12,7 +12,9 @@ import (
 
 const grokUser = "# Grok Build settings\n[models]\ndefault = \"grok-4.6\"\n\n[model.\"glm-5\"]\nmodel = \"glm-5\"\nbase_url = \"https://open.bigmodel.cn/api/paas/v4\"\napi_key = \"zk-own\"\n\n[ui]\nscreen_mode = \"minimal\"\n"
 
-func grokConfigPath(home agents.Home) string { return filepath.Join(home.Dir(), ".grok", "config.toml") }
+func grokConfigPath(home agents.Home) string {
+	return filepath.Join(home.Dir(), ".grok", "config.toml")
+}
 
 func grokRead(t *testing.T, home agents.Home) any {
 	t.Helper()
