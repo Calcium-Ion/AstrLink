@@ -54,6 +54,7 @@ type App struct {
 // Call it before App.Run; it starts once the host started.
 func New(h *host.Host) *App {
 	a := &App{h: h}
+	current.Store(a)
 	a.reclaim = NewReclaim(a.lookup)
 	a.tray = newTray(a)
 	a.legacyStorage = sync.OnceValue(func() string { return legacyStorageScript(readLegacyStorage(h.Instance().Identifier())) })
@@ -339,11 +340,24 @@ type linkInbox struct {
 
 var links linkInbox
 
+// current is the App New returned, which ShowMainWindow brings up.
+var current atomic.Pointer[App]
+
+// ShowMainWindow brings the main window up, building it again when the
+// hidden one was released, for code that takes links outside the window
+// runtime. It does nothing before New.
+func ShowMainWindow() {
+	if a := current.Load(); a != nil {
+		a.ShowMain()
+	}
+}
+
 // ReceiveLinks hands every link of the instance's scheme
 // (astrlink://, astrlink-isolated:// in development) to fn, starting with
 // one that arrived before, such as the link the app was launched with. fn
-// runs on the main thread and shows the main window itself; one link is
-// confirmed at a time, so only the last one waiting is kept.
+// runs on the main thread and shows the main window itself
+// (ShowMainWindow); one link is confirmed at a time, so only the last one
+// waiting is kept.
 func ReceiveLinks(fn func(link string)) {
 	links.mu.Lock()
 	links.receive = fn
