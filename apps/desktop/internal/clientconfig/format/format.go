@@ -22,3 +22,5 @@ func (e *Invalid) Error() string {
 func invalid(message string, line int) *Invalid {
 	return &Invalid{Message: message, Line: line}
 }
+
+func errorf(format string, args ...any) error { return fmt.Errorf(format, args...) }
