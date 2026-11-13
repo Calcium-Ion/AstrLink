@@ -299,7 +299,7 @@ impl Default for DesktopToyPet {
 #[serde(default)]
 pub struct DesktopToysPreferences {
     pub level: ToyLevel,
-    /// Each conversation's model floats beside the pet as a winged orb.
+    /// Each conversation's model floats beside the pet as an orb.
     pub orb: bool,
     /// What she is doing shows over her head: the tool, tok/s, a thought
     /// cloud, a snore.

@@ -645,7 +645,6 @@ describe("the crew", () => {
 });
 
 describe("the model orb", () => {
-  const T = 3;
   function joined(model: string) {
     const crew = createCrew();
     syncCrew(crew, reading(member("a", "think", "", { model })), layout);
@@ -656,14 +655,14 @@ describe("the model orb", () => {
   it("rides along only when a model is known", () => {
     const fx: Pixel[] = [];
     const crew = joined("");
-    stepOrb(crew.members[0], T, 1 / 30, fx, crew.rand);
+    stepOrb(crew.members[0], 1 / 30, fx, crew.rand);
     expect(crew.members[0].orb).toBeNull();
     syncCrew(
       crew,
       reading(member("a", "think", "", { model: "kimi-k3" })),
       layout,
     );
-    stepOrb(crew.members[0], T, 1 / 30, fx, crew.rand);
+    stepOrb(crew.members[0], 1 / 30, fx, crew.rand);
     // Appearing for the first time bursts nothing.
     expect(crew.members[0].orb).toMatchObject({ model: "kimi-k3", in: 1 });
     expect(fx).toHaveLength(0);
@@ -673,14 +672,14 @@ describe("the model orb", () => {
     const fx: Pixel[] = [];
     const crew = joined("kimi-k3");
     const [owner] = crew.members;
-    stepOrb(owner, T, 1 / 30, fx, crew.rand);
+    stepOrb(owner, 1 / 30, fx, crew.rand);
     const before = owner.orb!.y;
     syncCrew(
       crew,
       reading(member("a", "think", "", { model: "deepseek-v4" })),
       layout,
     );
-    stepOrb(owner, T, 1 / 30, fx, crew.rand);
+    stepOrb(owner, 1 / 30, fx, crew.rand);
     expect(fx).toHaveLength(14);
     expect(owner.orb).toMatchObject({ model: "deepseek-v4" });
     expect(owner.orb!.in).toBeLessThan(0.1);
@@ -696,7 +695,7 @@ describe("the model orb", () => {
     const side = (30 * 1.5) / 2 + 8;
     let walked = 0;
     const follow = () => {
-      stepOrb(owner, crew.time, 1 / 30, fx, crew.rand);
+      stepOrb(owner, 1 / 30, fx, crew.rand);
       const gap = Math.abs(owner.orb!.x - owner.x);
       if (!owner.arrived) {
         walked += 1;
@@ -710,7 +709,29 @@ describe("the model orb", () => {
     expect(owner).toMatchObject({ act: "edit", arrived: true });
     syncCrew(crew, reading(member("a", "wait", "", { model })), layout);
     run(crew, MIN_HOLD + 2, follow);
-    expect(owner.orb).toMatchObject({ dim: true, flap: false });
+    expect(owner.orb).toMatchObject({ dim: true, glow: false });
+  });
+
+  it("keeps still beside the shoulder, ringed only while writing", () => {
+    const fx: Pixel[] = [];
+    const model = "claude-opus-5-5";
+    const crew = joined(model);
+    const [owner] = crew.members;
+    const step = () => stepOrb(owner, 1 / 30, fx, crew.rand);
+    for (const act of ["think", "write", "bash"] as const) {
+      syncCrew(crew, reading(member("a", act, "", { model })), layout);
+      run(crew, MIN_HOLD + 3, step);
+      expect(owner.arrived).toBe(true);
+      const at = { x: owner.orb!.x, y: owner.orb!.y };
+      // No circling, bobbing or sparks: it does not move while she works.
+      run(crew, 2, () => {
+        step();
+        expect(Math.abs(owner.orb!.x - at.x)).toBeLessThan(0.5);
+        expect(Math.abs(owner.orb!.y - at.y)).toBeLessThan(0.5);
+      });
+      expect(owner.orb!.glow).toBe(act === "write");
+    }
+    expect(fx).toHaveLength(0);
   });
 
   it("wears its vendor's mark, or the Brain's", () => {

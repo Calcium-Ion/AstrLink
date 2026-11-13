@@ -381,18 +381,17 @@ export interface CrewClone extends CrewWalker {
   slot: number;
 }
 
-/** The winged orb that shows a character's model. */
+/** The orb that shows a character's model. */
 export interface CrewOrb {
   x: number;
   y: number;
   /** Fade-in after a model change, 0 → 1. */
   in: number;
-  /** Sparks owed while the model writes. */
-  spark: number;
   /** The model it shows. */
   model: string;
-  flap: boolean;
+  /** Ringed: the model is writing. */
   glow: boolean;
+  /** Dimmed: the conversation waits. */
   dim: boolean;
 }
 

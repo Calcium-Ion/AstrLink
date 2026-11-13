@@ -114,7 +114,7 @@ export type PetCharacter = (typeof PET_CHARACTERS)[number];
 /** Mirrors `DesktopToysPreferences` in `preferences.rs`. */
 export interface DesktopToysPreferences {
   level: ToyLevel;
-  /** Each conversation's model floats beside the pet as a winged orb. */
+  /** Each conversation's model floats beside the pet as an orb. */
   orb: boolean;
   /** The tool, tok/s, thought cloud and snore over her head. */
   status: boolean;

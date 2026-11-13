@@ -1,8 +1,8 @@
 // The big desktop pet's mind: one girl who floats wherever you leave her,
-// over every window and full-screen app. Every conversation in progress is a
-// winged orb beside her; she does what the busiest one does, says what
-// happened in a bubble, dozes off when nothing happens, and can be patted,
-// poked, picked up and thrown.
+// over every window and full-screen app. Every conversation in progress is an
+// orb beside her; she does what the busiest one does, says what happened in a
+// bubble, dozes off when nothing happens, and can be patted, poked, picked up
+// and thrown.
 // Everything here is plain state stepped by the window's loop on its own
 // clock, so tests drive it the same way.
 import type { Pixel } from "../live-crew-draw";

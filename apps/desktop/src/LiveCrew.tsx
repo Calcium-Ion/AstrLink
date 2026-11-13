@@ -405,7 +405,7 @@ export class CrewEngine {
     if (!scene) return;
     settleCrew(this.crew, scene.layout);
     for (const member of this.crew.members)
-      stepOrb(member, this.crew.time, 0, scene.stage.fx, this.crew.rand, true);
+      stepOrb(member, 0, scene.stage.fx, this.crew.rand, true);
     this.draw(0);
   }
 
@@ -453,7 +453,7 @@ export class CrewEngine {
       const step = Math.min(STEP_S, left);
       stepCrew(this.crew, scene.layout, step);
       for (const member of this.crew.members)
-        stepOrb(member, this.crew.time, step, scene.stage.fx, this.crew.rand);
+        stepOrb(member, step, scene.stage.fx, this.crew.rand);
       scene.step(this.crew, step);
     }
     this.draw(dt);
