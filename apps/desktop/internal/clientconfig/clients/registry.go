@@ -22,5 +22,6 @@ func init() {
 		CodeBuddy,
 		DeepSeekHarness,
 		QwenCode,
+		KimiCode,
 	)
 }

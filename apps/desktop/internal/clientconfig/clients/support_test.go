@@ -247,3 +247,26 @@ func fileMode(t *testing.T, path string) os.FileMode {
 	}
 	return info.Mode().Perm()
 }
+
+// tomlValue reads TOML text as JSON values, leaving out arrays of tables.
+func tomlValue(t *testing.T, text string) any {
+	t.Helper()
+	doc, err := format.ParseTOML(text)
+	if err != nil {
+		t.Fatalf("%v: %s", err, text)
+	}
+	var object func(table *format.TOMLTable) map[string]any
+	object = func(table *format.TOMLTable) map[string]any {
+		out := map[string]any{}
+		for _, name := range table.Names() {
+			item := table.Get(name)
+			if inner, ok := item.(*format.TOMLTable); ok {
+				out[name] = object(inner)
+			} else if value, ok := format.TOMLJSON(item); ok {
+				out[name] = value
+			}
+		}
+		return out
+	}
+	return object(doc.Root())
+}

@@ -221,6 +221,17 @@ func (t *TOMLTable) Insert(name string, item TOMLItem) {
 	t.entries = append(t.entries, &tomlEntry{key: &tomlKey{name: name}, item: item})
 }
 
+// Replace sets the item at name, keeping how its key was written; false
+// when nothing is there.
+func (t *TOMLTable) Replace(name string, item TOMLItem) bool {
+	i := t.find(name)
+	if i < 0 {
+		return false
+	}
+	t.entries[i].item = item
+	return true
+}
+
 // Remove drops the item at name, keeping the order of the rest.
 func (t *TOMLTable) Remove(name string) TOMLItem {
 	i := t.find(name)
