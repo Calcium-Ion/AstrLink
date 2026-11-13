@@ -16,6 +16,11 @@ core/coverage.out
 # Desktop frontend
 apps/desktop/node_modules/
 apps/desktop/dist/
+
+# MyGo desktop: development builds, release builds and the staged sidecars
+apps/desktop/.mygo/
+apps/desktop/build/
+apps/desktop/resources/*-*/
 apps/desktop/src-tauri/icons/.branding-hash
 apps/desktop/src-tauri/icons/dev/.branding-hash
 apps/desktop/src-tauri/icons/tray/.branding-hash
