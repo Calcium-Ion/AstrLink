@@ -40,5 +40,6 @@ func init() {
 		StepCode,
 		Aider,
 		Chatbox,
+		QoderCLI,
 	)
 }
