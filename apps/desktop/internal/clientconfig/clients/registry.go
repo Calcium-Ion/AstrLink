@@ -18,5 +18,6 @@ func init() {
 		OpenCode,
 		OpenClaw,
 		Pi,
+		WorkBuddy,
 	)
 }

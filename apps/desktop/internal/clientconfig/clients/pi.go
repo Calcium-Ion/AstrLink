@@ -140,7 +140,7 @@ func (pi) CurrentModels(config *cc.Config) cc.CurrentModels {
 		}
 	}
 	if model == nil && len(entries) > 0 {
-		model = &entries[0].ID
+		model = cc.Some(entries[0].ID)
 	}
 	limit := func(field string) *uint64 {
 		if model == nil {

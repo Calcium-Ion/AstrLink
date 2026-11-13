@@ -1,6 +1,7 @@
 package clients
 
 import (
+	"os"
 	"reflect"
 	"slices"
 	"testing"
@@ -198,4 +199,51 @@ func statusOf(t *testing.T, home agents.Home, client cc.Client, inferenceURL str
 		t.Fatal(err)
 	}
 	return statuses[0]
+}
+
+// targeted is client's place at target.
+func targeted(t *testing.T, client cc.Client, target string) cc.Place {
+	t.Helper()
+	place, err := cc.NewPlace(client, &target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return place
+}
+
+// writePlace writes connection to place in home with details, failing the
+// test on an error; it returns what the write asks to confirm.
+func writePlace(t *testing.T, home agents.Home, place cc.Place, connection *cc.Connection, details cc.Catalog, replace bool) *cc.Confirmation {
+	t.Helper()
+	_, confirmation, err := cc.WriteWith(home, place, connection, details, tokens(), replace)
+	if err != nil {
+		t.Fatalf("write %s: %+v", place.Key(), err)
+	}
+	return confirmation
+}
+
+func removePlace(t *testing.T, home agents.Home, place cc.Place) {
+	t.Helper()
+	if err := cc.Remove(home, place); err != nil {
+		t.Fatalf("remove %s: %+v", place.Key(), err)
+	}
+}
+
+// readJSON reads a JSON file as a value, nil when it is missing.
+func readJSON(t *testing.T, path string) any {
+	t.Helper()
+	text, exists := readFile(t, path)
+	if !exists {
+		return nil
+	}
+	return decode(t, text)
+}
+
+func fileMode(t *testing.T, path string) os.FileMode {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return info.Mode().Perm()
 }
