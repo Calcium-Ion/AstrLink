@@ -105,7 +105,7 @@ func (t traeCLI) Detected(home agents.Home, target string) bool {
 	if home.Windows() {
 		installs = []string{home.Join("AppData", "Local", "Programs", "TraeCLI", "bin")}
 	}
-	if isDir(filepath.Join(dir, "cli")) || isFile(filepath.Join(dir, "traecli.toml")) {
+	if cc.IsDir(filepath.Join(dir, "cli")) || isFile(filepath.Join(dir, "traecli.toml")) {
 		return true
 	}
 	for _, path := range installs {

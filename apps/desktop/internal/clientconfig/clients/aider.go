@@ -1,7 +1,6 @@
 package clients
 
 import (
-	"os"
 	"strings"
 
 	"github.com/QuantumNous/astrlink/desktop/internal/agents"
@@ -36,11 +35,6 @@ const (
 
 var aiderModelKeys = []string{"model", "weak-model", "editor-model"}
 
-func isDir(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && info.IsDir()
-}
-
 func (aider) ID() string          { return "aider" }
 func (aider) Name() string        { return "Aider" }
 func (aider) Protocols() []string { return []string{"openai.chat"} }
@@ -54,11 +48,11 @@ func (aider) Detected(home agents.Home, _ string) bool {
 	if home.Windows() {
 		installs = []string{home.Join("AppData", "Roaming", "uv", "data", "tools", "aider-chat"), home.Join("pipx", "venvs", "aider-chat")}
 	}
-	if isDir(home.Join(".aider")) || isFile(home.Join(".aider.conf.yml")) {
+	if cc.IsDir(home.Join(".aider")) || isFile(home.Join(".aider.conf.yml")) {
 		return true
 	}
 	for _, dir := range installs {
-		if isDir(dir) {
+		if cc.IsDir(dir) {
 			return true
 		}
 	}
