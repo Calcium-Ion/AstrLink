@@ -1,7 +1,13 @@
 import { execFileSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
-import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import {
+  createHash,
+  generateKeyPairSync,
+  randomBytes,
+  scryptSync,
+  sign,
+} from "node:crypto";
+import {
+  cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -15,73 +21,165 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   attachRelease,
+  bridgeTargets,
   collectRelease,
   extendRelease,
+  linuxMigrationNotice,
+  minisignSecretKey,
+  mygoPlatforms,
   newestStable,
   publishRelease,
   releaseTargets,
   releaseVersion,
+  scryptParameters,
+  signUpdate,
   signingEnvironment,
-  stampVersion,
   stageUpdate,
+  stampVersion,
   targets,
   verifyUpdateSignature,
 } from "./release-updates.mjs";
 
+type Target = keyof typeof mygoPlatforms;
+
 const sha256 = (bytes: Buffer) =>
   createHash("sha256").update(bytes).digest("hex");
+const rawKey = (key: { export: (options: object) => Buffer }, type: string) =>
+  key.export({ type, format: "der" }).subarray(-32);
 
-function signingFixture(bytes: Buffer) {
+/** A Minisign key pair as `tauri signer generate` writes it. */
+function minisignKeys(password = "") {
   const { publicKey, privateKey } = generateKeyPairSync("ed25519");
-  const id = Buffer.from("0102030405060708", "hex");
-  const key = Buffer.concat([
-    Buffer.from("Ed"),
+  const id = randomBytes(8),
+    pk = rawKey(publicKey, "spki");
+  // Key id, secret key (seed and public key) and a checksum, which the
+  // release script does not need.
+  const keynum = Buffer.concat([
     id,
-    publicKey.export({ type: "spki", format: "der" }).subarray(-32),
+    rawKey(privateKey, "pkcs8"),
+    pk,
+    randomBytes(32),
   ]);
-  const signature = sign(
-    null,
-    createHash("blake2b512").update(bytes).digest(),
-    privateKey,
-  );
-  const comment = "timestamp:1\tfile:test";
-  const global = sign(
-    null,
-    Buffer.concat([signature, Buffer.from(comment)]),
-    privateKey,
-  );
+  const salt = randomBytes(32),
+    limits = Buffer.alloc(16);
+  limits.writeBigUInt64LE(1048576n, 0);
+  limits.writeBigUInt64LE(33554432n, 8);
+  const stream = scryptSync(password, salt, keynum.length, {
+    N: 32768,
+    r: 8,
+    p: 1,
+    maxmem: 64 * 1024 * 1024,
+  });
+  for (let i = 0; i < keynum.length; i += 1) keynum[i] ^= stream[i];
+  const blob = Buffer.concat([Buffer.from("EdScB2"), salt, limits, keynum]);
   return {
-    publicKey: Buffer.from(
-      `untrusted comment: test key\n${key.toString("base64")}\n`,
+    secret: Buffer.from(
+      `untrusted comment: rsign encrypted secret key\n${blob.toString("base64")}\n`,
     ).toString("base64"),
-    signature: Buffer.from(
-      `untrusted comment: test signature\n${Buffer.concat([Buffer.from("ED"), id, signature]).toString("base64")}\ntrusted comment: ${comment}\n${global.toString("base64")}\n`,
+    publicKey: Buffer.from(
+      `untrusted comment: minisign public key: ${id.toString("hex")}\n${Buffer.concat([Buffer.from("Ed"), id, pk]).toString("base64")}\n`,
     ).toString("base64"),
   };
 }
-function stagePlatform(
-  input: string,
-  target: string,
-  bytes: Buffer,
-  signature: string,
-) {
-  const dir = path.join(input, target);
-  mkdirSync(dir);
-  const filename = `${target}.exe`;
-  writeFileSync(path.join(dir, filename), bytes);
-  writeFileSync(path.join(dir, `${filename}.sig`), signature);
-  writeFileSync(
-    path.join(dir, `${target}.json`),
+
+/** Both release keys, as Actions passes them to release-updates.mjs. */
+function releaseKeys() {
+  const bridge = minisignKeys();
+  const mygo = generateKeyPairSync("ed25519");
+  return {
+    mygo: mygo.privateKey,
+    env: {
+      MYGO_UPDATER_PUBLIC_KEY: rawKey(mygo.publicKey, "spki").toString(
+        "base64",
+      ),
+      MYGO_UPDATER_PRIVATE_KEY: "set",
+      TAURI_UPDATER_PUBLIC_KEY: bridge.publicKey,
+      TAURI_SIGNING_PRIVATE_KEY: bridge.secret,
+    },
+  };
+}
+type Keys = ReturnType<typeof releaseKeys>;
+
+const download = (tag: string, name: string) =>
+  `https://github.com/Calcium-Ion/AstrLink/releases/download/${tag}/${name}`;
+
+/** What `mygo build` leaves in build/<platform> with updates. */
+function mygoBuild(root: string, target: Target, keys: Keys, tag = "v1.0.0") {
+  const version = "1.0.0",
+    platform = mygoPlatforms[target],
+    arch = platform.split("-")[1];
+  const build = path.join(root, "build", platform);
+  mkdirSync(build, { recursive: true });
+  const write = (name: string, text: string) => {
+    writeFileSync(path.join(build, name), text);
+    return readFileSync(path.join(build, name));
+  };
+  const signed = (name: string, text: string) => {
+    const bytes = write(name, text);
+    return {
+      url: download(tag, name),
+      size: bytes.length,
+      signature: sign(
+        null,
+        createHash("sha256").update(bytes).digest(),
+        keys.mygo,
+      ).toString("base64"),
+    };
+  };
+  const archive = signed(
+    `astrlink-${version}-${platform}.tar.gz`,
+    `archive ${platform}`,
+  );
+  const delta = signed(
+    `astrlink-0.9.0-to-${version}-${platform}.delta`,
+    `delta ${platform}`,
+  );
+  write(
+    `update-${platform}.json`,
     JSON.stringify({
-      target,
-      tag: "v1.0.0",
-      version: "1.0.0",
-      file: filename,
-      signature,
-      sha256: sha256(bytes),
+      version,
+      date: "2026-11-13T00:00:00Z",
+      ...archive,
+      deltas: [{ from: "0.9.0", ...delta }],
+      previous: [
+        {
+          version: "0.9.0",
+          url: download("v0.9.0", `astrlink-0.9.0-${platform}.tar.gz`),
+          size: 1,
+          signature: "earlier",
+        },
+      ],
     }),
   );
+  // MyGo's own checksums of the platform; the release writes one for all.
+  write("SHA256SUMS", "mygo checksums\n");
+  if (target.startsWith("darwin-")) {
+    mkdirSync(path.join(build, "AstrLink.app/Contents"), { recursive: true });
+    write("AstrLink.app/Contents/Info.plist", "app bundle");
+    write(`astrlink-${version}-${arch}.dmg`, `disk image ${arch}`);
+    write("install.sh", "install script");
+  } else if (target.startsWith("windows-")) {
+    write("AstrLink.exe", "unpackaged app");
+    write(`astrlink-setup-${version}-${arch}.exe`, `installer ${arch}`);
+    write("install.ps1", "install script");
+  } else {
+    write(`astrlink_${version}_${arch}.deb`, `package ${arch}`);
+    write("install.sh", "install script");
+  }
 }
+
+/** Builds and stages targets as their release jobs do; returns `package`. */
+function staged(keys: Keys, list: readonly Target[], tag = "v1.0.0") {
+  const root = directory();
+  writeFileSync(
+    path.join(root, "package.json"),
+    JSON.stringify({ version: releaseVersion(tag).version }),
+  );
+  for (const target of list) mygoBuild(root, target, keys, tag);
+  for (const target of list) stageUpdate(root, target, tag, keys.env);
+  return path.join(root, "package");
+}
+
 /** Answers the gh calls of a Release publish and keeps what it uploads. */
 function fakeGitHub(release?: object) {
   const calls: string[][] = [];
@@ -110,10 +208,14 @@ function fakeGitHub(release?: object) {
       .map((args) => args.slice(6).map((file) => path.basename(file)));
   return { gh, calls, uploads };
 }
-const releaseEnv = (publicKey: string) => ({
+const releaseEnv = (keys: Keys) => ({
+  ...keys.env,
   GITHUB_REPOSITORY: "Calcium-Ion/AstrLink",
   GITHUB_SHA: "0123456789abcdef",
-  TAURI_UPDATER_PUBLIC_KEY: publicKey,
+});
+const publicKeys = (keys: Keys) => ({
+  bridge: keys.env.TAURI_UPDATER_PUBLIC_KEY,
+  mygo: keys.env.MYGO_UPDATER_PUBLIC_KEY,
 });
 const manifestNotes = (output: string) =>
   JSON.parse(readFileSync(path.join(output, "latest.json"), "utf8")).notes;
@@ -129,77 +231,132 @@ afterEach(() => {
 });
 
 describe("release updates", () => {
-  it("round-trips real Tauri CLI signatures through all four platform manifests", () => {
-    const root = directory();
-    mkdirSync(path.join(root, "src-tauri"));
-    const cli = fileURLToPath(
-      new URL("../node_modules/@tauri-apps/cli/tauri.js", import.meta.url),
-    );
-    const keyPath = path.join(root, "test.key");
-    execFileSync(
-      "bun",
-      [
-        cli,
-        "signer",
-        "generate",
-        "--ci",
-        "--password",
-        "",
-        "--write-keys",
-        keyPath,
-      ],
-      { stdio: "pipe" },
-    );
-    const env = {
-      ...process.env,
-      TAURI_SIGNING_PRIVATE_KEY: readFileSync(keyPath, "utf8").trim(),
-      TAURI_UPDATER_PUBLIC_KEY: readFileSync(`${keyPath}.pub`, "utf8").trim(),
-      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: "",
-    };
-    writeFileSync(
-      path.join(root, "package.json"),
-      JSON.stringify({ version: "1.0.0", scripts: { tauri: `bun "${cli}"` } }),
-    );
-    writeFileSync(
-      path.join(root, "src-tauri/tauri.conf.json"),
-      JSON.stringify({ version: "1.0.0" }),
-    );
-    const packages = path.join(root, "package");
-    mkdirSync(packages);
-    for (const arch of ["arm64", "x86_64"])
-      writeFileSync(
-        path.join(packages, `AstrLink-macOS-${arch}.app.tar.gz`),
-        `test-only archive ${arch}`,
-      );
-    for (const [folder, file] of [
-      ["x86_64-pc-windows-msvc/release/bundle/nsis", "test-setup.exe"],
-      ["release/bundle/appimage", "test.AppImage"],
-    ]) {
-      const destination = path.join(root, "src-tauri/target", folder);
-      mkdirSync(destination, { recursive: true });
-      writeFileSync(
-        path.join(destination, file),
-        `test-only installer ${file}`,
-      );
-    }
-    for (const target of targets) stageUpdate(root, target, "v1.0.0", env);
-    const release = path.join(root, "release");
+  it("ships MyGo updates and moves earlier macOS and Windows installs onto them", () => {
+    const keys = releaseKeys(),
+      packages = staged(keys, targets as Target[]);
+    const files = readdirSync(packages);
+    // The app bundle as one archive for earlier macOS releases, the
+    // installer for earlier Windows ones, and no package for AppImages.
+    for (const name of [
+      "AstrLink-macOS-arm64.app.tar.gz.sig",
+      "AstrLink-macOS-x86_64.app.tar.gz.sig",
+      "astrlink-setup-1.0.0-amd64.exe.sig",
+      "update-linux-amd64.json",
+      "astrlink_1.0.0_amd64.deb",
+      "astrlink-0.9.0-to-1.0.0-darwin-arm64.delta",
+    ])
+      expect(files).toContain(name);
+    expect(files).not.toContain("AstrLink.exe");
+    expect(files).not.toContain("SHA256SUMS");
+    expect(files.some((name) => name.endsWith(".AppImage"))).toBe(false);
+    expect(
+      JSON.parse(readFileSync(path.join(packages, "linux-x86_64.json"), "utf8"))
+        .file,
+    ).toBeNull();
+    expect(
+      execFileSync(
+        "tar",
+        ["-tzf", path.join(packages, "AstrLink-macOS-arm64.app.tar.gz")],
+        { encoding: "utf8" },
+      ),
+    ).toContain("AstrLink.app/Contents/Info.plist");
+
+    const release = path.join(directory(), "release");
     const manifest = collectRelease(
       packages,
       release,
       "v1.0.0",
-      env.TAURI_UPDATER_PUBLIC_KEY,
+      publicKeys(keys),
+      "Notes",
     );
-    expect(Object.keys(manifest.platforms)).toEqual(releaseTargets);
+    expect(Object.keys(manifest.platforms)).toEqual(
+      releaseTargets.filter((target) => bridgeTargets.includes(target)),
+    );
+    expect(manifest.platforms["windows-x86_64"].url).toBe(
+      download("v1.0.0", "astrlink-setup-1.0.0-amd64.exe"),
+    );
+    const published = readdirSync(release);
+    for (const platform of ["darwin-arm64", "windows-amd64", "linux-amd64"])
+      expect(published).toContain(`update-${platform}.json`);
+    const sums = readFileSync(path.join(release, "SHA256SUMS"), "utf8");
+    for (const name of published.filter((name) => name !== "SHA256SUMS"))
+      expect(sums).toContain(
+        `${sha256(readFileSync(path.join(release, name)))}  ${name}\n`,
+      );
+
     const extended = extendRelease(
       packages,
       release,
-      path.join(root, "attach"),
+      path.join(directory(), "attach"),
       "v1.0.0",
       "darwin-x86_64",
-      env.TAURI_UPDATER_PUBLIC_KEY,
+      publicKeys(keys),
     );
-    expect(Object.keys(extended.platforms).sort()).toEqual([...targets].sort());
+    expect(Object.keys(extended.platforms).sort()).toEqual(
+      [...bridgeTargets].sort(),
+    );
+  });
+
+  it("decrypts the Tauri signing key and signs as its signer does", () => {
+    expect(scryptParameters(1048576, 33554432)).toEqual({
+      N: 32768,
+      r: 8,
+      p: 1,
+    });
+    // Minisign's own (sensitive) limits.
+    expect(scryptParameters(33554432, 1073741824)).toEqual({
+      N: 1048576,
+      r: 8,
+      p: 1,
+    });
+    const keys = minisignKeys("passphrase"),
+      bytes = Buffer.from("signed installer");
+    expect(() => minisignSecretKey(keys.secret, "")).toThrow("wrong password");
+    expect(() => minisignSecretKey("bm90IGEga2V5")).toThrow(
+      "not a Minisign secret key",
+    );
+    const signature = signUpdate(
+      bytes,
+      "AstrLink-macOS-arm64.app.tar.gz",
+      minisignSecretKey(keys.secret, "passphrase"),
+      new Date(1_700_000_000_000),
+    );
+    expect(() =>
+      verifyUpdateSignature(bytes, signature, keys.publicKey),
+    ).not.toThrow();
+    expect(Buffer.from(signature, "base64").toString()).toContain(
+      "trusted comment: timestamp:1700000000\tfile:AstrLink-macOS-arm64.app.tar.gz\n",
+    );
+    expect(() =>
+      verifyUpdateSignature(bytes, signature, minisignKeys().publicKey),
+    ).toThrow("does not match");
+  });
+
+  it("stages nothing a release would not verify", () => {
+    const keys = releaseKeys(),
+      root = directory();
+    writeFileSync(
+      path.join(root, "package.json"),
+      JSON.stringify({ version: "1.0.0" }),
+    );
+    expect(() =>
+      stageUpdate(root, "darwin-aarch64", "v1.0.1", keys.env),
+    ).toThrow("does not match release tag");
+    // Signed by another key, or for another release.
+    mygoBuild(root, "windows-x86_64", { ...releaseKeys(), env: keys.env });
+    expect(() =>
+      stageUpdate(root, "windows-x86_64", "v1.0.0", keys.env),
+    ).toThrow("MyGo update signature mismatch");
+    mygoBuild(root, "linux-x86_64", keys, "v0.9.0");
+    expect(() => stageUpdate(root, "linux-x86_64", "v1.0.0", keys.env)).toThrow(
+      "not a file of v1.0.0",
+    );
+    expect(() =>
+      stageUpdate(root, "darwin-aarch64", "v1.0.0", {
+        ...keys.env,
+        TAURI_SIGNING_PRIVATE_KEY: "",
+      }),
+    ).toThrow("TAURI_SIGNING_PRIVATE_KEY");
   });
 
   it("validates release tags and identifies preview channels", () => {
@@ -242,101 +399,76 @@ describe("release updates", () => {
     expect(newestStable("v1.0.0", [])).toBe(true);
   });
 
-  it("stamps all desktop versions without changing dependencies", () => {
+  it("stamps the version into package.json only", () => {
     const dir = directory();
-    mkdirSync(path.join(dir, "src-tauri"));
     writeFileSync(
       path.join(dir, "package.json"),
-      '{"version":"0.1.0","name":"desktop"}',
+      '{"version":"0.1.0","name":"desktop","dependencies":{"other":"1.0.0"}}',
     );
-    writeFileSync(
-      path.join(dir, "src-tauri/tauri.conf.json"),
-      '{"version":"0.1.0"}',
-    );
-    writeFileSync(
-      path.join(dir, "src-tauri/Cargo.toml"),
-      '[package]\nname = "astrlink-desktop"\nversion = "0.1.0"\n[dependencies]\nother = "1"\n',
-    );
-    writeFileSync(
-      path.join(dir, "src-tauri/Cargo.lock"),
-      '[[package]]\nname = "astrlink-desktop"\nversion = "0.1.0"\n[[package]]\nname = "other"\nversion = "1.0.0"\n',
-    );
-    // Git checkouts on Windows may contain CRLF.
-    for (const file of ["src-tauri/Cargo.toml", "src-tauri/Cargo.lock"]) {
-      const target = path.join(dir, file);
-      writeFileSync(
-        target,
-        readFileSync(target, "utf8").replaceAll("\n", "\r\n"),
-      );
-    }
     stampVersion(dir, "v2.0.0-beta.1");
     expect(
-      JSON.parse(readFileSync(path.join(dir, "package.json"), "utf8")).version,
-    ).toBe("2.0.0-beta.1");
-    expect(
-      readFileSync(path.join(dir, "src-tauri/Cargo.lock"), "utf8"),
-    ).toContain('name = "other"\r\nversion = "1.0.0"');
-    expect(
-      readFileSync(path.join(dir, "src-tauri/Cargo.toml"), "utf8"),
-    ).toContain('version = "2.0.0-beta.1"');
+      JSON.parse(readFileSync(path.join(dir, "package.json"), "utf8")),
+    ).toEqual({
+      version: "2.0.0-beta.1",
+      name: "desktop",
+      dependencies: { other: "1.0.0" },
+    });
+    expect(readdirSync(dir)).toEqual(["package.json"]);
   });
   it("verifies both artifact bytes and the trusted comment", () => {
-    const bytes = Buffer.from("a signed test artifact"),
-      keys = signingFixture(bytes);
+    const keys = minisignKeys(),
+      bytes = Buffer.from("a signed test artifact");
+    const signature = signUpdate(
+      bytes,
+      "test",
+      minisignSecretKey(keys.secret),
+      new Date(1000),
+    );
     expect(() =>
-      verifyUpdateSignature(bytes, keys.signature, keys.publicKey),
+      verifyUpdateSignature(bytes, signature, keys.publicKey),
     ).not.toThrow();
     expect(() =>
-      verifyUpdateSignature(
-        Buffer.from("tampered"),
-        keys.signature,
-        keys.publicKey,
-      ),
+      verifyUpdateSignature(Buffer.from("tampered"), signature, keys.publicKey),
     ).toThrow("signature mismatch");
     const changed = Buffer.from(
-      Buffer.from(keys.signature, "base64")
+      Buffer.from(signature, "base64")
         .toString()
         .replace("timestamp:1", "timestamp:2"),
     ).toString("base64");
     expect(() => verifyUpdateSignature(bytes, changed, keys.publicKey)).toThrow(
       "trusted comment",
     );
-    expect(() =>
-      verifyUpdateSignature(
-        bytes,
-        keys.signature,
-        signingFixture(bytes).publicKey,
-      ),
-    ).toThrow();
   });
-  it("requires signing configuration only for update releases", () => {
-    expect(() => signingEnvironment({})).toThrow("PUBLIC_KEY");
-    expect(() =>
-      signingEnvironment({ TAURI_UPDATER_PUBLIC_KEY: "public" }),
-    ).toThrow("PRIVATE_KEY");
+  it("requires both signing keys for update releases", () => {
+    const { env } = releaseKeys();
+    expect(() => signingEnvironment(env)).not.toThrow();
+    for (const name of Object.keys(env))
+      expect(() => signingEnvironment({ ...env, [name]: " " })).toThrow(name);
   });
   it("publishes a manifest only after every platform is present and verified", () => {
-    const input = directory(),
-      output = path.join(directory(), "release"),
-      bytes = Buffer.from("signed installer");
-    const keys = signingFixture(bytes);
-    const platform = (target: string) =>
-      stagePlatform(input, target, bytes, keys.signature);
-    for (const target of releaseTargets.slice(0, -1)) platform(target);
+    const keys = releaseKeys(),
+      input = directory(),
+      output = path.join(directory(), "release");
+    const partial = staged(keys, releaseTargets.slice(0, -1) as Target[]);
+    cpSync(partial, path.join(input, "partial"), { recursive: true });
     expect(() =>
-      collectRelease(input, output, "v1.0.0", keys.publicKey),
+      collectRelease(input, output, "v1.0.0", publicKeys(keys)),
     ).toThrow("Missing or duplicate");
     expect(existsSync(output)).toBe(false);
-    platform(releaseTargets.at(-1)!);
+    cpSync(
+      staged(keys, [releaseTargets.at(-1)] as Target[]),
+      path.join(input, "last"),
+      { recursive: true },
+    );
     const manifest = collectRelease(
       input,
       output,
       "v1.0.0",
-      keys.publicKey,
+      publicKeys(keys),
       "Release notes",
     );
-    expect(Object.keys(manifest.platforms)).toEqual(releaseTargets);
-    expect(manifest.platforms[releaseTargets[0]].url).toContain(
+    expect(manifest.notes).toBe("Release notes");
+    expect(manifest.platforms["darwin-aarch64"].url).toContain(
       "/releases/download/v1.0.0/",
     );
     expect(() =>
@@ -344,61 +476,62 @@ describe("release updates", () => {
         input,
         path.join(directory(), "bad"),
         "v2.0.0",
-        keys.publicKey,
+        publicKeys(keys),
       ),
     ).toThrow("Version");
-    writeFileSync(
-      path.join(input, releaseTargets[0], `${releaseTargets[0]}.exe`),
-      "corrupted",
-    );
-    expect(() =>
-      collectRelease(
-        input,
-        path.join(directory(), "bad"),
-        "v1.0.0",
-        keys.publicKey,
-      ),
-    ).toThrow("checksum");
+    const corrupt = (folder: string, name: string, failure: string) => {
+      writeFileSync(path.join(input, folder, name), "corrupted");
+      expect(() =>
+        collectRelease(
+          input,
+          path.join(directory(), "bad"),
+          "v1.0.0",
+          publicKeys(keys),
+        ),
+      ).toThrow(failure);
+    };
+    corrupt("last", "astrlink-1.0.0-linux-amd64.tar.gz", "size mismatch");
+    corrupt("partial", "AstrLink-macOS-arm64.app.tar.gz", "checksum");
   });
   it("adds a late platform to a published release without replacing a listed package", () => {
-    const bytes = Buffer.from("signed installer"),
-      keys = signingFixture(bytes);
-    const input = directory(),
-      late = directory(),
+    const keys = releaseKeys(),
+      input = staged(keys, releaseTargets as Target[]),
+      late = staged(keys, ["darwin-x86_64"]),
       published = path.join(directory(), "release"),
       output = path.join(directory(), "attach");
-    for (const target of releaseTargets)
-      stagePlatform(input, target, bytes, keys.signature);
-    collectRelease(input, published, "v1.0.0", keys.publicKey, "Notes");
-    stagePlatform(late, "darwin-x86_64", bytes, keys.signature);
+    collectRelease(input, published, "v1.0.0", publicKeys(keys), "Notes");
     const extend = (from: string, to: string, tag = "v1.0.0") =>
-      extendRelease(late, from, to, tag, "darwin-x86_64", keys.publicKey);
+      extendRelease(late, from, to, tag, "darwin-x86_64", publicKeys(keys));
 
     const manifest = extend(published, output);
     expect(Object.keys(manifest.platforms)).toEqual([
-      ...releaseTargets,
+      "darwin-aarch64",
+      "windows-x86_64",
       "darwin-x86_64",
     ]);
     expect(manifest.notes).toBe("Notes");
-    // Only the new package and the two rewritten manifests are uploaded.
+    // The new packages, the platform's MyGo update and the rewritten
+    // manifest and checksums.
     expect(readdirSync(output).sort()).toEqual([
+      "AstrLink-macOS-x86_64.app.tar.gz",
+      "AstrLink-macOS-x86_64.app.tar.gz.sig",
       "SHA256SUMS",
-      "darwin-x86_64.exe",
-      "darwin-x86_64.exe.sig",
+      "astrlink-0.9.0-to-1.0.0-darwin-amd64.delta",
+      "astrlink-1.0.0-amd64.dmg",
+      "astrlink-1.0.0-darwin-amd64.tar.gz",
+      "install.sh",
       "latest.json",
+      "update-darwin-amd64.json",
     ]);
-    const sums = readFileSync(path.join(output, "SHA256SUMS"), "utf8");
-    expect(sums).toContain(`${sha256(bytes)}  windows-x86_64.exe\n`);
-    expect(sums).toContain(`${sha256(bytes)}  darwin-x86_64.exe\n`);
-    expect(sums).toContain(
-      `${sha256(readFileSync(path.join(output, "latest.json")))}  latest.json\n`,
-    );
-    // Release's lines stay and the two package files join them.
     const lines = (dir: string) =>
       readFileSync(path.join(dir, "SHA256SUMS"), "utf8")
         .split("\n")
         .filter(Boolean);
-    expect(lines(output)).toHaveLength(lines(published).length + 2);
+    // Release's lines stay and the six new files join them.
+    expect(lines(output)).toHaveLength(lines(published).length + 6);
+    expect(lines(output)).toContain(
+      `${sha256(readFileSync(path.join(output, "latest.json")))}  latest.json`,
+    );
 
     // Re-running with the same package succeeds, e.g. after a failed upload.
     expect(() => extend(output, path.join(directory(), "retry"))).not.toThrow();
@@ -418,19 +551,16 @@ describe("release updates", () => {
     writeFileSync(
       path.join(published, "SHA256SUMS"),
       readFileSync(path.join(published, "SHA256SUMS"), "utf8") +
-        `${"0".repeat(64)}  darwin-x86_64.exe\n`,
+        `${"0".repeat(64)}  astrlink-1.0.0-amd64.dmg\n`,
     );
     expect(() => extend(published, refused)).toThrow(
-      "different darwin-x86_64.exe",
+      "different astrlink-1.0.0-amd64.dmg",
     );
     expect(existsSync(refused)).toBe(false);
   });
   it("adds the packages to a release written ahead of CI and keeps its notes", () => {
-    const bytes = Buffer.from("signed installer"),
-      keys = signingFixture(bytes),
-      input = directory();
-    for (const target of releaseTargets)
-      stagePlatform(input, target, bytes, keys.signature);
+    const keys = releaseKeys(),
+      input = staged(keys, releaseTargets as Target[]);
     // Saved as a draft, or already published as a pre-release.
     for (const draft of [true, false]) {
       const output = path.join(directory(), "release");
@@ -441,23 +571,25 @@ describe("release updates", () => {
         body: "Written notes",
         assets: [],
       });
-      publishRelease(
-        input,
-        output,
-        "v1.0.0",
-        releaseEnv(keys.publicKey),
-        github.gh,
-      );
-      // No new release and no generated notes; latest.json goes up last.
+      publishRelease(input, output, "v1.0.0", releaseEnv(keys), github.gh);
+      // No new release and no generated notes; the manifests go up after
+      // the packages, latest.json last.
       expect(github.calls.map((args) => args.slice(0, 2).join(" "))).toEqual([
         "api repos/Calcium-Ion/AstrLink/releases",
         "release upload",
         "release view",
         "release upload",
         "release view",
+        "release upload",
+        "release view",
         "release edit",
       ]);
-      expect(github.uploads()[1]).toEqual(["latest.json"]);
+      expect(github.uploads()[1].sort()).toEqual([
+        "update-darwin-arm64.json",
+        "update-linux-amd64.json",
+        "update-windows-amd64.json",
+      ]);
+      expect(github.uploads()[2]).toEqual(["latest.json"]);
       expect(github.uploads().flat().sort()).toEqual(
         readdirSync(output)
           .filter((name) => name !== "release-notes.txt")
@@ -476,23 +608,21 @@ describe("release updates", () => {
     }
   });
   it("drafts a new release with generated notes and never replaces a complete one", () => {
-    const bytes = Buffer.from("signed installer"),
-      keys = signingFixture(bytes),
-      input = directory(),
-      env = releaseEnv(keys.publicKey);
-    for (const target of releaseTargets)
-      stagePlatform(input, target, bytes, keys.signature);
+    const keys = releaseKeys(),
+      input = staged(keys, releaseTargets as Target[]),
+      env = releaseEnv(keys);
 
     const fresh = fakeGitHub(),
       output = path.join(directory(), "release");
     publishRelease(input, output, "v1.0.0", env, fresh.gh);
     const create = fresh.calls.find(([, action]) => action === "create")!;
     expect(create).toContain("--draft");
+    const notes = `Generated notes\n\n${linuxMigrationNotice}`;
     expect(
       readFileSync(create[create.indexOf("--notes-file") + 1], "utf8"),
-    ).toBe("Generated notes");
+    ).toBe(notes);
     expect(fresh.calls.at(-1)).toContain("--notes-file");
-    expect(manifestNotes(output)).toBe("Generated notes");
+    expect(manifestNotes(output)).toBe(notes);
 
     const published = fakeGitHub({
       tag_name: "v1.0.0",

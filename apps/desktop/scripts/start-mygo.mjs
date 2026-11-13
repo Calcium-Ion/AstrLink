@@ -3,6 +3,7 @@
 import { execFileSync, spawn } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { patchedMygo } from "./mygo.mjs";
 
 const desktopDirectory = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -16,12 +17,7 @@ if (!goos || !goarch) {
   throw new Error(`Unsupported platform ${process.platform}/${process.arch}.`);
 }
 
-const mygo = path.join(
-  desktopDirectory,
-  "node_modules",
-  ".bin",
-  process.platform === "win32" ? "mygo.cmd" : "mygo",
-);
+const mygo = patchedMygo();
 execFileSync(
   mygo,
   ["build", "-platform", `${goos}/${goarch}`, "-skip-dmg", "-skip-installer"],

@@ -13,7 +13,7 @@ import (
 )
 
 // publicKey is updates.publicKey of mygo.config.ts, which the desktop build
-// links in with -X beside MyGo's own copy (scripts/mygo-build.mjs), so a
+// links in with -X beside MyGo's own copy (scripts/mygo.mjs), so a
 // download is verified before it is offered for installing. Builds without
 // updates leave it empty.
 var publicKey string

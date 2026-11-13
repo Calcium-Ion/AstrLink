@@ -16,11 +16,11 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest --maxWorkers=1",
-    "tauri": "tauri",
     "sidecar:build": "bun scripts/build-sidecar.mjs",
-    "desktop:dev": "bun run branding:sync && bun run sidecar:build && mygo dev",
+    "desktop:dev": "bun run branding:sync && bun run sidecar:build && bun scripts/mygo.mjs dev",
     "desktop:start": "bun run branding:sync && bun run sidecar:build && bun scripts/start-mygo.mjs",
-    "desktop:build": "bun run branding:sync && bun run sidecar:build && tauri build --config src-tauri/binaries/tauri.onnxruntime.conf.json",
+    "desktop:build": "bun run branding:sync && bun run sidecar:build && bun scripts/build-macos-widget.mjs && bun scripts/mygo.mjs build",
+    "mygo": "bun scripts/mygo.mjs",
     "macos:notarize": "bun scripts/notarize-macos.mjs",
     "build:web": "PUBLIC_ASTRLINK_EDITION=web bun run build"
   },
@@ -49,10 +49,10 @@
     "react-is": "19.2.8"
   },
   "devDependencies": {
+    "@resvg/resvg-js": "2.6.2",
     "@rsbuild/core": "2.1.7",
     "@rsbuild/plugin-react": "2.1.0",
     "@tailwindcss/postcss": "^4.3.3",
-    "@tauri-apps/cli": "2.11.4",
     "@types/node": "22.20.1",
     "@types/react": "19.2.17",
     "@types/react-dom": "19.2.3",

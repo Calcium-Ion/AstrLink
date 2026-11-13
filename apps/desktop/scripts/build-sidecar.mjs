@@ -102,9 +102,7 @@ const rustVersion = execFileSync("rustc", ["-vV"], { encoding: "utf8" });
 const target = rustVersion.match(/^host:\s+(.+)$/m)?.[1]?.trim();
 
 if (!target) {
-  throw new Error(
-    "Unable to determine the Rust host target for the Tauri sidecar.",
-  );
+  throw new Error("Unable to determine the Rust host target for the workers.");
 }
 
 const executableSuffix = target.includes("windows") ? ".exe" : "";
@@ -125,7 +123,10 @@ if (reuseWindowsWorkers) {
     reuseWindowsWorkers = false;
   }
 }
-const binariesDirectory = path.join(desktopDirectory, "src-tauri", "binaries");
+// Intermediate outputs: the programs under their target names, the pinned
+// ONNX Runtime and the Windows VC++ runtime the installer embeds
+// (installer/windows.nsh).
+const binariesDirectory = path.join(desktopDirectory, "build", "staging");
 // The MyGo app ships resources/<os>-<arch> merged into its resource
 // directory: the programs under bin/, the Linux ONNX Runtime under
 // onnxruntime/ and the license notices under notices/. Each program keeps
@@ -163,14 +164,6 @@ const cliOutput = path.join(
   binariesDirectory,
   `astrlink-cli-${target}${executableSuffix}`,
 );
-// Tauri config files are per OS, not per architecture. The bundle scripts
-// merge this generated file (`tauri --config`) so only Apple silicon builds
-// add the Core ML runtime and its notices; it is empty everywhere else.
-const runtimeConfigOutput = path.join(
-  binariesDirectory,
-  "tauri.onnxruntime.conf.json",
-);
-
 mkdirSync(binariesDirectory, { recursive: true });
 mkdirSync(resourcesBinDirectory, { recursive: true });
 
@@ -184,7 +177,7 @@ function stageResource(source, relativePath) {
   }
 }
 
-// stageProgram copies a Tauri sidecar into bin/ under its plain name.
+// stageProgram copies a built program into bin/ under its plain name.
 function stageProgram(sidecar, name) {
   stageResource(sidecar, `bin/${name}${executableSuffix}`);
   console.log(`Staged ${name} for MyGo: ${resourcesBinDirectory}`);
@@ -319,38 +312,6 @@ function stageCoreMLRuntime() {
     coreMLRuntimeAssets,
     coreMLRuntimeLibraryName,
     [workerDirectory],
-  );
-}
-
-function writeRuntimeConfig(coreMLRuntime) {
-  let config = {};
-  if (coreMLRuntime) {
-    // A merged array replaces the configured one, so start from the list
-    // the build would otherwise use: the macOS file's, if it has one.
-    const bundleConfig = (name) =>
-      JSON.parse(
-        readFileSync(path.join(desktopDirectory, "src-tauri", name), "utf8"),
-      ).bundle;
-    const frameworks =
-      bundleConfig("tauri.macos.conf.json")?.macOS?.frameworks ??
-      bundleConfig("tauri.conf.json").macOS.frameworks;
-    config = {
-      bundle: {
-        macOS: {
-          frameworks: [...frameworks, `binaries/${coreMLRuntimeLibraryName}`],
-        },
-        resources: Object.fromEntries(
-          onnxRuntimeNotices[coreMLRuntimeVersion].map((notice) => [
-            `binaries/onnxruntime-${coreMLRuntimeVersion}-${notice.name}`,
-            `notices/onnxruntime-${coreMLRuntimeVersion}/${notice.name}`,
-          ]),
-        ),
-      },
-    };
-  }
-  writeFileSync(runtimeConfigOutput, `${JSON.stringify(config, null, 2)}\n`);
-  console.log(
-    `Wrote Tauri runtime config for ${target}: ${runtimeConfigOutput}`,
   );
 }
 
@@ -514,6 +475,14 @@ if (process.argv.includes("--test-runtime-only")) {
   process.exit(0);
 }
 
+// The licenses the app ships, as the About page lists them.
+for (const [source, destination] of [
+  ["LICENSE", "licenses/LICENSE"],
+  ["LICENSING.md", "licenses/LICENSING.md"],
+  ["LICENSES/AGPL-3.0.txt", "licenses/LICENSES/AGPL-3.0.txt"],
+]) {
+  stageResource(path.join(repositoryRoot, source), destination);
+}
 await stageOnnxRuntimeNotices(onnxRuntimeVersion);
 if (coreMLRuntimeAssets[target]) {
   await stageOnnxRuntimeNotices(coreMLRuntimeVersion);
@@ -521,7 +490,7 @@ if (coreMLRuntimeAssets[target]) {
 await stageWindowsVcRuntime({ target, binariesDirectory });
 
 // Release jobs stamp the tag into package.json before this script runs, so
-// Core reports the same version as the desktop shell.
+// Core reports the same version as the desktop app.
 const { version: appVersion } = JSON.parse(
   readFileSync(path.join(desktopDirectory, "package.json"), "utf8"),
 );
@@ -542,7 +511,7 @@ execFileSync(
   },
 );
 
-console.log(`Staged astrlink-core for Tauri: ${output}`);
+console.log(`Staged astrlink-core for MyGo: ${output}`);
 stageProgram(output, "astrlink-core");
 
 execFileSync(
@@ -556,7 +525,7 @@ execFileSync(
 if (!target.includes("windows")) {
   chmodSync(cliOutput, 0o755);
 }
-console.log(`Staged astrlink-cli for Tauri: ${cliOutput}`);
+console.log(`Staged astrlink-cli for MyGo: ${cliOutput}`);
 stageProgram(cliOutput, "astrlink-cli");
 
 const macOSRuntime = await stageMacOSRuntime();
@@ -591,7 +560,6 @@ for (const runtime of [macOSRuntime, coreMLRuntime]) {
   }
   console.log(`Staged pinned ONNX Runtime ${runtime.version} for macOS.`);
 }
-writeRuntimeConfig(coreMLRuntime);
 
 if (linuxRuntime) {
   for (const destination of linuxRuntime.runtimeDestinations) {
@@ -614,7 +582,7 @@ if (!target.includes("windows")) {
   chmodSync(workerOutput, 0o755);
 }
 
-console.log(`Staged astrlink-privacy-worker for Tauri: ${workerOutput}`);
+console.log(`Staged astrlink-privacy-worker for MyGo: ${workerOutput}`);
 stageProgram(workerOutput, "astrlink-privacy-worker");
 
 if (!reuseWindowsWorkers) {
@@ -649,7 +617,7 @@ if (!target.includes("windows")) {
 }
 
 console.log(
-  `Staged astrlink-classifier-worker for Tauri: ${classifierWorkerOutput}`,
+  `Staged astrlink-classifier-worker for MyGo: ${classifierWorkerOutput}`,
 );
 stageProgram(classifierWorkerOutput, "astrlink-classifier-worker");
 
