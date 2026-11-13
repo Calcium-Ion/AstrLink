@@ -37,5 +37,6 @@ func init() {
 		Reasonix,
 		ZCode,
 		MiniMaxCode,
+		StepCode,
 	)
 }
