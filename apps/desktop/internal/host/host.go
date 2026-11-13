@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/egoist/mygo"
+	"github.com/egoist/mygo/transfer"
 
 	"github.com/QuantumNous/astrlink/desktop/internal/control"
 	"github.com/QuantumNous/astrlink/desktop/internal/core"
@@ -55,6 +56,8 @@ type Host struct {
 	autostart Autostart
 	// openURL opens a link in the system browser.
 	openURL func(url string) error
+	// writeClipboard puts text on the system clipboard (mygo.Clipboard.Write).
+	writeClipboard func(text string) error
 	// applyTheme sets the appearance of native UI (mygo.Theme.SetSource).
 	applyTheme func(theme prefs.ThemePreference)
 	// stop ends the background polls; stopped is closed once they ended.
@@ -81,8 +84,11 @@ type Host struct {
 // New returns a host that has not started.
 func New() *Host {
 	return &Host{
-		autostart:  loginItem{},
-		openURL:    mygo.Shell.OpenExternal,
+		autostart: loginItem{},
+		openURL:   mygo.Shell.OpenExternal,
+		writeClipboard: func(text string) error {
+			return mygo.Clipboard.Write(transfer.TextData(text))
+		},
 		applyTheme: func(theme prefs.ThemePreference) { mygo.Theme.SetSource(mygo.ThemeSource(theme)) },
 		stopped:    make(chan struct{}),
 	}
@@ -256,11 +262,9 @@ func (h *Host) CancelServiceTest(owner, serviceID, testID string) bool {
 // OpenURL opens a link in the system browser.
 func (h *Host) OpenURL(url string) error { return h.openURL(url) }
 
-// WriteClipboard puts text on the system clipboard.
-func (h *Host) WriteClipboard(text string) error {
-	mygo.Clipboard.WriteText(text)
-	return nil
-}
+// WriteClipboard puts text on the system clipboard, or says why it could
+// not.
+func (h *Host) WriteClipboard(text string) error { return h.writeClipboard(text) }
 
 func (h *Host) appVersion() string { return mygo.App.Version() }
 

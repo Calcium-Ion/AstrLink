@@ -317,3 +317,28 @@ func TestCallsBeforeStartReportCoreNotRunning(t *testing.T) {
 		t.Error("pins applied before Start")
 	}
 }
+
+// A clipboard that refuses the text reports it, so the copy commands
+// answer false instead of claiming a copy that never happened.
+func TestWriteClipboardReportsARefusedClipboard(t *testing.T) {
+	f := newHostFixture(t, t.TempDir())
+	var written []string
+	refusal := errors.New("clipboard busy")
+	f.host.writeClipboard = func(text string) error {
+		written = append(written, text)
+		return refusal
+	}
+	if err := f.host.WriteClipboard("sk-local"); !errors.Is(err, refusal) {
+		t.Fatalf("WriteClipboard error = %v, want %v", err, refusal)
+	}
+	f.host.writeClipboard = func(text string) error {
+		written = append(written, text)
+		return nil
+	}
+	if err := f.host.WriteClipboard("sk-next"); err != nil {
+		t.Fatalf("WriteClipboard error = %v", err)
+	}
+	if !reflect.DeepEqual(written, []string{"sk-local", "sk-next"}) {
+		t.Fatalf("written %q", written)
+	}
+}

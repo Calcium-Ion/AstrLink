@@ -28,7 +28,7 @@ import (
 func registerClientCommands(h *host.Host) {
 	api := &control.API{Caller: h}
 	gateway := clientGateway{host: h, tokens: control.Tokens{API: api}, pricing: control.Pricing{API: api}}
-	mygo.Bind(Clients{host: h, gateway: gateway})
+	mygo.Bind(Clients{host: h, gateway: gateway, writeClipboard: h.WriteClipboard})
 	h.OnStarted(func() { go syncClientConfigs(h, gateway) })
 }
 
@@ -82,6 +82,8 @@ func (g clientGateway) ModelMetadata(ctx context.Context, model string) (json.Ra
 type Clients struct {
 	host    *host.Host
 	gateway cc.Gateway
+	// writeClipboard puts text on the system clipboard (Host.WriteClipboard).
+	writeClipboard func(text string) error
 }
 
 // ClientCatalog is every client the dialog lists, in its order: the ones
@@ -253,7 +255,7 @@ func (c Clients) CopyClientConfigSnippet(ctx context.Context, tokenID string, cl
 	if file < 0 || file >= len(files) {
 		return false, errors.New("invalid snippet file")
 	}
-	if err := c.host.WriteClipboard(files[file].Contents); err != nil {
+	if err := c.writeClipboard(files[file].Contents); err != nil {
 		fmt.Fprintf(os.Stderr, "unable to copy the client config: %v\n", err)
 		return false, nil
 	}
