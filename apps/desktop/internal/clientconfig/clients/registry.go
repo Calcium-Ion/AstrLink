@@ -39,5 +39,6 @@ func init() {
 		MiniMaxCode,
 		StepCode,
 		Aider,
+		Chatbox,
 	)
 }
