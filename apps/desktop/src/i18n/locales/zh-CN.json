@@ -4314,21 +4314,17 @@
       "fine": "高清"
     },
     "totals": {
+      "label": "累计",
       "helpTotals": "累计只算发往上游的请求，一次请求重试或换提供商重发只计一次。累计单独保存，删除或清理请求记录不会减少。",
-      "saved": "少传流量",
-      "savedHint": "压缩前后相差的图片大小，按解码后的字节计算。转成 WebP 没变小的图原样发送，不算节省。",
+      "saved": "少传 {{size}}",
+      "savedHint": "少传的是压缩前后相差的图片大小，按解码后的字节计算。转成 WebP 没变小的图原样发送，不算节省。",
       "savedShare": "减小 {{percent}}%",
-      "compressed": "压缩图片",
-      "compressedValue_one": "{{count}} 张",
-      "compressedValue_other": "{{count}} 张",
-      "imagesOf_one": "共 {{count}} 张",
-      "imagesOf_other": "共 {{count}} 张",
-      "original": "压缩前",
+      "images_one": "压缩 {{count}} 张",
+      "images_other": "压缩 {{count}} 张",
       "requests_one": "{{count}} 次请求",
       "requests_other": "{{count}} 次请求",
-      "sent": "实际发送",
-      "since": "从 {{date}} 开始统计",
-      "sinceEmpty": "从 {{date}} 开始统计，还没有带图片的请求经过压缩。"
+      "since": "{{date}}起开始统计",
+      "none": "还没有压缩过图片"
     }
   },
   "about": {

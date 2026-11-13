@@ -4314,21 +4314,17 @@
       "fine": "最高"
     },
     "totals": {
+      "label": "累計",
       "helpTotals": "上流へ送信したリクエストだけを集計し、再試行や別のプロバイダーへの再送信は 1 回として数えます。集計は別に保存されるため、リクエスト記録を削除・整理しても減りません。",
-      "saved": "削減した転送量",
-      "savedHint": "圧縮前後の画像サイズの差で、デコード後のバイト数で計算します。WebP にしても小さくならなかった画像はそのまま送信し、削減に含めません。",
-      "savedShare": "{{percent}}% 削減",
-      "compressed": "圧縮した画像",
-      "compressedValue_one": "{{count}} 枚",
-      "compressedValue_other": "{{count}} 枚",
-      "imagesOf_one": "全 {{count}} 枚中",
-      "imagesOf_other": "全 {{count}} 枚中",
-      "original": "圧縮前",
+      "saved": "{{size}} 削減",
+      "savedHint": "削減量は圧縮前後の画像サイズの差で、デコード後のバイト数で計算します。WebP にしても小さくならなかった画像はそのまま送信し、削減に含めません。",
+      "savedShare": "{{percent}}% 縮小",
+      "images_one": "{{count}} 枚を圧縮",
+      "images_other": "{{count}} 枚を圧縮",
       "requests_one": "{{count}} 件のリクエスト",
       "requests_other": "{{count}} 件のリクエスト",
-      "sent": "実際の送信量",
       "since": "{{date}} から集計",
-      "sinceEmpty": "{{date}} から集計しています。画像付きのリクエストはまだ圧縮されていません。"
+      "none": "まだ画像を圧縮していません"
     }
   },
   "about": {

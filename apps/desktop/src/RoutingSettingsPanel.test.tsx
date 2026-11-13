@@ -1714,7 +1714,8 @@ describe("shared global recovery settings", () => {
   });
 
   it("shows what image compression saved since counting began", async () => {
-    const totals = (values: Partial<Record<string, number>> = {}) => ({
+    vi.setSystemTime(new Date(2026, 11, 1, 12));
+    const totals = (values: Partial<Record<string, number | string>> = {}) => ({
       since: "2026-11-12T08:00:00Z",
       requests: 0,
       images: 0,
@@ -1741,9 +1742,10 @@ describe("shared global recovery settings", () => {
       container.querySelector<HTMLElement>(
         '[data-testid="image-compression-totals"]',
       );
-    expect(band()!.textContent).toBe(
-      "从 2026年11月12日 开始统计，还没有带图片的请求经过压缩。",
-    );
+    // The line sits in the settings' label column, after the mode hint.
+    expect(band()!.previousElementSibling!.textContent).toBe("累计");
+    expect(band()!.textContent).toBe("还没有压缩过图片");
+    expect(band()!.title).toBe("11月12日起开始统计");
 
     // 3 MB in, 1 MB out over two requests: 2 MB saved, 67% smaller.
     bridge.getImageCompressionTotals.mockResolvedValue(
@@ -1758,16 +1760,14 @@ describe("shared global recovery settings", () => {
     await act(async () =>
       vi.advanceTimersByTimeAsync(imageTotalsRefreshInterval),
     );
-    const metrics = [...band()!.querySelectorAll("dl > div")].map((metric) =>
-      [...metric.children].map((part) => part.textContent),
-    );
-    expect(metrics).toEqual([
-      ["少传流量", "2.0 MB", "减小 67%"],
-      ["压缩图片", "2 张", "共 3 张"],
-      ["压缩前", "3.0 MB", "2 次请求"],
-      ["实际发送", "1.0 MB"],
+    expect([...band()!.children].map((part) => part.textContent)).toEqual([
+      "少传 2.0 MB",
+      "· 减小 67%",
+      "· 压缩 2 张",
+      "· 3.0 MB → 1.0 MB",
     ]);
-    expect(band()!.textContent).toContain("从 2026年11月12日 开始统计");
+    // When counting began stays out of the line, in the tooltip.
+    expect(band()!.title.split("\n")[0]).toBe("11月12日起开始统计 · 2 次请求");
 
     // A failed read keeps the last figures.
     bridge.getImageCompressionTotals.mockRejectedValue(new Error("offline"));
@@ -1775,6 +1775,15 @@ describe("shared global recovery settings", () => {
       vi.advanceTimersByTimeAsync(imageTotalsRefreshInterval),
     );
     expect(band()!.textContent).toContain("2.0 MB");
+
+    // A start in an earlier year names the year.
+    bridge.getImageCompressionTotals.mockResolvedValue(
+      totals({ since: "2025-12-30T08:00:00Z", requests: 1, images: 1 }),
+    );
+    await act(async () =>
+      vi.advanceTimersByTimeAsync(imageTotalsRefreshInterval),
+    );
+    expect(band()!.title).toContain("2025年12月30日起开始统计");
 
     // Turned off with nothing counted, the band stays hidden.
     bridge.getImageCompressionTotals.mockResolvedValue(totals());

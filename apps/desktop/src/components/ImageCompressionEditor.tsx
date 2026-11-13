@@ -13,7 +13,6 @@ import {
 import { formatImageBytes } from "@/request-trajectory-model";
 import { HelpPopover } from "./HelpPopover";
 import { ImageCompressionScene } from "./ImageCompressionScene";
-import { Metric, MetricGroup } from "./Metric";
 import {
   FoldHorizontal,
   ImageDown,
@@ -175,86 +174,73 @@ export function ImageCompressionEditor({
           <p className="col-start-2 text-xs text-muted-foreground">
             {t(`imageCompression.modeHints.${value.mode}`)}
           </p>
+          {totals && (totals.requests > 0 || value.enabled) ? (
+            <>
+              <span className={optionRowLabel}>
+                {t("imageCompression.totals.label")}
+              </span>
+              <ImageCompressionTotalsLine totals={totals} />
+            </>
+          ) : null}
         </div>
       </SettingSceneBody>
-      {totals && (totals.requests > 0 || value.enabled) ? (
-        <ImageCompressionTotalsBand totals={totals} />
-      ) : null}
     </Panel>
   );
 }
 
-/** What compression has saved since counting began, under the settings. */
-function ImageCompressionTotalsBand({
+/**
+ * One line of what compression has saved since counting began, in the
+ * settings' label column: "少传 1.2 MB · 减小 22% · 压缩 20 张 · …".
+ * When counting began and how many requests it covers sit in the tooltip.
+ */
+function ImageCompressionTotalsLine({
   totals,
 }: {
   totals: ImageCompressionTotals;
 }) {
   const t = useT();
+  const since = new Date(totals.since);
   const date = new Intl.DateTimeFormat(currentLocale(), {
-    year: "numeric",
-    month: "long",
+    year:
+      since.getFullYear() === new Date().getFullYear() ? undefined : "numeric",
+    month: "short",
     day: "numeric",
-  }).format(new Date(totals.since));
+  }).format(since);
+  const started = t("imageCompression.totals.since", { date });
   if (totals.requests === 0) {
     return (
       <p
-        className="border-t px-3.5 py-2.5 text-xs text-muted-foreground"
+        className="flex min-h-8 items-center text-xs text-muted-foreground"
         data-testid="image-compression-totals"
+        title={started}
       >
-        {t("imageCompression.totals.sinceEmpty", { date })}
+        {t("imageCompression.totals.none")}
       </p>
     );
   }
   const share = imageCompressionSavedShare(totals);
+  const details = [
+    share ? t("imageCompression.totals.savedShare", { percent: share }) : null,
+    t("imageCompression.totals.images", { count: totals.compressed }),
+    `${formatImageBytes(totals.original_bytes)} → ${formatImageBytes(totals.sent_bytes)}`,
+  ].filter((part) => part !== null);
   return (
-    <div
-      className="grid gap-2 border-t px-3.5 py-3"
+    <p
+      className="flex min-h-8 min-w-0 flex-wrap items-center gap-x-1.5 text-xs text-muted-foreground tabular-nums"
       data-testid="image-compression-totals"
+      title={[
+        `${started} · ${t("imageCompression.totals.requests", { count: totals.requests })}`,
+        t("imageCompression.totals.savedHint"),
+      ].join("\n")}
     >
-      <MetricGroup className="overflow-hidden rounded-md border">
-        <Metric
-          detail={
-            share
-              ? t("imageCompression.totals.savedShare", { percent: share })
-              : null
-          }
-          emphasis
-          label={
-            <span title={t("imageCompression.totals.savedHint")}>
-              {t("imageCompression.totals.saved")}
-            </span>
-          }
-          size="sm"
-          value={formatImageBytes(imageCompressionSavedBytes(totals))}
-        />
-        <Metric
-          detail={t("imageCompression.totals.imagesOf", {
-            count: totals.images,
-          })}
-          label={t("imageCompression.totals.compressed")}
-          size="sm"
-          value={t("imageCompression.totals.compressedValue", {
-            count: totals.compressed,
-          })}
-        />
-        <Metric
-          detail={t("imageCompression.totals.requests", {
-            count: totals.requests,
-          })}
-          label={t("imageCompression.totals.original")}
-          size="sm"
-          value={formatImageBytes(totals.original_bytes)}
-        />
-        <Metric
-          label={t("imageCompression.totals.sent")}
-          size="sm"
-          value={formatImageBytes(totals.sent_bytes)}
-        />
-      </MetricGroup>
-      <p className="text-xs text-muted-foreground">
-        {t("imageCompression.totals.since", { date })}
-      </p>
-    </div>
+      <span className="font-medium text-foreground">
+        {t("imageCompression.totals.saved", {
+          size: formatImageBytes(imageCompressionSavedBytes(totals)),
+        })}
+      </span>
+      {details.map((part) => (
+        <span key={part}>· {part}</span>
+      ))}
+    </p>
   );
 }
