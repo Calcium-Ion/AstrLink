@@ -446,6 +446,13 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 	if routingSettingsLoaded && err == nil {
 		session.routingSettings = &routingSettings
 	}
+	if builtinInternalFrom(request.Context()) == nil {
+		learnSettings := routingSettings
+		if !routingSettingsLoaded || err != nil {
+			learnSettings = contract.DefaultRoutingSettings()
+		}
+		handler.learnClientIdentities(request.Context(), classified, request.Header, learnSettings)
+	}
 	// Codex's own image and search requests skip routing: the built-in tools
 	// answer them, or the provider that served the turn.
 	switch classified.Protocol {

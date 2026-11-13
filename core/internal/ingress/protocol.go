@@ -11,8 +11,10 @@ import (
 	"sync"
 	"unicode/utf8"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/QuantumNous/astrlink/convo"
 	"github.com/QuantumNous/astrlink/core/contract"
+	"github.com/QuantumNous/astrlink/core/internal/accountauth"
 	"github.com/QuantumNous/astrlink/core/internal/autotext"
 )
 
@@ -67,6 +69,10 @@ type Request struct {
 	// context is what the body carried to the model, for the request
 	// records; nil for protocols without history. It holds raw client text.
 	context *contextObservation
+	// claudeCodeUserID reports a Messages body whose metadata.user_id is a
+	// Claude Code identifier, the body half of an official Claude Code
+	// request. It is read before any rewrite, for identity learning.
+	claudeCodeUserID bool
 }
 
 // routingModel is the model id used to select services and sent upstream.
@@ -193,6 +199,10 @@ func classify(request *http.Request, maxBodyBytes int64) (Request, error) {
 	// Read the caller's identity before subscription forwarding scopes it
 	// to an upstream account.
 	attachAgentThread(&result, request.Header, metadata.fields)
+	if result.Protocol == contract.ProtocolAnthropicMessages {
+		userID := ojson.GetBytes(metadata.fields["metadata"], "user_id")
+		result.claudeCodeUserID = userID.Type == ojson.String && accountauth.ClaudeUserIDRecognized(userID.Str)
+	}
 	attachAutoClassifyText(&result, request, metadata.raw, maxBodyBytes)
 	result.context = observeRequestContext(result.Protocol, metadata.raw)
 	return validateClassifiedRequest(result)
