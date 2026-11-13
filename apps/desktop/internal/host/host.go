@@ -186,7 +186,15 @@ func (h *Host) Call(ctx context.Context, req control.Request) (control.Response,
 
 // Raw returns the raw content service.
 func (h *Host) Raw() raw.Raw {
-	return raw.Raw{Core: rawCore{h}, Pins: rawPins{h}, Changed: h.RawSealingChanged}
+	return raw.Raw{Core: rawCore{h}, Pins: rawPins{h}, Changed: h.RawSealingChanged, Locale: h.locale}
+}
+
+// locale is the language native prompts use.
+func (h *Host) locale() prefs.Locale {
+	if h.prefs == nil {
+		return prefs.SystemLocale()
+	}
+	return h.prefs.Values().Locale
 }
 
 // rawCore and rawPins reach the Core and the pins Start creates.
