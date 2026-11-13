@@ -286,6 +286,19 @@ fn identifies_cursor_and_pi_installations() {
         ),
         InstallMethod::Native
     );
+    // Windows PowerShell 5.1 writes the marker with a BOM.
+    fixture.write(
+        ".pi/agent/install/managed-install.json",
+        "\u{feff}{\"kind\":\"pi-managed-install\",\"schemaVersion\":1,\"layout\":\"releases-v1\"}",
+    );
+    assert_eq!(
+        installation_method(
+            &fixture.environment(),
+            ClientId::Pi,
+            &fixture.0.join(".pi/agent/bin/pi-launcher.js")
+        ),
+        InstallMethod::Native
+    );
 }
 
 #[cfg(unix)]
@@ -357,14 +370,79 @@ endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\node_
                 .join("npm/node_modules/@anthropic-ai/claude-code/bin/claude.exe")
         )
     );
+    // Pi's installer writes `%~dp0` without a backslash, which it ends in.
+    let path = fixture.write(".pi/agent/bin/pi.cmd", PI_INSTALLER_CMD);
+    assert_eq!(
+        cmd_shim_target(&path),
+        Some(fixture.0.join(".pi/agent/bin/pi-launcher.js"))
+    );
     for invalid in [
         r#""%dp0%\..\@openai\codex\bin\codex.js" %*"#,
         r#""%dp0%\C:\other\codex.js" %*"#,
+        r#""%~dp0..\codex.js" %*"#,
         "@echo off\ncodex.exe %*\n",
+        // The shim's own directory is not a target.
+        r#"cd /d "%~dp0" %*"#,
     ] {
         let path = fixture.write("npm/codex.cmd", invalid);
         assert_eq!(cmd_shim_target(&path), None);
     }
+}
+
+/// The pi.cmd that https://pi.dev/install.ps1 writes when it installed a
+/// standalone Node.js.
+const PI_INSTALLER_CMD: &str = "@ECHO off\r
+SETLOCAL\r
+SET \"node=node\"\r
+IF EXIST \"%LOCALAPPDATA%\\pi-node\\current\\node.exe\" SET \"node=%LOCALAPPDATA%\\pi-node\\current\\node.exe\"\r
+\"%node%\" \"%~dp0pi-launcher.js\" %*\r
+SET \"pi_exit_code=%ERRORLEVEL%\"\r
+IF \"%pi_exit_code%\"==\"9009\" (\r
+  IF \"%node%\"==\"node\" (\r
+    \"%SystemRoot%\\System32\\where.exe\" /Q node\r
+    IF ERRORLEVEL 1 GOTO node_missing\r
+  ) ELSE IF NOT EXIST \"%node%\" GOTO node_missing\r
+)\r
+EXIT /B %pi_exit_code%\r
+:node_missing\r
+ECHO Pi could not find Node.js. Install Node.js 22.19.0 or newer, or rerun the installer at https://pi.dev. 1>&2\r
+EXIT /B %pi_exit_code%\r
+";
+
+#[cfg(unix)]
+#[test]
+fn runs_the_node_a_shim_names() {
+    let fixture = Fixture::new();
+    let environment = fixture.environment();
+    let shim = fixture.write(".pi/agent/bin/pi.cmd", PI_INSTALLER_CMD);
+    let local = fixture.0.join("local");
+    let var = |name: &str| (name == "LOCALAPPDATA").then(|| local.clone().into_os_string());
+    // Without its standalone Node.js, Pi's launcher runs `node` from PATH.
+    assert_eq!(shim_node(&environment, &shim, var), None);
+    let node = fixture.script("local/pi-node/current/node.exe", "");
+    assert_eq!(shim_node(&environment, &shim, var).unwrap().path, node);
+
+    // npm's shims name the node.exe beside them.
+    let npm = fixture.write(
+        "npm/codex.cmd",
+        r#"IF EXIST "%dp0%\node.exe" (
+  SET "_prog=%dp0%\node.exe"
+)
+"#,
+    );
+    assert_eq!(shim_node(&environment, &npm, |_| None), None);
+    let sibling = fixture.script("npm/node.exe", "");
+    assert_eq!(
+        shim_node(&environment, &npm, |_| None).unwrap().path,
+        sibling
+    );
+    let script = fixture
+        .0
+        .join("npm/node_modules/@openai/codex/bin/codex.js");
+    assert_eq!(
+        shim_command(&environment, &npm, &script).unwrap().program,
+        sibling
+    );
 }
 
 #[cfg(unix)]
@@ -479,6 +557,59 @@ fn follows_npm_shims_on_windows_without_verbatim_paths() {
         nodejs.join(r"node_modules\npm\bin\npm-cli.js")
     );
     assert_eq!(command.args[4], npm.as_os_str());
+}
+
+#[cfg(windows)]
+#[test]
+fn follows_the_pi_installer_launcher_on_windows() {
+    let fixture = Fixture::new();
+    let root = dunce::canonicalize(&fixture.0).unwrap();
+    let bin = root.join(r".pi\agent\bin");
+    let nodejs = root.join("nodejs");
+    for (name, contents) in [
+        ("pi.cmd", PI_INSTALLER_CMD),
+        ("pi.ps1", ""),
+        ("pi", "#!/bin/sh\n"),
+        ("pi-launcher.js", ""),
+    ] {
+        fixture.write(&format!(".pi/agent/bin/{name}"), contents);
+    }
+    fixture.write(
+        ".pi/agent/install/managed-install.json",
+        "\u{feff}{\"kind\":\"pi-managed-install\",\"schemaVersion\":1,\"layout\":\"releases-v1\"}",
+    );
+    fixture.write("nodejs/node.exe", "");
+    let environment = Environment {
+        home: root.clone(),
+        path: std::env::join_paths([&bin, &nodejs]).unwrap(),
+        use_system_proxy: false,
+        proxy_env: None,
+        wsl: None,
+    };
+
+    let pi = detect(&environment, ClientId::Pi).unwrap();
+    assert_eq!(pi.method, InstallMethod::Native);
+    assert_eq!(pi.executable, bin.join("pi.cmd"));
+    assert_eq!(pi.resolved, bin.join("pi-launcher.js"));
+    assert!(pi.others.is_empty());
+    let command = update_command(
+        &environment,
+        ClientId::Pi,
+        &pi,
+        &version(ClientId::Pi, "99.0.0"),
+    )
+    .unwrap();
+    let node = shim_node(&environment, &pi.executable, |name| std::env::var_os(name))
+        .map_or(nodejs.join("node.exe"), |node| node.path);
+    assert_eq!(command.program, node);
+    assert_eq!(
+        command.args,
+        [
+            bin.join("pi-launcher.js").into_os_string(),
+            "update".into(),
+            "--self".into()
+        ]
+    );
 }
 
 #[test]

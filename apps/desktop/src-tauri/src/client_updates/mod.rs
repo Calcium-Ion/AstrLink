@@ -357,11 +357,17 @@ impl Environment {
             Some(wsl) => wsl::program(self, wsl, path),
         }
     }
+    /// A text file without the BOM Windows PowerShell 5.1 writes, which JSON
+    /// parsers reject.
     fn read(&self, path: &Path) -> Option<String> {
-        match &self.wsl {
+        let raw = match &self.wsl {
             None => fs::read_to_string(path).ok(),
             Some(wsl) => fs::read_to_string(wsl.shared(path)?).ok(),
-        }
+        }?;
+        Some(match raw.strip_prefix('\u{feff}') {
+            Some(text) => text.to_owned(),
+            None => raw,
+        })
     }
     fn executable(&self, path: &Path) -> bool {
         match &self.wsl {
@@ -412,24 +418,73 @@ fn find_programs(path: &std::ffi::OsStr, name: &str) -> Vec<Program> {
 }
 
 /// npm's Windows shims run their target as `"%dp0%\<path>"` (`"%~dp0\<path>"`
-/// before npm 7), after the script's interpreter. Read the target instead of
-/// guessing each package's entry point; package ownership is checked later.
+/// before npm 7), after the script's interpreter. `%~dp0` already ends in a
+/// backslash, so Pi's installer writes `"%~dp0pi-launcher.js"`. Read the target
+/// instead of guessing each package's entry point; package ownership is checked
+/// later.
 fn cmd_shim_target(shim: &Path) -> Option<PathBuf> {
     let raw = fs::read_to_string(shim).ok()?;
     let (_, rest) = raw
-        .rsplit_once("\"%dp0%\\")
-        .or_else(|| raw.rsplit_once("\"%~dp0\\"))?;
+        .rsplit_once("\"%dp0%")
+        .or_else(|| raw.rsplit_once("\"%~dp0"))?;
     let (target, _) = rest.split_once('"')?;
-    let mut path = shim.parent()?.to_path_buf();
-    for part in target.split(['\\', '/']).filter(|p| !p.is_empty()) {
-        // Global shims point into their own directory. A project's
-        // node_modules\.bin shim climbs out of it and is not a global install.
+    // Global shims point into their own directory. A project's
+    // node_modules\.bin shim climbs out of it and is not a global install.
+    shim_join(shim.parent()?, target)
+}
+
+/// `base` joined with a path a shim wrote after it, if that names something
+/// inside `base`.
+fn shim_join(base: &Path, relative: &str) -> Option<PathBuf> {
+    let mut path = base.to_path_buf();
+    let mut parts = relative
+        .split(['\\', '/'])
+        .filter(|p| !p.is_empty())
+        .peekable();
+    parts.peek()?;
+    for part in parts {
         if part == ".." || part.contains(':') {
             return None;
         }
         path.push(part);
     }
     Some(path)
+}
+
+/// The node.exe a shim runs if it exists: npm's `"%dp0%\node.exe"` beside it,
+/// or the standalone Node.js that Pi's installer names under `%LOCALAPPDATA%`.
+/// A new terminal's PATH lists the system's Node.js before that one.
+fn shim_node(
+    environment: &Environment,
+    shim: &Path,
+    var: impl Fn(&str) -> Option<OsString>,
+) -> Option<Program> {
+    let raw = fs::read_to_string(shim).ok()?;
+    let directory = shim.parent()?;
+    raw.split("EXIST \"")
+        .skip(1)
+        .filter_map(|rest| {
+            let (written, _) = rest.split_once('"')?;
+            let (base, relative) = match written.strip_prefix("%~dp0") {
+                Some(relative) => (directory.to_path_buf(), relative),
+                None => {
+                    let (name, relative) = written.strip_prefix('%')?.split_once('%')?;
+                    let base = match name {
+                        "dp0" => directory.to_path_buf(),
+                        _ => PathBuf::from(var(name)?),
+                    };
+                    (base, relative)
+                }
+            };
+            base.is_absolute()
+                .then(|| shim_join(&base, relative))
+                .flatten()
+                .filter(|node| {
+                    node.file_name()
+                        .is_some_and(|name| name.eq_ignore_ascii_case("node.exe"))
+                })
+        })
+        .find_map(|node| environment.program(&node))
 }
 
 fn manifest_name(environment: &Environment, directory: &Path) -> Option<String> {
@@ -695,10 +750,9 @@ fn shim_command(
     match extension.as_deref() {
         Some("exe") => Ok(CommandSpec::new(target, &[])),
         Some("js" | "cjs" | "mjs") => {
-            // Like the shim, prefer a node.exe beside it, then PATH.
-            let node = shim
-                .parent()
-                .and_then(|prefix| node_program(environment, prefix))
+            // Like the shim, prefer the node.exe it names, then PATH.
+            let node = shim_node(environment, shim, |name| std::env::var_os(name))
+                .or_else(|| node_program(environment, shim.parent()?))
                 .ok_or_else(|| ClientError::new("unsupported", "Node.js is unavailable"))?;
             Ok(CommandSpec {
                 program: node.path,
