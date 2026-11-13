@@ -8,12 +8,27 @@ import type { ServicePerformance } from "./usage-range";
  */
 export type AccessTokenSource = "user" | "system_default";
 
+/**
+ * `all` lets the token use every enabled provider, including ones added
+ * later; `selected` limits it to `service_ids`. A selection may list
+ * providers deleted since; they match nothing.
+ */
+export type AccessTokenServiceScope = "all" | "selected";
+
 export interface AccessTokenSummary {
   id: string;
   name: string;
   hint: string;
   source: AccessTokenSource;
   created_at: string;
+  service_scope: AccessTokenServiceScope;
+  service_ids: string[];
+}
+
+/** The providers a token may use, as the create and edit dialogs send them. */
+export interface AccessTokenServices {
+  service_scope: AccessTokenServiceScope;
+  service_ids: string[];
 }
 
 export interface AccessTokenPage {
@@ -90,6 +105,7 @@ function stringAt(
 function parseAccessToken(value: unknown, path: string): AccessTokenSummary {
   const token = objectAt(value, path);
   // Older Core versions list no source; their tokens read as created ones.
+  // Ones without a provider scope read as using every provider.
   exactKeys(
     token,
     [
@@ -98,6 +114,8 @@ function parseAccessToken(value: unknown, path: string): AccessTokenSummary {
       "hint",
       ...("source" in token ? ["source"] : []),
       "created_at",
+      ...("service_scope" in token ? ["service_scope"] : []),
+      ...("service_ids" in token ? ["service_ids"] : []),
     ],
     path,
   );
@@ -118,13 +136,35 @@ function parseAccessToken(value: unknown, path: string): AccessTokenSummary {
     invalid(`${path}.source`, "expected user or system_default");
   }
 
+  const scope = token.service_scope ?? "all";
+  if (scope !== "all" && scope !== "selected") {
+    invalid(`${path}.service_scope`, "expected all or selected");
+  }
+  const rawIDs = token.service_ids ?? [];
+  if (!Array.isArray(rawIDs))
+    invalid(`${path}.service_ids`, "expected an array");
+  const serviceIDs = rawIDs.map((serviceID, index) => {
+    const value = stringAt(serviceID, `${path}.service_ids[${index}]`, 3, 96);
+    if (!resourceIDPattern.test(value)) {
+      invalid(`${path}.service_ids[${index}]`, "invalid provider ID");
+    }
+    return value;
+  });
+
   return {
     id,
     name,
     hint,
     source,
     created_at: createdAt,
+    service_scope: scope,
+    service_ids: scope === "selected" ? serviceIDs : [],
   };
+}
+
+/** Parses the token PATCH returns. */
+export function parseAccessTokenSummary(value: unknown): AccessTokenSummary {
+  return parseAccessToken(value, "$");
 }
 
 function accessTokenAt(value: unknown, path: string): string {

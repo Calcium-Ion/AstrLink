@@ -8,10 +8,10 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/QuantumNous/astrlink/convo"
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/accountauth"
-	"github.com/tidwall/gjson"
 )
 
 // Coding agents run subagents: a thread the conversation starts for a task,
@@ -152,18 +152,18 @@ func readClaudeCodeThread(thread *agentThread, header http.Header, client contra
 // claudeCodeParentSession reads parent_session_id from the JSON form of
 // Claude Code's metadata.user_id.
 func claudeCodeParentSession(raw json.RawMessage) string {
-	userID := gjson.GetBytes(raw, "user_id")
-	if userID.Type != gjson.String || !strings.HasPrefix(strings.TrimSpace(userID.Str), "{") {
+	userID := ojson.GetBytes(raw, "user_id")
+	if userID.Type != ojson.String || !strings.HasPrefix(strings.TrimSpace(userID.Str), "{") {
 		return ""
 	}
-	return threadCursor(gjson.Get(userID.Str, "parent_session_id").String())
+	return threadCursor(ojson.Get(userID.Str, "parent_session_id").String())
 }
 
 func readCodexThread(thread *agentThread, header http.Header, fields map[string]json.RawMessage, summary convo.RequestSummary) {
-	metadata := gjson.ParseBytes(fields["client_metadata"])
-	turn := gjson.Parse(header.Get(codexTurnMetadataHeader))
+	metadata := ojson.ParseBytes(fields["client_metadata"])
+	turn := ojson.Parse(header.Get(codexTurnMetadataHeader))
 	if !turn.IsObject() {
-		turn = gjson.Parse(metadata.Get("x-codex-turn-metadata").String())
+		turn = ojson.Parse(metadata.Get("x-codex-turn-metadata").String())
 	}
 	cursor := firstHeaderCursor(header, codexThreadHeaders)
 	if cursor == "" {
@@ -278,17 +278,17 @@ func systemRawText(protocol contract.ProtocolID, fields map[string]json.RawMessa
 	if protocol != contract.ProtocolAnthropicMessages {
 		return ""
 	}
-	return partsText(gjson.ParseBytes(fields["system"]))
+	return partsText(ojson.ParseBytes(fields["system"]))
 }
 
 // partsText reads content that is a string or a list of text parts.
-func partsText(content gjson.Result) string {
-	if content.Type == gjson.String {
+func partsText(content ojson.Result) string {
+	if content.Type == ojson.String {
 		return content.Str
 	}
 	var text strings.Builder
-	content.ForEach(func(_, part gjson.Result) bool {
-		if value := part.Get("text"); value.Type == gjson.String {
+	content.ForEach(func(_, part ojson.Result) bool {
+		if value := part.Get("text"); value.Type == ojson.String {
 			text.WriteString(value.Str)
 		}
 		return true
@@ -456,14 +456,14 @@ func paseoAgentMessage(text string) (string, bool) {
 // userRawParts returns the text parts of each user message in history order.
 func userRawParts(protocol contract.ProtocolID, fields map[string]json.RawMessage) [][]string {
 	var messages [][]string
-	add := func(content gjson.Result) {
-		if content.Type == gjson.String {
+	add := func(content ojson.Result) {
+		if content.Type == ojson.String {
 			messages = append(messages, []string{content.Str})
 			return
 		}
 		var parts []string
-		content.ForEach(func(_, part gjson.Result) bool {
-			if value := part.Get("text"); value.Type == gjson.String {
+		content.ForEach(func(_, part ojson.Result) bool {
+			if value := part.Get("text"); value.Type == ojson.String {
 				parts = append(parts, value.Str)
 			}
 			return true
@@ -472,19 +472,19 @@ func userRawParts(protocol contract.ProtocolID, fields map[string]json.RawMessag
 	}
 	switch protocol {
 	case contract.ProtocolOpenAIChat, contract.ProtocolAnthropicMessages:
-		gjson.ParseBytes(fields["messages"]).ForEach(func(_, message gjson.Result) bool {
+		ojson.ParseBytes(fields["messages"]).ForEach(func(_, message ojson.Result) bool {
 			if message.Get("role").String() == "user" {
 				add(message.Get("content"))
 			}
 			return true
 		})
 	case contract.ProtocolOpenAIResponses, contract.ProtocolOpenAIResponsesCompact:
-		input := gjson.ParseBytes(fields["input"])
-		if input.Type == gjson.String {
+		input := ojson.ParseBytes(fields["input"])
+		if input.Type == ojson.String {
 			add(input)
 			break
 		}
-		input.ForEach(func(_, item gjson.Result) bool {
+		input.ForEach(func(_, item ojson.Result) bool {
 			itemType := item.Get("type").String()
 			if item.Get("role").String() == "user" && (itemType == "" || itemType == "message") {
 				add(item.Get("content"))
@@ -525,15 +525,15 @@ func (spawns *spawnCalls) observe(payload []byte, streaming bool) {
 		// The whole body is read again on every usage read.
 		spawns.calls, spawns.bytes = nil, 0
 	}
-	document := gjson.ParseBytes(payload)
+	document := ojson.ParseBytes(payload)
 	switch spawns.protocol {
 	case contract.ProtocolOpenAIChat:
 		key := "message"
 		if streaming {
 			key = "delta"
 		}
-		document.Get("choices").ForEach(func(_, choice gjson.Result) bool {
-			choice.Get(key + ".tool_calls").ForEach(func(position, call gjson.Result) bool {
+		document.Get("choices").ForEach(func(_, choice ojson.Result) bool {
+			choice.Get(key + ".tool_calls").ForEach(func(position, call ojson.Result) bool {
 				index := position.Int()
 				if value := call.Get("index"); value.Exists() {
 					index = value.Int()
@@ -549,7 +549,7 @@ func (spawns *spawnCalls) observe(payload []byte, streaming bool) {
 		if streaming {
 			output = document.Get("response.output")
 		}
-		output.ForEach(func(position, item gjson.Result) bool {
+		output.ForEach(func(position, item ojson.Result) bool {
 			if item.Get("type").String() == "function_call" {
 				spawns.add(position.Int(), item.Get("name").String(), item.Get("arguments").String())
 				spawns.calls[position.Int()].namespace = item.Get("namespace").String()
@@ -558,7 +558,7 @@ func (spawns *spawnCalls) observe(payload []byte, streaming bool) {
 		})
 	case contract.ProtocolAnthropicMessages:
 		if !streaming {
-			document.Get("content").ForEach(func(position, block gjson.Result) bool {
+			document.Get("content").ForEach(func(position, block ojson.Result) bool {
 				if block.Get("type").String() == "tool_use" {
 					spawns.add(position.Int(), block.Get("name").String(), block.Get("input").Raw)
 				}
@@ -608,7 +608,7 @@ func (spawns *spawnCalls) prompts() []string {
 		default:
 			continue
 		}
-		if prompt := gjson.Get(call.arguments.String(), field); prompt.Type == gjson.String && strings.TrimSpace(prompt.Str) != "" {
+		if prompt := ojson.Get(call.arguments.String(), field); prompt.Type == ojson.String && strings.TrimSpace(prompt.Str) != "" {
 			prompts = append(prompts, prompt.Str)
 		}
 	}

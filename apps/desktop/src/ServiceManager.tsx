@@ -131,7 +131,8 @@ import {
   updateService,
 } from "./bridge";
 import { copyButtonLabel, useCopyFeedback } from "./copy-feedback";
-import { i18n, useT } from "./i18n";
+import { currentLocale, i18n, useT } from "./i18n";
+import type { AccessTokenSummary } from "./access-token-model";
 import type { ConversionEngineCapability } from "./core-model";
 import {
   conversionQualityLabels,
@@ -161,6 +162,7 @@ import {
   localImportPickerValue,
 } from "./LocalImportDialog";
 import { decodeModelEditorValue, encodeModelEditorValue } from "./model-editor";
+import { modelDiscoveryFailureReason } from "./model-discovery-error";
 import { filterModels } from "./model-groups";
 import {
   ServiceModelsEditor,
@@ -256,6 +258,23 @@ export interface ServiceManagerProps {
   inferenceURL?: string;
   /** Opens the import from agent tool configs; omitted where none is readable. */
   onLocalImport?: () => void;
+  /** Access tokens, so deleting a provider can warn the ones it strands. */
+  accessTokens?: AccessTokenSummary[];
+}
+
+/** Limited tokens that would have no provider left once `serviceID` is gone. */
+function tokensStrandedBy(
+  serviceID: string,
+  tokens: AccessTokenSummary[],
+  services: Service[],
+): AccessTokenSummary[] {
+  const live = new Set(services.map((service) => service.id));
+  return tokens.filter(
+    (token) =>
+      token.service_scope === "selected" &&
+      token.service_ids.includes(serviceID) &&
+      !token.service_ids.some((id) => id !== serviceID && live.has(id)),
+  );
 }
 
 type Draft = {
@@ -596,6 +615,148 @@ function modelDiscoveryKey(draft: Draft): string {
     modelDiscoveryProtocols(draft),
   ]);
 }
+
+/** Whether the draft's connection can ask the upstream for its models. */
+function canListModels(draft: Draft): boolean {
+  return (
+    (draft.kind === "custom" && draft.modelListPath.trim() !== "") ||
+    modelDiscoveryProtocols(draft).length > 0
+  );
+}
+
+/** A failed model list request: the protocol it used, if any, and why. */
+type ModelListFailure = { label: string | null; reason: string };
+
+type UpstreamModelList =
+  | {
+      ok: true;
+      models: string[];
+      protocols: ModelProtocol[];
+      warnings: string[];
+      /** Whether the list is kept to flag absent models; not for a custom path. */
+      snapshot: boolean;
+    }
+  | { ok: false; failures: ModelListFailure[] };
+
+function modelListFailureLine(failure: ModelListFailure): string {
+  return failure.label ? `${failure.label}：${failure.reason}` : failure.reason;
+}
+
+/**
+ * Asks the upstream for the draft's models with the requests 「获取模型列表」
+ * makes. Callers check `canListModels` first.
+ */
+async function fetchUpstreamModels(
+  draft: Draft,
+  editing: ServiceRecord | null,
+): Promise<UpstreamModelList> {
+  const proxy =
+    draft.proxy.mode !== "inherit" || editing?.service.proxy
+      ? { proxy: proxyInput(draft.proxy) }
+      : {};
+  const serviceID = editing ? { service_id: editing.service.id } : {};
+  const http = {
+    base_url: draft.baseURL.trim(),
+    ...vertexForDraft(draft),
+    auth: authForDraft(draft),
+    ...(draft.secret.trim() ? { credential: { secret: draft.secret } } : {}),
+  };
+  if (draft.kind === "custom" && draft.modelListPath.trim() !== "") {
+    try {
+      const result = await fetchCustomModelList({
+        ...proxy,
+        ...serviceID,
+        kind: draft.kind,
+        http: { ...http, model_list_path: draft.modelListPath.trim() },
+      });
+      return {
+        ok: true,
+        models: result.model_ids,
+        protocols: [],
+        warnings: result.warnings ?? [],
+        snapshot: false,
+      };
+    } catch (cause) {
+      return {
+        ok: false,
+        failures: [{ label: null, reason: modelDiscoveryFailureReason(cause) }],
+      };
+    }
+  }
+  const discoveryProtocols = modelDiscoveryProtocols(draft);
+  const attempts = await Promise.allSettled(
+    discoveryProtocols.map((protocol) =>
+      isSubscriptionKind(draft.kind)
+        ? probeServiceModels(editing!.service.id, protocol)
+        : probeDraftServiceModels({
+            ...proxy,
+            ...serviceID,
+            kind: draft.kind as HTTPServiceKind,
+            http,
+            protocol,
+          }),
+    ),
+  );
+  const models: string[] = [];
+  const protocols: ModelProtocol[] = [];
+  const failures: ModelListFailure[] = [];
+  attempts.forEach((attempt, index) => {
+    if (attempt.status === "fulfilled") {
+      models.push(...attempt.value.model_ids);
+      protocols.push(...(attempt.value.model_protocols ?? []));
+    } else {
+      failures.push({
+        label: protocolLabel(discoveryProtocols[index] ?? "models"),
+        reason: modelDiscoveryFailureReason(attempt.reason),
+      });
+    }
+  });
+  if (failures.length === attempts.length) return { ok: false, failures };
+  return {
+    ok: true,
+    models,
+    protocols,
+    warnings: failures.map(modelListFailureLine),
+    snapshot: true,
+  };
+}
+
+/**
+ * The draft listing exactly `selected`, as applying a fetched list does:
+ * Claude Code redirects follow the list, and newly listed models take the
+ * format the fetched list names.
+ */
+function withAppliedModels(
+  current: Draft,
+  selected: readonly string[],
+  fetchedProtocols: readonly ModelProtocol[],
+): Draft {
+  const models = [...new Set(selected)].sort();
+  return {
+    ...current,
+    models,
+    modelRedirects: withClaudeCodeRedirects(
+      current.kind,
+      current.modelRedirects,
+      current.models,
+      models,
+    ),
+    modelProtocols: withDiscoveredModelProtocols(
+      current.kind,
+      pruneModelProtocols(current.modelProtocols, models),
+      current.models,
+      models,
+      [...fetchedProtocols],
+    ),
+  };
+}
+
+/** Why a new provider without models was not saved. */
+type ModelFetchNotice =
+  | { kind: "failed"; reason: string }
+  | { kind: "empty" }
+  | { kind: "too_many" }
+  | { kind: "unavailable" };
 
 function draftForKind(
   kind: ServiceKind,
@@ -1109,6 +1270,7 @@ export function ServiceManager({
   onDirtyChange,
   inferenceURL = "",
   onLocalImport,
+  accessTokens = [],
 }: ServiceManagerProps) {
   const routingDefaults = useRoutingDefaults(isReady);
   const gatewayTimeout = useGatewayResponseTimeout();
@@ -1137,6 +1299,10 @@ export function ServiceManager({
   const [actionID, setActionID] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirmAction, setConfirmAction] = useState<ConfirmAction>(null);
+  const strandedTokens =
+    confirmAction?.kind === "delete"
+      ? tokensStrandedBy(confirmAction.service.id, accessTokens, services)
+      : [];
   const [loginChoice, setLoginChoice] = useState<Service | null>(null);
   const [riskStart, setRiskStart] = useState<RiskStart>(null);
   const [loginChoiceFlow, setLoginChoiceFlow] =
@@ -1160,6 +1326,19 @@ export function ServiceManager({
   const [modelPreviewQuery, setModelPreviewQuery] = useState("");
   const currentDiscoveryKey = useRef("");
   currentDiscoveryKey.current = modelDiscoveryKey(draft);
+  // Saving a new provider without models fetches them first.
+  const [fetchingOnSave, setFetchingOnSave] = useState(false);
+  const [modelNotice, setModelNotice] = useState<{
+    key: string;
+    notice: ModelFetchNotice;
+  } | null>(null);
+  const [modelAddRequest, setModelAddRequest] = useState(0);
+  // Listed models or another connection answer the notice.
+  if (
+    modelNotice &&
+    (modelNotice.key !== currentDiscoveryKey.current || draft.models.length > 0)
+  )
+    setModelNotice(null);
   const [upstreamModels, setUpstreamModels] = useState<{
     key: string;
     snapshot: UpstreamModelSnapshot;
@@ -1346,6 +1525,9 @@ export function ServiceManager({
     setModelPreview(null);
     setModelPreviewQuery("");
     setUpstreamModels(null);
+    setModelNotice(null);
+    // A fetch still running for the editor that was left must not lock this one.
+    setFetchingOnSave(false);
     setEditorTab(requestedEditorTab);
     setCustomSite(false);
     if (view.kind === "list") {
@@ -1700,127 +1882,102 @@ export function ServiceManager({
       setError(t("services.saveBeforeFetch"));
       return;
     }
-
-    // Custom kind with model_list_path uses a dedicated fetch command
-    if (draft.kind === "custom" && draft.modelListPath.trim() !== "") {
-      setProbingModels(true);
-      setError(null);
-      try {
-        const result = await fetchCustomModelList({
-          ...(draft.proxy.mode !== "inherit" || editing?.service.proxy
-            ? { proxy: proxyInput(draft.proxy) }
-            : {}),
-          ...(editing ? { service_id: editing.service.id } : {}),
-          kind: draft.kind,
-          http: {
-            base_url: draft.baseURL.trim(),
-            ...vertexForDraft(draft),
-            auth: authForDraft(draft),
-            ...(draft.secret.trim()
-              ? { credential: { secret: draft.secret } }
-              : {}),
-            model_list_path: draft.modelListPath.trim(),
-          },
-        });
-        if (!isCurrent()) return;
-        const models = [
-          ...new Set([...draft.models, ...result.model_ids]),
-        ].sort();
-        if (models.length > 2_000) {
-          setError(t("services.mergeTooMany"));
-          return;
-        }
-        setModelPreviewQuery("");
-        setModelPreview({
-          models,
-          selected: initialModelPreviewSelection(draft.models, models),
-          missing: [],
-          warnings: result.warnings ?? [],
-        });
-      } catch (cause) {
-        if (!isCurrent()) return;
-        setError(
-          t("services.fetchFailedDetail", {
-            warnings: errorMessage(cause, t("services.fetchFailed")),
-          }),
-        );
-      } finally {
-        setProbingModels(false);
-      }
-      return;
-    }
-
-    const discoveryProtocols = modelDiscoveryProtocols(draft);
-    if (discoveryProtocols.length === 0) {
+    if (!canListModels(draft)) {
       setError(t("services.enableDiscovery"));
       return;
     }
     setProbingModels(true);
     setError(null);
     try {
-      const attempts = await Promise.allSettled(
-        discoveryProtocols.map((protocol) => {
-          if (isSubscriptionKind(draft.kind)) {
-            return probeServiceModels(editing!.service.id, protocol);
-          }
-          return probeDraftServiceModels({
-            ...(draft.proxy.mode !== "inherit" || editing?.service.proxy
-              ? { proxy: proxyInput(draft.proxy) }
-              : {}),
-            ...(editing ? { service_id: editing.service.id } : {}),
-            kind: draft.kind as HTTPServiceKind,
-            http: {
-              base_url: draft.baseURL.trim(),
-              ...vertexForDraft(draft),
-              auth: authForDraft(draft),
-              ...(draft.secret.trim()
-                ? { credential: { secret: draft.secret } }
-                : {}),
-            },
-            protocol,
-          });
-        }),
-      );
+      const result = await fetchUpstreamModels(draft, editing);
       if (!isCurrent()) return;
-      const discovered: string[] = [];
-      const discoveredProtocols: ModelProtocol[] = [];
-      const warnings: string[] = [];
-      attempts.forEach((attempt, index) => {
-        if (attempt.status === "fulfilled") {
-          discovered.push(...attempt.value.model_ids);
-          discoveredProtocols.push(...(attempt.value.model_protocols ?? []));
-        } else {
-          warnings.push(
-            `${protocolLabel(discoveryProtocols[index] ?? "models")}：${errorMessage(attempt.reason, t("services.fetchFailed"))}`,
-          );
-        }
-      });
-      if (warnings.length === attempts.length) {
+      if (!result.ok) {
         setError(
-          t("services.fetchFailedDetail", { warnings: warnings.join("；") }),
+          t("services.fetchFailedDetail", {
+            warnings: result.failures.map(modelListFailureLine).join("；"),
+          }),
         );
         return;
       }
-      const upstream = new Set(discovered);
+      const upstream = new Set(result.models);
       const models = [...new Set([...draft.models, ...upstream])].sort();
       if (models.length > 2_000) {
         setError(t("services.mergeTooMany"));
         return;
       }
-      setUpstreamModels({
-        key: modelDiscoveryKey(draft),
-        snapshot: { models: upstream, partial: warnings.length > 0 },
-      });
+      if (result.snapshot) {
+        setUpstreamModels({
+          key: modelDiscoveryKey(draft),
+          snapshot: { models: upstream, partial: result.warnings.length > 0 },
+        });
+      }
       setModelPreviewQuery("");
       setModelPreview({
         models,
         selected: initialModelPreviewSelection(draft.models, models),
-        missing: draft.models.filter((model) => !upstream.has(model)).sort(),
-        warnings,
-        protocols: discoveredProtocols,
+        missing: result.snapshot
+          ? draft.models.filter((model) => !upstream.has(model)).sort()
+          : [],
+        warnings: result.warnings,
+        ...(result.snapshot ? { protocols: result.protocols } : {}),
       });
     } finally {
       setProbingModels(false);
+    }
+  };
+
+  /**
+   * Lists the upstream models on a new provider saved without any. Returns
+   * the draft to create, or null after telling the operator why it was not
+   * saved.
+   */
+  const fetchModelsBeforeCreate = async (): Promise<Draft | null> => {
+    const key = currentDiscoveryKey.current;
+    const generation = loadGeneration.current;
+    const isCurrent = () =>
+      currentDiscoveryKey.current === key &&
+      loadGeneration.current === generation;
+    const block = (notice: ModelFetchNotice) => {
+      setModelNotice({ key, notice });
+      setEditorTab("models");
+      return null;
+    };
+    setError(null);
+    if (!canListModels(draft)) return block({ kind: "unavailable" });
+    setFetchingOnSave(true);
+    try {
+      const result = await fetchUpstreamModels(draft, null);
+      if (!isCurrent()) return null;
+      if (!result.ok) {
+        const reasons = new Set(result.failures.map(({ reason }) => reason));
+        return block({
+          kind: "failed",
+          reason:
+            reasons.size === 1
+              ? [...reasons][0]!
+              : result.failures.map(modelListFailureLine).join("；"),
+        });
+      }
+      const upstream = new Set(result.models);
+      if (upstream.size === 0) return block({ kind: "empty" });
+      if (upstream.size > 2_000) return block({ kind: "too_many" });
+      if (result.snapshot) {
+        setUpstreamModels({
+          key,
+          snapshot: { models: upstream, partial: result.warnings.length > 0 },
+        });
+      }
+      const next = withAppliedModels(draft, [...upstream], result.protocols);
+      setDraft(next);
+      return next;
+    } catch (cause) {
+      if (!isCurrent()) return null;
+      return block({
+        kind: "failed",
+        reason: modelDiscoveryFailureReason(cause),
+      });
+    } finally {
+      if (loadGeneration.current === generation) setFetchingOnSave(false);
     }
   };
 
@@ -1885,6 +2042,18 @@ export function ServiceManager({
       setRiskStart({ kind: "create", serviceKind: draft.kind });
       return;
     }
+    // A provider without models never serves a request, so a new one lists
+    // the upstream's models before it is created.
+    let fetched: Draft | null = null;
+    if (
+      !editing &&
+      !isSubscriptionKind(draft.kind) &&
+      draft.models.length === 0
+    ) {
+      fetched = await fetchModelsBeforeCreate();
+      if (!fetched) return;
+    }
+    const created = fetched ?? draft;
     setSaving(true);
     setError(null);
     try {
@@ -1971,9 +2140,9 @@ export function ServiceManager({
             enabled: draft.enabled,
             responses_websocket_enabled: draft.responsesWebSocket,
             ...(draft.privacyTrusted ? { privacy_trusted: true } : {}),
-            models: draft.models,
-            ...redirectCreateFields(draft),
-            ...modelProtocolCreateFields(draft),
+            models: created.models,
+            ...redirectCreateFields(created),
+            ...modelProtocolCreateFields(created),
             ...(draft.failurePolicy
               ? { failure_policy: draft.failurePolicy }
               : {}),
@@ -2009,7 +2178,11 @@ export function ServiceManager({
             setError(errorMessage(cause, t("services.addedOauthFailed")));
           }
         } else {
-          notify.success(t("services.addedKey"));
+          notify.success(
+            fetched
+              ? t("services.addedWithModels", { count: fetched.models.length })
+              : t("services.addedKey"),
+          );
         }
       }
       onServiceSaved(record.service);
@@ -2241,9 +2414,6 @@ export function ServiceManager({
     const serviceMenu = (service: Service) => {
       const subscription = service.subscription;
       const acting = actionID === service.id;
-      const resets =
-        usageByService[service.id]?.usage?.rate_limit_reset_credits
-          ?.available_count ?? 0;
       return (
         <>
           <DropdownMenuItem
@@ -2289,17 +2459,6 @@ export function ServiceManager({
               {t("services.signOut")}
             </DropdownMenuItem>
           ) : null}
-          {hasPlanUsage(service) && resets > 0 ? (
-            <DropdownMenuItem
-              data-testid="subscription-usage-reset"
-              disabled={acting}
-              onSelect={() =>
-                setConfirmAction({ kind: "reset-usage", service })
-              }
-            >
-              {t("packages.resetQuota", { count: resets })}
-            </DropdownMenuItem>
-          ) : null}
           {isWebEdition ? null : (
             <DropdownMenuItem
               disabled={acting || !isReady || !inferenceURL}
@@ -2335,8 +2494,8 @@ export function ServiceManager({
         ) : null;
       },
       detail: serviceCardDetail,
-      edit: (service, tab) =>
-        onViewChange({ kind: "edit", serviceId: service.id, tab }),
+      edit: (service) => onViewChange({ kind: "edit", serviceId: service.id }),
+      reset: (service) => setConfirmAction({ kind: "reset-usage", service }),
       test: setTestingService,
       toggle: (service) => void toggleEnabled(service),
       login: startLogin,
@@ -2420,7 +2579,10 @@ export function ServiceManager({
                 onChange={setPerformancePreset}
                 size="default"
               />
-              <ServiceOrderHelp ready={isReady && catalogStatus === "ready"} />
+              <ServiceOrderHelp
+                providerCount={services.length}
+                ready={isReady && catalogStatus === "ready"}
+              />
               <IconButton
                 label={
                   busy ? t("common.refreshing") : t("services.refreshList")
@@ -2599,19 +2761,32 @@ export function ServiceManager({
               : t("common.confirm")
           }
           description={
-            <p>
-              {confirmAction?.kind === "delete"
-                ? t("services.deleteBody", {
-                    name: confirmAction.service.name,
-                  })
-                : confirmAction?.kind === "clear-risk"
-                  ? t("services.riskRestoreBody", {
+            <>
+              <p>
+                {confirmAction?.kind === "delete"
+                  ? t("services.deleteBody", {
                       name: confirmAction.service.name,
                     })
-                  : t("services.logoutBody", {
-                      name: confirmAction?.service.name ?? "",
-                    })}
-            </p>
+                  : confirmAction?.kind === "clear-risk"
+                    ? t("services.riskRestoreBody", {
+                        name: confirmAction.service.name,
+                      })
+                    : t("services.logoutBody", {
+                        name: confirmAction?.service.name ?? "",
+                      })}
+              </p>
+              {confirmAction?.kind === "delete" && strandedTokens.length > 0 ? (
+                <p className="text-danger-foreground">
+                  {t("services.deleteScopeWarning", {
+                    count: strandedTokens.length,
+                    name: confirmAction.service.name,
+                    tokens: new Intl.ListFormat(currentLocale()).format(
+                      strandedTokens.map((token) => `“${token.name}”`),
+                    ),
+                  })}
+                </p>
+              ) : null}
+            </>
           }
           destructive={confirmAction?.kind !== "clear-risk"}
           onCancel={() => setConfirmAction(null)}
@@ -3005,7 +3180,8 @@ export function ServiceManager({
         modelEditor={modelEditor}
         modelProtocols={draft.modelProtocols}
         models={draft.models}
-        probingModels={probingModels}
+        probingModels={probingModels || fetchingOnSave}
+        addRequest={modelAddRequest}
         onAddModels={addModels}
         onClearModels={() =>
           setDraft((current) => ({
@@ -3015,10 +3191,7 @@ export function ServiceManager({
           }))
         }
         onDiscoverModels={
-          modelDiscoveryProtocols(draft).length > 0 ||
-          (draft.kind === "custom" && draft.modelListPath.trim() !== "")
-            ? () => void discoverModels()
-            : undefined
+          canListModels(draft) ? () => void discoverModels() : undefined
         }
         onModelEditorChange={setModelEditor}
         onModelProtocolsChange={(models, protocol) =>
@@ -3899,7 +4072,7 @@ export function ServiceManager({
         </FormMessage>
       ) : (
         <form
-          aria-busy={saving}
+          aria-busy={saving || fetchingOnSave}
           className="flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-y-clip"
           data-testid="service-form"
           noValidate
@@ -3907,7 +4080,7 @@ export function ServiceManager({
         >
           <fieldset
             className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-clip border-0 p-0 disabled:pointer-events-none disabled:opacity-70"
-            disabled={!isReady || saving}
+            disabled={!isReady || saving || fetchingOnSave}
           >
             <Tabs
               className="min-h-0 flex-1 gap-3"
@@ -4033,6 +4206,49 @@ export function ServiceManager({
                 data-testid="service-editor-tab-panel"
                 value="models"
               >
+                {modelNotice ? (
+                  <FormMessage
+                    className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1"
+                    data-testid="service-model-fetch-notice"
+                    tone="error"
+                  >
+                    <span className="min-w-0 flex-[1_1_240px]">
+                      {modelNotice.notice.kind === "failed"
+                        ? t("services.autoFetchFailed", {
+                            reason: modelNotice.notice.reason,
+                          })
+                        : modelNotice.notice.kind === "empty"
+                          ? t("services.autoFetchEmpty")
+                          : modelNotice.notice.kind === "too_many"
+                            ? t("services.autoFetchTooMany")
+                            : t("services.autoFetchUnavailable")}
+                    </span>
+                    <span className="flex shrink-0 items-center gap-3">
+                      {/* The same upstream would list the same models again. */}
+                      {modelNotice.notice.kind === "failed" ||
+                      modelNotice.notice.kind === "empty" ? (
+                        <Button
+                          className="h-auto px-0 text-xs"
+                          onClick={() => void save(false)}
+                          type="button"
+                          variant="link"
+                        >
+                          {t("services.autoFetchRetry")}
+                        </Button>
+                      ) : null}
+                      <Button
+                        className="h-auto px-0 text-xs"
+                        onClick={() =>
+                          setModelAddRequest((request) => request + 1)
+                        }
+                        type="button"
+                        variant="link"
+                      >
+                        {t("services.autoFetchManual")}
+                      </Button>
+                    </span>
+                  </FormMessage>
+                ) : null}
                 {modelsEditor}
               </TabsContent>
               <TabsContent
@@ -4118,7 +4334,14 @@ export function ServiceManager({
           </fieldset>
           <div className="mt-3 flex shrink-0 items-center justify-between gap-3 border-t pt-3 pb-1 [@media(max-height:680px)]:mt-2 [@media(max-height:680px)]:pt-2">
             <span className="text-xs text-muted-foreground">
-              {dirty ? t("services.unsavedChanges") : t("services.saveHint")}
+              {view.kind === "create" &&
+              !isSubscriptionKind(draft.kind) &&
+              draft.models.length === 0 &&
+              canListModels(draft)
+                ? t("services.autoFetchHint")
+                : dirty
+                  ? t("services.unsavedChanges")
+                  : t("services.saveHint")}
             </span>
             <div className="flex shrink-0 items-center gap-2">
               <Button
@@ -4135,19 +4358,22 @@ export function ServiceManager({
                 disabled={
                   !isReady ||
                   saving ||
+                  fetchingOnSave ||
                   (view.kind === "create" &&
                     isSubscriptionKind(draft.kind) &&
                     draft.authorizationFlow === null)
                 }
                 type="submit"
               >
-                {saving
-                  ? t("common.saving")
-                  : view.kind === "edit"
-                    ? t("services.saveChanges")
-                    : isSubscriptionKind(draft.kind)
-                      ? t("services.addAndLogin")
-                      : t("services.saveService")}
+                {fetchingOnSave
+                  ? t("services.autoFetching")
+                  : saving
+                    ? t("common.saving")
+                    : view.kind === "edit"
+                      ? t("services.saveChanges")
+                      : isSubscriptionKind(draft.kind)
+                        ? t("services.addAndLogin")
+                        : t("services.saveService")}
               </Button>
             </div>
           </div>
@@ -4168,25 +4394,13 @@ export function ServiceManager({
             )
           }
           onApply={() => {
-            const models = [...new Set(modelPreview.selected)].sort();
-            setDraft((current) => ({
-              ...current,
-              models,
-              modelRedirects: withClaudeCodeRedirects(
-                current.kind,
-                current.modelRedirects,
-                current.models,
-                models,
-              ),
-              // Newly listed models take the format the fetched list names.
-              modelProtocols: withDiscoveredModelProtocols(
-                current.kind,
-                pruneModelProtocols(current.modelProtocols, models),
-                current.models,
-                models,
+            setDraft((current) =>
+              withAppliedModels(
+                current,
+                modelPreview.selected,
                 modelPreview.protocols ?? [],
               ),
-            }));
+            );
             setModelPreview(null);
             setModelPreviewQuery("");
           }}

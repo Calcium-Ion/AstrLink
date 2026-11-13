@@ -62,8 +62,8 @@ pub enum TerminalClient {
 impl TerminalClient {
     fn config(self) -> client_config::Client {
         match self {
-            Self::Claude => client_config::Client::Claude,
-            Self::Codex => client_config::Client::Codex,
+            Self::Claude => client_config::clients::claude::CLIENT,
+            Self::Codex => client_config::clients::codex::CLIENT,
         }
     }
 

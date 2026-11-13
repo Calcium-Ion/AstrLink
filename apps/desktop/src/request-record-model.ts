@@ -26,6 +26,7 @@ export const CLIENT_TYPES = [
   "mistral_vibe",
   "zed",
   "cherry_studio",
+  "goose",
 ] as const;
 
 export type ClientType = (typeof CLIENT_TYPES)[number];
@@ -215,7 +216,8 @@ export type RoutingSkipReason =
   | "circuit_open"
   | "rate_limited"
   | "websocket_disabled"
-  | "websocket_unsupported";
+  | "websocket_unsupported"
+  | "access_token_scope";
 
 export interface RoutingSkip {
   service_id: string;
@@ -817,6 +819,8 @@ export interface RequestRecordListQuery {
   /** Roots asking for, redirected to, or served by any of these models. */
   models?: string[];
   status?: RequestStatus;
+  /** Records sent by this kind of client. */
+  client_type?: ClientType;
 }
 
 export type AuditPartExposure = "shareable" | "raw";
@@ -1387,6 +1391,7 @@ const routingSkipReasons = new Set<RoutingSkipReason>([
   "rate_limited",
   "websocket_disabled",
   "websocket_unsupported",
+  "access_token_scope",
 ]);
 
 function optionalRoutingDecision(

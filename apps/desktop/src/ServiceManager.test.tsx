@@ -81,7 +81,7 @@ import { ServiceManager, type ServiceManagerProps } from "./ServiceManager";
 import { PROTOCOL_MODE_GUIDE_KEY } from "./ProtocolModeHelp";
 import { SERVICE_EDITOR_TOUR_KEY } from "./ServiceEditorTour";
 import { SERVICE_ORDER_GUIDE_KEY } from "./ServiceOrderHelp";
-import { parseService, type Service } from "./service-model";
+import { parseService, type Service, type ServiceKind } from "./service-model";
 import { httpServicePreset } from "./service-presets";
 import { WorkspaceSnapshotProvider } from "./workspace-snapshots";
 import type { SubscriptionUsage } from "./subscription-usage-model";
@@ -145,6 +145,9 @@ const backupGatewayService: Service = {
 };
 
 /** An ISO time `hours` from now; quota reset times in the past roll over. */
+/** A 5-hour reset as a clock time: today, or a weekday after midnight. */
+const fiveHourReset = /^(\S+ )?\d{2}:\d{2} 重置$/;
+
 function hoursFromNow(hours: number): string {
   return new Date(Date.now() + hours * 3_600_000 + 60_000).toISOString();
 }
@@ -402,11 +405,14 @@ describe("ServiceManager", () => {
     );
     if (!summary) throw new Error("Missing quota summary");
     const bar = summary.querySelector<HTMLElement>('[data-slot="quota-bar"]');
+    const status = summary.querySelector('[data-slot="quota-status"]')!;
     return {
-      status: summary.querySelector('[data-slot="quota-status"]')!.textContent,
-      tone: summary
-        .querySelector('[data-slot="quota-status"]')!
-        .getAttribute("data-tone"),
+      // The dot, the status, then a reset time on two-window cards.
+      status: status.children[1]?.textContent,
+      statusEnd:
+        status.querySelector('[data-slot="quota-status-end"]')?.textContent ??
+        undefined,
+      tone: status.getAttribute("data-tone"),
       bar: bar?.dataset.bar,
       barLabel: bar?.getAttribute("aria-label") ?? null,
       caption: [
@@ -534,7 +540,7 @@ describe("ServiceManager", () => {
         },
       ],
     });
-    await chooseOption("缓存与 TPS 统计区间", "近 30 天");
+    await chooseOption("统计区间", "近 30 天");
     expect(bridgeMocks.getUsageSummary).toHaveBeenLastCalledWith(
       expect.objectContaining({ preset: "30d" }),
     );
@@ -863,6 +869,41 @@ describe("ServiceManager", () => {
     }
   });
 
+  it("opens the provider order guide only once there are two providers", async () => {
+    localStorage.removeItem(SERVICE_ORDER_GUIDE_KEY);
+    const orderGuide = () =>
+      [...document.querySelectorAll('[data-slot="dialog-content"]')].find(
+        (dialog) => dialog.textContent?.includes("拖动卡片调整提供商先后"),
+      );
+    const render = (services: Service[]) =>
+      act(async () =>
+        root.render(
+          <ServiceManager
+            catalogError={null}
+            catalogStatus="ready"
+            isReady
+            services={services}
+            protocols={[]}
+            view={{ kind: "list" }}
+            onDirtyChange={() => {}}
+            onRefresh={() => {}}
+            onServiceRemoved={() => {}}
+            onServiceSaved={() => {}}
+            onViewChange={() => {}}
+          />,
+        ),
+      );
+
+    await render([gatewayService]);
+    await vi.waitFor(() => expect(cardNames()).toEqual([gatewayService.name]));
+    expect(orderGuide()).toBeUndefined();
+    expect(localStorage.getItem(SERVICE_ORDER_GUIDE_KEY)).toBeNull();
+
+    await render([gatewayService, backupGatewayService]);
+    await vi.waitFor(() => expect(orderGuide()).toBeDefined());
+    expect(localStorage.getItem(SERVICE_ORDER_GUIDE_KEY)).toBe("seen");
+  });
+
   it("drags a card from its body and cancels with Escape without saving", async () => {
     bridgeMocks.getServiceOrder.mockResolvedValueOnce({
       service_ids: [gatewayService.id, backupGatewayService.id],
@@ -1116,7 +1157,10 @@ describe("ServiceManager", () => {
         caption: ["1 个号用完 · 最早 2 小时后恢复"],
         busy: false,
       });
-      expect(stack.textContent).toContain("2 个模型");
+      // The footer keeps the cost and the tray toggle; the page header
+      // already names the period.
+      expect(stack.textContent).not.toContain("个模型");
+      expect(stack.textContent).not.toContain("近 7 天");
       expect(stack.querySelector('[role="switch"]')).toBeNull();
       expect(tray()).toBeNull();
 
@@ -1144,11 +1188,18 @@ describe("ServiceManager", () => {
               ?.textContent,
         ),
       ).toEqual(["Plus", "Plus"]);
-      expect(quotaOf(packageCard("Codex A")).status).toBe("剩余 70%");
+      // Two windows: the status is the 5 hours, the caption the week.
+      expect(quotaOf(packageCard("Codex A"))).toMatchObject({
+        status: "5 小时 剩 70%",
+        statusEnd: expect.stringMatching(fiveHourReset),
+      });
       expect(quotaOf(packageCard("Codex B"))).toMatchObject({
-        status: "已用完 · 2 小时后恢复",
+        status: "5 小时 已用完",
         tone: "critical",
         bar: "nested",
+        caption: [
+          expect.stringMatching(/^每周 剩 60% · \S+ \d{2}:\d{2} 重置$/),
+        ],
       });
       expect(
         packageCard("Codex B")
@@ -1212,28 +1263,44 @@ describe("ServiceManager", () => {
       const basis = "按官方 API 价格估算：近 7 天的调用花费 ÷ 已用比例";
       const estimate = (card: HTMLElement) =>
         card.querySelector<HTMLElement>('[data-testid="quota-estimate"]');
-      // Codex B is used up: it adds its whole window and nothing left.
+      // Codex B is used up: it adds its whole window and nothing left. The
+      // status keeps the share; the estimate takes the caption's end, so the
+      // disabled count moves in.
       const stack = packageCard("Codex Plus");
-      expect(quotaOf(stack).status).toBe("还剩约 $28共约 $80");
+      expect(quotaOf(stack).status).toBe("1 个号有额度，平均剩 35%");
+      expect(quotaOf(stack).caption).toEqual([
+        "1 个号用完 · 最早 2 小时后恢复 · 1 个停用",
+        "预估总额 $80",
+      ]);
       expect(estimate(stack)?.title).toBe(
-        `2 个账户合计，各按最先用完的窗口\n${basis}`,
+        `还剩约 $28\n2 个账户合计，各按最先用完的窗口\n${basis}`,
       );
       // Only Claude's weekly window has an estimate: what is left is unknown.
       const single = packageCard("Claude personal");
-      expect(quotaOf(single).status).toBe("剩余 50%");
+      expect(quotaOf(single).status).toBe("5 小时 剩 80%");
       expect(estimate(single)).toBeNull();
 
       await act(async () => expandButton("Codex Plus").click());
       const own = packageCard("Codex A");
-      expect(quotaOf(own).status).toBe("还剩约 $28共约 $40");
+      expect(quotaOf(own).status).toBe("5 小时 剩 70%");
+      // The caption is the week beside the estimate; hovering lists every
+      // window.
+      expect(quotaOf(own).caption).toEqual([
+        expect.stringMatching(/^每周 剩 90% · \S+ \d{2}:\d{2} 重置$/),
+        "预估总额 $40",
+      ]);
+      expect(
+        own.querySelector<HTMLElement>('[data-slot="quota-caption"] [title]')
+          ?.title,
+      ).toBe("5 小时 剩 70% · 3 小时后\n每周 剩 90% · 4 天后");
       expect(estimate(own)?.title).toBe(
-        `5 小时共约 $40，剩约 $28\n每周共约 $300，剩约 $270\n${basis}`,
+        `5 小时预估总额 $40，剩约 $28\n每周预估总额 $300，剩约 $270\n${basis}`,
       );
-      // Its status needs the room for when it is back.
-      expect(quotaOf(packageCard("Codex B")).status).toBe(
-        "已用完 · 2 小时后恢复",
+      // A used-up account still shows what its window holds.
+      expect(quotaOf(packageCard("Codex B")).status).toBe("5 小时 已用完");
+      expect(estimate(packageCard("Codex B"))?.textContent).toBe(
+        "预估总额 $40",
       );
-      expect(estimate(packageCard("Codex B"))).toBeNull();
     });
 
     it("saves the tray's strategy and rolls back a failed save", async () => {
@@ -2382,8 +2449,8 @@ describe("ServiceManager", () => {
         .click(),
     );
     // Built-in rows show before the account lists any model.
-    expect(container.querySelectorAll("[data-redirect-row]")).toHaveLength(9);
-    expect(container.textContent).toContain("claude-sonnet-4-6");
+    expect(container.querySelectorAll("[data-redirect-row]")).toHaveLength(12);
+    expect(container.textContent).toContain("claude-fable-5-2");
     await submit();
     expect(copilotRiskDialog()?.textContent).toContain("封禁 GitHub 账号");
     expect(bridgeMocks.createService).not.toHaveBeenCalled();
@@ -2652,7 +2719,7 @@ describe("ServiceManager", () => {
         )!
         .click(),
     );
-    expect(container.querySelectorAll("[data-redirect-row]")).toHaveLength(10);
+    expect(container.querySelectorAll("[data-redirect-row]")).toHaveLength(13);
     const sonnet = container.querySelector<HTMLButtonElement>(
       '[role="switch"][aria-label="启用 claude-sonnet-4-6 的重定向"]',
     );
@@ -3375,11 +3442,12 @@ describe("ServiceManager", () => {
       ),
     ).not.toBeNull();
     expect(quotaOf(packageCard("Kimi Coding"))).toEqual({
-      status: "剩余 75%",
+      status: "5 小时 剩 75%",
+      statusEnd: expect.stringMatching(fiveHourReset),
       tone: "positive",
       bar: "nested",
       barLabel: "5 小时 剩 75% · 每周 剩 90%",
-      caption: ["5 小时 剩 75%", "每周 剩 90%"],
+      caption: [expect.stringMatching(/^每周 剩 90% · \S+ \d{2}:\d{2} 重置$/)],
       busy: false,
     });
     expect(quotaOf(packageCard("new-api"))).toEqual({
@@ -3528,7 +3596,7 @@ describe("ServiceManager", () => {
     },
   );
 
-  it("shows rolling quota on a connected Codex card and reset in its menu", async () => {
+  it("shows rolling quota on a connected Codex card and its resets in the footer", async () => {
     const connected: Service = {
       ...codexService,
       enabled: false,
@@ -3611,11 +3679,12 @@ describe("ServiceManager", () => {
     ).toBe("Plus");
     // The account is turned off, so its dot is grey while the numbers stay.
     expect(quotaOf(card)).toEqual({
-      status: "剩余 66%",
+      status: "5 小时 剩 66%",
+      statusEnd: expect.stringMatching(fiveHourReset),
       tone: "neutral",
       bar: "nested",
       barLabel: "5 小时 剩 66% · 每周 剩 88%",
-      caption: ["5 小时 剩 66%", "每周 剩 88%"],
+      caption: [expect.stringMatching(/^每周 剩 88% · \S+ \d{2}:\d{2} 重置$/)],
       busy: false,
     });
     expect(
@@ -3624,15 +3693,17 @@ describe("ServiceManager", () => {
     // Extra per-model limits stay in the editor, not on the card.
     expect(card.textContent).not.toContain("GPT-5.3-Codex-Spark");
     expect(card.textContent).not.toContain("gpt-reserve");
-    expect(container.textContent).not.toContain("重置额度");
+    // The footer offers the resets; the menu no longer does.
+    const reset = card.querySelector<HTMLButtonElement>(
+      '[data-testid="subscription-usage-reset"]',
+    );
+    expect(reset?.textContent).toBe("2");
+    expect(reset?.getAttribute("aria-label")).toBe("重置额度（剩 2 次）");
     await openServiceOverflow("Codex personal");
-    expect(
-      document.querySelector('[data-testid="subscription-usage-reset"]')
-        ?.textContent,
-    ).toBe("重置额度（剩 2 次）");
+    expect(document.body.textContent).not.toContain("重置额度");
   });
 
-  it("confirms a manual reset from the card menu", async () => {
+  it("confirms a manual reset from the card footer", async () => {
     const connected: Service = {
       ...codexService,
       subscription: {
@@ -3686,9 +3757,13 @@ describe("ServiceManager", () => {
       await Promise.resolve();
     });
 
-    await openServiceOverflow("Codex personal");
-    await chooseMenuItem("重置额度（剩 1 次）");
-    await settleClosedLayer();
+    const reset = packageCard(
+      "Codex personal",
+    ).querySelector<HTMLButtonElement>(
+      '[data-testid="subscription-usage-reset"]',
+    );
+    if (!reset) throw new Error("missing reset button");
+    await act(async () => reset.click());
     expect(bridgeMocks.resetServiceUsage).not.toHaveBeenCalled();
     expect(document.body.textContent).toContain("重置这个账户的额度？");
     expect(document.body.textContent).toContain("将消耗 1 次官方额度重置");
@@ -3705,6 +3780,86 @@ describe("ServiceManager", () => {
       fresh: true,
     });
     expect(notifyMocks.success).toHaveBeenCalledWith("额度已重置。");
+  });
+
+  it("names resets about to expire on the footer button", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(2026, 10, 3, 12, 0));
+    try {
+      const today: Service = {
+        ...codexService,
+        subscription: { provider: "openai_codex", status: "connected" },
+      };
+      const soon: Service = {
+        ...today,
+        id: "service_codex_soon",
+        name: "Codex soon",
+      };
+      bridgeMocks.getServiceUsage.mockImplementation(async (id: string) => ({
+        service_id: id,
+        fetched_at: new Date().toISOString(),
+        plan_type: "pro",
+        secondary: {
+          used_percent: 17,
+          limit_window_seconds: 604_800,
+          reset_at: hoursFromNow(100),
+        },
+        rate_limit_reset_credits: { available_count: 3 },
+      }));
+      const at = (day: number, hour: number) =>
+        new Date(2026, 10, day, hour, 0).toISOString();
+      bridgeMocks.getServiceResetCredits.mockImplementation(
+        async (id: string) => ({
+          available_count: 3,
+          credits:
+            id === today.id
+              ? // Two within three days; the first goes tonight.
+                [
+                  { expires_at: at(5, 9) },
+                  { expires_at: at(3, 18) },
+                  { expires_at: at(20, 9) },
+                ]
+              : // Tomorrow evening is more than a day away.
+                [{ expires_at: at(4, 18) }, {}, {}],
+        }),
+      );
+
+      await act(async () => {
+        root.render(
+          <ServiceManager
+            catalogError={null}
+            catalogStatus="ready"
+            isReady
+            onDirtyChange={() => {}}
+            onRefresh={() => {}}
+            onServiceRemoved={() => {}}
+            onServiceSaved={() => {}}
+            onViewChange={() => {}}
+            protocols={[]}
+            services={[today, soon]}
+            view={{ kind: "list" }}
+          />,
+        );
+      });
+      for (let i = 0; i < 4; i++)
+        await act(async () => {
+          await Promise.resolve();
+        });
+
+      const reset = (name: string) =>
+        packageCard(name).querySelector<HTMLButtonElement>(
+          '[data-testid="subscription-usage-reset"]',
+        );
+      expect(reset("Codex personal")?.textContent).toBe("2 次今天到期");
+      expect(reset("Codex personal")?.className).toContain("bg-danger-wash");
+      expect(reset("Codex personal")?.getAttribute("aria-label")).toBe(
+        "重置额度（剩 3 次），2 次今天到期",
+      );
+      expect(reset("Codex soon")?.textContent).toBe("1 次明天到期");
+      expect(reset("Codex soon")?.className).toContain("bg-warning-wash");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("logs and shows the usage failure instead of swallowing it", async () => {
@@ -3769,11 +3924,13 @@ describe("ServiceManager", () => {
     "creates %s with API credentials and preserves its kind on reload",
     async (kind, label) => {
       const preset = httpServicePreset(kind);
+      // These presets cannot list models, so they need some typed in.
+      const listsModels = !["qwen", "glm", "doubao"].includes(kind);
       const service = parseService({
         ...gatewayService,
         name: preset.defaultName,
         kind,
-        models: [],
+        models: [`${kind}-model`],
         http: {
           base_url: preset.baseURL,
           auth: { scheme: preset.authScheme },
@@ -3782,6 +3939,11 @@ describe("ServiceManager", () => {
         capabilities: preset.capabilities,
       });
       bridgeMocks.createService.mockResolvedValue({ service, etag });
+      bridgeMocks.probeDraftServiceModels.mockResolvedValue({
+        service_id: "",
+        protocol: "openai.models",
+        model_ids: [`${kind}-model`],
+      });
       await act(async () =>
         root.render(
           <ServiceManager
@@ -3843,11 +4005,29 @@ describe("ServiceManager", () => {
             new Event("submit", { bubbles: true, cancelable: true }),
           );
       });
+      await settleSave();
+      if (!listsModels) {
+        expect(bridgeMocks.probeDraftServiceModels).not.toHaveBeenCalled();
+        expect(bridgeMocks.createService).not.toHaveBeenCalled();
+        expect(modelFetchNotice()?.textContent).toContain(
+          "这个提供商不能从上游获取模型列表",
+        );
+        await clickButton("手动填写模型");
+        await typeInto(
+          container.querySelector<HTMLInputElement>(
+            'input[aria-label="待添加模型 ID"]',
+          )!,
+          `${kind}-model`,
+        );
+        await clickButton("添加");
+        await submitServiceForm();
+        await settleSave();
+      }
       expect(bridgeMocks.createService).toHaveBeenCalledWith(
         expect.objectContaining({
           kind,
           name: preset.defaultName,
-          models: [],
+          models: [`${kind}-model`],
           capabilities: preset.capabilities,
           http: {
             base_url: preset.baseURL,
@@ -4996,6 +5176,25 @@ describe("ServiceManager", () => {
     }
   }
 
+  /** Lets a save run through its fetch, create and refresh calls. */
+  async function settleSave(): Promise<void> {
+    await act(async () => {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    });
+  }
+
+  function modelFetchNotice(): HTMLElement | null {
+    return container.querySelector<HTMLElement>(
+      '[data-testid="service-model-fetch-notice"]',
+    );
+  }
+
+  function activeEditorTab(): string | null | undefined {
+    return container
+      .querySelector('[role="tab"][data-state="active"]')
+      ?.getAttribute("data-testid");
+  }
+
   async function submitServiceForm(): Promise<void> {
     await act(async () => {
       container
@@ -5902,6 +6101,422 @@ describe("ServiceManager", () => {
     });
   });
 
+  describe("saving a new provider without models", () => {
+    const compatibleURL = "https://api.example.com/v1";
+    const compatible: Service = {
+      ...gatewayService,
+      id: "service_compatible",
+      name: "OpenAI 兼容",
+      kind: "openai_compatible",
+      models: ["claude-opus-5-5", "gpt-5.5"],
+      capabilities: httpServicePreset("openai_compatible").capabilities,
+      http: {
+        base_url: compatibleURL,
+        auth: { scheme: "bearer" },
+        credential_ref: "local://service/service_compatible",
+      },
+    };
+    const draftProbe = {
+      kind: "openai_compatible",
+      http: {
+        base_url: compatibleURL,
+        auth: { scheme: "bearer" },
+        credential: { secret: "test-api-key" },
+      },
+      protocol: "openai.models",
+    };
+    const fetched = {
+      service_id: "",
+      protocol: "openai.models",
+      model_ids: ["gpt-5.5", "claude-opus-5-5", "gpt-5.5"],
+      model_protocols: [
+        { model: "claude-opus-5-5", protocol: "anthropic.messages" },
+      ],
+    };
+    const unauthorized = new Error(
+      'POST /control/v1/service-model-probes returned 502 Bad Gateway: {"error":{"code":"upstream_model_discovery_failed","message":"upstream model discovery failed (HTTP 401)","retryable":false,"details":[{"reason":"upstream_unauthorized"}]},"request_id":"req_probe"}',
+    );
+
+    async function renderCreate(serviceKind: ServiceKind): Promise<void> {
+      await act(async () =>
+        root.render(
+          <ServiceManager
+            catalogError={null}
+            catalogStatus="ready"
+            isReady
+            onDirtyChange={() => {}}
+            onRefresh={() => {}}
+            onServiceRemoved={() => {}}
+            onServiceSaved={() => {}}
+            onViewChange={() => {}}
+            protocols={[]}
+            services={[]}
+            view={{ kind: "create", serviceKind }}
+          />,
+        ),
+      );
+    }
+
+    async function fillCompatibleConnection(): Promise<void> {
+      await renderCreate("openai_compatible");
+      await typeInto(
+        container.querySelector<HTMLInputElement>('input[type="url"]')!,
+        compatibleURL,
+      );
+      await typeInto(
+        container.querySelector<HTMLInputElement>('input[type="password"]')!,
+        "test-api-key",
+      );
+    }
+
+    function footerHint(): string | null | undefined {
+      return container.querySelector('[data-testid="service-submit"]')
+        ?.parentElement?.previousElementSibling?.textContent;
+    }
+
+    it("fetches the upstream models and creates the provider with them", async () => {
+      bridgeMocks.probeDraftServiceModels.mockResolvedValue(fetched);
+      bridgeMocks.createService.mockResolvedValue({
+        service: compatible,
+        etag,
+      });
+      await fillCompatibleConnection();
+      expect(footerHint()).toBe("保存时会从上游获取模型");
+
+      await submitServiceForm();
+      await settleSave();
+
+      expect(bridgeMocks.probeDraftServiceModels).toHaveBeenCalledOnce();
+      expect(bridgeMocks.probeDraftServiceModels).toHaveBeenCalledWith(
+        draftProbe,
+      );
+      expect(bridgeMocks.createService).toHaveBeenCalledOnce();
+      expect(bridgeMocks.createService.mock.calls[0]?.[0]).toMatchObject({
+        kind: "openai_compatible",
+        models: ["claude-opus-5-5", "gpt-5.5"],
+        model_protocols: [
+          { model: "claude-opus-5-5", protocol: "anthropic.messages" },
+        ],
+        http: draftProbe.http,
+      });
+      expect(
+        bridgeMocks.probeDraftServiceModels.mock.invocationCallOrder[0],
+      ).toBeLessThan(bridgeMocks.createService.mock.invocationCallOrder[0]!);
+      expect(notifyMocks.success).toHaveBeenCalledWith(
+        "API 提供商已添加，已从上游获取 2 个模型。",
+      );
+    });
+
+    it("keeps the provider unsaved when the key is rejected, then retries or takes typed models", async () => {
+      bridgeMocks.probeDraftServiceModels.mockRejectedValue(unauthorized);
+      bridgeMocks.createService.mockResolvedValue({
+        service: compatible,
+        etag,
+      });
+      await fillCompatibleConnection();
+      await submitServiceForm();
+      await settleSave();
+
+      expect(bridgeMocks.createService).not.toHaveBeenCalled();
+      expect(activeEditorTab()).toBe("service-editor-tab-models");
+      const notice = modelFetchNotice();
+      expect(notice?.getAttribute("role")).toBe("alert");
+      expect(notice?.textContent).toContain(
+        "API 提供商未保存：没有从上游获取到模型。上游拒绝了 API Key（HTTP 401）。",
+      );
+      expect(notice?.textContent).not.toContain("returned 502");
+
+      // Fetching again succeeds and creates the provider with the list.
+      bridgeMocks.probeDraftServiceModels.mockResolvedValueOnce(fetched);
+      await clickButton("重新获取");
+      await settleSave();
+      expect(bridgeMocks.probeDraftServiceModels).toHaveBeenCalledTimes(2);
+      expect(bridgeMocks.createService).toHaveBeenCalledOnce();
+      expect(bridgeMocks.createService.mock.calls[0]?.[0].models).toEqual([
+        "claude-opus-5-5",
+        "gpt-5.5",
+      ]);
+    });
+
+    it("opens the add row from the notice and creates typed models without fetching", async () => {
+      bridgeMocks.probeDraftServiceModels.mockRejectedValue(unauthorized);
+      bridgeMocks.createService.mockResolvedValue({
+        service: compatible,
+        etag,
+      });
+      await fillCompatibleConnection();
+      await submitServiceForm();
+      await settleSave();
+      expect(bridgeMocks.probeDraftServiceModels).toHaveBeenCalledOnce();
+
+      await clickButton("手动填写模型");
+      const input = container.querySelector<HTMLInputElement>(
+        'input[aria-label="待添加模型 ID"]',
+      );
+      expect(input).not.toBeNull();
+      expect(document.activeElement).toBe(input);
+      await typeInto(input!, "my-model");
+      await clickButton("添加");
+      // A listed model answers the notice.
+      expect(modelFetchNotice()).toBeNull();
+
+      await submitServiceForm();
+      await settleSave();
+      expect(bridgeMocks.probeDraftServiceModels).toHaveBeenCalledOnce();
+      expect(bridgeMocks.createService.mock.calls[0]?.[0].models).toEqual([
+        "my-model",
+      ]);
+    });
+
+    it.each([
+      [
+        "a timeout",
+        () =>
+          Promise.reject(
+            new Error(
+              'POST /control/v1/service-model-probes returned 504 Gateway Timeout: {"error":{"code":"upstream_model_discovery_timeout","message":"upstream model discovery timed out","retryable":true},"request_id":"req_probe"}',
+            ),
+          ),
+        "上游没有及时响应。请稍后重试，或检查网络和代理。",
+      ],
+      [
+        "an empty list",
+        () => Promise.resolve({ ...fetched, model_ids: [] }),
+        "上游没有返回任何模型",
+      ],
+    ])("keeps the provider unsaved after %s", async (_name, probe, reason) => {
+      bridgeMocks.probeDraftServiceModels.mockImplementation(probe);
+      await fillCompatibleConnection();
+      await submitServiceForm();
+      await settleSave();
+
+      expect(bridgeMocks.probeDraftServiceModels).toHaveBeenCalledOnce();
+      expect(bridgeMocks.createService).not.toHaveBeenCalled();
+      expect(activeEditorTab()).toBe("service-editor-tab-models");
+      expect(modelFetchNotice()?.textContent).toContain(reason);
+      expect(
+        [...modelFetchNotice()!.querySelectorAll("button")].map(
+          (button) => button.textContent,
+        ),
+      ).toEqual(["重新获取", "手动填写模型"]);
+    });
+
+    it("clears the notice when the connection changes", async () => {
+      bridgeMocks.probeDraftServiceModels.mockRejectedValue(unauthorized);
+      await fillCompatibleConnection();
+      await submitServiceForm();
+      await settleSave();
+      expect(modelFetchNotice()).not.toBeNull();
+
+      await openEditorTab("connection");
+      await typeInto(
+        container.querySelector<HTMLInputElement>('input[type="password"]')!,
+        "another-key",
+      );
+      await openEditorTab("models");
+      expect(modelFetchNotice()).toBeNull();
+    });
+
+    it("leaves the next editor usable when the operator leaves during the fetch", async () => {
+      let answer: (value: typeof fetched) => void = () => {};
+      bridgeMocks.probeDraftServiceModels.mockReturnValueOnce(
+        new Promise<typeof fetched>((resolve) => {
+          answer = resolve;
+        }),
+      );
+      await fillCompatibleConnection();
+      await submitServiceForm();
+      const submit = () =>
+        container.querySelector<HTMLButtonElement>(
+          '[data-testid="service-submit"]',
+        );
+      expect(submit()?.textContent).toBe("正在获取模型…");
+
+      const renderView = (view: ServiceManagerProps["view"]) =>
+        act(async () =>
+          root.render(
+            <ServiceManager
+              catalogError={null}
+              catalogStatus="ready"
+              isReady
+              onDirtyChange={() => {}}
+              onRefresh={() => {}}
+              onServiceRemoved={() => {}}
+              onServiceSaved={() => {}}
+              onViewChange={() => {}}
+              protocols={[]}
+              services={[]}
+              view={view}
+            />,
+          ),
+        );
+      await renderView({ kind: "list" });
+      await renderView({ kind: "create", serviceKind: "openai_compatible" });
+      expect(submit()?.textContent).toBe("保存 API 提供商");
+      expect(submit()?.disabled).toBe(false);
+
+      // The abandoned fetch answers late; it neither creates nor relocks.
+      await act(async () => answer(fetched));
+      await settleSave();
+      expect(bridgeMocks.createService).not.toHaveBeenCalled();
+      expect(submit()?.disabled).toBe(false);
+      expect(
+        container.querySelector<HTMLFieldSetElement>(
+          '[data-testid="service-form"] fieldset',
+        )?.disabled,
+      ).toBe(false);
+    });
+
+    it("saves a manually fetched selection with no second fetch", async () => {
+      bridgeMocks.probeDraftServiceModels.mockResolvedValue(fetched);
+      bridgeMocks.createService.mockResolvedValue({
+        service: compatible,
+        etag,
+      });
+      await fillCompatibleConnection();
+      await openEditorTab("models");
+      await clickButton("获取模型列表");
+      await togglePreviewModel("claude-opus-5-5");
+      await act(async () => applySelectedButton().click());
+      await settleClosedLayer();
+      await submitServiceForm();
+      await settleSave();
+
+      expect(bridgeMocks.probeDraftServiceModels).toHaveBeenCalledOnce();
+      expect(bridgeMocks.createService.mock.calls[0]?.[0]).toMatchObject({
+        models: ["gpt-5.5"],
+      });
+      expect(bridgeMocks.createService.mock.calls[0]?.[0]).not.toHaveProperty(
+        "model_protocols",
+      );
+      expect(notifyMocks.success).toHaveBeenCalledWith(
+        "API 提供商已添加，新请求立即可用。API Key 只保存在本机凭据库中。",
+      );
+    });
+
+    it("saves typed models or a preset's own models without fetching", async () => {
+      bridgeMocks.createService.mockResolvedValue({
+        service: compatible,
+        etag,
+      });
+      await fillCompatibleConnection();
+      await openEditorTab("models");
+      await addModelsByHand(["typed-model"]);
+      expect(footerHint()).not.toBe("保存时会从上游获取模型");
+      await submitServiceForm();
+      await settleSave();
+      expect(bridgeMocks.createService.mock.calls[0]?.[0].models).toEqual([
+        "typed-model",
+      ]);
+
+      await renderCreate("kimi_coding");
+      await typeInto(
+        container.querySelector<HTMLInputElement>('input[type="password"]')!,
+        "test-api-key",
+      );
+      await submitServiceForm();
+      await settleSave();
+      expect(bridgeMocks.createService.mock.calls[1]?.[0]).toMatchObject({
+        kind: "kimi_coding",
+        models: httpServicePreset("kimi_coding").models,
+      });
+      expect(bridgeMocks.probeDraftServiceModels).not.toHaveBeenCalled();
+    });
+
+    it("blocks a provider that cannot list models with only the manual action", async () => {
+      await renderCreate("qwen");
+      await typeInto(
+        container.querySelector<HTMLInputElement>('input[type="password"]')!,
+        "test-api-key",
+      );
+      expect(footerHint()).not.toBe("保存时会从上游获取模型");
+      await submitServiceForm();
+      await settleSave();
+
+      expect(bridgeMocks.probeDraftServiceModels).not.toHaveBeenCalled();
+      expect(bridgeMocks.createService).not.toHaveBeenCalled();
+      expect(activeEditorTab()).toBe("service-editor-tab-models");
+      expect(modelFetchNotice()?.textContent).toContain(
+        "这个提供商不能从上游获取模型列表",
+      );
+      expect(
+        [...modelFetchNotice()!.querySelectorAll("button")].map(
+          (button) => button.textContent,
+        ),
+      ).toEqual(["手动填写模型"]);
+    });
+
+    it("updates an existing provider without models exactly as before", async () => {
+      const empty: Service = { ...compatible, models: [] };
+      bridgeMocks.getService.mockResolvedValue({ service: empty, etag });
+      bridgeMocks.updateService.mockResolvedValue({ service: empty, etag });
+      await act(async () => {
+        root.render(
+          <ServiceManager
+            catalogError={null}
+            catalogStatus="ready"
+            isReady
+            onDirtyChange={() => {}}
+            onRefresh={() => {}}
+            onServiceRemoved={() => {}}
+            onServiceSaved={() => {}}
+            onViewChange={() => {}}
+            protocols={[]}
+            services={[empty]}
+            view={{ kind: "edit", serviceId: empty.id }}
+          />,
+        );
+        await Promise.resolve();
+      });
+      expect(footerHint()).not.toBe("保存时会从上游获取模型");
+      await submitServiceForm();
+      await settleSave();
+
+      expect(bridgeMocks.probeDraftServiceModels).not.toHaveBeenCalled();
+      expect(bridgeMocks.updateService).toHaveBeenCalledOnce();
+      expect(bridgeMocks.updateService.mock.calls[0]?.[2]).toMatchObject({
+        models: [],
+      });
+    });
+
+    it("creates a subscription before any model fetch", async () => {
+      bridgeMocks.createService.mockResolvedValue({
+        service: codexService,
+        etag,
+      });
+      bridgeMocks.beginServiceAuthorization.mockResolvedValue({
+        kind: "session",
+        session: {
+          id: "authorization_01",
+          provider: "openai_codex",
+          status: "pending",
+          flow: "browser",
+          service_id: codexService.id,
+          authorization_url: "https://auth.example/oauth/authorize",
+          expires_at: "2026-07-28T12:10:00Z",
+          created_at: timestamp,
+          updated_at: timestamp,
+        },
+      });
+      await renderCreate("codex_subscription");
+      expect(footerHint()).not.toBe("保存时会从上游获取模型");
+      await act(async () =>
+        container
+          .querySelector<HTMLButtonElement>(
+            '[role="radio"][aria-label="浏览器 OAuth"]',
+          )!
+          .click(),
+      );
+      await submitServiceForm();
+      await settleSave();
+
+      expect(bridgeMocks.createService).toHaveBeenCalledOnce();
+      expect(bridgeMocks.createService.mock.calls[0]?.[0].models).toEqual([]);
+      expect(bridgeMocks.probeDraftServiceModels).not.toHaveBeenCalled();
+      expect(bridgeMocks.probeServiceModels).not.toHaveBeenCalled();
+    });
+  });
+
   it("lets OpenCode's chat entry rows follow each model's format", async () => {
     const saved: Service = {
       ...gatewayService,
@@ -6392,7 +7007,7 @@ describe("ServiceManager", () => {
     }
   });
 
-  it("opens the provider's model list straight from the model count", async () => {
+  it("lands the editor on the models tab when the view asks for it", async () => {
     bridgeMocks.getService.mockResolvedValue({ service: gatewayService, etag });
     const changed = vi.fn();
     const props = {
@@ -6407,23 +7022,6 @@ describe("ServiceManager", () => {
       protocols: [],
       services: [gatewayService],
     };
-    await act(async () => {
-      root.render(<ServiceManager {...props} view={{ kind: "list" }} />);
-    });
-    const count = container.querySelector<HTMLButtonElement>(
-      `button[aria-label="打开 ${gatewayService.name} 的模型列表"]`,
-    );
-    expect(count?.textContent).toBe(`${gatewayService.models.length} 个模型`);
-    await act(async () => {
-      count?.click();
-    });
-    expect(changed).toHaveBeenCalledWith({
-      kind: "edit",
-      serviceId: gatewayService.id,
-      tab: "models",
-    });
-
-    // The host routes that view back in; the editor lands on the models tab.
     await act(async () => {
       root.render(
         <ServiceManager
@@ -6445,7 +7043,7 @@ describe("ServiceManager", () => {
     ).toBe("inactive");
   });
 
-  it("opens a card's model list from its footer count", async () => {
+  it("keeps a card's footer to its cost and switch", async () => {
     const changed = vi.fn();
     await act(async () => {
       root.render(
@@ -6465,21 +7063,22 @@ describe("ServiceManager", () => {
       );
     });
     const card = packageCard(gatewayService.name);
-    const models = card.querySelector<HTMLButtonElement>(
-      `button[aria-label="打开 ${gatewayService.name} 的模型列表"]`,
-    );
-    expect(models?.textContent).toBe(`${gatewayService.models.length} 个模型`);
+    // The page header names the period; the editor lists the models.
+    expect(card.textContent).not.toContain("个模型");
+    expect(card.textContent).not.toContain("近 7 天");
+    expect(
+      card.querySelector('[data-testid="package-cost"]')?.textContent,
+    ).toBe("$0.00");
     expect(
       card.querySelector(
         `[role="switch"][aria-label="启用 ${gatewayService.name}"]`,
       ),
     ).not.toBeNull();
-    await act(async () => models!.click());
-    expect(changed).toHaveBeenCalledWith({
-      kind: "edit",
-      serviceId: gatewayService.id,
-      tab: "models",
-    });
+    // A relay has no quota resets.
+    expect(
+      card.querySelector('[data-testid="subscription-usage-reset"]'),
+    ).toBeNull();
+    expect(changed).not.toHaveBeenCalled();
   });
 
   it("toggles a service from the list without opening the editor", async () => {
@@ -6626,6 +7225,63 @@ describe("ServiceManager", () => {
       etag,
     );
     expect(removed).toHaveBeenCalledWith(gatewayService.id);
+  });
+
+  it("warns before deleting the last provider a limited token may use", async () => {
+    const token = {
+      id: "token_zhang",
+      name: "张三",
+      hint: "astr_…K8Q2",
+      source: "user" as const,
+      created_at: "2026-11-10T00:00:00Z",
+    };
+    await act(async () => {
+      root.render(
+        <ServiceManager
+          accessTokens={[
+            {
+              ...token,
+              service_scope: "selected",
+              service_ids: [gatewayService.id],
+            },
+            {
+              ...token,
+              id: "token_team",
+              name: "研发组",
+              service_scope: "selected",
+              service_ids: [gatewayService.id, "svc_other"],
+            },
+            {
+              ...token,
+              id: "token_all",
+              name: "默认令牌",
+              service_scope: "all",
+              service_ids: [],
+            },
+          ]}
+          catalogError={null}
+          catalogStatus="ready"
+          isReady
+          onDirtyChange={() => {}}
+          onRefresh={() => {}}
+          onServiceRemoved={() => {}}
+          onServiceSaved={() => {}}
+          onViewChange={() => {}}
+          protocols={[]}
+          services={[
+            gatewayService,
+            { ...gatewayService, id: "svc_other", name: "Other" },
+          ]}
+          view={{ kind: "list" }}
+        />,
+      );
+    });
+    await openServiceOverflow(gatewayService.name);
+    await chooseMenuItem("删除");
+    const text = document.querySelector('[role="alertdialog"]')?.textContent;
+    expect(text).toContain("令牌“张三”没有可用的提供商");
+    expect(text).not.toContain("研发组");
+    expect(text).not.toContain("默认令牌");
   });
 
   it("configures local conversion instead of native versus delegated", async () => {

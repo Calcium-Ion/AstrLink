@@ -34,9 +34,9 @@ import {
   type CrewWords,
 } from "./live-crew-draw";
 import {
+  catchUpCrew,
   celebrate,
   createCrew,
-  CREW_ACTS,
   CREW_STAGES,
   crewGrowth,
   readCrew,
@@ -47,7 +47,6 @@ import {
   syncCrew,
   type Crew,
   type CrewReading,
-  type CrewStation,
 } from "./live-crew-model";
 import {
   createScene,
@@ -58,6 +57,7 @@ import {
   type CrewSceneId,
 } from "./live-crew-scenes";
 import { useRequestActivityPoll } from "./RequestActivityBoard";
+import type { RequestActivity } from "./request-record-model";
 import { useResolvedTheme } from "./theme";
 
 export const LIVE_CREW_SCENE_STORAGE_KEY =
@@ -70,17 +70,6 @@ const STEP_S = 1 / 30;
 const SETTLE_S = 1;
 /** How long the milestone banner stays up without motion. */
 const STILL_BANNER_MS = 3500;
-/** The places the ship's window passes, a stage each. */
-const PLANETS = [
-  "earth",
-  "moon",
-  "mars",
-  "jupiter",
-  "saturn",
-  "neptune",
-  "nebula",
-  "core",
-] as const;
 
 function readSceneChoice(): CrewSceneId {
   try {
@@ -144,15 +133,16 @@ export class CrewEngine {
   private back: HTMLCanvasElement | null = null;
   private front: HTMLCanvasElement | null = null;
   private reading: CrewReading = { members: [], rate: 0 };
+  /** The activity the reading came from. */
+  private activity: RequestActivity | null = null;
+  /**
+   * Nobody watched the crew since the last reading: the next one brings it
+   * in line at once instead of acting out what it missed.
+   */
+  private stale = true;
+  private hasReading = false;
   private seen = "";
-  private words: CrewWords = {
-    failover: "",
-    name: clientTypeName,
-    hold: "",
-    planets: [],
-  };
-  private labels: Record<CrewSceneId, Record<CrewStation, string>> | null =
-    null;
+  private words: CrewWords = { failover: "", name: clientTypeName };
   private running = false;
   private still = false;
   private frame = 0;
@@ -160,6 +150,8 @@ export class CrewEngine {
   private settled = 0;
   private bannerTimer = 0;
   private tokens: number | null = null;
+  /** The tokens were read since the canvas was attached. */
+  private tokensShown = false;
   /** What the cached layers show of today's growth. */
   private grown = "";
   /** The next bake sparkles what it adds. */
@@ -173,28 +165,50 @@ export class CrewEngine {
     this.sceneId = sceneId;
   }
 
+  /** The scene it shows. */
+  get shownScene(): CrewSceneId {
+    return this.sceneId;
+  }
+
+  /** What the last reading showed, for the header. */
+  summary(): CrewSummary {
+    return summarize(this.reading);
+  }
+
+  /**
+   * Draws on `canvas`. A canvas handed over when the overview comes back
+   * shows the same scene with everyone where they were.
+   */
   attach(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
+    this.tokensShown = false;
     this.g = canvas.getContext("2d", { alpha: false });
     this.font = getComputedStyle(canvas).fontFamily || this.font;
     this.palette = readCrewPalette(canvas);
     document.fonts?.addEventListener("loadingdone", this.fontsLoaded);
+    const fit = this.fit;
+    if (!fit || !this.scene) return;
+    this.sizeCanvas(fit);
+    this.invalidate();
+    this.draw(0);
   }
 
-  destroy() {
+  /** Lets go of the canvas; the crew and its scene wait for the next one. */
+  detach() {
     document.fonts?.removeEventListener("loadingdone", this.fontsLoaded);
-    this.stop();
-    window.clearTimeout(this.bannerTimer);
+    this.setRunning(false);
+    if (this.bannerTimer) {
+      window.clearTimeout(this.bannerTimer);
+      this.bannerTimer = 0;
+      this.crew.banner = 0;
+    }
     this.canvas = null;
     this.g = null;
+    this.pen = null;
   }
 
-  setWords(
-    words: CrewWords,
-    labels: Record<CrewSceneId, Record<CrewStation, string>>,
-  ) {
+  setWords(words: CrewWords) {
     this.words = words;
-    this.labels = labels;
     this.redraw();
   }
 
@@ -209,9 +223,10 @@ export class CrewEngine {
 
   /** Today's tokens: the scene grows a stage at a time. */
   setTokens(tokens: number | null) {
-    // The first read only sets where the day is; growing while watching
-    // sparkles.
-    const watching = this.tokens !== null;
+    // The first read on a canvas only sets where the day is; growing while
+    // watching sparkles.
+    const watching = this.tokens !== null && this.tokensShown;
+    this.tokensShown = true;
     this.tokens = tokens;
     const scene = this.scene;
     if (!scene) return;
@@ -286,7 +301,17 @@ export class CrewEngine {
     if (running) {
       this.redraw();
       this.wake();
-    } else this.stop();
+    } else {
+      this.stop();
+      this.stale = true;
+    }
+  }
+
+  /** A read of the activity feed; the same read again changes nothing. */
+  feed(activity: RequestActivity) {
+    if (activity === this.activity) return;
+    this.activity = activity;
+    this.setReading(readCrew(activity));
   }
 
   setReading(reading: CrewReading) {
@@ -301,8 +326,14 @@ export class CrewEngine {
     const same = seen === this.seen;
     this.seen = seen;
     this.reading = reading;
+    this.hasReading = true;
     if (!this.scene) return;
-    syncCrew(this.crew, reading, this.scene.layout);
+    if (this.stale || !this.running) {
+      // Nobody watched: those it knew stand where their conversations are
+      // now, and only newcomers walk in.
+      catchUpCrew(this.crew, reading, this.scene.layout);
+      this.stale = false;
+    } else syncCrew(this.crew, reading, this.scene.layout);
     if (!this.still) this.wake();
     else if (!same) this.settle();
   }
@@ -327,10 +358,7 @@ export class CrewEngine {
     const fit = crewFit(this.cssWidth, this.dpr, CREW_HEIGHT);
     const previous = this.fit;
     this.fit = fit;
-    this.canvas.width = fit.width;
-    this.canvas.height = fit.height;
-    this.canvas.style.height = `${fit.cssHeight}px`;
-    if (this.g) this.g.imageSmoothingEnabled = false;
+    this.sizeCanvas(fit);
     this.scene = createScene(this.sceneId, fit.W);
     this.grown = this.scene.grow(crewGrowth(this.tokens));
     this.burst = false;
@@ -339,8 +367,8 @@ export class CrewEngine {
       this.crew = createCrew();
       this.crew.width = fit.W;
       this.crew.height = this.scene.H;
-      syncCrew(this.crew, this.reading, this.scene.layout);
-      settleCrew(this.crew, this.scene.layout);
+      if (this.hasReading)
+        catchUpCrew(this.crew, this.reading, this.scene.layout);
     } else {
       rescaleCrew(this.crew, fit.W / previous.W);
     }
@@ -350,6 +378,14 @@ export class CrewEngine {
       this.draw(0);
       this.wake();
     }
+  }
+
+  private sizeCanvas(fit: CrewFit) {
+    if (!this.canvas) return;
+    this.canvas.width = fit.width;
+    this.canvas.height = fit.height;
+    this.canvas.style.height = `${fit.cssHeight}px`;
+    if (this.g) this.g.imageSmoothingEnabled = false;
   }
 
   /** Text cached before its font arrived used a fallback; draw it again. */
@@ -453,8 +489,8 @@ export class CrewEngine {
   }
 
   private draw(dt: number) {
-    const { g, scene, fit, palette, labels } = this;
-    if (!g || !scene || !fit || !palette || !labels) return;
+    const { g, scene, fit, palette } = this;
+    if (!g || !scene || !fit || !palette) return;
     if (!this.back) {
       this.back = this.layer((pen) => scene.back(pen));
       this.front = scene.front ? this.layer((pen) => scene.front!(pen)) : null;
@@ -477,9 +513,45 @@ export class CrewEngine {
     if (this.back) g.drawImage(this.back, 0, 0);
     scene.movers?.(pen);
     if (this.front) g.drawImage(this.front, 0, 0);
-    scene.props(pen, this.crew, labels[scene.id], this.words);
+    scene.props(pen, this.crew);
     drawCrew(pen, this.crew, scene.stage, this.words, this.marks);
   }
+}
+
+export interface CrewSummary {
+  count: number;
+  rate: number;
+  /** The vendor marks worn, sorted and space separated. */
+  marks: string;
+}
+
+function summarize(reading: CrewReading): CrewSummary {
+  const marks = new Set(
+    reading.members.flatMap((member) =>
+      member.model ? [markOf(member.model)] : [],
+    ),
+  );
+  return {
+    count: reading.members.length,
+    rate: Math.round(reading.rate),
+    marks: [...marks].sort().join(" "),
+  };
+}
+
+/**
+ * The overview's one engine. Leaving the overview unmounts it; the crew
+ * stays here, so coming back finds everyone where they were.
+ */
+let sharedEngine: CrewEngine | null = null;
+function crewEngine(): CrewEngine {
+  sharedEngine ??= new CrewEngine(readSceneChoice());
+  return sharedEngine;
+}
+
+/** Tests start each overview from an empty scene. */
+export function resetCrewEngineForTests() {
+  sharedEngine?.detach();
+  sharedEngine = null;
 }
 
 /** Reads the shared activity poll and hands each read to the engine. */
@@ -492,23 +564,13 @@ function CrewFeed({
   coreSessionKey: string | null;
   enabled: boolean;
   engine: CrewEngine;
-  onRead: (count: number, rate: number, marks: string) => void;
+  onRead: (summary: CrewSummary) => void;
 }) {
   const activity = useRequestActivityPoll(coreSessionKey, enabled);
   useEffect(() => {
     if (!activity) return;
-    const reading = readCrew(activity);
-    engine.setReading(reading);
-    const marks = new Set(
-      reading.members.flatMap((member) =>
-        member.model ? [markOf(member.model)] : [],
-      ),
-    );
-    onRead(
-      reading.members.length,
-      Math.round(reading.rate),
-      [...marks].sort().join(" "),
-    );
+    engine.feed(activity);
+    onRead(engine.summary());
   }, [activity, engine, onRead]);
   return null;
 }
@@ -532,10 +594,14 @@ export const LiveCrew = memo(function LiveCrew({
   const theme = useResolvedTheme();
   const dpr = useDevicePixelRatio();
   const still = useMediaQuery("(prefers-reduced-motion: reduce)");
-  const [sceneId, setSceneId] = useState(readSceneChoice);
-  const [engine] = useState(() => new CrewEngine(sceneId));
-  const [header, setHeader] = useState({ count: 0, rate: 0 });
-  const [marks, setMarks] = useState("");
+  const [engine] = useState(crewEngine);
+  const [sceneId, setSceneId] = useState(() => engine.shownScene);
+  // Back on the overview, the header shows the last read at once.
+  const [header, setHeader] = useState(() => {
+    const { count, rate } = engine.summary();
+    return { count, rate };
+  });
+  const [marks, setMarks] = useState(() => engine.summary().marks);
   const sectionRef = useRef<HTMLElement>(null);
   const boxRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -544,7 +610,7 @@ export const LiveCrew = memo(function LiveCrew({
   const pageVisible = usePageVisible();
   const running = onScreen && pageVisible;
 
-  const onRead = useCallback((count: number, rate: number, marks: string) => {
+  const onRead = useCallback(({ count, rate, marks }: CrewSummary) => {
     setHeader((current) =>
       current.count === count && current.rate === rate
         ? current
@@ -571,7 +637,7 @@ export const LiveCrew = memo(function LiveCrew({
     observer?.observe(box);
     return () => {
       observer?.disconnect();
-      engine.destroy();
+      engine.detach();
     };
   }, [engine]);
 
@@ -584,25 +650,10 @@ export const LiveCrew = memo(function LiveCrew({
   useEffect(() => engine.setStill(still), [engine, still]);
   useEffect(() => engine.setRunning(running), [engine, running]);
   useEffect(() => {
-    const stations = (scene: CrewSceneId) =>
-      Object.fromEntries(
-        CREW_ACTS.filter((act) => act !== "wait").map((act) => [
-          act,
-          t(`overview.liveCrew.stations.${scene}.${act}`),
-        ]),
-      ) as Record<CrewStation, string>;
-    engine.setWords(
-      {
-        failover: t("overview.liveCrew.failover"),
-        name: clientTypeName,
-        hold: t("overview.liveCrew.hold"),
-        planets: PLANETS.map((key) => t(`overview.liveCrew.planets.${key}`)),
-      },
-      Object.fromEntries(CREW_SCENES.map((id) => [id, stations(id)])) as Record<
-        CrewSceneId,
-        Record<CrewStation, string>
-      >,
-    );
+    engine.setWords({
+      failover: t("overview.liveCrew.failover"),
+      name: clientTypeName,
+    });
   }, [engine, t]);
 
   // Only a stage passed while watching counts; the first read sets the mark.

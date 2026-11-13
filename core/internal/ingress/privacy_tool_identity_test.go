@@ -8,11 +8,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/endpoint"
 	"github.com/QuantumNous/astrlink/core/internal/privacy"
 	"github.com/QuantumNous/astrlink/core/internal/transport"
-	"github.com/tidwall/gjson"
 )
 
 func TestPrivacyPreservesToolNamespaceOnUpstreamRequest(t *testing.T) {
@@ -58,15 +58,15 @@ func TestPrivacyPreservesToolNamespaceOnUpstreamRequest(t *testing.T) {
 						"input.0.call_id": "call_fixture", "input.1.call_id": "call_fixture",
 						"tools.0.name": namespace, "tools.0.tools.0.name": "js",
 					} {
-						if got := gjson.GetBytes(outbound, path).Str; got != want {
+						if got := ojson.GetBytes(outbound, path).Str; got != want {
 							t.Errorf("upstream %s = %q, want %q", path, got, want)
 						}
 					}
 					if !strings.Contains(string(outbound), `"namespace" : "mcp\u005f_cua_repl"`) {
 						t.Error("rewriting content changed the raw namespace bytes")
 					}
-					arguments := gjson.GetBytes(outbound, "input.0.arguments").Str
-					if !gjson.Valid(arguments) || strings.Contains(arguments, namespace) || strings.Contains(string(outbound), "alice@example.com") {
+					arguments := ojson.GetBytes(outbound, "input.0.arguments").Str
+					if !ojson.Valid(arguments) || strings.Contains(arguments, namespace) || strings.Contains(string(outbound), "alice@example.com") {
 						t.Error("tool arguments or results escaped valid redaction")
 					}
 					return &http.Response{

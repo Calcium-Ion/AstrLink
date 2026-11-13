@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -36,8 +37,12 @@ func continuationFixtures() []continuationFixture {
 		},
 		{
 			"chat-gemini", contract.ProtocolOpenAIChat,
-			`{"messages":[{"role":"assistant","content":"SCAN","tool_calls":[{"type":"function","id":"call_1","function":{"name":"lookup","arguments":{"thought_signature":"SCAN"},"provider_specific_fields":{"thought_signature":"HOLD","other":"SCAN"}},"extra_content":{"google":{"thought_signature":"HOLD","other":"SCAN"}},"provider_specific_fields":{"thought_signature":"HOLD","other":"SCAN"}}]},{"role":"tool","tool_call_id":"call_1","content":"SCAN"}]}`,
-			[]string{"/messages/0/tool_calls/0/function/provider_specific_fields/thought_signature", "/messages/0/tool_calls/0/extra_content/google/thought_signature", "/messages/0/tool_calls/0/provider_specific_fields/thought_signature"},
+			`{"messages":[{"role":"assistant","content":"SCAN","tool_calls":[{"type":"function","id":"call_1","function":{"name":"lookup","arguments":{"thought_signature":"SCAN"},"provider_specific_fields":{"thought_signature":"HOLD","other":"HOLD"}},"extra_content":{"google":{"thought_signature":"HOLD","other":"HOLD"}},"provider_specific_fields":{"thought_signature":"HOLD","other":"HOLD"}}]},{"role":"tool","tool_call_id":"call_1","content":"SCAN"}]}`,
+			[]string{
+				"/messages/0/tool_calls/0/function/provider_specific_fields/thought_signature", "/messages/0/tool_calls/0/function/provider_specific_fields/other",
+				"/messages/0/tool_calls/0/extra_content/google/thought_signature", "/messages/0/tool_calls/0/extra_content/google/other",
+				"/messages/0/tool_calls/0/provider_specific_fields/thought_signature", "/messages/0/tool_calls/0/provider_specific_fields/other",
+			},
 		},
 		{
 			"chat-anthropic", contract.ProtocolOpenAIChat,
@@ -52,21 +57,29 @@ func continuationFixtures() []continuationFixture {
 	}
 }
 
-func TestContinuationPathsAreTypedAndProtocolScoped(t *testing.T) {
+// Replay metadata is never at a content position, and every ordinary string
+// beside it is.
+func TestContinuationMetadataIsNeverExtracted(t *testing.T) {
 	for _, fixture := range continuationFixtures() {
 		t.Run(fixture.name, func(t *testing.T) {
-			var root map[string]any
-			if err := json.Unmarshal([]byte(fixture.body), &root); err != nil {
+			if !json.Valid([]byte(fixture.body)) {
+				t.Fatal("invalid fixture")
+			}
+			_, segments, err := extractDocument(fixture.protocol, []byte(fixture.body), InspectionOptions{})
+			if err != nil {
 				t.Fatal(err)
 			}
-			paths := continuationPaths(fixture.protocol, root)
-			if len(paths) != len(fixture.protected) {
-				t.Fatalf("protected=%v want=%v", paths, fixture.protected)
-			}
-			for _, path := range fixture.protected {
-				if _, ok := paths[path]; !ok {
-					t.Errorf("missing protection: %s", path)
+			scanned := 0
+			for _, segment := range segments {
+				if slices.Contains(fixture.protected, segment.Path) || segment.Value == "HOLD" {
+					t.Errorf("metadata extracted: %s", segment.Path)
 				}
+				if segment.Value == "SCAN" {
+					scanned++
+				}
+			}
+			if want := strings.Count(fixture.body, `"SCAN"`); scanned != want {
+				t.Fatalf("extracted %d ordinary strings, want %d: %+v", scanned, want, segments)
 			}
 		})
 	}
@@ -136,32 +149,23 @@ func TestContinuationNamesCannotBypassOrdinaryContent(t *testing.T) {
 		protocol contract.ProtocolID
 		body     string
 	}{
-		{contract.ProtocolOpenAIResponses, `{"input":{"0":{"type":"reasoning","encrypted_content":"%s"}}}`},
-		{contract.ProtocolOpenAIResponses, `{"input":[{"role":"user","type":"reasoning","encrypted_content":"%s"}]}`},
-		{contract.ProtocolOpenAIResponses, `{"input":[{"type":"message","output":[{"type":"encrypted_content","encrypted_content":"%s"}]}]}`},
 		{contract.ProtocolOpenAIResponses, `{"input":[{"type":"function_call_output","output":{"0":{"type":"encrypted_content","encrypted_content":"%s"}}}]}`},
 		{contract.ProtocolOpenAIResponses, `{"input":[{"role":"user","content":"{\"input\":[{\"type\":\"reasoning\",\"encrypted_content\":\"%s\"}]}"}]}`},
-		{contract.ProtocolAnthropicMessages, `{"messages":[{"role":"user","content":[{"type":"thinking","signature":"%s"}]}]}`},
 		{contract.ProtocolAnthropicMessages, `{"messages":[{"role":"assistant","content":[{"type":"thinking","thinking":"%s"}]}]}`},
 		{contract.ProtocolAnthropicMessages, `{"messages":[{"role":"assistant","content":[{"type":"tool_use","input":{"type":"thinking","signature":"%s"}}]}]}`},
-		{contract.ProtocolAnthropicMessages, `{"messages":[{"role":"user","content":[{"type":"tool_result","content":[{"type":"redacted_thinking","data":"%s"}]}]}]}`},
-		{contract.ProtocolGoogleGenerateContent, `{"contents":[{"role":"user","parts":[{"thoughtSignature":"%s"}]}]}`},
-		{contract.ProtocolGoogleGenerateContent, `{"contents":[{"role":"model","parts":{"0":{"thought_signature":"%s"}}}]}`},
 		{contract.ProtocolGoogleGenerateContent, `{"contents":[{"role":"model","parts":[{"functionCall":{"args":{"thoughtSignature":"%s"}}}]}]}`},
-		{contract.ProtocolOpenAIChat, `{"messages":[{"role":"user","reasoning_details":[{"type":"reasoning.encrypted","data":"%s"}]}]}`},
 		{contract.ProtocolOpenAIChat, `{"messages":[{"role":"assistant","tool_calls":[{"type":"function","function":{"arguments":{"extra_content":{"google":{"thought_signature":"%s"}}}}}]}]}`},
 		{contract.ProtocolOpenAIChat, `{"messages":[{"role":"user","content":"{\"role\":\"assistant\",\"thinking_blocks\":[{\"type\":\"thinking\",\"signature\":\"%s\"}]}"}]}`},
+		// A record in another role that claims a replay type keeps its
+		// content inspected.
+		{contract.ProtocolOpenAIResponses, `{"input":[{"role":"user","type":"reasoning","encrypted_content":"opaque","content":"%s"}]}`},
+		{contract.ProtocolAnthropicMessages, `{"messages":[{"role":"user","content":[{"type":"thinking","thinking":"%s","signature":"opaque"}]}]}`},
+		{contract.ProtocolOpenAIChat, `{"messages":[{"role":"user","thinking_blocks":[{"type":"thinking","thinking":"%s","signature":"opaque"}]}]}`},
+		{contract.ProtocolOpenAIChat, `{"messages":[{"role":"user","reasoning_details":[{"type":"reasoning.text","text":"%s","signature":"opaque"}]}]}`},
 	} {
 		t.Run(fmt.Sprintf("%s/%s", fixture.protocol, fixture.body), func(t *testing.T) {
 			const secret = "sk-proj-abcdefghijklmnopqrstuvwxyz123456"
 			body := fmt.Sprintf(fixture.body, secret)
-			var root map[string]any
-			if err := json.Unmarshal([]byte(body), &root); err != nil {
-				t.Fatal(err)
-			}
-			if paths := continuationPaths(fixture.protocol, root); len(paths) != 0 {
-				t.Fatalf("ordinary content was exempted: %v", paths)
-			}
 			result, err := newTestEngine(t, nil).Inspect(t.Context(), Policy{
 				Enabled: true, Mode: ModeRegex, Action: ActionRedact,
 			}, fixture.protocol, []byte(body))

@@ -11,8 +11,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/tidwall/gjson"
-	"github.com/tidwall/sjson"
+	"github.com/MoeForge/moego/ojson"
 )
 
 // DroidEndpointHeader is the authorizer overlay naming the Factory API host an
@@ -90,16 +89,16 @@ func DroidRequest(req *http.Request, endpoint string) error {
 	if len(body) > droidMaxBody {
 		return fmt.Errorf("Factory Droid request exceeds size limit")
 	}
-	if !gjson.ValidBytes(body) || !gjson.ParseBytes(body).IsObject() {
+	if !ojson.ValidBytes(body) || !ojson.ParseBytes(body).IsObject() {
 		return fmt.Errorf("invalid Factory Droid request body")
 	}
-	model := gjson.GetBytes(body, "model").String()
+	model := ojson.GetBytes(body, "model").String()
 	provider := DroidAPIProvider(model)
-	turns := gjson.GetBytes(body, "messages")
+	turns := ojson.GetBytes(body, "messages")
 	if surface == "responses" {
-		turns = gjson.GetBytes(body, "input")
-		if turns.Type == gjson.String {
-			turns = gjson.Parse(`[{"role":"user","content":` + turns.Raw + `}]`)
+		turns = ojson.GetBytes(body, "input")
+		if turns.Type == ojson.String {
+			turns = ojson.Parse(`[{"role":"user","content":` + turns.Raw + `}]`)
 		}
 	}
 	switch surface {
@@ -208,22 +207,22 @@ func containsString(values []string, value string) bool {
 func openAsDroid(surface string, body []byte) ([]byte, error) {
 	switch surface {
 	case "responses":
-		instructions := gjson.GetBytes(body, "instructions")
+		instructions := ojson.GetBytes(body, "instructions")
 		switch instructions.Type {
-		case gjson.Null:
-			return sjson.SetBytes(body, "instructions", DroidSystemPromptLine)
-		case gjson.String:
+		case ojson.Null:
+			return ojson.SetBytes(body, "instructions", DroidSystemPromptLine)
+		case ojson.String:
 			if strings.HasPrefix(instructions.String(), DroidSystemPromptLine) {
 				return body, nil
 			}
-			return sjson.SetBytes(body, "instructions", droidPrefixed(instructions.String()))
+			return ojson.SetBytes(body, "instructions", droidPrefixed(instructions.String()))
 		default:
 			return body, nil
 		}
 	case "chat":
-		messages := gjson.GetBytes(body, "messages")
+		messages := ojson.GetBytes(body, "messages")
 		index := -1
-		messages.ForEach(func(position, message gjson.Result) bool {
+		messages.ForEach(func(position, message ojson.Result) bool {
 			if message.Get("role").String() == "system" {
 				index = int(position.Int())
 				return false
@@ -246,33 +245,33 @@ func openAsDroid(surface string, body []byte) ([]byte, error) {
 			if err != nil {
 				return nil, err
 			}
-			return sjson.SetRawBytes(body, "messages", encoded)
+			return ojson.SetRawBytes(body, "messages", encoded)
 		}
 		path := fmt.Sprintf("messages.%d.content", index)
-		content := gjson.GetBytes(body, path)
+		content := ojson.GetBytes(body, path)
 		switch {
-		case content.Type == gjson.String:
+		case content.Type == ojson.String:
 			if strings.HasPrefix(content.String(), DroidSystemPromptLine) {
 				return body, nil
 			}
-			return sjson.SetBytes(body, path, droidPrefixed(content.String()))
+			return ojson.SetBytes(body, path, droidPrefixed(content.String()))
 		case content.IsArray():
 			return prependDroidTextPart(body, path, content)
-		case content.Type == gjson.Null || !content.Exists():
-			return sjson.SetBytes(body, path, DroidSystemPromptLine)
+		case content.Type == ojson.Null || !content.Exists():
+			return ojson.SetBytes(body, path, DroidSystemPromptLine)
 		default:
 			return body, nil
 		}
 	case "messages":
-		system := gjson.GetBytes(body, "system")
+		system := ojson.GetBytes(body, "system")
 		switch {
-		case system.Type == gjson.Null || !system.Exists():
-			return sjson.SetRawBytes(body, "system", droidTextBlocks())
-		case system.Type == gjson.String:
+		case system.Type == ojson.Null || !system.Exists():
+			return ojson.SetRawBytes(body, "system", droidTextBlocks())
+		case system.Type == ojson.String:
 			if strings.HasPrefix(system.String(), DroidSystemPromptLine) {
 				return body, nil
 			}
-			return sjson.SetBytes(body, "system", droidPrefixed(system.String()))
+			return ojson.SetBytes(body, "system", droidPrefixed(system.String()))
 		case system.IsArray():
 			return prependDroidTextPart(body, "system", system)
 		default:
@@ -296,13 +295,13 @@ func droidTextBlocks() []byte {
 
 // prependDroidTextPart puts Droid's line before the text parts at path unless
 // the first part already opens with it.
-func prependDroidTextPart(body []byte, path string, parts gjson.Result) ([]byte, error) {
+func prependDroidTextPart(body []byte, path string, parts ojson.Result) ([]byte, error) {
 	var blocks []json.RawMessage
 	if err := json.Unmarshal([]byte(parts.Raw), &blocks); err != nil {
 		return nil, err
 	}
 	if len(blocks) > 0 {
-		first := gjson.ParseBytes(blocks[0])
+		first := ojson.ParseBytes(blocks[0])
 		if first.Get("type").String() == "text" && strings.HasPrefix(first.Get("text").String(), DroidSystemPromptLine) {
 			return body, nil
 		}
@@ -315,14 +314,14 @@ func prependDroidTextPart(body []byte, path string, parts gjson.Result) ([]byte,
 	if err != nil {
 		return nil, err
 	}
-	return sjson.SetRawBytes(body, path, encoded)
+	return ojson.SetRawBytes(body, path, encoded)
 }
 
 // droidSessionID keys a conversation the way Droid keys a session (a UUID):
 // later requests of a conversation resend its first message unchanged, so
 // hashing that message keeps one id per conversation, salted by the account
 // credential so the same prompt on two accounts never shares an id.
-func droidSessionID(salt string, turns gjson.Result) string {
+func droidSessionID(salt string, turns ojson.Result) string {
 	sum := conversationDigest(salt, turns)
 	return formatUUID(sum[:16])
 }

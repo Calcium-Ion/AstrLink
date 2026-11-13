@@ -13,6 +13,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/endpoint"
 	"github.com/QuantumNous/astrlink/core/internal/providerapi"
@@ -20,7 +21,6 @@ import (
 	"github.com/QuantumNous/astrlink/core/internal/storage"
 	"github.com/QuantumNous/astrlink/core/internal/storage/sqlite"
 	"github.com/QuantumNous/astrlink/core/internal/transport"
-	"github.com/tidwall/gjson"
 )
 
 const (
@@ -805,7 +805,7 @@ func TestReasoningSettingsEndToEnd(t *testing.T) {
 	t.Run("fixed wins over a model-name suffix", func(t *testing.T) {
 		payload, effort := converted(t, fixed(contract.ReasoningLevelMax), "claude-opus-4-7-low",
 			`{"model":"claude-model","max_tokens":2000,"messages":[{"role":"user","content":"hello"}]}`)
-		if string(payload["model"]) != `"claude-opus-4-7"` || gjson.GetBytes(payload["thinking"], "type").Str != "adaptive" ||
+		if string(payload["model"]) != `"claude-opus-4-7"` || ojson.GetBytes(payload["thinking"], "type").Str != "adaptive" ||
 			string(payload["output_config"]) != `{"effort":"max"}` || effort != "max" {
 			t.Fatalf("converted body: model %s thinking %s output_config %s, recorded = %q",
 				payload["model"], payload["thinking"], payload["output_config"], effort)
@@ -814,7 +814,7 @@ func TestReasoningSettingsEndToEnd(t *testing.T) {
 	t.Run("fixed turns on thinking a converted client turned off", func(t *testing.T) {
 		payload, effort := converted(t, fixed(contract.ReasoningLevelHigh), "claude-opus-4-7",
 			`{"model":"claude-model","max_tokens":2000,"reasoning_effort":"none","messages":[{"role":"user","content":"hello"}]}`)
-		if gjson.GetBytes(payload["thinking"], "type").Str != "adaptive" || string(payload["output_config"]) != `{"effort":"high"}` || effort != "high" {
+		if ojson.GetBytes(payload["thinking"], "type").Str != "adaptive" || string(payload["output_config"]) != `{"effort":"high"}` || effort != "high" {
 			t.Fatalf("converted body: thinking %s output_config %s, recorded = %q", payload["thinking"], payload["output_config"], effort)
 		}
 	})
@@ -856,7 +856,7 @@ func TestAdaptiveEverydayFollowsTheConversation(t *testing.T) {
 		{`{"model":"claude-opus-4-7","max_tokens":32000,"thinking":{"type":"adaptive"},"tools":` + claudeTools(5) + `,"messages":` + conversation(11, long) + `}`, "max"},
 	} {
 		got := send(test.body)
-		if gjson.Get(got, "thinking").Raw != `{"type":"adaptive"}` || gjson.Get(got, "output_config").Raw != `{"effort":"`+test.effort+`"}` {
+		if ojson.Get(got, "thinking").Raw != `{"type":"adaptive"}` || ojson.Get(got, "output_config").Raw != `{"effort":"`+test.effort+`"}` {
 			t.Fatalf("request %d = %s", round+1, got)
 		}
 	}
@@ -919,7 +919,7 @@ func TestAdaptiveResearchReachesEachModelsTop(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			got, record := serveReasoning(t, research, test.protocol, []string{test.model}, test.path, test.body, nil)
-			if gjson.Get(got, test.field).Raw != test.want || recordedEffort(record) != test.effort {
+			if ojson.Get(got, test.field).Raw != test.want || recordedEffort(record) != test.effort {
 				t.Fatalf("upstream body = %s, recorded %q", got, recordedEffort(record))
 			}
 			if diagnostic := gatewayDiagnostic(record); !strings.HasPrefix(diagnostic, "adaptive research medium..max: messages ") {
@@ -941,7 +941,7 @@ func TestAdaptiveCustomRanges(t *testing.T) {
 	t.Run("low to high stops at high with every signal", func(t *testing.T) {
 		got, record := serveReasoning(t, custom(contract.ReasoningLevelLow, contract.ReasoningLevelHigh), contract.ProtocolOpenAIChat,
 			[]string{"gpt-5.4"}, "/v1/chat/completions", `{"model":"gpt-5.4","tools":`+functionTools(5)+`,"messages":`+long+`}`, nil)
-		if gjson.Get(got, "reasoning_effort").Str != "high" || recordedEffort(record) != "high" ||
+		if ojson.Get(got, "reasoning_effort").Str != "high" || recordedEffort(record) != "high" ||
 			gatewayDiagnostic(record) != "adaptive custom low..high: messages 11, tools 5, last 2500 chars, 3 signals, sent high (upper bound)" {
 			t.Fatalf("upstream body = %s, record %q %q", got, recordedEffort(record), gatewayDiagnostic(record))
 		}
@@ -966,11 +966,11 @@ func TestAdaptiveCustomRanges(t *testing.T) {
 				`{"contents":` + geminiConversation(1) + `}`, "generationConfig.thinkingConfig", `{"thinkingBudget":0}`, "none"},
 		} {
 			got, record := serveReasoning(t, custom(contract.ReasoningLevelOff, contract.ReasoningLevelMax), test.protocol, []string{test.model}, test.path, test.body, nil)
-			if gjson.Get(got, test.field).Raw != test.want || recordedEffort(record) != test.effort {
+			if ojson.Get(got, test.field).Raw != test.want || recordedEffort(record) != test.effort {
 				t.Fatalf("%s: upstream body = %s, recorded %q", test.name, got, recordedEffort(record))
 			}
-			if test.model == "claude-opus-5-5" && gjson.Get(got, "thinking").Raw != `{"type":"adaptive"}` {
-				t.Fatalf("Opus 5.5 thinking = %s", gjson.Get(got, "thinking").Raw)
+			if test.model == "claude-opus-5-5" && ojson.Get(got, "thinking").Raw != `{"type":"adaptive"}` {
+				t.Fatalf("Opus 5.5 thinking = %s", ojson.Get(got, "thinking").Raw)
 			}
 		}
 	})
@@ -978,7 +978,7 @@ func TestAdaptiveCustomRanges(t *testing.T) {
 		for _, messages := range []string{conversation(1, `"hello"`), long} {
 			got, record := serveReasoning(t, custom(contract.ReasoningLevelMedium, contract.ReasoningLevelMedium), contract.ProtocolOpenAIChat,
 				[]string{"gpt-5.4"}, "/v1/chat/completions", `{"model":"gpt-5.4","tools":`+functionTools(5)+`,"messages":`+messages+`}`, nil)
-			if gjson.Get(got, "reasoning_effort").Str != "medium" || recordedEffort(record) != "medium" {
+			if ojson.Get(got, "reasoning_effort").Str != "medium" || recordedEffort(record) != "medium" {
 				t.Fatalf("upstream body = %s, recorded %q", got, recordedEffort(record))
 			}
 		}
@@ -1061,14 +1061,14 @@ func TestClaudeCodeHaikuRequestsStayUntouched(t *testing.T) {
 		}
 		redirected.ModelRedirects = []contract.ModelRedirect{enabledRedirect("claude-sonnet-4-5", "claude-haiku-4-5-20251001")}
 		got, _ = serve(t, redirected, "claude-sonnet-4-5", header)
-		if !strings.Contains(got, testPromptPrefix) || gjson.Get(got, "thinking.type").Str != "enabled" {
+		if !strings.Contains(got, testPromptPrefix) || ojson.Get(got, "thinking.type").Str != "enabled" {
 			t.Fatalf("a request for another model redirected to Haiku is the main conversation:\n%s", got)
 		}
 	})
 	t.Run("other clients", func(t *testing.T) {
 		got, record := serve(t, settings, "claude-haiku-4-5-20251001", http.Header{"User-Agent": {"factory-cli/0.30.0"}})
 		if !strings.Contains(got, testPromptPrefix) || !strings.Contains(got, testPromptSuffix) ||
-			gjson.Get(got, "thinking.type").Str != "enabled" || recordedEffort(record) == "" {
+			ojson.Get(got, "thinking.type").Str != "enabled" || recordedEffort(record) == "" {
 			t.Fatalf("Droid's Haiku request is its main conversation:\n%s", got)
 		}
 	})
@@ -1112,7 +1112,7 @@ func TestReasoningRecordsArePersisted(t *testing.T) {
 	}
 	codex := serve(contract.ProtocolOpenAIResponses, "gpt-5.4", "/v1/responses",
 		`{"model":"gpt-5.4","reasoning":{"effort":"low"},"input":"hello","tools":`+functionTools(5)+`}`)
-	if gjson.Get(codex, "reasoning.effort").Str != "high" {
+	if ojson.Get(codex, "reasoning.effort").Str != "high" {
 		t.Fatalf("Responses body = %s", codex)
 	}
 	toolResult := `[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]`

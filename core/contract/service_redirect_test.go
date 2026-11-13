@@ -59,6 +59,27 @@ func TestServiceModelRedirectsServeListedTargetsAndAreValidated(t *testing.T) {
 	}
 }
 
+func TestCopilotBuiltinRedirectsReachTheNewestClaudeModels(t *testing.T) {
+	t.Parallel()
+	service := contract.Service{
+		Kind:   contract.ServiceKindCopilotSubscription,
+		Models: []string{"claude-fable-5.2", "claude-haiku-5.5", "claude-opus-4.8", "claude-opus-5"},
+	}
+	for requested, want := range map[string]string{
+		"claude-fable-5-2": "claude-fable-5.2",
+		"claude-haiku-5-5": "claude-haiku-5.5",
+		"claude-opus-4-8":  "claude-opus-4.8",
+		"claude-opus-5":    "claude-opus-5",
+	} {
+		if got, ok := service.UpstreamModelFor(requested); !ok || got != want {
+			t.Errorf("UpstreamModelFor(%q) = %q, %t; want %q", requested, got, ok, want)
+		}
+	}
+	if first := contract.ServiceKindCopilotSubscription.BuiltinModelRedirects()[0]; first.From != "claude-fable-5-2" {
+		t.Errorf("built-in rules should list the newest model first, got %#v", first)
+	}
+}
+
 func TestCopilotBuiltinRedirectsYieldToStoredRules(t *testing.T) {
 	t.Parallel()
 	service := contract.Service{

@@ -12,6 +12,7 @@ export function SearchInput({
   placeholder,
   clearLabel,
   className,
+  size = "default",
 }: {
   value: string;
   onValueChange: (value: string) => void;
@@ -19,6 +20,8 @@ export function SearchInput({
   placeholder: string;
   clearLabel: string;
   className?: string;
+  /** `sm` fits a compact header, such as a list rail's. */
+  size?: "default" | "sm";
 }) {
   return (
     <div className={cn("relative min-w-0", className)}>
@@ -28,7 +31,10 @@ export function SearchInput({
       />
       <Input
         aria-label={label}
-        className="h-8 pr-8 pl-8 [&::-webkit-search-cancel-button]:appearance-none"
+        className={cn(
+          "pr-8 pl-8 [&::-webkit-search-cancel-button]:appearance-none",
+          size === "sm" ? "h-7 text-xs" : "h-8",
+        )}
         onChange={(event) => onValueChange(event.currentTarget.value)}
         placeholder={placeholder}
         type="search"

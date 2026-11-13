@@ -290,12 +290,24 @@ function buildAppex() {
   const slices = architectures(process.env.TAURI_ENV_TARGET_TRIPLE).map(
     (arch) => {
       const binary = path.join(build, `${moduleName}-${arch}`);
-      swiftc(sources, arch, binary, ["-application-extension"]);
+      // Extensions start in Foundation's _NSExtensionMain, as Xcode links
+      // them. Started at the Swift main, WidgetKit traps before the system
+      // can list the widget.
+      swiftc(sources, arch, binary, [
+        "-application-extension",
+        "-Xlinker",
+        "-e",
+        "-Xlinker",
+        "_NSExtensionMain",
+      ]);
       return binary;
     },
   );
   const executable = path.join(contents, "MacOS", moduleName);
   run("lipo", ["-create", ...slices, "-output", executable]);
+  // A wrong entry point only shows as a widget missing from the gallery.
+  if (!run("nm", ["-u", executable]).split("\n").includes("_NSExtensionMain"))
+    throw new Error("The widget is not linked to start at _NSExtensionMain.");
   // The metadata names Swift types; a mismatch would only show as a widget
   // that cannot be edited, so stop the build here instead.
   const symbols = run("nm", ["-U", executable]);

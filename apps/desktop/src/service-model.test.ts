@@ -421,6 +421,16 @@ describe("service model", () => {
       defaultTo: "claude-sonnet-4.6",
       defaultEnabled: true,
     });
+    expect(serviceBuiltinRedirects("copilot_subscription")[0]).toEqual({
+      from: "claude-fable-5-2",
+      defaultTo: "claude-fable-5.2",
+      defaultEnabled: true,
+    });
+    expect(serviceBuiltinRedirects("copilot_subscription")).toContainEqual({
+      from: "claude-haiku-5-5",
+      defaultTo: "claude-haiku-5.5",
+      defaultEnabled: true,
+    });
     expect(serviceBuiltinRedirects("openai")).toEqual([]);
     expect(
       withClaudeCodeRedirects(

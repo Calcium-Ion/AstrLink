@@ -114,7 +114,7 @@ export DISABLE_AUTOUPDATER=1
 	if !answered {
 		t.Fatal("the tool result did not reach the model")
 	}
-	for _, record := range harness.records.records() {
+	for _, record := range harness.settledRecords() {
 		if record.ParentRequestID != nil && (record.RoutingDecision == nil || record.RoutingDecision.Selected != contract.RoutingSelectionClaudeCLI) {
 			t.Fatalf("child = %+v", record)
 		}

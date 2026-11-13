@@ -69,6 +69,8 @@ export type ServiceModelsEditorProps = {
   builtinProtocol: (model: string) => ModelFormat | undefined;
   onModelEditorChange: (value: string) => void;
   onAddModels: () => void;
+  /** Each new value opens the add row and focuses its input. */
+  addRequest?: number;
   onDiscoverModels?: () => void;
   onRemoveModels: (models: string[]) => void;
   onClearModels: () => void;
@@ -495,6 +497,7 @@ export function ServiceModelsEditor({
   builtinProtocol,
   onModelEditorChange,
   onAddModels,
+  addRequest = 0,
   onDiscoverModels,
   onRemoveModels,
   onClearModels,
@@ -510,6 +513,9 @@ export function ServiceModelsEditor({
   const [selecting, setSelecting] = useState(false);
   const [checked, setChecked] = useState<ReadonlySet<string>>(() => new Set());
   const addInputRef = useRef<HTMLInputElement | null>(null);
+  const addTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  // A request made before this editor mounted is not a new one.
+  const [seenAddRequest, setSeenAddRequest] = useState(addRequest);
   const seededCollapse = useRef(false);
   const selectButtonRef = useRef<HTMLButtonElement | null>(null);
   const moreButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -544,10 +550,15 @@ export function ServiceModelsEditor({
     setCollapsed(initialCollapsed(catalog));
   }, [catalog]);
 
+  if (addRequest !== seenAddRequest) {
+    setSeenAddRequest(addRequest);
+    setAdding(true);
+  }
+
   useEffect(() => {
     if (!adding) return;
-    addInputRef.current?.focus();
-  }, [adding, bulkPaste]);
+    (bulkPaste ? addTextareaRef : addInputRef).current?.focus();
+  }, [adding, bulkPaste, addRequest]);
 
   useEffect(() => {
     if (!moveFocusRef.current) return;
@@ -759,6 +770,7 @@ export function ServiceModelsEditor({
         <div className="col-span-full mt-2 grid gap-2 rounded-md border bg-muted p-2.5">
           {bulkPaste ? (
             <Textarea
+              ref={addTextareaRef}
               aria-label={t("models.pendingIds")}
               placeholder={t("models.bulkPlaceholder")}
               className="min-h-[72px] resize-y"

@@ -301,6 +301,14 @@ func (harness *officialHarness) post(t *testing.T, path, body string) (int, stri
 	return response.StatusCode, string(raw)
 }
 
+// settledRecords stops the gateway, which waits for the requests it is
+// still serving, and returns their records. The CLI's loopback calls finish
+// their records after the outer answer may already have reached the client.
+func (harness *officialHarness) settledRecords() []contract.RequestRecord {
+	harness.server.Close()
+	return harness.records.records()
+}
+
 func (harness *officialHarness) secret(t *testing.T) string {
 	t.Helper()
 	raw, err := os.ReadFile(fakeclaude.EnvFile(harness.configDir, "serve"))
@@ -375,7 +383,7 @@ func TestOfficialClaudeServesThroughTheCLIAndItsLoopback(t *testing.T) {
 		t.Fatalf("the CLI's own requests = %q, %v", own, err)
 	}
 
-	records := harness.records.records()
+	records := harness.settledRecords()
 	roots := map[contract.RequestID]contract.RequestRecord{}
 	var children []contract.RequestRecord
 	for _, record := range records {

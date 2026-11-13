@@ -1309,6 +1309,32 @@ END`,
           FROM context_sets sets WHERE sets.project = OLD.project AND sets.client_type = OLD.client_type));
 END`,
 		}},
+		// A token limited to selected API providers keeps the list here. The
+		// update trigger on local_access_tokens already logs both columns for
+		// sync. A provider deleted later stays listed and matches nothing, so
+		// the token never widens to every provider.
+		{Version: 58, Name: "access_token_service_scope", Statements: []string{
+			`ALTER TABLE local_access_tokens ADD COLUMN service_scope TEXT NOT NULL DEFAULT 'all'
+    CHECK(service_scope IN ('all', 'selected'))`,
+			`ALTER TABLE local_access_tokens ADD COLUMN service_ids_json TEXT NOT NULL DEFAULT '[]'
+    CHECK(json_valid(service_ids_json) AND json_type(service_ids_json) = 'array')`,
+		}},
+		// Request image compression adds up what it did to forwarded
+		// requests in this one row. Deleting, purging or expiring request
+		// records leaves it alone. since is when counting began: this
+		// upgrade, or the install. Earlier requests are not counted.
+		{Version: 59, Name: "image_compression_totals", Statements: []string{
+			`CREATE TABLE image_compression_totals (
+    id INTEGER PRIMARY KEY CHECK(id = 1),
+    since TEXT NOT NULL,
+    requests INTEGER NOT NULL DEFAULT 0 CHECK(requests >= 0),
+    images INTEGER NOT NULL DEFAULT 0 CHECK(images >= 0),
+    compressed INTEGER NOT NULL DEFAULT 0 CHECK(compressed >= 0),
+    original_bytes INTEGER NOT NULL DEFAULT 0 CHECK(original_bytes >= 0),
+    sent_bytes INTEGER NOT NULL DEFAULT 0 CHECK(sent_bytes >= 0)
+)`,
+			`INSERT INTO image_compression_totals (id, since) VALUES (1, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))`,
+		}},
 	}
 }
 

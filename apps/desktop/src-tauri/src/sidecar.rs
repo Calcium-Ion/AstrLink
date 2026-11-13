@@ -52,6 +52,14 @@ const MAX_CONTROL_BODY: usize = 8 * 1024 * 1024;
 // Decrypted audit content may reach response_content_max_bytes (64 MiB).
 const MAX_AUDIT_CONTENT_BODY: usize = 96 * 1024 * 1024;
 const AUDIT_CONTENT_TIMEOUT: Duration = Duration::from_secs(60);
+const REQUEST_PURGE_PATH: &str = "/control/v1/requests/purge";
+// One transaction deletes the whole selection; 300,000 records with their
+// captured content take about a minute. Core finishes a purge it started even
+// after this wait ends, so the wait only bounds how long the page shows it.
+const REQUEST_PURGE_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+/// Returned when a purge outlasts REQUEST_PURGE_TIMEOUT. Core is still
+/// deleting; the records page matches this code to say so.
+const REQUEST_PURGE_STILL_RUNNING: &str = "request_purge_still_running";
 /// Stable machine-readable error codes for the provider-test command. The
 /// frontend matches these codes instead of human-readable messages.
 pub const SERVICE_TEST_CANCELLED: &str = "service_test_cancelled";
@@ -1994,6 +2002,20 @@ impl CoreManager {
             .map_err(|error| format!("privacy summary returned invalid JSON: {error}"))
     }
 
+    /// What request image compression has saved since counting began.
+    pub async fn get_image_compression_totals(&self) -> Result<serde_json::Value, String> {
+        let (_, body) = self
+            .authenticated_control(
+                Method::GET,
+                "/control/v1/image-compression-totals",
+                None,
+                None,
+            )
+            .await?;
+        serde_json::from_slice(&body)
+            .map_err(|error| format!("image compression totals returned invalid JSON: {error}"))
+    }
+
     pub async fn list_access_token_usage(
         &self,
         today_from: &str,
@@ -2009,14 +2031,22 @@ impl CoreManager {
             .map_err(|error| format!("access token usage returned invalid JSON: {error}"))
     }
 
-    pub async fn create_access_token(&self, name: &str) -> Result<serde_json::Value, String> {
+    pub async fn create_access_token(
+        &self,
+        name: &str,
+        service_scope: Option<&str>,
+        service_ids: Option<Vec<String>>,
+    ) -> Result<serde_json::Value, String> {
+        let body = match service_scope {
+            Some(scope) => serde_json::json!({
+                "name": name,
+                "service_scope": scope,
+                "service_ids": service_ids.unwrap_or_default(),
+            }),
+            None => serde_json::json!({ "name": name }),
+        };
         let (_, body) = self
-            .authenticated_control(
-                Method::POST,
-                "/control/v1/access-tokens",
-                Some(serde_json::json!({ "name": name })),
-                None,
-            )
+            .authenticated_control(Method::POST, "/control/v1/access-tokens", Some(body), None)
             .await?;
         serde_json::from_slice(&body)
             .map_err(|error| format!("access token create returned invalid JSON: {error}"))
@@ -2034,6 +2064,33 @@ impl CoreManager {
             .await?;
         serde_json::from_slice(&body)
             .map_err(|error| format!("access token reveal returned invalid JSON: {error}"))
+    }
+
+    pub async fn update_access_token(
+        &self,
+        token_id: &str,
+        name: &str,
+        service_scope: &str,
+        service_ids: Vec<String>,
+    ) -> Result<serde_json::Value, String> {
+        validate_resource_id(token_id)?;
+        for service_id in &service_ids {
+            validate_resource_id(service_id)?;
+        }
+        let (_, body) = self
+            .authenticated_control(
+                Method::PATCH,
+                &format!("/control/v1/access-tokens/{token_id}"),
+                Some(serde_json::json!({
+                    "name": name,
+                    "service_scope": service_scope,
+                    "service_ids": service_ids,
+                })),
+                None,
+            )
+            .await?;
+        serde_json::from_slice(&body)
+            .map_err(|error| format!("access token update returned invalid JSON: {error}"))
     }
 
     pub async fn delete_access_token(&self, token_id: &str) -> Result<(), String> {
@@ -2378,32 +2435,6 @@ impl CoreManager {
             .authenticated_control(method, &path, body, None)
             .await?;
         serde_json::from_slice(&body).map_err(|_| "pricing returned invalid JSON".into())
-    }
-
-    /// The reasoning levels of the official model a gateway model reaches,
-    /// or `None` when LLM Metadata does not list it as reasoning.
-    pub async fn official_reasoning(&self, model: &str) -> Result<Option<Vec<String>>, String> {
-        #[derive(Deserialize)]
-        struct ModelMetadata {
-            reasoning: bool,
-            reasoning_levels: Vec<String>,
-        }
-        let path = format!(
-            "/control/v1/model-metadata?model={}",
-            percent_encode_query(model)
-        );
-        let (status, body) = self
-            .authenticated_control_status(Method::GET, &path, None, None)
-            .await?;
-        if status == reqwest::StatusCode::NOT_FOUND {
-            return Ok(None);
-        }
-        if !status.is_success() {
-            return Err(control_status_error(&Method::GET, &path, status, &body));
-        }
-        serde_json::from_slice::<ModelMetadata>(&body)
-            .map(|model| model.reasoning.then_some(model.reasoning_levels))
-            .map_err(|_| "model metadata returned invalid JSON".into())
     }
 
     /// Configuration sync. `configure` stores the settings, `passphrase` sets
@@ -2863,12 +2894,7 @@ impl CoreManager {
     ) -> Result<serde_json::Value, String> {
         let input = validate_purge_request_records_input(&input)?;
         let (_, body) = self
-            .authenticated_control(
-                Method::POST,
-                "/control/v1/requests/purge",
-                Some(input),
-                None,
-            )
+            .authenticated_control(Method::POST, REQUEST_PURGE_PATH, Some(input), None)
             .await?;
         serde_json::from_slice(&body)
             .map_err(|error| format!("request purge returned invalid JSON: {error}"))
@@ -3102,6 +3128,7 @@ impl CoreManager {
                 Err(error) => {
                     if attempt == 0
                         && !is_builtin_tool_test(&method, path)
+                        && !is_request_purge(&method, path)
                         && !crate::raw_access::is_proof_request(&method, path)
                         && is_control_transport_error(&error)
                     {
@@ -3156,7 +3183,7 @@ impl CoreManager {
         let response = request
             .send()
             .await
-            .map_err(|error| format!("{} {path} failed: {error}", method.as_str()))?;
+            .map_err(|error| control_send_error(&method, path, &error))?;
         let status = response.status();
         let etag = response
             .headers()
@@ -3398,6 +3425,19 @@ fn is_request_record_list_path(path: &str) -> bool {
         || path == "/control/v1/request-memory/entry"
 }
 
+/// A purge must not be sent twice: Core keeps deleting after the desktop
+/// stops waiting, and a second request would only queue behind the first.
+fn is_request_purge(method: &Method, path: &str) -> bool {
+    *method == Method::POST && control_path(path) == REQUEST_PURGE_PATH
+}
+
+fn control_send_error(method: &Method, path: &str, error: &reqwest::Error) -> String {
+    if error.is_timeout() && is_request_purge(method, path) {
+        return REQUEST_PURGE_STILL_RUNNING.to_string();
+    }
+    format!("{} {path} failed: {error}", method.as_str())
+}
+
 fn is_builtin_tool_test(method: &Method, path: &str) -> bool {
     *method == Method::POST
         && matches!(
@@ -3504,6 +3544,9 @@ fn control_request_timeout(method: &Method, path: &str) -> Duration {
     }
     if *method == Method::GET && is_request_record_list_path(path) {
         return REQUEST_LIST_TIMEOUT;
+    }
+    if is_request_purge(method, path) {
+        return REQUEST_PURGE_TIMEOUT;
     }
     REQUEST_TIMEOUT
 }
@@ -5375,6 +5418,18 @@ fn percent_encode_query(value: &str) -> String {
     encoded
 }
 
+/// A lowercase snake_case id such as a protocol or client type; Core checks
+/// the value against its own list.
+fn query_id_ok(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 64
+        && value.bytes().enumerate().all(|(index, byte)| match byte {
+            b'a'..=b'z' => true,
+            b'0'..=b'9' | b'_' => index > 0,
+            _ => false,
+        })
+}
+
 fn timestamp_query_charset_ok(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 64
@@ -5391,6 +5446,10 @@ fn build_request_session_query(query: &serde_json::Value) -> Result<String, Stri
     let kind = record_query
         .as_object_mut()
         .and_then(|object| object.remove("kind"));
+    // Core filters records by client type, not sessions.
+    if query.get("client_type").is_some() {
+        return Err("request session query contains unknown key client_type".to_string());
+    }
     let mut qs = build_request_record_query(&record_query)?;
     if let Some(kind) = kind {
         let kind = kind
@@ -5530,6 +5589,7 @@ fn build_request_record_query(query: &serde_json::Value) -> Result<String, Strin
     let mut local_access_token_ids: Vec<&str> = Vec::new();
     let mut models: Vec<&str> = Vec::new();
     let mut status: Option<&str> = None;
+    let mut client_type: Option<&str> = None;
 
     for (key, value) in object {
         match key.as_str() {
@@ -5579,14 +5639,7 @@ fn build_request_record_query(query: &serde_json::Value) -> Result<String, Strin
                 let text = value
                     .as_str()
                     .ok_or_else(|| "request record query protocol must be a string".to_string())?;
-                if text.is_empty()
-                    || text.len() > 64
-                    || !text.bytes().enumerate().all(|(index, byte)| match byte {
-                        b'a'..=b'z' => true,
-                        b'0'..=b'9' | b'_' => index > 0,
-                        _ => false,
-                    })
-                {
+                if !query_id_ok(text) {
                     return Err("request record query protocol is invalid".to_string());
                 }
                 protocol = Some(text);
@@ -5643,6 +5696,15 @@ fn build_request_record_query(query: &serde_json::Value) -> Result<String, Strin
                     _ => return Err("request record query status is invalid".to_string()),
                 }
             }
+            "client_type" => {
+                let text = value.as_str().ok_or_else(|| {
+                    "request record query client_type must be a string".to_string()
+                })?;
+                if !query_id_ok(text) {
+                    return Err("request record query client_type is invalid".to_string());
+                }
+                client_type = Some(text);
+            }
             other => {
                 return Err(format!("request record query contains unknown key {other}"));
             }
@@ -5679,6 +5741,9 @@ fn build_request_record_query(query: &serde_json::Value) -> Result<String, Strin
     }
     if let Some(value) = status {
         pairs.push(format!("status={}", percent_encode_query(value)));
+    }
+    if let Some(value) = client_type {
+        pairs.push(format!("client_type={}", percent_encode_query(value)));
     }
     if pairs.is_empty() {
         return Ok(String::new());
@@ -6560,10 +6625,10 @@ mod tests {
     }
 
     #[test]
-    fn builtin_tool_control_waits_past_two_seconds_and_does_not_repeat_transport_failures() {
+    fn tool_tests_and_purges_wait_past_two_seconds_and_do_not_repeat_transport_failures() {
         use std::io::{BufRead, Read, Write};
         use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-        for succeeds in [true, false] {
+        for (purge, succeeds) in [(false, true), (false, false), (true, true), (true, false)] {
             let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
             listener.set_nonblocking(true).unwrap();
             let address = listener.local_addr().unwrap();
@@ -6623,16 +6688,64 @@ mod tests {
                 .enable_all()
                 .build()
                 .unwrap();
-            let result = runtime.block_on(manager.builtin_tool_action("web_search".into(), "test".into(), Some(serde_json::json!({"enabled":true,"backend":"upstream","service_id":"service_test","model":"main"}))));
+            let result = if purge {
+                runtime.block_on(
+                    manager
+                        .purge_request_records(serde_json::json!({"scope":"all","confirm":true})),
+                )
+            } else {
+                runtime.block_on(manager.builtin_tool_action("web_search".into(), "test".into(), Some(serde_json::json!({"enabled":true,"backend":"upstream","service_id":"service_test","model":"main"}))))
+            };
             stop.store(true, Ordering::SeqCst);
             server.join().unwrap();
-            assert_eq!(result.is_ok(), succeeds, "{result:?}");
+            assert_eq!(result.is_ok(), succeeds, "purge={purge} {result:?}");
             assert_eq!(
                 calls.load(Ordering::SeqCst),
                 1,
-                "a tool test must never be automatically retried"
+                "purge={purge}: a tool test or purge must never be automatically retried"
             );
         }
+    }
+
+    #[test]
+    fn request_purge_waits_long_and_reports_a_purge_still_running() {
+        assert_eq!(
+            control_request_timeout(&Method::POST, REQUEST_PURGE_PATH),
+            REQUEST_PURGE_TIMEOUT
+        );
+        assert!(is_request_purge(&Method::POST, REQUEST_PURGE_PATH));
+        assert!(!is_request_purge(&Method::GET, REQUEST_PURGE_PATH));
+        assert_eq!(
+            control_request_timeout(&Method::DELETE, "/control/v1/requests/request_one"),
+            REQUEST_TIMEOUT
+        );
+
+        // A listener that never answers makes reqwest time out the request.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let error = runtime.block_on(async {
+            reqwest::Client::builder()
+                .no_proxy()
+                .build()
+                .unwrap()
+                .post(format!("http://{address}{REQUEST_PURGE_PATH}"))
+                .timeout(Duration::from_millis(50))
+                .send()
+                .await
+                .unwrap_err()
+        });
+        drop(listener);
+        assert!(error.is_timeout(), "{error}");
+        assert_eq!(
+            control_send_error(&Method::POST, REQUEST_PURGE_PATH, &error),
+            REQUEST_PURGE_STILL_RUNNING
+        );
+        let other = control_send_error(&Method::GET, "/control/v1/requests", &error);
+        assert!(is_control_transport_error(&other), "{other}");
     }
 
     #[test]
@@ -6996,6 +7109,7 @@ mod tests {
             assert!(build_request_session_query(&serde_json::json!({"kind": kind})).is_err());
         }
         assert!(build_request_record_query(&serde_json::json!({"kind": "inference"})).is_err());
+        assert!(build_request_session_query(&serde_json::json!({"client_type": "zed"})).is_err());
     }
 
     #[test]
@@ -7006,6 +7120,7 @@ mod tests {
         );
         assert_eq!(
             build_request_record_query(&serde_json::json!({
+                "client_type": "zed",
                 "status": "succeeded",
                 "service_id": "service_01",
                 "local_access_token_ids": ["token_01", "token_02"],
@@ -7016,7 +7131,7 @@ mod tests {
                 "limit": 50
             }))
             .unwrap(),
-            "?limit=50&cursor=a%2Bb%3Dc%26d%2Fe&from=2026-07-24T00%3A00%3A00Z&to=2026-07-25T12%3A00%3A00Z&protocol=openai_responses&service_id=service_01&local_access_token_id=token_01&local_access_token_id=token_02&status=succeeded"
+            "?limit=50&cursor=a%2Bb%3Dc%26d%2Fe&from=2026-07-24T00%3A00%3A00Z&to=2026-07-25T12%3A00%3A00Z&protocol=openai_responses&service_id=service_01&local_access_token_id=token_01&local_access_token_id=token_02&status=succeeded&client_type=zed"
         );
         assert!(
             build_request_record_query(&serde_json::json!({"unknown": 1}))
@@ -7040,6 +7155,18 @@ mod tests {
         assert!(build_request_record_query(&serde_json::json!({"limit": 201})).is_err());
         assert!(build_request_record_query(&serde_json::json!({"status": "ok"})).is_err());
         assert!(build_request_record_query(&serde_json::json!({"protocol": "OpenAI"})).is_err());
+        for client_type in [
+            serde_json::json!("Zed"),
+            serde_json::json!("_goose"),
+            serde_json::json!("zed&x=1"),
+            serde_json::json!(""),
+            serde_json::json!(["zed"]),
+        ] {
+            assert!(build_request_record_query(&serde_json::json!({
+                "client_type": client_type
+            }))
+            .is_err());
+        }
         assert!(build_request_record_query(&serde_json::json!({
             "cursor": "x".repeat(513)
         }))

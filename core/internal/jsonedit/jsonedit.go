@@ -8,8 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 
-	"github.com/tidwall/gjson"
-	"github.com/tidwall/sjson"
+	"github.com/MoeForge/moego/ojson"
 )
 
 // ErrUnsafe reports an edit that cannot be applied in place.
@@ -39,14 +38,14 @@ func Set(body []byte, path string, value any) ([]byte, error) {
 // member at the end of its object.
 func SetRaw(body []byte, path string, value []byte) ([]byte, error) {
 	return withEnvelope(body, func(document []byte) ([]byte, error) {
-		return sjson.SetRawBytes(document, path, value)
+		return ojson.SetRawBytes(document, path, value)
 	})
 }
 
 // Delete removes the member or element at path.
 func Delete(body []byte, path string) ([]byte, error) {
 	return withEnvelope(body, func(document []byte) ([]byte, error) {
-		return sjson.DeleteBytes(document, path)
+		return ojson.DeleteBytes(document, path)
 	})
 }
 
@@ -54,7 +53,7 @@ func Delete(body []byte, path string) ([]byte, error) {
 // past the end appends; a negative index prepends. The existing elements keep
 // their raw bytes.
 func Insert(body []byte, path string, index int, value any) ([]byte, error) {
-	array := gjson.GetBytes(body, path)
+	array := ojson.GetBytes(body, path)
 	if !array.IsArray() || !located(body, array) {
 		return nil, ErrUnsafe
 	}
@@ -94,7 +93,7 @@ func Insert(body []byte, path string, index int, value any) ([]byte, error) {
 }
 
 // located reports whether value's offset points at its raw bytes in body.
-func located(body []byte, value gjson.Result) bool {
+func located(body []byte, value ojson.Result) bool {
 	return value.Index > 0 && value.Index+len(value.Raw) <= len(body) &&
 		string(body[value.Index:value.Index+len(value.Raw)]) == value.Raw
 }

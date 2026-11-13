@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/providerapi"
-	"github.com/tidwall/gjson"
 )
 
 func TestVertexFinalOutboundRequestsAndNativeResponses(t *testing.T) {
@@ -65,15 +65,15 @@ func TestVertexFinalOutboundRequestsAndNativeResponses(t *testing.T) {
 							}
 						}
 						out, _ := io.ReadAll(r.Body)
-						if gjson.GetBytes(out, "unknown.large").Raw != "9007199254740993" {
+						if ojson.GetBytes(out, "unknown.large").Raw != "9007199254740993" {
 							t.Error("changed unknown field")
 						}
 						if surface == "claude" {
-							if gjson.GetBytes(out, "model").Exists() || gjson.GetBytes(out, "anthropic_version").String() != "vertex-2023-10-16" {
+							if ojson.GetBytes(out, "model").Exists() || ojson.GetBytes(out, "anthropic_version").String() != "vertex-2023-10-16" {
 								t.Error("incorrect Claude envelope")
 							}
 							for _, field := range []string{"messages", "tools", "stream"} {
-								if gjson.GetBytes(out, field).Raw != gjson.Get(body, field).Raw {
+								if ojson.GetBytes(out, field).Raw != ojson.Get(body, field).Raw {
 									t.Errorf("changed %s", field)
 								}
 							}

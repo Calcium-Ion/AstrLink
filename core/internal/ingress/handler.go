@@ -49,6 +49,23 @@ type AccessTokenAuthenticator interface {
 
 type AccessTokenAuthenticatorFunc func(context.Context, string) (contract.AccessTokenID, error)
 
+// ScopedAccessTokenAuthenticator also returns the API providers the token may
+// use. An authenticator without it lets every token use every provider.
+type ScopedAccessTokenAuthenticator interface {
+	AuthenticateAccessTokenScope(context.Context, string) (contract.AccessTokenID, contract.AccessTokenServices, error)
+}
+
+type ScopedAccessTokenAuthenticatorFunc func(context.Context, string) (contract.AccessTokenID, contract.AccessTokenServices, error)
+
+func (function ScopedAccessTokenAuthenticatorFunc) AuthenticateAccessToken(ctx context.Context, token string) (contract.AccessTokenID, error) {
+	id, _, err := function(ctx, token)
+	return id, err
+}
+
+func (function ScopedAccessTokenAuthenticatorFunc) AuthenticateAccessTokenScope(ctx context.Context, token string) (contract.AccessTokenID, contract.AccessTokenServices, error) {
+	return function(ctx, token)
+}
+
 func (function AccessTokenAuthenticatorFunc) AuthenticateAccessToken(ctx context.Context, token string) (contract.AccessTokenID, error) {
 	return function(ctx, token)
 }
@@ -925,13 +942,21 @@ func (handler *Handler) allowInferenceBoundary(writer http.ResponseWriter, reque
 			handler.writeBoundaryError(writer, request, http.StatusUnauthorized, "invalid_access_token", "a valid local access token is required")
 			return false
 		}
-		tokenID, err := handler.accessTokenAuthenticator.AuthenticateAccessToken(request.Context(), token)
+		var tokenID contract.AccessTokenID
+		var services contract.AccessTokenServices
+		var err error
+		if scoped, ok := handler.accessTokenAuthenticator.(ScopedAccessTokenAuthenticator); ok {
+			tokenID, services, err = scoped.AuthenticateAccessTokenScope(request.Context(), token)
+		} else {
+			tokenID, err = handler.accessTokenAuthenticator.AuthenticateAccessToken(request.Context(), token)
+		}
 		if err != nil || tokenID == "" {
 			writer.Header().Set("WWW-Authenticate", `Bearer realm="astrlink-inference"`)
 			handler.writeBoundaryError(writer, request, http.StatusUnauthorized, "invalid_access_token", "a valid local access token is required")
 			return false
 		}
-		*request = *request.WithContext(context.WithValue(request.Context(), accessTokenIDContextKey{}, tokenID))
+		ctx := context.WithValue(request.Context(), accessTokenIDContextKey{}, tokenID)
+		*request = *request.WithContext(endpoint.WithAccessTokenServices(ctx, services))
 	}
 	route, _, known := matchProtocolRoute(request.URL.Path)
 	if !known || route.method != http.MethodPost || request.Method != http.MethodPost {
@@ -1152,7 +1177,12 @@ func (handler *Handler) writeResolveError(writer http.ResponseWriter, request *h
 	session := recordSessionFromContext(request.Context())
 	var capabilityErr *endpoint.CapabilityUnavailableError
 	var pinnedErr *endpoint.PinnedServiceError
+	var scopeErr *endpoint.AccessTokenScopeError
 	switch {
+	case errors.As(err, &scopeErr):
+		message := accessTokenScopeMessage(scopeErr, classified)
+		writeInferenceError(writer, http.StatusForbidden, "access_token_scope", message, false, nil)
+		session.noteFailed(errorSummaryFromInference("access_token_scope", message, false))
 	case errors.As(err, &pinnedErr):
 		message := pinnedServiceMessage(pinnedErr, classified)
 		writeInferenceError(writer, http.StatusUnprocessableEntity, "api_provider_unavailable", message, false, nil)
@@ -1194,6 +1224,18 @@ func (handler *Handler) writeResolveError(writer http.ResponseWriter, request *h
 		}})
 		session.noteFailed(errorSummaryFromInference("endpoint_resolver_unavailable", "upstream endpoint resolution failed", true))
 	}
+}
+
+// accessTokenScopeMessage names only what the client sent: the provider ID
+// or the model. It never lists providers the token cannot use.
+func accessTokenScopeMessage(err *endpoint.AccessTokenScopeError, classified Request) string {
+	if err.Service != "" {
+		return fmt.Sprintf("this access token may not use the API provider named in %s", ServiceHeader)
+	}
+	if classified.Model != "" {
+		return fmt.Sprintf("none of the API providers this access token may use serve model %q", classified.Model)
+	}
+	return "none of the API providers this access token may use can serve this request"
 }
 
 // pinnedServiceMessage tells the client why the provider it named in

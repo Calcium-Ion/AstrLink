@@ -4,7 +4,6 @@ import {
   body,
   clamp,
   type CrewColor,
-  type CrewWords,
   DEMO_WIDTH,
   drawPixels,
   figureOf,
@@ -29,7 +28,6 @@ import {
   type CrewLayout,
   type CrewMember,
   type CrewSpot,
-  type CrewStation,
 } from "./live-crew-model";
 import { smallU } from "./live-crew-sprites";
 import type { ClientType } from "./request-record-model";
@@ -44,7 +42,9 @@ export const CREW_SCENES = ["camp", "office", "ship", "site"] as const;
 export type CrewSceneId = (typeof CREW_SCENES)[number];
 export const DEFAULT_CREW_SCENE: CrewSceneId = "camp";
 /** Every scene's logical height, so switching scenes keeps the module still. */
-export const CREW_HEIGHT = 240;
+export const CREW_HEIGHT = 280;
+/** The floor line of the one-floor scenes; name tags go in the band below. */
+const GROUND = CREW_HEIGHT - 54;
 
 export interface CrewScene {
   readonly id: CrewSceneId;
@@ -65,13 +65,8 @@ export interface CrewScene {
   movers?(pen: Pen): void;
   /** Drawn once per size, palette and growth, over the movers. */
   front?(pen: Pen): void;
-  /** Props that move or light up, and the station labels. */
-  props(
-    pen: Pen,
-    crew: Crew,
-    labels: Record<CrewStation, string>,
-    words: CrewWords,
-  ): void;
+  /** Props that move or light up. */
+  props(pen: Pen, crew: Crew): void;
   step(crew: Crew, dt: number): void;
   /** Nothing of the scene's own is still moving. */
   quiet(): boolean;
@@ -157,30 +152,6 @@ function screenRows(
   }
 }
 
-function label(pen: Pen, text: string, x: number, y: number, on: boolean) {
-  pen.text(
-    text,
-    x,
-    y,
-    10.5,
-    rgba(pen.palette.muted, on ? 1 : 0.6),
-    on ? 600 : 400,
-    "center",
-  );
-}
-
-function stationLabels(
-  pen: Pen,
-  crew: Crew,
-  labels: Record<CrewStation, string>,
-  X: Places,
-  y: number,
-  order: readonly CrewStation[],
-) {
-  for (const act of order)
-    label(pen, labels[act], X[act], y, Boolean(busy(crew, act)));
-}
-
 /**
  * Stars as `[x, y, size, alpha]`, one fill per shade: alphas in steps of
  * 1/32 look the same.
@@ -260,7 +231,7 @@ const PINES = [
 ] as const;
 
 function camp(W: number): CrewScene {
-  const FLOOR = 186;
+  const FLOOR = GROUND;
   const H = CREW_HEIGHT;
   const k = W / DEMO_WIDTH;
   const at = (x: number) => Math.round(x * k);
@@ -488,7 +459,7 @@ function camp(W: number): CrewScene {
         ]);
       }
     },
-    props(pen, crew, labels) {
+    props(pen, crew) {
       const p = pen.palette;
       const T = pen.T;
       if (st === CREW_TOP) {
@@ -581,14 +552,6 @@ function camp(W: number): CrewScene {
           ]);
         },
       );
-      stationLabels(pen, crew, labels, X, H - 8, [
-        "bash",
-        "read",
-        "edit",
-        "search",
-        "write",
-        "think",
-      ]);
     },
     step(crew, dt) {
       roll += (Number(Boolean(busy(crew, "write"))) - roll) * clamp(dt);
@@ -601,7 +564,7 @@ function camp(W: number): CrewScene {
 // ---------- office ----------
 
 function office(W: number): CrewScene {
-  const FLOOR = 186;
+  const FLOOR = GROUND;
   const H = CREW_HEIGHT;
   const X = spread(
     {
@@ -891,7 +854,7 @@ function office(W: number): CrewScene {
         note(W - 21, FLOOR - 40, 1);
       }
     },
-    props(pen, crew, labels) {
+    props(pen, crew) {
       const p = pen.palette;
       const T = pen.T;
       if (st >= 5) {
@@ -980,14 +943,6 @@ function office(W: number): CrewScene {
       pen.stamp(`strokes|${drawn}`, X.think, FLOOR, [-40, -84, 44, 0], (at) =>
         at.rects(0, 0, segments.slice(0, drawn)),
       );
-      stationLabels(pen, crew, labels, X, H - 8, [
-        "bash",
-        "read",
-        "edit",
-        "search",
-        "write",
-        "think",
-      ]);
     },
     step(crew, dt) {
       if (busy(crew, "think")) strokes = Math.min(1, strokes + dt / 4);
@@ -1077,8 +1032,8 @@ function paintPlanet(pen: Pen, stage: number) {
 
 function ship(W: number): CrewScene {
   const H = CREW_HEIGHT;
-  const UP = 106;
-  const LO = 206;
+  const UP = 126;
+  const LO = H - 34;
   const k = W / DEMO_WIDTH;
   const rooms: Record<CrewAct, readonly [number, number]> = {
     bash: [165, 0],
@@ -1113,6 +1068,8 @@ function ship(W: number): CrewScene {
   const xr = W - 56;
   const top = 12;
   const bottom = H - 16;
+  // The observation window's glass, on the upper deck's wall.
+  const pane = UP - 80;
   // The hold sits at the stern end of the nose.
   const hold = xr - 144;
   const NOSE = [
@@ -1180,9 +1137,10 @@ function ship(W: number): CrewScene {
       const flick = Math.floor(pen.T * 12) % 3;
       const length = 10 + st * 2 + flick * 3;
       const engines =
-        st >= 5 ? [36, 80, 124, 168] : st >= 2 ? [54, 104, 154] : [70, 150];
+        st >= 5 ? [-82, -38, 6, 50] : st >= 2 ? [-64, -14, 36] : [-48, 32];
+      const mid = (top + bottom) / 2;
       for (const y of engines) {
-        pen.stamp(`exhaust|${length}`, 0, y, [-4, 0, 32, 16], (at) => {
+        pen.stamp(`exhaust|${length}`, 0, mid + y, [-4, 0, 32, 16], (at) => {
           at.rect(28 - length, 0, length, 16, p.yellow);
           at.rect(28 - length * 0.7, 4, length * 0.7, 8, p.orange);
           at.rect(20, 4, 8, 8, p.flame);
@@ -1206,9 +1164,9 @@ function ship(W: number): CrewScene {
       pen.rect(xl, UP + 4, xr - xl, 12, p.deckTop);
       pen.rect(xl, LO, xr - xl, 18, p.deck);
       pen.rect(xl, LO + 4, xr - xl, 14, p.deckTop);
-      pen.rect(ladder - 26, 62, 4, LO - 62, p.slate);
-      pen.rect(ladder + 22, 62, 4, LO - 62, p.slate);
-      for (let y = 66; y < LO; y += 14)
+      pen.rect(ladder - 26, UP - 44, 4, LO - UP + 44, p.slate);
+      pen.rect(ladder + 22, UP - 44, 4, LO - UP + 44, p.slate);
+      for (let y = UP - 40; y < LO; y += 14)
         pen.rect(ladder - 26, y, 52, 3, p.slate);
       pen.rect(ladder - 30, UP, 60, 16, p.hull);
       for (let y = UP; y < UP + 16; y += 14)
@@ -1230,7 +1188,7 @@ function ship(W: number): CrewScene {
       ]);
       // Window frame.
       const wx = R.search[0];
-      pen.rect(wx - 26, 22, 132, 60, p.slate);
+      pen.rect(wx - 26, pane - 4, 132, 60, p.slate);
       // Stripes go on the hull and cargo piles up in the hold as the day
       // goes on.
       if (st >= 3) {
@@ -1265,7 +1223,8 @@ function ship(W: number): CrewScene {
         [-9, 0, 18, 6, p.slate],
         [-6, 6, 12, 4, p.steel],
         [-7, 10, 14, 2, p.console],
-        [-1, 12, 2, 8, p.slateLight],
+        // The mast reaches the antenna on the roof.
+        [-1, 12, 2, (UP - top - 14) / U - 12, p.slateLight],
       ]);
       pen.rect(tx - 4, 14, 8, 8, p.slateLight);
       // Archive cabinet, engine pipes, star map table.
@@ -1281,7 +1240,7 @@ function ship(W: number): CrewScene {
         [-9, 5, 18, 1, p.steel],
       ]);
     },
-    props(pen, crew, labels, words) {
+    props(pen, crew) {
       const p = pen.palette;
       const T = pen.T;
       const bashOn = Boolean(busy(crew, "bash"));
@@ -1304,15 +1263,15 @@ function ship(W: number): CrewScene {
       // telescope points out at the stars passing.
       const scopeOn = Boolean(busy(crew, "search"));
       const wx = R.search[0];
-      pen.rect(wx - 22, 26, 124, 52, p.bg);
-      pen.clip(wx - 22, 26, 124, 52, () => {
+      pen.rect(wx - 22, pane, 124, 52, p.bg);
+      pen.clip(wx - 22, pane, 124, 52, () => {
         starsOf(
           pen,
           stars
             .filter((_, n) => n % 3 === 0)
             .map((star) => [
               wx - 22 + (star.x % 124),
-              26 + (star.y % 52),
+              pane + (star.y % 52),
               star.s,
               star.o + 0.2,
             ]),
@@ -1320,11 +1279,12 @@ function ship(W: number): CrewScene {
         pen.stamp(
           `planet|${st}`,
           wx + 40 - 32 + Math.round(Math.sin(T * 0.2) * 6),
-          28,
+          pane + 2,
           [0, 0, 64, 48],
           (at) => paintPlanet(at, st),
         );
-        if (scopeOn) pixStar(pen, wx + 40 + Math.sin(T) * 34, 40, 3, p.yellow);
+        if (scopeOn)
+          pixStar(pen, wx + 40 + Math.sin(T) * 34, pane + 14, 3, p.yellow);
       });
       pen.stamp("telescope", wx, UP, [-20, -64, 32, 0], (at) => {
         for (let n = 0; n < 5; n += 1) {
@@ -1406,21 +1366,6 @@ function ship(W: number): CrewScene {
         );
       }
       pen.rect(mx - 28, LO - 72, 56, 48, rgba(p.blue, glow * 0.25));
-      label(pen, labels.bash, R.bash[0], 32, bashOn);
-      pen.text(
-        `${labels.search} · ${words.planets[st] ?? ""}`,
-        wx - 32,
-        40,
-        10.5,
-        rgba(p.muted, scopeOn ? 1 : 0.75),
-        600,
-        "right",
-      );
-      label(pen, labels.write, tx + 34, 30, Boolean(writer));
-      label(pen, labels.read, R.read[0], 136, readOn);
-      label(pen, labels.edit, R.edit[0], 136, editOn);
-      label(pen, labels.think, mx, 136, mapOn);
-      label(pen, words.hold, hold + 66, 136, false);
     },
     step(crew, dt) {
       // Writing fast speeds the ship up.
@@ -1459,7 +1404,7 @@ function ship(W: number): CrewScene {
 const MAX_FLOORS = 12;
 
 function site(W: number): CrewScene {
-  const FLOOR = 186;
+  const FLOOR = GROUND;
   const H = CREW_HEIGHT;
   const X = spread(
     {
@@ -1685,7 +1630,7 @@ function site(W: number): CrewScene {
       }
       pen.rects(W - 21, FLOOR, [[-1, 0, 1, 4, p.steel]]);
     },
-    props(pen, crew, labels) {
+    props(pen, crew) {
       const p = pen.palette;
       const T = pen.T;
       // The jib swings a beam over whenever a call finishes.
@@ -1774,14 +1719,6 @@ function site(W: number): CrewScene {
         pen.rect(X.search + 14, FLOOR - 13 * U, 80, 2, rgba(p.red, 0.45));
         pen.rect(X.search + 92, FLOOR - 13 * U - 2, 6, 6, p.red);
       }
-      stationLabels(pen, crew, labels, X, H - 8, [
-        "bash",
-        "read",
-        "edit",
-        "write",
-        "search",
-        "think",
-      ]);
     },
     step(crew, dt) {
       dirt = driver(crew)

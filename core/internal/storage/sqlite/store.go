@@ -8,7 +8,6 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"database/sql"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,6 +23,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/MoeForge/moego/base64"
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/accesstoken"
 	"github.com/QuantumNous/astrlink/core/internal/localkey"
@@ -398,7 +398,7 @@ func (store *Store) CreateAccessToken(ctx context.Context, candidate storagecont
 func (store *Store) ListAccessTokens(ctx context.Context) ([]storagecontract.AccessTokenMetadata, error) {
 	// This projection is intentionally metadata-only. In particular, neither
 	// token_hash nor local_access_token_secrets participates in this query.
-	rows, err := store.db.QueryContext(ctx, `SELECT id, name, name_key, token_hint, source, created_at
+	rows, err := store.db.QueryContext(ctx, `SELECT id, name, name_key, token_hint, source, created_at, service_scope, service_ids_json
 FROM local_access_tokens
 ORDER BY created_at, id`)
 	if err != nil {
@@ -425,7 +425,7 @@ func (store *Store) RevealAccessToken(ctx context.Context, id contract.AccessTok
 		return "", fmt.Errorf("%w: %v", storagecontract.ErrInvalidArgument, err)
 	}
 	row, err := store.readAccessTokenMaterial(store.db.QueryRowContext(ctx, `SELECT
-    t.id, t.name, t.name_key, t.token_hash, t.token_hint, t.source, t.created_at, s.token_value, s.sealed
+    t.id, t.name, t.name_key, t.token_hash, t.token_hint, t.source, t.created_at, t.service_scope, t.service_ids_json, s.token_value, s.sealed
 FROM local_access_tokens AS t
 LEFT JOIN local_access_token_secrets AS s ON s.token_id = t.id
 WHERE t.id = ?`, id))
@@ -456,18 +456,64 @@ func (store *Store) DeleteAccessToken(ctx context.Context, id contract.AccessTok
 	return nil
 }
 
+// UpdateAccessToken renames a token and replaces its provider scope. The
+// value, digest and hint stay as they are, so clients keep the token they hold.
+func (store *Store) UpdateAccessToken(ctx context.Context, id contract.AccessTokenID, update storagecontract.AccessTokenUpdate) (storagecontract.AccessTokenMetadata, error) {
+	if err := id.Validate(); err != nil {
+		return storagecontract.AccessTokenMetadata{}, fmt.Errorf("%w: %v", storagecontract.ErrInvalidArgument, err)
+	}
+	name, nameKey, err := normalizeAccessTokenName(update.Name)
+	if err != nil || name != update.Name || nameKey != update.NameKey {
+		return storagecontract.AccessTokenMetadata{}, fmt.Errorf("%w: access token name is not canonical", storagecontract.ErrInvalidArgument)
+	}
+	services := normalAccessTokenServices(update.Services)
+	if err := services.Validate(); err != nil {
+		return storagecontract.AccessTokenMetadata{}, fmt.Errorf("%w: %v", storagecontract.ErrInvalidArgument, err)
+	}
+	scope, serviceIDs, err := encodeAccessTokenServices(services)
+	if err != nil {
+		return storagecontract.AccessTokenMetadata{}, err
+	}
+	result, err := store.db.ExecContext(ctx, `UPDATE local_access_tokens
+SET name = ?, name_key = ?, service_scope = ?, service_ids_json = ?
+WHERE id = ? AND (name <> ? OR service_scope <> ? OR service_ids_json <> ?)`,
+		name, nameKey, scope, serviceIDs, id, name, scope, serviceIDs)
+	if err != nil {
+		var holder int
+		scanErr := store.db.QueryRowContext(ctx, `SELECT EXISTS(
+    SELECT 1 FROM local_access_tokens WHERE name_key = ? AND id <> ?
+)`, nameKey, id).Scan(&holder)
+		if scanErr == nil && holder == 1 {
+			return storagecontract.AccessTokenMetadata{}, fmt.Errorf("%w: access token name", storagecontract.ErrConflict)
+		}
+		return storagecontract.AccessTokenMetadata{}, fmt.Errorf("update access token: %w", err)
+	}
+	if _, err := result.RowsAffected(); err != nil {
+		return storagecontract.AccessTokenMetadata{}, fmt.Errorf("read access token update result: %w", err)
+	}
+	record, err := scanAccessTokenMetadata(store.db.QueryRowContext(ctx, `SELECT id, name, name_key, token_hint, source, created_at, service_scope, service_ids_json
+FROM local_access_tokens WHERE id = ?`, id))
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return storagecontract.AccessTokenMetadata{}, fmt.Errorf("%w: access token %q", storagecontract.ErrNotFound, id)
+		}
+		return storagecontract.AccessTokenMetadata{}, err
+	}
+	return record, nil
+}
+
 // FindAccessTokenByHash authenticates by token_hash alone. It never opens
 // the sealed token value, so the hot path needs no decryption and tokens keep
 // working when the stored values no longer decrypt (plan §5.7).
 func (store *Store) FindAccessTokenByHash(ctx context.Context, hash storagecontract.AccessTokenHash) (storagecontract.AccessTokenMetadata, error) {
-	var id, name, nameKey, hint, source, createdAt string
+	var id, name, nameKey, hint, source, createdAt, scope, serviceIDs string
 	var hashBytes []byte
 	var hasSecret bool
 	err := store.db.QueryRowContext(ctx, `SELECT
-    t.id, t.name, t.name_key, t.token_hash, t.token_hint, t.source, t.created_at,
+    t.id, t.name, t.name_key, t.token_hash, t.token_hint, t.source, t.created_at, t.service_scope, t.service_ids_json,
     EXISTS(SELECT 1 FROM local_access_token_secrets AS s WHERE s.token_id = t.id)
 FROM local_access_tokens AS t
-WHERE t.token_hash = ?`, hash[:]).Scan(&id, &name, &nameKey, &hashBytes, &hint, &source, &createdAt, &hasSecret)
+WHERE t.token_hash = ?`, hash[:]).Scan(&id, &name, &nameKey, &hashBytes, &hint, &source, &createdAt, &scope, &serviceIDs, &hasSecret)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return storagecontract.AccessTokenMetadata{}, fmt.Errorf("%w: access token hash", storagecontract.ErrNotFound)
@@ -475,7 +521,7 @@ WHERE t.token_hash = ?`, hash[:]).Scan(&id, &name, &nameKey, &hashBytes, &hint, 
 		return storagecontract.AccessTokenMetadata{}, err
 	}
 	defer clear(hashBytes)
-	metadata, err := decodeAccessTokenMetadata(id, name, nameKey, hint, source, createdAt)
+	metadata, err := decodeAccessTokenMetadata(id, name, nameKey, hint, source, createdAt, scope, serviceIDs)
 	if err != nil {
 		return storagecontract.AccessTokenMetadata{}, err
 	}
@@ -745,9 +791,14 @@ func (store *Store) insertAccessTokenTx(ctx context.Context, transaction *sql.Tx
 
 	createdAt := now.UTC()
 	createdAtText := createdAt.Format(time.RFC3339Nano)
+	services := normalAccessTokenServices(candidate.Services)
+	scope, serviceIDs, err := encodeAccessTokenServices(services)
+	if err != nil {
+		return storagecontract.AccessTokenMetadata{}, err
+	}
 	if _, err := transaction.ExecContext(ctx, `INSERT INTO local_access_tokens
-    (id, name, name_key, token_hash, token_hint, source, created_at)
-VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    (id, name, name_key, token_hash, token_hint, source, created_at, service_scope, service_ids_json)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		candidate.ID,
 		candidate.Name,
 		candidate.NameKey,
@@ -755,6 +806,8 @@ VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		candidate.Hint,
 		source,
 		createdAtText,
+		scope,
+		serviceIDs,
 	); err != nil {
 		var exists int
 		scanErr := transaction.QueryRowContext(ctx, `SELECT EXISTS(
@@ -781,6 +834,7 @@ VALUES (?, ?, 1)`, candidate.ID, sealed); err != nil {
 		Hint:      candidate.Hint,
 		Source:    source,
 		CreatedAt: createdAt,
+		Services:  services,
 	}, nil
 }
 
@@ -795,21 +849,21 @@ type storedAccessTokenMaterial struct {
 }
 
 func scanAccessTokenMetadata(scanner accessTokenScanner) (storagecontract.AccessTokenMetadata, error) {
-	var id, name, nameKey, hint, source, createdAt string
-	if err := scanner.Scan(&id, &name, &nameKey, &hint, &source, &createdAt); err != nil {
+	var id, name, nameKey, hint, source, createdAt, scope, serviceIDs string
+	if err := scanner.Scan(&id, &name, &nameKey, &hint, &source, &createdAt, &scope, &serviceIDs); err != nil {
 		return storagecontract.AccessTokenMetadata{}, fmt.Errorf("scan access token metadata: %w", err)
 	}
-	return decodeAccessTokenMetadata(id, name, nameKey, hint, source, createdAt)
+	return decodeAccessTokenMetadata(id, name, nameKey, hint, source, createdAt, scope, serviceIDs)
 }
 
 func (store *Store) readAccessTokenMaterial(scanner accessTokenScanner) (storedAccessTokenMaterial, error) {
-	var id, name, nameKey, hint, source, createdAt string
+	var id, name, nameKey, hint, source, createdAt, scope, serviceIDs string
 	var hashBytes, stored []byte
 	var sealed sql.NullBool
-	if err := scanner.Scan(&id, &name, &nameKey, &hashBytes, &hint, &source, &createdAt, &stored, &sealed); err != nil {
+	if err := scanner.Scan(&id, &name, &nameKey, &hashBytes, &hint, &source, &createdAt, &scope, &serviceIDs, &stored, &sealed); err != nil {
 		return storedAccessTokenMaterial{}, err
 	}
-	metadata, err := decodeAccessTokenMetadata(id, name, nameKey, hint, source, createdAt)
+	metadata, err := decodeAccessTokenMetadata(id, name, nameKey, hint, source, createdAt, scope, serviceIDs)
 	if err != nil {
 		clear(stored)
 		return storedAccessTokenMaterial{}, err
@@ -843,7 +897,7 @@ func (store *Store) readAccessTokenMaterial(scanner accessTokenScanner) (storedA
 	return storedAccessTokenMaterial{metadata: metadata, hash: hash, value: value}, nil
 }
 
-func decodeAccessTokenMetadata(id, name, nameKey, hint, source, createdAt string) (storagecontract.AccessTokenMetadata, error) {
+func decodeAccessTokenMetadata(id, name, nameKey, hint, source, createdAt, scope, serviceIDs string) (storagecontract.AccessTokenMetadata, error) {
 	tokenID := contract.AccessTokenID(id)
 	if err := tokenID.Validate(); err != nil {
 		return storagecontract.AccessTokenMetadata{}, fmt.Errorf("%w: %v", storagecontract.ErrInvalidRecord, err)
@@ -863,12 +917,17 @@ func decodeAccessTokenMetadata(id, name, nameKey, hint, source, createdAt string
 	if err != nil || parsedCreatedAt.IsZero() {
 		return storagecontract.AccessTokenMetadata{}, fmt.Errorf("%w: access token created_at", storagecontract.ErrInvalidRecord)
 	}
+	services, err := decodeAccessTokenServices(scope, serviceIDs)
+	if err != nil {
+		return storagecontract.AccessTokenMetadata{}, err
+	}
 	return storagecontract.AccessTokenMetadata{
 		ID:        tokenID,
 		Name:      canonicalName,
 		Hint:      hint,
 		Source:    tokenSource,
 		CreatedAt: parsedCreatedAt,
+		Services:  services,
 	}, nil
 }
 
@@ -889,6 +948,9 @@ func validateNewAccessToken(candidate storagecontract.NewAccessToken) error {
 	}
 	if candidate.Hint != accessTokenHint(candidate.Value) {
 		return fmt.Errorf("access token hint does not match value")
+	}
+	if err := normalAccessTokenServices(candidate.Services).Validate(); err != nil {
+		return err
 	}
 	return nil
 }
@@ -1019,3 +1081,36 @@ func rollbackOnError(transaction *sql.Tx, err *error) {
 var _ storagecontract.EndpointStore = (*Store)(nil)
 var _ storagecontract.AccessTokenStore = (*Store)(nil)
 var _ secretstore.SecretStore = (*Store)(nil)
+
+// normalAccessTokenServices reads the zero scope as unrestricted.
+func normalAccessTokenServices(services contract.AccessTokenServices) contract.AccessTokenServices {
+	if services.Scope == "" && len(services.ServiceIDs) == 0 {
+		return contract.AllAccessTokenServices()
+	}
+	if services.ServiceIDs == nil {
+		services.ServiceIDs = []contract.ServiceID{}
+	}
+	return services
+}
+
+func encodeAccessTokenServices(services contract.AccessTokenServices) (string, string, error) {
+	encoded, err := json.Marshal(services.ServiceIDs)
+	if err != nil {
+		return "", "", fmt.Errorf("encode access token providers: %w", err)
+	}
+	return string(services.Scope), string(encoded), nil
+}
+
+// decodeAccessTokenServices reads a stored scope. A selected scope may list
+// providers this device no longer has; they match nothing.
+func decodeAccessTokenServices(scope, serviceIDs string) (contract.AccessTokenServices, error) {
+	var ids []contract.ServiceID
+	if err := json.Unmarshal([]byte(serviceIDs), &ids); err != nil {
+		return contract.AccessTokenServices{}, fmt.Errorf("%w: access token providers", storagecontract.ErrInvalidRecord)
+	}
+	services := normalAccessTokenServices(contract.AccessTokenServices{Scope: contract.AccessTokenServiceScope(scope), ServiceIDs: ids})
+	if err := services.Validate(); err != nil {
+		return contract.AccessTokenServices{}, fmt.Errorf("%w: access token providers: %v", storagecontract.ErrInvalidRecord, err)
+	}
+	return services, nil
+}

@@ -92,6 +92,21 @@ describe("service terminal model", () => {
       suggestedModel(service({ models: ["gpt-5.5"] }), "codex", memory),
     ).toBe("");
     expect(suggestedModel(service({ models: [] }), "codex", memory)).toBe("");
+    // A Gemini provider lists its oldest model first; start on its newest.
+    expect(
+      suggestedModel(
+        service({
+          kind: "gemini",
+          models: [
+            "gemini-2.5-flash",
+            "gemini-3-pro-image",
+            "gemini-3.8-flash",
+          ],
+        }),
+        "claude",
+        memory,
+      ),
+    ).toBe("gemini-3.8-flash");
   });
 
   it("remembers each session's choices for the next one", () => {

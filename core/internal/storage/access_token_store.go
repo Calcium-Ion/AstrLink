@@ -29,6 +29,8 @@ type AccessTokenMetadata struct {
 	Hint      string                 `json:"hint"`
 	Source    AccessTokenSource      `json:"source"`
 	CreatedAt time.Time              `json:"created_at"`
+	// Services is the set of API providers the token may reach.
+	Services contract.AccessTokenServices `json:"-"`
 }
 
 type AccessTokenHash [32]byte
@@ -43,6 +45,16 @@ type NewAccessToken struct {
 	Hash    AccessTokenHash
 	Hint    string
 	Value   string
+	// Services is the provider scope the token starts with. The zero value
+	// is unrestricted.
+	Services contract.AccessTokenServices
+}
+
+// AccessTokenUpdate replaces a token's name and provider scope.
+type AccessTokenUpdate struct {
+	Name     string
+	NameKey  string
+	Services contract.AccessTokenServices
 }
 
 type AccessTokenStore interface {
@@ -50,6 +62,7 @@ type AccessTokenStore interface {
 	CreateAccessToken(context.Context, NewAccessToken) (AccessTokenMetadata, error)
 	ListAccessTokens(context.Context) ([]AccessTokenMetadata, error)
 	RevealAccessToken(context.Context, contract.AccessTokenID) (string, error)
+	UpdateAccessToken(context.Context, contract.AccessTokenID, AccessTokenUpdate) (AccessTokenMetadata, error)
 	DeleteAccessToken(context.Context, contract.AccessTokenID) error
 	FindAccessTokenByHash(context.Context, AccessTokenHash) (AccessTokenMetadata, error)
 }

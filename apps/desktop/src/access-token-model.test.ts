@@ -110,28 +110,39 @@ describe("access-token IPC contract", () => {
   });
 
   it("strictly parses list, create, and copy responses", () => {
+    // Older Core builds omit the scope; their tokens may use every provider.
+    const unlimited = { ...token, service_scope: "all", service_ids: [] };
     expect(parseAccessTokenPage({ items: [token], next_cursor: null })).toEqual(
-      { items: [token], next_cursor: null },
+      { items: [unlimited], next_cursor: null },
     );
     expect(
       parseAccessTokenCreateResult({
         token,
         access_token: accessToken,
       }),
-    ).toEqual({ token, access_token: accessToken });
+    ).toEqual({ token: unlimited, access_token: accessToken });
+    const limited = {
+      ...token,
+      service_scope: "selected",
+      service_ids: ["svc_a", "svc_b"],
+    };
+    expect(
+      parseAccessTokenPage({ items: [limited], next_cursor: null }).items,
+    ).toEqual([limited]);
     expect(parseAccessTokenCopied(true)).toBe(true);
     expect(parseAccessTokenCopied(false)).toBe(false);
   });
 
   it("reads where a token came from, as created when Core does not say", () => {
+    const scope = { service_scope: "all", service_ids: [] };
     const bootstrap = { ...token, source: "system_default" };
     expect(
       parseAccessTokenPage({ items: [bootstrap], next_cursor: null }).items,
-    ).toEqual([bootstrap]);
+    ).toEqual([{ ...bootstrap, ...scope }]);
     const { source: _source, ...older } = token;
     expect(
       parseAccessTokenPage({ items: [older], next_cursor: null }).items,
-    ).toEqual([token]);
+    ).toEqual([{ ...token, ...scope }]);
     expect(() =>
       parseAccessTokenPage({
         items: [{ ...token, source: "imported" }],

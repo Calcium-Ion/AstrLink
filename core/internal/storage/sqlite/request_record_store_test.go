@@ -91,10 +91,12 @@ func TestRequestRecordStoreInsertListFiltersAndPurge(t *testing.T) {
 	withToken.ID = "request_token_a"
 	withToken.StartedAt = start.Add(3 * time.Minute)
 	withToken.LocalAccessTokenID = &tokenA
+	withToken.ClientType = contract.ClientZed
 	otherToken := records[0]
 	otherToken.ID = "request_token_b"
 	otherToken.StartedAt = start.Add(4 * time.Minute)
 	otherToken.LocalAccessTokenID = &tokenB
+	otherToken.ClientType = contract.ClientGoose
 	for _, record := range []contract.RequestRecord{withToken, otherToken} {
 		if err := store.InsertRequestRecord(ctx, record); err != nil {
 			t.Fatalf("InsertRequestRecord(%s): %v", record.ID, err)
@@ -105,6 +107,35 @@ func TestRequestRecordStoreInsertListFiltersAndPurge(t *testing.T) {
 	})
 	if err != nil || len(tokenFiltered.Items) != 1 || tokenFiltered.Items[0].ID != "request_token_a" {
 		t.Fatalf("token filtered = %#v err=%v", tokenFiltered, err)
+	}
+	zed, goose := contract.ClientZed, contract.ClientGoose
+	sinceWritten := withToken.StartedAt
+	afterWritten := withToken.StartedAt.Add(time.Second)
+	for _, test := range []struct {
+		name   string
+		tokens []contract.AccessTokenID
+		client *contract.ClientType
+		from   *time.Time
+		want   []contract.RequestID
+	}{
+		{name: "token and client", tokens: []contract.AccessTokenID{tokenA}, client: &zed, from: &sinceWritten, want: []contract.RequestID{"request_token_a"}},
+		{name: "other client on token", tokens: []contract.AccessTokenID{tokenA}, client: &goose, from: &sinceWritten},
+		{name: "before since", tokens: []contract.AccessTokenID{tokenA}, client: &zed, from: &afterWritten},
+		{name: "client alone", client: &goose, want: []contract.RequestID{"request_token_b"}},
+	} {
+		page, err := store.ListRequestRecords(ctx, storagecontract.RequestRecordListOptions{
+			LocalAccessTokenIDs: test.tokens, ClientType: test.client, From: test.from,
+		})
+		if err != nil {
+			t.Fatalf("%s: %v", test.name, err)
+		}
+		got := make([]contract.RequestID, 0, len(page.Items))
+		for _, item := range page.Items {
+			got = append(got, item.ID)
+		}
+		if fmt.Sprint(got) != fmt.Sprint(test.want) {
+			t.Fatalf("%s: records = %v, want %v", test.name, got, test.want)
+		}
 	}
 
 	multiTokenFiltered, err := store.ListRequestRecords(ctx, storagecontract.RequestRecordListOptions{
@@ -748,6 +779,66 @@ func TestPurgeRequestSessionsDeletesWholeConversations(t *testing.T) {
 	if len(page.Items) != 2 || page.Items[0].ID != live || page.Items[0].TurnCount != 1 ||
 		page.Items[0].Status != contract.SessionStatusPending || page.Items[1].ID != kept {
 		t.Fatalf("sessions after purge = %+v", page.Items)
+	}
+}
+
+// A purge that fails after deleting audit parts and cursors leaves every one
+// of them in place: the whole purge is one transaction.
+func TestPurgeRequestRecordsFailingMidwayKeepsEverything(t *testing.T) {
+	store := openTestStore(t, filepath.Join(t.TempDir(), "purge-atomic.db"))
+	defer store.Close()
+	ctx := context.Background()
+	key, err := store.GetOrCreateAuditKey(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := time.Date(2026, 11, 10, 9, 0, 0, 0, time.UTC)
+	session := contract.SessionID("session_atomic")
+	record := contract.RequestRecord{
+		ID: "request_atomic", SessionID: &session, StartedAt: start, CompletedAt: ptrTime(start.Add(time.Second)),
+		Status: contract.RequestStatusSucceeded, InputProtocol: contract.ProtocolOpenAIResponses,
+		Audit:   contract.NotCapturedAuditSummary(),
+		Cursors: []contract.SessionCursor{{Kind: contract.SessionCursorEchoID, Direction: contract.SessionCursorOut, Value: "call_atomic_cursor"}},
+	}
+	if err := store.InsertRequestRecord(ctx, record); err != nil {
+		t.Fatal(err)
+	}
+	nonce, ciphertext, err := storagecontract.SealAuditBlob(key, []byte(`{"input":"hello"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.InsertAuditBlob(ctx, storagecontract.AuditBlob{
+		RequestID: record.ID, Direction: storagecontract.AuditDirectionRequest,
+		MediaType: "application/json", Nonce: nonce, Ciphertext: ciphertext, CapturedBytes: 17,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// The record rows go last, after the audit parts and cursors.
+	if _, err := store.db.Exec(`CREATE TRIGGER purge_fails_on_records BEFORE DELETE ON request_records
+BEGIN SELECT RAISE(ABORT, 'purge failed midway'); END`); err != nil {
+		t.Fatal(err)
+	}
+	before := start.Add(time.Hour)
+	for _, request := range []contract.PurgeRequest{
+		{Scope: contract.PurgeScopeAll, Confirm: true},
+		{Scope: contract.PurgeScopeBefore, Before: &before, Confirm: true},
+		{Scope: contract.PurgeScopeSessions, SessionIDs: []contract.SessionID{session}, Confirm: true},
+	} {
+		if _, err := store.PurgeRequestRecords(ctx, request); err == nil {
+			t.Fatalf("purge %s succeeded through the failing trigger", request.Scope)
+		}
+		if _, err := store.GetRequestRecord(ctx, record.ID); err != nil {
+			t.Fatalf("record after failed %s purge: %v", request.Scope, err)
+		}
+		var cursors, blobs int
+		if err := store.db.QueryRow(`SELECT
+    (SELECT COUNT(*) FROM request_record_cursors WHERE request_id = ?1),
+    (SELECT COUNT(*) FROM audit_blobs WHERE request_id = ?1)`, record.ID).Scan(&cursors, &blobs); err != nil {
+			t.Fatal(err)
+		}
+		if cursors != 1 || blobs != 1 {
+			t.Fatalf("after failed %s purge: cursors=%d audit parts=%d, want 1 and 1", request.Scope, cursors, blobs)
+		}
 	}
 }
 

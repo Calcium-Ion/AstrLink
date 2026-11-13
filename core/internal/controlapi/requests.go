@@ -1,7 +1,7 @@
 package controlapi
 
 import (
-	"encoding/base64"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +14,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/MoeForge/moego/base64"
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/storage"
 )
@@ -37,6 +38,7 @@ type requestRecordPageResponse struct {
 func (handler *Handler) registerRequestRecordRoutes() {
 	handler.mux.HandleFunc(UsageSummaryPath, handler.authenticated(handler.getUsageSummary, RoleObserver))
 	handler.mux.HandleFunc(PrivacySummaryPath, handler.authenticated(handler.getPrivacySummary, RoleObserver))
+	handler.mux.HandleFunc(ImageCompressionTotalsPath, handler.authenticated(handler.getImageCompressionTotals, RoleObserver))
 	handler.mux.HandleFunc(AccessTokenUsagePath, handler.authenticated(handler.listAccessTokenUsage, RoleObserver))
 	handler.mux.HandleFunc(RequestsPurgePath, handler.authenticated(handler.purgeRequestRecords, RoleOperator))
 	handler.mux.HandleFunc(RequestSessionsPath, handler.authenticated(handler.requestSessionCollection, RoleObserver))
@@ -131,6 +133,9 @@ func parseRequestSessionListOptions(request *http.Request) (storage.RequestSessi
 	query.Del("kind")
 	if query.Has("q") {
 		return storage.RequestSessionListOptions{}, fmt.Errorf("q is only supported on request records")
+	}
+	if query.Has("client_type") {
+		return storage.RequestSessionListOptions{}, fmt.Errorf("client_type is only supported on request records")
 	}
 	recordOptions, err := parseRequestRecordQuery(query)
 	if err != nil {
@@ -763,7 +768,12 @@ func (handler *Handler) purgeRequestRecords(writer http.ResponseWriter, request 
 		writeError(writer, http.StatusBadRequest, "invalid_purge_request", err.Error())
 		return
 	}
-	result, err := handler.requestRecords.PurgeRequestRecords(request.Context(), input)
+	// One transaction deletes everything chosen or nothing. A large history
+	// takes a minute or more, longer than a client may wait, so a purge that
+	// started finishes even when the caller disconnects; rolling it back would
+	// leave such a history impossible to clear. A Core that stops before the
+	// commit still leaves every record in place.
+	result, err := handler.requestRecords.PurgeRequestRecords(context.WithoutCancel(request.Context()), input)
 	if err != nil {
 		handler.writeRequestRecordStoreError(writer, err)
 		return
@@ -778,7 +788,7 @@ func parseRequestRecordListOptions(request *http.Request) (storage.RequestRecord
 func parseRequestRecordQuery(query url.Values) (storage.RequestRecordListOptions, error) {
 	for name, values := range query {
 		switch name {
-		case "limit", "cursor", "from", "to", "protocol", "service_id", "status", "q":
+		case "limit", "cursor", "from", "to", "protocol", "service_id", "status", "q", "client_type":
 			if len(values) != 1 {
 				return storage.RequestRecordListOptions{}, fmt.Errorf("query parameter must occur once")
 			}
@@ -883,6 +893,13 @@ func parseRequestRecordQuery(query url.Values) (storage.RequestRecordListOptions
 			return options, fmt.Errorf("invalid q filter")
 		}
 		options.Query = text
+	}
+	if value := query.Get("client_type"); value != "" {
+		client := contract.ClientType(value)
+		if !client.Valid() {
+			return options, fmt.Errorf("invalid client_type filter")
+		}
+		options.ClientType = &client
 	}
 	return options, nil
 }

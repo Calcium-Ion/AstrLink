@@ -2,7 +2,6 @@ package ingress
 
 import (
 	"bytes"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/MoeForge/moego/base64"
 	"golang.org/x/image/webp"
 
 	"github.com/QuantumNous/astrlink/core/contract"

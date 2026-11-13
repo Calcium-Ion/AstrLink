@@ -1,7 +1,7 @@
 import { CLIENT_TYPES, type ClientType } from "./request-record-model";
 import {
   clientSeriesColor,
-  modelSeriesColor,
+  modelSeriesColors,
   MUTED_SERIES_COLOR,
 } from "./series-colors";
 import type { UsageGroup, UsageSummary } from "./usage-range";
@@ -34,6 +34,7 @@ export interface StarTrailLegend {
 /**
  * The top models by tokens, each in the color its arcs use, and one muted
  * row for every other model. Calls without a model always fold into the rest.
+ * Families on the disc never share a color; see `modelSeriesColors`.
  */
 export function starTrailLegend(
   byModel: readonly UsageGroup[],
@@ -72,10 +73,9 @@ export function starTrailLegend(
     color,
     folded: count,
   });
+  const colors = modelSeriesColors(named.map((group) => group.id!));
   return {
-    rows: named.map((group, index) =>
-      row(group, index, modelSeriesColor(group.id), 0),
-    ),
+    rows: named.map((group, index) => row(group, index, colors[index], 0)),
     rest: rest
       ? row(rest, named.length, MUTED_SERIES_COLOR, folded.length)
       : null,

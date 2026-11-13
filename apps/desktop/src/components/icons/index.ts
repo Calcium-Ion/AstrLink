@@ -28,6 +28,7 @@ export { Fingerprint } from "./fingerprint";
 export { Flask } from "./flask";
 export { FoldHorizontal } from "./fold-horizontal";
 export { GripVertical } from "./grip-vertical";
+export { Hand } from "./hand";
 export { Home } from "./home";
 export { Hourglass } from "./hourglass";
 export { ImageDown } from "./image-down";

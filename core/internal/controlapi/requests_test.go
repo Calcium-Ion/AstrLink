@@ -2,6 +2,7 @@ package controlapi
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/astrlink/core/contract"
+	"github.com/QuantumNous/astrlink/core/internal/storage"
 )
 
 func TestParseRequestRecordQueryAllowsOnlyRepeatedTokenFilters(t *testing.T) {
@@ -119,7 +121,7 @@ func TestRequestRecordControlAPI(t *testing.T) {
 		ID: "request_ctrl", StartedAt: start, CompletedAt: &completed,
 		Status: contract.RequestStatusSucceeded, InputProtocol: contract.ProtocolOpenAIResponses,
 		RequestedModel: &model, HTTPStatus: &status, LatencyMs: &latency,
-		Audit: contract.NotCapturedAuditSummary(),
+		Audit: contract.NotCapturedAuditSummary(), ClientType: contract.ClientZed,
 		Usage: &contract.Usage{InputTokens: 1, OutputTokens: 1, TotalTokens: 2},
 		PrivacyRestore: &contract.PrivacyRestoreSummary{
 			Enabled: true, MappingCount: 1, RestoredCount: 2,
@@ -153,6 +155,9 @@ func TestRequestRecordControlAPI(t *testing.T) {
 		RequestsPath + "?model=other-model":                           0,
 		RequestSessionsPath + "?model=other-model&model=public-alias": 1,
 		RequestSessionsPath + "?model=other-model":                    0,
+		RequestsPath + "?client_type=zed&from=2026-07-25T12:00:00Z":   1,
+		RequestsPath + "?client_type=zed&from=2026-07-25T12:00:01Z":   0,
+		RequestsPath + "?client_type=goose":                           0,
 	} {
 		response := requestRecordHTTP(t, handler, http.MethodGet, path, "", "")
 		if response.Code != http.StatusOK {
@@ -297,6 +302,46 @@ func TestRequestSessionControlAPI(t *testing.T) {
 	}
 }
 
+// A large purge outlasts the desktop's wait. Once started it finishes, so a
+// caller that gave up does not throw away the work it asked for.
+func TestRequestPurgeFinishesAfterCallerLeaves(t *testing.T) {
+	store, err := openControlTestStore(t, context.Background(), filepath.Join(t.TempDir(), "astrlink.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	handler, err := NewWithDependencies(contract.VersionResponse{
+		CoreVersion: "0.0.0-test", ControlAPIVersion: "v1", ProtocolContractVersion: "v1",
+	}, Dependencies{ServiceStore: store, RequestRecords: store, ControlToken: "control-token-123456"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := time.Date(2026, 11, 10, 9, 0, 0, 0, time.UTC)
+	completed := start.Add(time.Second)
+	if err := store.InsertRequestRecord(context.Background(), contract.RequestRecord{
+		ID: "request_purge_left", StartedAt: start, CompletedAt: &completed,
+		Status: contract.RequestStatusSucceeded, InputProtocol: contract.ProtocolOpenAIResponses,
+		Audit: contract.NotCapturedAuditSummary(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	gone, cancel := context.WithCancel(context.Background())
+	cancel()
+	request := httptest.NewRequestWithContext(gone, http.MethodPost, RequestsPurgePath,
+		strings.NewReader(`{"scope":"all","confirm":true}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer control-token-123456")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("purge status=%d body=%s", response.Code, response.Body.String())
+	}
+	if _, err := store.GetRequestRecord(context.Background(), "request_purge_left"); !errors.Is(err, storage.ErrNotFound) {
+		t.Fatalf("record after purge: err=%v, want not found", err)
+	}
+}
+
 func requestRecordHTTP(
 	t *testing.T,
 	handler *Handler,
@@ -335,5 +380,25 @@ func TestParseRequestRecordQueryValidatesSearchText(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, RequestSessionsPath+"?q=x", nil)
 	if _, err := parseRequestSessionListOptions(request); err == nil {
 		t.Fatal("q on request sessions was accepted")
+	}
+}
+
+func TestParseRequestRecordQueryValidatesClientType(t *testing.T) {
+	options, err := parseRequestRecordQuery(url.Values{"client_type": {"goose"}})
+	if err != nil || options.ClientType == nil || *options.ClientType != contract.ClientGoose {
+		t.Fatalf("options = %#v err=%v", options, err)
+	}
+	for _, values := range [][]string{
+		{"future_client"},
+		{"Zed"},
+		{"zed", "goose"},
+	} {
+		if _, err := parseRequestRecordQuery(url.Values{"client_type": values}); err == nil {
+			t.Fatalf("client_type=%q was accepted", values)
+		}
+	}
+	request := httptest.NewRequest(http.MethodGet, RequestSessionsPath+"?client_type=zed", nil)
+	if _, err := parseRequestSessionListOptions(request); err == nil {
+		t.Fatal("client_type on request sessions was accepted")
 	}
 }
