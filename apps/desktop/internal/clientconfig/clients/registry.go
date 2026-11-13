@@ -31,5 +31,6 @@ func init() {
 		Crush,
 		Cline,
 		Zed,
+		Goose,
 	)
 }
