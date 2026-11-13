@@ -1,12 +1,13 @@
-/* The star map's stage: a star in a night sky with its bodies round it,
- * lit in the logo's tide. Colors come from the --star-* tokens in
- * styles/globals.css. These rules are unlayered, so they win over the
+/* The star map's stage: a star with its bodies round it, on paper by day
+ * and in a night sky in the dark theme, lit in the logo's tide. Colors,
+ * shadows and glows come from the --star-* tokens in styles/globals.css. These rules are unlayered, so they win over the
  * Button utilities a body is built on; they set only paint, never the size
  * or spacing a caller gives.
  */
 
 .star-stage {
   background: var(--star-sky);
+  box-shadow: inset 0 0 0 1px var(--star-frame);
   color: var(--star-ink);
 }
 
@@ -30,7 +31,7 @@
   width: 1px;
   height: 1px;
   border-radius: 9999px;
-  color: var(--star-ink);
+  color: var(--star-dust);
   opacity: 0.35;
 }
 
@@ -126,8 +127,9 @@
   inset: -85%;
   background: radial-gradient(
     closest-side,
-    color-mix(in srgb, var(--star-sun) 55%, transparent),
-    color-mix(in srgb, var(--star-sun) 18%, transparent) 55%,
+    color-mix(in srgb, var(--star-sun) var(--star-corona-inner), transparent),
+    color-mix(in srgb, var(--star-sun) var(--star-corona-outer), transparent)
+      55%,
     transparent
   );
   animation: star-stage-corona 6s ease-in-out infinite;
@@ -142,8 +144,10 @@
     var(--star-sun)
   );
   box-shadow:
-    0 0 32px 6px color-mix(in srgb, var(--star-sun) 65%, transparent),
-    0 0 90px 20px color-mix(in srgb, var(--star-sun) 25%, transparent);
+    0 0 32px 6px
+      color-mix(in srgb, var(--star-sun) var(--star-halo-near), transparent),
+    0 0 90px 20px
+      color-mix(in srgb, var(--star-sun) var(--star-halo-far), transparent);
 }
 
 .star-stage-sun > * {
@@ -151,7 +155,8 @@
   z-index: 1;
 }
 
-/* A body: a sphere lit from the star's side, glowing in its color. */
+/* A body: a sphere lit from the star's side, glowing in its color at night
+ * and casting a soft shadow of it by day. */
 .star-stage-sphere {
   position: relative;
   display: block;
@@ -160,9 +165,18 @@
     circle at var(--star-light-x) var(--star-light-y),
     color-mix(in srgb, #fff 70%, var(--star-sphere)),
     var(--star-sphere) 42%,
-    color-mix(in srgb, #000 65%, var(--star-sphere))
+    color-mix(
+      in srgb,
+      var(--star-shade) var(--star-shade-depth),
+      var(--star-sphere)
+    )
   );
-  box-shadow: 0 0 14px color-mix(in srgb, var(--star-sphere) 50%, transparent);
+  box-shadow: var(--star-glow)
+    color-mix(
+      in srgb,
+      var(--star-sphere) var(--star-glow-strength),
+      transparent
+    );
   transition: box-shadow 250ms ease;
 }
 
@@ -171,7 +185,11 @@
     circle at var(--star-light-x) var(--star-light-y),
     color-mix(in srgb, #fff 25%, var(--star-off)),
     var(--star-off) 45%,
-    color-mix(in srgb, #000 70%, var(--star-off))
+    color-mix(
+      in srgb,
+      var(--star-shade) var(--star-shade-depth),
+      var(--star-off)
+    )
   );
   box-shadow: none;
   opacity: 0.7;
@@ -223,13 +241,18 @@
 }
 
 .star-stage-label {
-  text-shadow: 0 1px 3px rgb(0 0 0 / 85%);
+  text-shadow: var(--star-label-halo);
 }
 
 .star-stage-body:hover .star-stage-sphere,
 .star-stage-body[data-focus="lit"] .star-stage-sphere {
   box-shadow:
-    0 0 22px color-mix(in srgb, var(--star-sphere) 75%, transparent),
+    var(--star-glow-lit)
+      color-mix(
+        in srgb,
+        var(--star-sphere) var(--star-glow-lit-strength),
+        transparent
+      ),
     0 0 0 2px color-mix(in srgb, var(--star-lit) 60%, transparent);
 }
 
@@ -247,7 +270,7 @@
   border: 1px solid var(--star-mark-tone, var(--star-line));
   background: var(--star-surface);
   color: var(--star-ink);
-  box-shadow: 0 10px 26px rgb(0 0 0 / 35%);
+  box-shadow: var(--star-mark-shadow);
   transition:
     opacity 250ms ease,
     border-color 250ms ease,
@@ -274,7 +297,7 @@
   border: 1px solid var(--star-line);
   border-radius: var(--radius-lg);
   background: var(--star-surface);
-  box-shadow: 0 18px 40px rgb(0 0 0 / 45%);
+  box-shadow: var(--star-card-shadow);
   color: var(--star-ink);
 }
 

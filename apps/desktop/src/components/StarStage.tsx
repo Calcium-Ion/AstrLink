@@ -429,7 +429,10 @@ export function StarStage({
                 <radialGradient id={`${ids}-disc`}>
                   <stop
                     offset="0%"
-                    style={{ stopColor: "var(--star-sun)", stopOpacity: 0.28 }}
+                    style={{
+                      stopColor: "var(--star-sun)",
+                      stopOpacity: "var(--star-disc)",
+                    }}
                   />
                   <stop
                     offset="100%"
