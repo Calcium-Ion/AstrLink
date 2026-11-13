@@ -76,6 +76,7 @@ dependencies = [
  "block2",
  "chrono",
  "core-foundation 0.10.1",
+ "dispatch2",
  "dunce",
  "getrandom 0.2.17",
  "gtk",

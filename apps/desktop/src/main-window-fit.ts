@@ -36,16 +36,24 @@ export function resetInitialWindowFitForTests(): void {
 }
 
 /**
+ * The two modules the opening window is fitted to: the usage summary and
+ * the live crew's scene, in either order. Any other pair on top leaves the
+ * opening height alone.
+ */
+const FITTED_MODULES = ["usage", "live-crew"];
+
+/**
  * The window's inner height, in whole CSS pixels, that ends right where the
- * overview's third module (or the footer) begins, so the first two modules
- * fit and nothing of the next row shows. Measured against the scroller as
- * if it were scrolled to the top, so the chrome around it needs no fixed
- * numbers. Null while the first two modules are not laid out yet.
+ * overview's third module (or the footer) begins, so the usage summary and
+ * the live crew fit and nothing of the next row shows. Measured against the
+ * scroller as if it were scrolled to the top, so the chrome around it needs
+ * no fixed numbers. Null while the first two modules are not laid out yet;
+ * `"other-modules"` when they are not that pair.
  */
 export function measureInitialWindowHeight(
   scroller: HTMLElement,
   innerHeight: number,
-): number | null {
+): number | "other-modules" | null {
   const list = scroller
     .querySelector('[data-slot="ordered-module-content"]')
     ?.closest("[data-ordered-item]")?.parentElement;
@@ -58,16 +66,22 @@ export function measureInitialWindowHeight(
   );
   const fitted = items.slice(0, 2);
   const last = fitted.at(-1);
-  if (!last) return null;
+  if (!last || fitted.length < FITTED_MODULES.length) return null;
+  if (
+    !FITTED_MODULES.every((id) =>
+      fitted.some((item) => item.getAttribute("data-ordered-item") === id),
+    )
+  ) {
+    return "other-modules";
+  }
   // The crew sizes its canvas from its own width a frame after mounting.
   const crew = fitted.find(
     (item) => item.getAttribute("data-ordered-item") === "live-crew",
   );
   if (
-    crew &&
     !(
       (crew
-        .querySelector('[data-slot="live-crew-canvas"]')
+        ?.querySelector('[data-slot="live-crew-canvas"]')
         ?.getBoundingClientRect().height ?? 0) > 0
     )
   ) {
@@ -111,12 +125,13 @@ function useDocumentVisible(): boolean {
 }
 
 /**
- * Shortens the opening main window to the overview's first two modules
- * once their size settles: the usage panel shows data (a loading, blocked
- * or failed panel has another height), the live crew has drawn, and two
- * samples two animation frames apart agree. The host only shrinks the
- * window it placed at startup and the operator left alone; a window too
- * short for both modules keeps its height.
+ * Shortens the opening main window to the overview's usage summary and live
+ * crew when those two lead the page, once their size settles: the usage
+ * panel shows data (a loading, blocked or failed panel has another height),
+ * the live crew has drawn, and two samples two animation frames apart
+ * agree. Other modules on top leave the window as it opened. The host only
+ * shrinks the window it placed at startup and the operator left alone; a
+ * window too short for both modules keeps its height.
  */
 export function useInitialWindowFit(
   anchor: RefObject<HTMLElement | null>,
@@ -173,6 +188,10 @@ export function useInitialWindowFit(
         return;
       }
       const height = measureInitialWindowHeight(scroller, window.innerHeight);
+      if (height === "other-modules") {
+        giveUp();
+        return;
+      }
       if (height === null) {
         // Wait for the resize that lays the modules out.
         previous = null;

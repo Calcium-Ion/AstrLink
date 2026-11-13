@@ -60,6 +60,8 @@ zeroize = { version = "=1.9.0", features = ["serde"] }
 # objc2 crates are the ones AppKit is bound with, already in the tree.
 block2 = "=0.6.2"
 core-foundation = "=0.10.1"
+# tao applies window sizes on the main dispatch queue; reads queue behind them.
+dispatch2 = "=0.3.1"
 mac-notification-sys = "=0.6.15"
 objc2 = "=0.6.4"
 objc2-foundation = { version = "=0.3.2", default-features = false, features = [

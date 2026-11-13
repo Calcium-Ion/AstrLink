@@ -174,16 +174,49 @@ pub fn fit_to_monitor(window: &WebviewWindow) -> Result<(), Box<dyn std::error::
     window.set_size(geometry.inner_size)?;
     window.set_position(geometry.position)?;
     remembered().minimum_size = Some(geometry.minimum_size);
-    // Read back what the platform applied; it may round a scaled size. A
-    // window whose place cannot be read keeps its opening height.
-    *pending_content_fit() = match (window.outer_position(), window.inner_size()) {
-        (Ok(position), Ok(size)) => Some(PendingContentFit {
-            placed: Placement { position, size },
-            minimum_height: geometry.minimum_size.height,
-        }),
-        _ => None,
-    };
+    let minimum_height = geometry.minimum_size.height;
+    *pending_content_fit() = None;
+    after_placement_applies(window, move |window| {
+        // Read back what the platform applied; it may round a scaled size. A
+        // window whose place cannot be read keeps its opening height.
+        *pending_content_fit() = match (window.outer_position(), window.inner_size()) {
+            (Ok(position), Ok(size)) => Some(PendingContentFit {
+                placed: Placement { position, size },
+                minimum_height,
+            }),
+            _ => None,
+        };
+    });
     Ok(())
+}
+
+/// Runs `read` once the size and position just requested have taken effect.
+/// macOS applies them on the main dispatch queue after the main thread's
+/// current call returns, so reading them at once still sees the window as
+/// it was built, and the overview's fit would take that for a window the
+/// operator moved. Requests from another thread first travel through the
+/// event loop; a task sent the same way follows them, and a block it queues
+/// on the main dispatch queue reads the new place.
+#[cfg(target_os = "macos")]
+fn after_placement_applies(
+    window: &WebviewWindow,
+    read: impl FnOnce(&WebviewWindow) + Send + 'static,
+) {
+    let target = window.clone();
+    let queued = window.run_on_main_thread(move || {
+        dispatch2::DispatchQueue::main().exec_async(move || read(&target));
+    });
+    if let Err(error) = queued {
+        eprintln!("unable to read where AstrLink placed its window: {error}");
+    }
+}
+
+/// Windows applies a size and position before the call returns. Where they
+/// land later, as on Linux, the read sees the window as built and the
+/// overview leaves the opening height alone.
+#[cfg(not(target_os = "macos"))]
+fn after_placement_applies(window: &WebviewWindow, read: impl FnOnce(&WebviewWindow)) {
+    read(window);
 }
 
 /// Shortens a window placed by `fit_to_monitor` to the overview's first two
