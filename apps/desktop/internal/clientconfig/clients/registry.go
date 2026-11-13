@@ -16,5 +16,6 @@ func init() {
 		Codex,
 		Gemini,
 		OpenCode,
+		OpenClaw,
 	)
 }
