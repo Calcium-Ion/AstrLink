@@ -28,11 +28,6 @@ export interface CurrentWindow {
   /** Calls handler after the window was resized or changed state. */
   onResized(handler: () => void): Promise<UnlistenFn>;
   onFocusChanged(handler: (event: Event<boolean>) => void): Promise<UnlistenFn>;
-  /**
-   * Frameless windows resize from their own edges, so this only resolves;
-   * it stays until the title bar drops its resize handles.
-   */
-  startResizeDragging(direction: string): Promise<void>;
 }
 
 const appWindow: CurrentWindow = {
@@ -48,7 +43,6 @@ const appWindow: CurrentWindow = {
   onResized: async (handler) => events.windowResized.on(() => handler()),
   onFocusChanged: async (handler) =>
     onWindowActive((focused) => handler({ payload: focused })),
-  startResizeDragging: async () => {},
 };
 
 /** Returns the window hosting the page; throws outside the desktop app. */

@@ -60,6 +60,9 @@ type Host struct {
 	// stop ends the background polls; stopped is closed once they ended.
 	stop    context.CancelFunc
 	stopped chan struct{}
+	// mainOpened takes over each main window as it is built
+	// (OnMainWindowOpened).
+	mainOpened func(w *mygo.Window)
 
 	mu   sync.Mutex
 	main *mygo.Window
@@ -124,6 +127,11 @@ func (h *Host) OnPrivacyReleasesRead(fn func()) {
 
 // SetAutostart replaces the login item, for the area that owns it.
 func (h *Host) SetAutostart(autostart Autostart) { h.autostart = autostart }
+
+// OnMainWindowOpened hands each main window, hidden as it is built, to fn,
+// which places and shows it: at Start, and again in OpenMainWindow. Without
+// it the window shows once its page is ready. Call it before Start.
+func (h *Host) OnMainWindowOpened(fn func(w *mygo.Window)) { h.mainOpened = fn }
 
 func (h *Host) run(hooks *[]func()) {
 	h.mu.Lock()
@@ -276,14 +284,23 @@ func (h *Host) Start() {
 	}
 	mygo.App.OnWillQuit(func(*mygo.QuitEvent) { h.shutdown() })
 
-	w := h.openMainWindow()
+	h.OpenMainWindow()
 	h.mu.Lock()
-	h.main = w
 	started := h.started
 	h.mu.Unlock()
 	for _, fn := range started {
 		fn()
 	}
+}
+
+// OpenMainWindow builds the main window: at Start, and again after the
+// hidden one was released.
+func (h *Host) OpenMainWindow() *mygo.Window {
+	w := h.openMainWindow()
+	h.mu.Lock()
+	h.main = w
+	h.mu.Unlock()
+	return w
 }
 
 // reconcileAutostart makes the login item match the preference, which a
@@ -386,7 +403,11 @@ func (h *Host) openMainWindow() *mygo.Window {
 	}
 	w := mygo.NewWindow(options)
 	Register(w, MainLabel)
-	w.OnReadyToShow(w.Show)
+	if h.mainOpened != nil {
+		h.mainOpened(w)
+	} else {
+		w.OnReadyToShow(w.Show)
+	}
 	return w
 }
 

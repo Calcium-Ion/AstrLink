@@ -3218,6 +3218,7 @@
   "host": {
     "tray": {
       "show": "AstrLinkを開く",
+      "panel": "トレイパネルを開く",
       "settings": "設定…",
       "quit": "AstrLinkを終了",
       "copied": "コピーしました",

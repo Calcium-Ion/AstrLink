@@ -1084,7 +1084,10 @@ export function TrayPopoverWindow() {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") close();
+      if (event.key !== "Escape") return;
+      // Handled here, so the window's own Escape does not close it twice.
+      event.preventDefault();
+      close();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);

@@ -16,7 +16,7 @@ import {
 
 /**
  * What the tray popover renders. Mirrors `TrayStateSnapshot` in
- * `src-tauri/src/tray.rs`; the host is the single source of truth for both
+ * `internal/ui/tray_model.go`; the host is the single source of truth for both
  * the popover and the settings preview.
  */
 export interface TrayCoreView {

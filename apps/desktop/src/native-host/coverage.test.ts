@@ -10,23 +10,7 @@ import { eventTable } from "./events";
 // table fails, so a list never outlives its commands.
 const pendingCommands: Record<string, string[]> = {
   // Windows, the tray, inspectors, files and the currency.
-  windows: [
-    "close_trajectory_inspectors",
-    "display_currency",
-    "fit_main_window_to_content",
-    "save_text_file",
-    "set_main_window_unsaved",
-    "set_trajectory_inspector_pinned",
-    "set_trajectory_inspector_wide",
-    "show_trajectory_inspector",
-    "take_tray_navigation",
-    "trajectory_inspector_state",
-    "tray_action",
-    "tray_popover_hide",
-    "tray_popover_resize",
-    "tray_state",
-    "update_trajectory_inspector",
-  ],
+  windows: [],
   // Agent tools, imports, terminals and local client updates.
   agents: [
     "agent_debug_status",

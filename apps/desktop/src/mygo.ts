@@ -159,6 +159,14 @@ export interface ConversionEngineDescriptor {
 
 export type ConversionQuality = "good" | "fair" | "discouraged";
 
+/** CoreOp is a gateway control of the popover. */
+export type CoreOp = "start" | "stop" | "restart";
+
+export interface CostDigest {
+  amount_usd: number;
+  unpriced: number;
+}
+
 /** CurrentModels are the models a client's config holds now. */
 export interface CurrentModels {
   model?: string;
@@ -189,6 +197,25 @@ export interface DataBackupFile {
 export interface DiffLine {
   kind: LineKind;
   text: string;
+}
+
+/** Display is what the interface shows amounts in, sent to every window. */
+export interface Display {
+  /**
+   * Code is the currency amounts are shown in; USD until Wanted has a
+   * rate.
+   */
+  code: string;
+  symbol: string;
+  digits: number;
+  /** PerUSD is units of Code per US dollar. */
+  per_usd: number;
+  /** RateDate is the day the rate was published; nil for USD. */
+  rate_date: string | null;
+  /** Wanted is the currency the setting resolves to. */
+  wanted: string;
+  /** System is what the automatic setting resolves to on this system. */
+  system: string;
 }
 
 /** FileChanges is what a write or removal changes in one file. */
@@ -223,8 +250,25 @@ export interface InferencePortFallback {
   active_port: number;
 }
 
+/**
+ * InspectorState is what an inspector window pulls on mount, instead of
+ * waiting for the main window to notice it exists.
+ */
+export interface InspectorState {
+  selection: unknown;
+  pinned: boolean;
+  wide: boolean;
+}
+
 /** Kind is how AstrLink reaches a client. */
 export type Kind = "file" | "paste" | "link" | "guide" | "unsupported";
+
+export interface LastRequest {
+  started_at: string;
+  model: string | null;
+  latency_ms: number | null;
+  failed: boolean;
+}
 
 /** LineKind is what a diff line is. */
 export type LineKind = "context" | "add" | "remove" | "gap";
@@ -266,6 +310,12 @@ export interface Models {
    */
   modelProtocols?: Record<string, string>;
 }
+
+/**
+ * ObserverReadLevel is how far an agent-side read reached, as Core
+ * classifies it.
+ */
+export type ObserverReadLevel = "metadata" | "shareable" | "raw";
 
 /** Phase is where Core is in its lifecycle. */
 export type Phase = "stopped" | "spawning" | "waiting_for_ready" | "handshaking" | "ready" | "stopping" | "exited" | "error";
@@ -331,6 +381,38 @@ export interface Preview {
 }
 
 /**
+ * PrivacyDigest is what the privacy policy did to today's calls. Values and
+ * placeholders never reach the host; these are counts only.
+ */
+export interface PrivacyDigest {
+  /**
+   * Enabled is the policy switch right now; nil when it could not be
+   * read.
+   */
+  enabled: boolean | null;
+  /** Checked counts the calls the policy finished checking. */
+  checked: number;
+  redacted: number;
+  warned: number;
+  blocked: number;
+  /**
+   * Unchecked counts calls that went upstream unchecked because the check
+   * failed.
+   */
+  unchecked: number;
+  replaced: number;
+  restored: number;
+  unrestored: number;
+  /** Kinds found, the most frequent first. */
+  kinds: PrivacyKindCount[];
+}
+
+export interface PrivacyKindCount {
+  kind: string;
+  count: number;
+}
+
+/**
  * ProofArg is the proof the dialog collected: a password, or a request for
  * Touch ID, so no key passes the webview.
  */
@@ -385,6 +467,25 @@ export interface ProxyCheck {
 
 /** QuotaDisplayMode is whether quotas show what remains or what is used. */
 export type QuotaDisplayMode = "remaining" | "used";
+
+/**
+ * RawKeyEvent is the latest raw password or key change this Core recorded,
+ * whoever made it.
+ */
+export interface RawKeyEvent {
+  kind: RawKeyEventKind;
+  /**
+   * At is Core's RFC 3339 timestamp, rendered by the popover in local
+   * time.
+   */
+  at: string;
+}
+
+/**
+ * RawKeyEventKind is a raw password or key change, as Core's observer log
+ * names it.
+ */
+export type RawKeyEventKind = "raw_password_set" | "raw_password_changed" | "raw_key_reset";
 
 /**
  * ReadyEvent is the single machine-readable line emitted to stdout after both
@@ -450,6 +551,11 @@ export interface SettingsSnapshot {
   local_key_storage: LocalKeyStorage | null;
 }
 
+export interface Share {
+  name: string;
+  percent: number;
+}
+
 /** SnippetFile is one file of a manual setup. */
 export interface SnippetFile {
   /** Path is where the file goes, from the home. */
@@ -460,8 +566,28 @@ export interface SnippetFile {
 /** State is a place's config as the dialog shows it. */
 export type State = "not_configured" | "configured" | "outdated" | "elsewhere" | "modified" | "invalid";
 
+export interface SubscriptionDigest {
+  name: string;
+  /** Kind is one of subscriptionKinds; the panel draws its logo. */
+  kind: string;
+  windows: WindowDigest[];
+}
+
 /** ThemePreference is the theme the user chose. */
 export type ThemePreference = "system" | "light" | "dark";
+
+/**
+ * TrayAction is an action the popover asks the host to perform:
+ * {"kind": "navigate", "page": "records"}, {"kind": "core", "op": "stop"}.
+ */
+export interface TrayAction {
+  kind: TrayActionKind;
+  page?: string;
+  op?: CoreOp;
+}
+
+/** TrayActionKind is what the popover asks the host to do. */
+export type TrayActionKind = "open" | "navigate" | "copy_address" | "core" | "refresh" | "raw_access" | "quit";
 
 /**
  * TrayMenubarText is what the macOS status item shows next to the tray
@@ -485,6 +611,25 @@ export interface TrayPreferences {
   usage: TrayUsagePreferences;
   /** Pages are the quick-jump pages in fixed navigation order. */
   pages: TrayPage[];
+}
+
+/**
+ * TrayStateSnapshot is what the popover (and the settings preview) renders
+ * from.
+ */
+export interface TrayStateSnapshot {
+  app_version: string;
+  platform: string;
+  view: View;
+  digest: UsageDigest | null;
+  digest_age_ms: number | null;
+  tray: TrayPreferences;
+  /**
+   * PopoverBelow is whether the popover hangs below its anchor (menu
+   * bar) or rises above it (taskbar); the panel keeps its shadow padding
+   * on the far side.
+   */
+  popover_below: boolean;
 }
 
 /**
@@ -527,11 +672,90 @@ export interface UpdatePreferences {
   official_mirror: boolean;
 }
 
+/**
+ * UsageDigest is everything the popover's usage cards need, collected in
+ * one pass. Each field is independent: a failed lookup hides its card, not
+ * the whole panel.
+ */
+export interface UsageDigest {
+  today: UsageTotals | null;
+  /**
+   * HourlyTokens is tokens per local hour of today, 24 slots, empty when
+   * unknown.
+   */
+  hourly_tokens: number[];
+  yesterday_tokens: number | null;
+  top_model: Share | null;
+  cost_today: CostDigest | null;
+  privacy: PrivacyDigest | null;
+  top_client: Share | null;
+  last_request: LastRequest | null;
+  month_tokens: number | null;
+  subscriptions: SubscriptionDigest[];
+}
+
+export interface UsageTotals {
+  requests: number;
+  failed: number;
+  total_tokens: number;
+  input_tokens: number;
+  cache_read_tokens: number;
+}
+
 export interface VersionResponse {
   core_version: string;
   control_api_version: string;
   protocol_contract_version: string;
   build_commit: string;
+}
+
+/**
+ * View is the slice of Core state that native surfaces (the tray) render
+ * from. It is published on every change, so it stays small and cheap to
+ * compare: no capabilities, no health payload, no countdown that ticks on
+ * its own.
+ */
+export interface View {
+  phase: Phase;
+  /**
+   * InferenceURL is the client-facing inference address
+   * (client_inference_url), which the tray shows, copies, and syncs into
+   * client configs.
+   */
+  inference_url: string | null;
+  core_version: string | null;
+  inference_port_fallback: InferencePortFallback | null;
+  last_error: string | null;
+  recovery_attempt: number;
+  recovery_scheduled: boolean;
+  /**
+   * ObserverActive reports an agent reading records through the agent
+   * CLI right now.
+   */
+  observer_active: boolean;
+  /**
+   * ObserverReadLevel is how far that agent's latest read reached, while
+   * it is active.
+   */
+  observer_read_level: ObserverReadLevel | null;
+  /**
+   * PendingRawAccess counts agent requests for raw audit content awaiting
+   * the operator.
+   */
+  pending_raw_access: number;
+  /** ActiveRawGrants counts timed agent grants still running. */
+  active_raw_grants: number;
+  /**
+   * RawPasswordRequired reports that no raw password is set yet; only the
+   * main window's setup sets it.
+   */
+  raw_password_required: boolean;
+  raw_key_event: RawKeyEvent | null;
+  /**
+   * RawKeyReplaced reports a raw key that differs from the one the
+   * desktop pinned; only the main window resolves it.
+   */
+  raw_key_replaced: boolean;
 }
 
 /** WindowChrome is what the frontend draws its own title bar from. */
@@ -542,6 +766,19 @@ export interface WindowChrome {
    * elsewhere.
    */
   decoration_layout: string | null;
+}
+
+export interface WindowDigest {
+  /**
+   * Label is a provider-named limit (Kimi "Monthly", Claude "Opus"); nil
+   * for the primary/secondary windows, which the panel labels by their
+   * length.
+   */
+  label: string | null;
+  limit_window_seconds: number | null;
+  secondary: boolean;
+  used_percent: number;
+  reset_at: string | null;
 }
 
 /** WindowState is what a custom title bar draws from. */
@@ -1098,6 +1335,123 @@ export const Window = {
   /** WindowState returns the state of the window the call came from. */
   windowState(): Promise<WindowState> {
     return call("Window.WindowState");
+  },
+} as const;
+
+/** MainWindow is the main window's placement and release. */
+export const MainWindow = {
+  /**
+   * FitMainWindowToContent shortens a freshly placed main window to the
+   * overview's first two modules, height CSS pixels drawn at
+   * devicePixelRatio. It applies once and never makes the window taller.
+   */
+  fitMainWindowToContent(height: number, devicePixelRatio: number): Promise<boolean> {
+    return call("MainWindow.FitMainWindowToContent", height, devicePixelRatio);
+  },
+  /**
+   * SetMainWindowUnsaved keeps the hidden main window from being released
+   * while it holds unsaved edits.
+   */
+  setMainWindowUnsaved(unsaved: boolean): Promise<void> {
+    return call("MainWindow.SetMainWindowUnsaved", unsaved);
+  },
+} as const;
+
+/** Files saves what pages export. */
+export const Files = {
+  /**
+   * SaveTextFile asks where to save contents, offering defaultFilename, and
+   * writes it there. It returns the path, nil when the operator canceled.
+   */
+  saveTextFile(defaultFilename: string, contents: string): Promise<string | null> {
+    return call("Files.SaveTextFile", defaultFilename, contents);
+  },
+} as const;
+
+/**
+ * Currency is the currency amounts estimated at official API prices show
+ * in.
+ */
+export const Currency = {
+  /** DisplayCurrency returns the display currency and its rate to USD. */
+  displayCurrency(): Promise<Display> {
+    return call("Currency.DisplayCurrency");
+  },
+} as const;
+
+/** Tray is the tray popover's and the tray settings' view of the tray. */
+export const Tray = {
+  /**
+   * TakeTrayNavigation hands over the page the tray last asked the main
+   * window to open, once.
+   */
+  takeTrayNavigation(): Promise<string | null> {
+    return call("Tray.TakeTrayNavigation");
+  },
+  /** TrayAction performs an action the popover asks for. */
+  trayAction(action: TrayAction): Promise<void> {
+    return call("Tray.TrayAction", action);
+  },
+  /** TrayPopoverHide closes the popover: Escape or a click beside the panel. */
+  trayPopoverHide(): Promise<void> {
+    return call("Tray.TrayPopoverHide");
+  },
+  /**
+   * TrayPopoverResize follows the popover's content height, height CSS
+   * pixels drawn at devicePixelRatio.
+   */
+  trayPopoverResize(height: number, devicePixelRatio: number): Promise<void> {
+    return call("Tray.TrayPopoverResize", height, devicePixelRatio);
+  },
+  /**
+   * TrayState returns what the popover renders, for the stored tray
+   * preferences or tray, a draft the settings page previews.
+   */
+  trayState(tray: TrayPreferences | null): Promise<TrayStateSnapshot> {
+    return call("Tray.TrayState", tray);
+  },
+} as const;
+
+/** TrajectoryInspector is the trajectory inspector windows. */
+export const TrajectoryInspector = {
+  /** CloseTrajectoryInspectors closes the inspectors that are not pinned. */
+  closeTrajectoryInspectors(): Promise<void> {
+    return call("TrajectoryInspector.CloseTrajectoryInspectors");
+  },
+  /**
+   * SetTrajectoryInspectorPinned pins or unpins the calling inspector and
+   * returns the state that took effect.
+   */
+  setTrajectoryInspectorPinned(pinned: boolean): Promise<boolean> {
+    return call("TrajectoryInspector.SetTrajectoryInspectorPinned", pinned);
+  },
+  /**
+   * SetTrajectoryInspectorWide widens or narrows the calling inspector and
+   * returns the state that took effect.
+   */
+  setTrajectoryInspectorWide(wide: boolean): Promise<boolean> {
+    return call("TrajectoryInspector.SetTrajectoryInspectorWide", wide);
+  },
+  /**
+   * ShowTrajectoryInspector shows selection in the inspector following the
+   * list, opening one when there is none, and returns its label.
+   */
+  showTrajectoryInspector(selection: unknown): Promise<string> {
+    return call("TrajectoryInspector.ShowTrajectoryInspector", selection);
+  },
+  /**
+   * TrajectoryInspectorState is what the calling inspector shows, which it
+   * pulls as it mounts.
+   */
+  trajectoryInspectorState(): Promise<InspectorState> {
+    return call("TrajectoryInspector.TrajectoryInspectorState");
+  },
+  /**
+   * UpdateTrajectoryInspector refreshes the inspector following the list,
+   * if one is open.
+   */
+  updateTrajectoryInspector(selection: unknown): Promise<void> {
+    return call("TrajectoryInspector.UpdateTrajectoryInspector", selection);
   },
 } as const;
 
