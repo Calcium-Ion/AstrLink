@@ -41,6 +41,11 @@ import {
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -1926,58 +1931,86 @@ function DesktopClientSetupDialog({
   );
 
   /** One checkbox per write target, the uninstalled ones dimmed. */
-  const targetsField = (home: Extract<Selected, { kind: "home" }>) => (
-    <Field group label={t("clientSetup.targets")}>
-      <div className="grid gap-1.5">
-        {home.places.map((status) => {
-          const writable = placeWritable(status);
-          const missingClient =
-            !status.detected && status.state === "not_configured";
-          const badge = missingClient ? null : badgeOf(status);
-          return (
-            <div
-              key={placeKey(status)}
-              className={cn(
-                "flex min-w-0 items-center gap-2.5 rounded-md border px-2.5 py-1.75 text-xs leading-normal font-normal",
-                !writable && "opacity-55",
-              )}
-              data-place={placeKey(status)}
-            >
-              <Checkbox
-                aria-label={t("clientSetup.deliver", {
-                  client: labelOf(status),
-                })}
-                checked={isChecked(status)}
-                disabled={working || !writable}
-                onCheckedChange={(checked) =>
-                  setChecked([status], checked === true)
-                }
-              />
-              <span className="shrink-0 font-medium text-foreground">
-                {targetName(status.client, status.target ?? "")}
-              </span>
-              <code
-                className="min-w-0 truncate font-mono text-muted-foreground"
-                title={status.paths
-                  .map((path) => homePath(path, status.home))
-                  .join("\n")}
+  const targetsField = (home: Extract<Selected, { kind: "home" }>) => {
+    const fields = (
+      <Field group label={t("clientSetup.targets")}>
+        <div className="grid gap-1.5">
+          {home.places.map((status) => {
+            const writable = placeWritable(status);
+            const missingClient =
+              !status.detected && status.state === "not_configured";
+            const badge = missingClient ? null : badgeOf(status);
+            return (
+              <div
+                key={placeKey(status)}
+                className={cn(
+                  "flex min-w-0 items-center gap-2.5 rounded-md border px-2.5 py-1.75 text-xs leading-normal font-normal",
+                  !writable && "opacity-55",
+                )}
+                data-place={placeKey(status)}
               >
-                {homePath(status.paths[0], status.home)}
-              </code>
-              <span className="flex-1" />
-              {missingClient ? (
-                <span className="shrink-0 text-muted-foreground">
-                  {t("clientSetup.notInstalled")}
+                <Checkbox
+                  aria-label={t("clientSetup.deliver", {
+                    client: labelOf(status),
+                  })}
+                  checked={isChecked(status)}
+                  disabled={working || !writable}
+                  onCheckedChange={(checked) =>
+                    setChecked([status], checked === true)
+                  }
+                />
+                <span className="shrink-0 font-medium text-foreground">
+                  {targetName(status.client, status.target ?? "")}
                 </span>
-              ) : badge ? (
-                <StatusBadge tone={badge.tone}>{badge.label}</StatusBadge>
-              ) : null}
-            </div>
-          );
-        })}
-      </div>
-    </Field>
-  );
+                <code
+                  className="min-w-0 truncate font-mono text-muted-foreground"
+                  title={status.paths
+                    .map((path) => homePath(path, status.home))
+                    .join("\n")}
+                >
+                  {homePath(status.paths[0], status.home)}
+                </code>
+                <span className="flex-1" />
+                {missingClient ? (
+                  <span className="shrink-0 text-muted-foreground">
+                    {t("clientSetup.notInstalled")}
+                  </span>
+                ) : badge ? (
+                  <StatusBadge tone={badge.tone}>{badge.label}</StatusBadge>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+      </Field>
+    );
+    if (home.places.length <= 2) return fields;
+    const selectedTargets = home.places
+      .filter(isChecked)
+      .map((status) => targetName(status.client, status.target ?? ""));
+    return (
+      <Collapsible key={homeKey(home.lead)}>
+        <CollapsibleTrigger asChild>
+          <Button
+            className="w-full justify-start"
+            data-testid="client-setup-targets-toggle"
+            size="sm"
+            type="button"
+            variant="outline"
+          >
+            <ChevronRight aria-hidden="true" className="size-3.5 shrink-0" />
+            <span className="truncate">
+              {t("clientSetup.targets")}
+              {selectedTargets.length > 0
+                ? ` · ${joinNames(selectedTargets)}`
+                : ""}
+            </span>
+          </Button>
+        </CollapsibleTrigger>
+        <CollapsibleContent className="mt-2">{fields}</CollapsibleContent>
+      </Collapsible>
+    );
+  };
 
   const settingsBody = (home: Extract<Selected, { kind: "home" }>) => {
     const { lead, places, entry } = home;

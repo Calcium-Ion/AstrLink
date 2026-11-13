@@ -77,6 +77,8 @@ func clientProduct(product string) contract.ClientType {
 		return contract.ClientCodewhale
 	case "reasonix":
 		return contract.ClientReasonix
+	case "dimagent", "dimcode", "dim":
+		return contract.ClientDimAgent
 	case "qwencode", "qwen code":
 		return contract.ClientQwenCode
 	case "kimi-code-cli", "kimi-code-vscode", "kimi-code-acp", "kimicli":

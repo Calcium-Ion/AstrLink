@@ -16,6 +16,7 @@ export { default as CodexColor } from "@lobehub/icons/es/Codex/components/Color"
 export { default as CursorMono } from "@lobehub/icons/es/Cursor/components/Mono";
 export { default as DeepSeekColor } from "@lobehub/icons/es/DeepSeek/components/Color";
 export { DeepSeekHarnessMono } from "./DeepSeekHarnessMono";
+export { DimAgentMono } from "./DimAgentMono";
 export { default as DoubaoColor } from "@lobehub/icons/es/Doubao/components/Color";
 export { default as GeminiColor } from "@lobehub/icons/es/Gemini/components/Color";
 export { default as GemmaColor } from "@lobehub/icons/es/Gemma/components/Color";

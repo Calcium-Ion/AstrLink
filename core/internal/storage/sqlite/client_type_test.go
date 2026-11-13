@@ -13,44 +13,48 @@ import (
 )
 
 func TestClientTypeRecordAndSessionRoundTrip(t *testing.T) {
-	store := openTestStore(t, filepath.Join(t.TempDir(), "client.db"))
-	defer store.Close()
-	ctx := context.Background()
-	sessionID := contract.SessionID("session_client")
-	first := contract.RequestRecord{
-		ID: "request_client_first", SessionID: &sessionID,
-		StartedAt: time.Now().UTC(), Status: contract.RequestStatusSucceeded,
-		InputProtocol: contract.ProtocolOpenAIResponses, ClientType: contract.ClientCodex,
-	}
-	if err := store.InsertRequestRecord(ctx, first); err != nil {
-		t.Fatal(err)
-	}
-	latest := first
-	latest.ID = "request_client_latest"
-	latest.StartedAt = first.StartedAt.Add(time.Second)
-	latest.Status = contract.RequestStatusPending
-	latest.ClientType = contract.ClientPi
-	if err := store.UpsertRequestRecord(ctx, latest); err != nil {
-		t.Fatal(err)
-	}
-	latest.Status = contract.RequestStatusSucceeded
-	if err := store.UpsertRequestRecord(ctx, latest); err != nil {
-		t.Fatal(err)
-	}
-	page, err := store.ListRequestRecords(ctx, storagecontract.RequestRecordListOptions{})
-	if err != nil || len(page.Items) != 2 {
-		t.Fatalf("records = %#v, %v", page, err)
-	}
-	if page.Items[0].ClientType != contract.ClientPi || page.Items[1].ClientType != contract.ClientCodex {
-		t.Fatalf("record clients = %#v", page.Items)
-	}
-	sessions, err := store.ListRequestSessions(ctx, storagecontract.RequestSessionListOptions{})
-	if err != nil || len(sessions.Items) != 1 || sessions.Items[0].ClientType != contract.ClientPi {
-		t.Fatalf("session summary = %#v, %v", sessions, err)
-	}
-	detail, err := store.GetRequestSession(ctx, string(sessionID))
-	if err != nil || detail.ClientType != contract.ClientPi || len(detail.Turns) != 2 || detail.Turns[0].ClientType != contract.ClientCodex {
-		t.Fatalf("session detail = %#v, %v", detail, err)
+	for _, client := range []contract.ClientType{contract.ClientPi, contract.ClientDimAgent} {
+		t.Run(string(client), func(t *testing.T) {
+			store := openTestStore(t, filepath.Join(t.TempDir(), "client.db"))
+			defer store.Close()
+			ctx := context.Background()
+			sessionID := contract.SessionID("session_client")
+			first := contract.RequestRecord{
+				ID: "request_client_first", SessionID: &sessionID,
+				StartedAt: time.Now().UTC(), Status: contract.RequestStatusSucceeded,
+				InputProtocol: contract.ProtocolOpenAIResponses, ClientType: contract.ClientCodex,
+			}
+			if err := store.InsertRequestRecord(ctx, first); err != nil {
+				t.Fatal(err)
+			}
+			latest := first
+			latest.ID = "request_client_latest"
+			latest.StartedAt = first.StartedAt.Add(time.Second)
+			latest.Status = contract.RequestStatusPending
+			latest.ClientType = client
+			if err := store.UpsertRequestRecord(ctx, latest); err != nil {
+				t.Fatal(err)
+			}
+			latest.Status = contract.RequestStatusSucceeded
+			if err := store.UpsertRequestRecord(ctx, latest); err != nil {
+				t.Fatal(err)
+			}
+			page, err := store.ListRequestRecords(ctx, storagecontract.RequestRecordListOptions{})
+			if err != nil || len(page.Items) != 2 {
+				t.Fatalf("records = %#v, %v", page, err)
+			}
+			if page.Items[0].ClientType != client || page.Items[1].ClientType != contract.ClientCodex {
+				t.Fatalf("record clients = %#v", page.Items)
+			}
+			sessions, err := store.ListRequestSessions(ctx, storagecontract.RequestSessionListOptions{})
+			if err != nil || len(sessions.Items) != 1 || sessions.Items[0].ClientType != client {
+				t.Fatalf("session summary = %#v, %v", sessions, err)
+			}
+			detail, err := store.GetRequestSession(ctx, string(sessionID))
+			if err != nil || detail.ClientType != client || len(detail.Turns) != 2 || detail.Turns[0].ClientType != contract.ClientCodex {
+				t.Fatalf("session detail = %#v, %v", detail, err)
+			}
+		})
 	}
 }
 

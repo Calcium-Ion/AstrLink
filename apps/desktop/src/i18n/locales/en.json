@@ -3995,6 +3995,13 @@
       "vscode_copilot": {
         "stable": "VS Code",
         "insiders": "VS Code Insiders"
+      },
+      "dimagent": {
+        "standard": "Standard",
+        "rust": "Rust",
+        "alpha": "Rust Alpha",
+        "global_standard": "Global Standard",
+        "global_rust": "Global Rust"
       }
     },
     "importIn": "Import in {{client}}",
@@ -4083,7 +4090,11 @@
       },
       "qoder_cli": {
         "account": "Qoder CLI uses the models written here only when signed in with an account that allows custom models."
-      }
+      },
+      "dimagent": {
+        "restart": "Quit DimAgent before writing, then reopen it. A workspace model selection takes priority; change it in /models if needed."
+      },
+      "unreadable": "Could not read {{client}} settings. Quit the client first. If this continues, check the settings format and file permissions."
     },
     "paste": {
       "waiting": "paste the token",

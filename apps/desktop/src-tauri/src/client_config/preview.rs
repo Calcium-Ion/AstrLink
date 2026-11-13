@@ -321,8 +321,8 @@ pub(crate) fn describe(
             changes: changes[index],
             unit: client.files()[index].unit(),
             lines: diff_lines(
-                before[index].unwrap_or_default(),
-                after[index].unwrap_or_default(),
+                &client.files()[index].preview(before[index].unwrap_or_default()),
+                &client.files()[index].preview(after[index].unwrap_or_default()),
             )
             .into_iter()
             .map(|line| DiffLine {
@@ -402,7 +402,7 @@ pub(crate) fn preview_place(
     let records = read_records(&home)?;
     let record = records.get(place);
     let paths = client.config_paths(home, place.target, record);
-    let existing = read_files(&paths)?;
+    let existing = read_files(client, &paths)?;
     let before = texts(&existing);
     match write {
         Some(PreviewWrite {

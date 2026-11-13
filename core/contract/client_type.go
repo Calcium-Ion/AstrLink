@@ -18,6 +18,7 @@ const (
 	ClientDeepSeekHarness ClientType = "deepseek_harness"
 	ClientCodewhale       ClientType = "codewhale"
 	ClientReasonix        ClientType = "reasonix"
+	ClientDimAgent        ClientType = "dimagent"
 	ClientQwenCode        ClientType = "qwen_code"
 	ClientKimiCode        ClientType = "kimi_code"
 	ClientCodeBuddy       ClientType = "codebuddy"
@@ -36,7 +37,7 @@ func (client ClientType) Valid() bool {
 	switch client {
 	case ClientUnknown, ClientCodex, ClientClaudeCode, ClientCursor, ClientGrokCLI,
 		ClientGeminiCLI, ClientOpenCode, ClientOpenClaw, ClientCline, ClientPi,
-		ClientDeepSeekHarness, ClientCodewhale, ClientReasonix, ClientQwenCode,
+		ClientDeepSeekHarness, ClientCodewhale, ClientReasonix, ClientDimAgent, ClientQwenCode,
 		ClientKimiCode, ClientCodeBuddy, ClientCopilot, ClientDroid, ClientCrush,
 		ClientKiloCode, ClientRooCode, ClientMistralVibe, ClientZed, ClientCherryStudio,
 		ClientGoose:

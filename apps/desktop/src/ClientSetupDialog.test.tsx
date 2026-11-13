@@ -1686,6 +1686,84 @@ describe("ClientSetupDialog", () => {
       );
     });
 
+    it("previews and writes both DimAgent editions with selected models", async () => {
+      const targets = [
+        "standard",
+        "rust",
+        "alpha",
+        "global_standard",
+        "global_rust",
+      ];
+      bridgeMocks.getClientCatalog.mockResolvedValue({
+        clients: [
+          ...builtinEntries,
+          {
+            id: "dimagent",
+            name: "DimAgent",
+            kind: "file",
+            targets,
+            protocols: [
+              "openai.chat",
+              "openai.responses",
+              "anthropic.messages",
+              "google.generate_content",
+            ],
+            list: true,
+          },
+        ],
+      });
+      bridgeMocks.getClientConfigStatus.mockResolvedValue({
+        ...overview(missingSix),
+        clients: targets.map((target, index) => ({
+          ...targetPlace(target),
+          client: "dimagent",
+          detected: index < 2,
+          dir: `/Users/me/.dimcode/${target === "standard" ? "v2" : target}`,
+          paths: [
+            `/Users/me/.dimcode/${target === "standard" ? "v2" : target}/dimcode.sqlite`,
+          ],
+          exists: [index < 2],
+          notes: ["restart"],
+        })),
+      });
+      await renderDialog();
+      expect(railRows()).toEqual(["dimagent"]);
+      expect(pane().textContent).toContain("先退出 DimAgent 再写入");
+      await click(box("DimAgent"));
+      const targetsToggle = pane().querySelector<HTMLButtonElement>(
+        '[data-testid="client-setup-targets-toggle"]',
+      )!;
+      expect(targetsToggle.textContent).toContain("常规版、Rust 版");
+      expect(targetsToggle.getAttribute("aria-expanded")).toBe("false");
+      await click(targetsToggle);
+      expect(checked("DimAgent（常规版）")).toBe("true");
+      expect(checked("DimAgent（Rust 版）")).toBe("true");
+      expect(box("DimAgent（Rust Alpha）").disabled).toBe(true);
+      expect(pane().textContent).toContain("dimcode.sqlite");
+      await click(targetsToggle);
+      await click(button("改动"));
+      expect(
+        bridgeMocks.previewClientConfigChanges.mock.calls.map(
+          ([request]) => request.target,
+        ),
+      ).toEqual(["standard", "rust"]);
+      expect(pane().textContent).toContain("DimAgent（常规版）");
+      expect(pane().textContent).toContain("DimAgent（Rust 版）");
+      await click(button("写入 1 个客户端"));
+      expect(
+        lastItems().map((item) => [item.client, item.target, item.action]),
+      ).toEqual([
+        ["dimagent", "standard", "write"],
+        ["dimagent", "rust", "write"],
+      ]);
+      for (const item of lastItems()) {
+        expect(item.models?.model).toBeTruthy();
+        expect(item.models?.models).toHaveLength(4);
+        expect(item.models?.modelProtocols).toBeDefined();
+      }
+      expect(dialog().textContent).toContain("已写入 1 个客户端");
+    });
+
     it("opens an import link through the host with the chosen protocol", async () => {
       bridgeMocks.getClientCatalog.mockResolvedValue({
         clients: [...builtinEntries, ...listedEntries],

@@ -3995,6 +3995,13 @@
       "vscode_copilot": {
         "stable": "VS Code",
         "insiders": "VS Code Insiders"
+      },
+      "dimagent": {
+        "standard": "通常版",
+        "rust": "Rust 版",
+        "alpha": "Rust Alpha",
+        "global_standard": "国際通常版",
+        "global_rust": "国際 Rust 版"
       }
     },
     "importIn": "{{client}} でインポート",
@@ -4083,7 +4090,11 @@
       },
       "qoder_cli": {
         "account": "Qoder CLI は、カスタムモデルを使えるアカウントでログインしているときだけ、ここで書き込むモデルを使います。"
-      }
+      },
+      "dimagent": {
+        "restart": "DimAgent を終了してから書き込み、完了後に開き直してください。ワークスペースで選択したモデルが優先されます。必要に応じて /models で切り替えてください。"
+      },
+      "unreadable": "{{client}} の設定を読み取れません。クライアントを終了してください。解決しない場合は設定形式とファイルの権限を確認してください。"
     },
     "paste": {
       "waiting": "トークンの貼り付け待ち",

@@ -3995,6 +3995,13 @@
       "vscode_copilot": {
         "stable": "VS Code",
         "insiders": "VS Code Insiders"
+      },
+      "dimagent": {
+        "standard": "常规版",
+        "rust": "Rust 版",
+        "alpha": "Rust Alpha",
+        "global_standard": "国际常规版",
+        "global_rust": "国际 Rust 版"
       }
     },
     "importIn": "在 {{client}} 中导入",
@@ -4083,7 +4090,11 @@
       },
       "qoder_cli": {
         "account": "Qoder CLI 只在登录、且账号允许使用自定义模型时才用这里写入的模型。"
-      }
+      },
+      "dimagent": {
+        "restart": "先退出 DimAgent 再写入，完成后重新打开。工作区里单独选过的模型仍优先使用，可在 /models 中切换。"
+      },
+      "unreadable": "无法读取 {{client}} 的配置。请先退出客户端；若仍失败，请检查配置格式和文件权限。"
     },
     "paste": {
       "waiting": "等你粘贴令牌",
