@@ -2813,6 +2813,7 @@ pub fn run() {
             local_import::dismiss_local_import,
             client_updates::refresh_local_clients,
             client_updates::update_local_clients,
+            client_updates::repair_local_clients,
             updates::app_update_status,
             model_updates::privacy_model_update_status,
             currency::display_currency,

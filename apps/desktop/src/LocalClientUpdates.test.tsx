@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   get: vi.fn(),
   refresh: vi.fn(),
   update: vi.fn(),
+  repair: vi.fn(),
   listen: vi.fn(),
   open: vi.fn(),
   native: true,
@@ -21,6 +22,7 @@ vi.mock("./local-client-bridge", () => ({
   getLocalClients: mocks.get,
   refreshLocalClients: mocks.refresh,
   updateLocalClients: mocks.update,
+  repairLocalClients: mocks.repair,
   listenLocalClients: mocks.listen,
 }));
 import { LocalClientUpdates } from "./LocalClientUpdates";
@@ -52,6 +54,7 @@ describe("local client updates", () => {
     mocks.get.mockResolvedValue(available());
     mocks.refresh.mockResolvedValue(available());
     mocks.update.mockResolvedValue({ ...available(), revision: 2, busy: true });
+    mocks.repair.mockResolvedValue({ ...available(), revision: 2, busy: true });
     unsubscribe = vi.fn();
     mocks.listen.mockImplementation(async (cb) => {
       listener = cb;
@@ -263,6 +266,157 @@ describe("local client updates", () => {
       expect(mocks.update).not.toHaveBeenCalled();
     },
   );
+
+  it("explains each damaged installation and repairs the selected client", async () => {
+    const snapshot = available();
+    const damaged = {
+      phase: "damaged" as const,
+      install_method: "npm" as const,
+      can_update: false,
+      error_detail: "codex.cmd is missing",
+    };
+    snapshot.clients[0] = {
+      ...snapshot.clients[0],
+      ...damaged,
+      repair: "restore",
+      previous_version: "0.40.0",
+    };
+    snapshot.clients[1] = {
+      ...snapshot.clients[1],
+      ...damaged,
+      repair: "reinstall",
+    };
+    snapshot.clients[2] = {
+      ...snapshot.clients[2],
+      ...damaged,
+      install_method: "native",
+    };
+    snapshot.clients.push({
+      ...snapshot.clients[0],
+      wsl: "Ubuntu",
+      previous_version: null,
+    });
+    mocks.get.mockResolvedValue(snapshot);
+    mocks.repair.mockResolvedValue({ ...snapshot, revision: 2, busy: true });
+    await render();
+    const card = (selector: string) => container.querySelector(selector)!;
+    const codex = card('[data-client="codex"]:not([data-wsl])');
+    const claude = card('[data-client="claude"]');
+    const cursor = card('[data-client="cursor"]');
+    const wsl = card('[data-client="codex"][data-wsl="Ubuntu"]');
+    expect(codex.textContent).toContain("无法启动");
+    expect(codex.querySelector('[role="alert"]')?.textContent).toBe(
+      "上次更新没有完成，客户端无法启动。点「修复」恢复到 0.40.0 版本，无需下载。",
+    );
+    expect(wsl.querySelector('[role="alert"]')?.textContent).toBe(
+      "上次更新没有完成，客户端无法启动。点「修复」恢复到原来的版本，无需下载。",
+    );
+    expect(claude.querySelector('[role="alert"]')?.textContent).toBe(
+      "安装不完整，客户端无法启动。点「修复」重新下载并安装最新版本。",
+    );
+    expect(cursor.querySelector('[role="alert"]')?.textContent).toBe(
+      "安装不完整，客户端无法启动。请点「如何安装」，按说明重新安装。",
+    );
+    // npm installations show the reinstall command; Cursor has no npm package.
+    expect(codex.textContent).toContain("手动重新安装");
+    expect(codex.textContent).toContain("npm install -g @openai/codex");
+    expect(claude.textContent).toContain(
+      "npm install -g @anthropic-ai/claude-code",
+    );
+    expect(cursor.textContent).not.toContain("手动重新安装");
+    expect(cursor.querySelector('[aria-label^="修复"]')).toBeNull();
+    await act(async () =>
+      Array.from(cursor.querySelectorAll("button"))
+        .find((b) => b.textContent === "如何安装")!
+        .click(),
+    );
+    expect(mocks.open).toHaveBeenCalledWith(
+      "https://cursor.com/docs/cli/installation",
+    );
+    await act(async () =>
+      container
+        .querySelector<HTMLButtonElement>(
+          '[aria-label="修复 Codex CLI（WSL · Ubuntu）"]',
+        )!
+        .click(),
+    );
+    expect(mocks.repair).toHaveBeenCalledWith([{ id: "codex", wsl: "Ubuntu" }]);
+    expect(mocks.update).not.toHaveBeenCalled();
+    expect(
+      container.querySelector<HTMLButtonElement>(
+        '[aria-label="修复 Claude Code"]',
+      )?.disabled,
+    ).toBe(true);
+    const repairing = { ...snapshot, revision: 3, busy: true };
+    repairing.clients = snapshot.clients.map((c, i) =>
+      i === 1 ? { ...c, phase: "repairing" } : c,
+    );
+    await act(async () => listener(repairing));
+    expect(button("修复中…").disabled).toBe(true);
+    await act(async () =>
+      listener({
+        ...repairing,
+        revision: 4,
+        busy: false,
+        clients: repairing.clients.map((c, i) =>
+          i === 1
+            ? {
+                ...c,
+                phase: "repaired",
+                current_version: "1.1.0",
+                repair: null,
+                error_detail: null,
+              }
+            : c,
+        ),
+      }),
+    );
+    expect(claude.textContent).toContain("修复成功");
+    expect(claude.textContent).toContain("已修复，重新打开客户端即可使用。");
+    expect(claude.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it("explains a running client, an unfinished download and a concurrent update", async () => {
+    const snapshot = available();
+    const failed = { phase: "error" as const, can_update: false };
+    snapshot.clients[0] = {
+      ...snapshot.clients[0],
+      ...failed,
+      error_code: "running",
+      error_detail: "4242 C:\\npm\\codex.exe",
+    };
+    snapshot.clients[1] = {
+      ...snapshot.clients[1],
+      ...failed,
+      error_code: "incomplete",
+      kept_previous: true,
+    };
+    snapshot.clients[2] = {
+      ...snapshot.clients[2],
+      ...failed,
+      error_code: "busy",
+    };
+    mocks.get.mockResolvedValue(snapshot);
+    await render();
+    const alert = (id: string) =>
+      container.querySelector(`[data-client="${id}"] [role="alert"]`)
+        ?.textContent;
+    expect(alert("codex")).toBe(
+      "客户端正在运行，没有更新。请先退出客户端，再刷新并更新。",
+    );
+    expect(alert("claude")).toBe(
+      "新版本没有下载完整，常见原因是网络中断或代理。请检查网络后重试。",
+    );
+    expect(alert("cursor")).toBe(
+      "另一个 AstrLink 正在更新这个客户端，请稍后刷新。",
+    );
+    // Only the client whose update failed after changing nothing visible
+    // says which version it still runs.
+    expect(
+      container.querySelector('[data-client="claude"]')?.textContent,
+    ).toContain("仍在使用原来的 1.0.0 版本。");
+    expect(container.textContent?.split("仍在使用").length).toBe(2);
+  });
 
   it("leaves scrolling to the About page", async () => {
     await render();

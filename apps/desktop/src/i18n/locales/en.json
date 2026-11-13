@@ -4424,6 +4424,8 @@
     "update": "Update",
     "updateNamed": "Update {{name}}",
     "updateAll": "Update all ({{count}})",
+    "repair": "Repair",
+    "repairNamed": "Repair {{name}}",
     "current": "Current version",
     "latest": "Latest version",
     "retry": "Retry",
@@ -4434,9 +4436,18 @@
     "installationPath": "Installation path",
     "installationMethod": "Installed with",
     "errorDetails": "Error details",
+    "manualReinstall": "Reinstall manually",
     "multiple": "Other installations were found. Only the active client will be updated:",
     "reopen": "Updated. Reopen the client to use the new version.",
+    "repaired": "Repaired. Reopen the client to use it.",
+    "kept": "Still using version {{version}}.",
     "wslUnchecked": "Clients in stopped WSL distributions weren’t checked: {{names}}. Start one, then select Refresh.",
+    "damaged": {
+      "restore": "The last update didn’t finish, so the client can’t start. Select Repair to restore version {{version}} without downloading.",
+      "restoreUnversioned": "The last update didn’t finish, so the client can’t start. Select Repair to restore the previous version without downloading.",
+      "reinstall": "The installation is incomplete, so the client can’t start. Select Repair to download and install the latest version again.",
+      "manual": "The installation is incomplete, so the client can’t start. Select How to install and reinstall it."
+    },
     "phase": {
       "idle": "Not checked",
       "checking": "Checking",
@@ -4446,7 +4457,10 @@
       "manual": "Manual update",
       "updating": "Updating…",
       "updated": "Updated",
-      "error": "Check or update failed"
+      "error": "Check or update failed",
+      "damaged": "Can’t start",
+      "repairing": "Repairing…",
+      "repaired": "Repaired"
     },
     "method": {
       "native": "Standalone installer",
@@ -4467,7 +4481,10 @@
       "changed": "The installation changed. Refresh before updating.",
       "unchanged": "No update was installed. Select View details to see why, then retry.",
       "damaged": "This installation is incomplete or damaged and cannot start. Reinstall it, then retry.",
-      "proxy": "Could not read or use the system proxy. Check your proxy settings."
+      "proxy": "Could not read or use the system proxy. Check your proxy settings.",
+      "running": "The client is running, so it was not updated. Quit the client, then refresh and update.",
+      "busy": "Another AstrLink is updating this client. Refresh in a moment.",
+      "incomplete": "The new version didn’t download completely, often because of a network interruption or proxy. Check your network, then retry."
     }
   },
   "proofDialog": {
