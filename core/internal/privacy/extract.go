@@ -176,7 +176,12 @@ func requestRoots(protocol contract.ProtocolID, options InspectionOptions) ([]re
 		}
 		declarations = []requestRoot{{"tools", listOf(object(responsesToolField))}}
 	case contract.ProtocolOpenAIChat:
-		roots = []requestRoot{{"messages", listOf(object(chatMessageField))}}
+		roots = []requestRoot{
+			{"messages", listOf(object(chatMessageField))},
+			// Predicted Outputs: text the caller expects the reply to repeat,
+			// usually the file being edited.
+			{"prediction", field("content", textOrList(object(chatPartField(false))))},
+		}
 		declarations = []requestRoot{
 			{"tools", listOf(object(chatToolField))},
 			{"functions", listOf(object(functionDeclarationField))},

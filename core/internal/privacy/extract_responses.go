@@ -70,6 +70,9 @@ func responsesItemField(options InspectionOptions) func(item map[string]any, key
 						return textPosition
 					case "queries":
 						return listOf(textPosition)
+					case "sources":
+						// The pages a search consulted.
+						return listOf(named("url"))
 					}
 					return position{}
 				})
@@ -127,6 +130,10 @@ func responsesItemField(options InspectionOptions) func(item map[string]any, key
 			// Tools a search loaded or an MCP server listed are declarations.
 			if key == "tools" && options.InspectToolDeclarations {
 				return listOf(object(responsesToolField))
+			}
+			// The server's listing error, as mcp_call reports its own.
+			if key == "error" && itemType == "mcp_list_tools" {
+				return textPosition
 			}
 		case "additional_tools":
 			// The declarations Codex responses-lite carries in a developer
