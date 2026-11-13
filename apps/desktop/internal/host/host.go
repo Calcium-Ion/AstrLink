@@ -63,6 +63,9 @@ type Host struct {
 	// mainOpened takes over each main window as it is built
 	// (OnMainWindowOpened).
 	mainOpened func(w *mygo.Window)
+	// mainPreload adds to the main window's preload script
+	// (OnMainWindowPreload).
+	mainPreload func() string
 
 	mu   sync.Mutex
 	main *mygo.Window
@@ -132,6 +135,10 @@ func (h *Host) SetAutostart(autostart Autostart) { h.autostart = autostart }
 // which places and shows it: at Start, and again in OpenMainWindow. Without
 // it the window shows once its page is ready. Call it before Start.
 func (h *Host) OnMainWindowOpened(fn func(w *mygo.Window)) { h.mainOpened = fn }
+
+// OnMainWindowPreload appends what fn returns to the preload script of each
+// main window as it is built. Call it before Start.
+func (h *Host) OnMainWindowPreload(fn func() string) { h.mainPreload = fn }
 
 func (h *Host) run(hooks *[]func()) {
 	h.mu.Lock()
@@ -385,6 +392,10 @@ const mainBackground = "light-dark(#ffffff, #111827)"
 // macOS keeps the traffic lights over the page; elsewhere the page draws
 // its own title bar.
 func (h *Host) openMainWindow() *mygo.Window {
+	preload := h.PreloadScript(MainLabel)
+	if h.mainPreload != nil {
+		preload += h.mainPreload()
+	}
 	options := mygo.WindowOptions{
 		Title:           h.instance.Name(),
 		URL:             "/",
@@ -394,7 +405,7 @@ func (h *Host) openMainWindow() *mygo.Window {
 		MinHeight:       600,
 		Hidden:          true,
 		BackgroundColor: mainBackground,
-		Page:            mygo.PageOptions{PreloadScript: h.PreloadScript(MainLabel)},
+		Page:            mygo.PageOptions{PreloadScript: preload},
 	}
 	if runtime.GOOS == "darwin" {
 		options.TitleBarStyle = mygo.TitleBarHidden

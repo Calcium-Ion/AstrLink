@@ -44,6 +44,10 @@ type App struct {
 	// stop ends the background work at quit.
 	stopOnce sync.Once
 	stop     context.CancelFunc
+
+	// legacyStorage is the main window's script handing the pages what
+	// the Tauri shell's webview stored, read once.
+	legacyStorage func() string
 }
 
 // New returns the app's window runtime and registers its lifecycle hooks.
@@ -52,6 +56,8 @@ func New(h *host.Host) *App {
 	a := &App{h: h}
 	a.reclaim = NewReclaim(a.lookup)
 	a.tray = newTray(a)
+	a.legacyStorage = sync.OnceValue(func() string { return legacyStorageScript(readLegacyStorage(h.Instance().Identifier())) })
+	h.OnMainWindowPreload(a.legacyStorage)
 	h.OnMainWindowOpened(a.mainOpened)
 	h.OnStarted(a.start)
 	h.OnRecordsChanged(a.tray.recordsChanged)
