@@ -30,5 +30,6 @@ func init() {
 		KiloCode,
 		Crush,
 		Cline,
+		Zed,
 	)
 }

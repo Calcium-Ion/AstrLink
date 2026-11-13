@@ -240,11 +240,7 @@ func (crushConfig) Get(document format.Document, key string) (string, bool, bool
 	if !ok || !crushWhole(key) {
 		return document.Get(key)
 	}
-	value, ok, present := json.GetJSON(key)
-	if !ok {
-		return "", false, present
-	}
-	return format.Encode(value), true, true
+	return getWhole(json, key)
 }
 
 func (crushConfig) Set(document format.Document, key, value string) error {
@@ -252,11 +248,7 @@ func (crushConfig) Set(document format.Document, key, value string) error {
 	if !ok || !crushWhole(key) {
 		return document.Set(key, value)
 	}
-	decoded, err := format.DecodeJSON(value)
-	if err != nil {
-		return err
-	}
-	return json.SetJSON(key, decoded, crushRank)
+	return setWhole(json, key, value, crushRank)
 }
 
 func (crushConfig) Emptied() []string { return []string{"providers", "models"} }

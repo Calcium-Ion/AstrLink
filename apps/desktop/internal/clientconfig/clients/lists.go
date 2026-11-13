@@ -39,6 +39,25 @@ func configObject(config *cc.Config, key string) (map[string]any, bool) {
 	return object, err == nil && isObject
 }
 
+// getWhole reads the value at key, whatever it is, as compact JSON.
+func getWhole(json *format.JSONDocument, key string) (string, bool, bool) {
+	value, ok, present := json.GetJSON(key)
+	if !ok {
+		return "", false, present
+	}
+	return format.Encode(value), true, true
+}
+
+// setWhole writes JSON text at key as a value; rank orders its objects'
+// properties.
+func setWhole(json *format.JSONDocument, key, value string, rank format.Rank) error {
+	decoded, err := format.DecodeJSON(value)
+	if err != nil {
+		return err
+	}
+	return json.SetJSON(key, decoded, rank)
+}
+
 // getOwned reads the list at key as the entries owned picks, compact;
 // nothing when there are none.
 func getOwned(json *format.JSONDocument, key string, owned func(any) bool) (string, bool, bool) {

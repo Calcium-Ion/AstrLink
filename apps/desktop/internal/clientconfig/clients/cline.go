@@ -222,11 +222,7 @@ func (clineProviders) Get(document format.Document, key string) (string, bool, b
 	if _, provider := clineProviderOf(key); !ok || !provider {
 		return document.Get(key)
 	}
-	value, ok, present := json.GetJSON(key)
-	if !ok {
-		return "", false, present
-	}
-	return format.Encode(value), true, true
+	return getWhole(json, key)
 }
 
 // Set gives a provider AstrLink adds the stamp Cline gives its own.
