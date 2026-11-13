@@ -611,6 +611,32 @@ describe("Overview", () => {
     expect(details?.textContent).toContain("协议能力");
   });
 
+  it("puts the usage view and range in the page header row", async () => {
+    await renderOverview();
+    const header = container.querySelector('[data-slot="page-header"]');
+    expect(header?.querySelector('[aria-label="用量展示方式"]')).not.toBeNull();
+    expect(header?.querySelector('[aria-label="用量区间"]')).not.toBeNull();
+    expect(header?.querySelector('[aria-label="统计说明"]')).not.toBeNull();
+    // The sidebar already shows a ready gateway, and the overview reads
+    // itself again on return, on a timer and when the window shows.
+    expect(header?.textContent).not.toContain("网关正常运行");
+    expect(header?.querySelector('[aria-label="刷新"]')).toBeNull();
+
+    localStorage.setItem(
+      OVERVIEW_LAYOUT_STORAGE_KEY,
+      JSON.stringify({
+        order: DEFAULT_OVERVIEW_LAYOUT,
+        hidden: [...DEFAULT_HIDDEN_MODULES, "usage"],
+      }),
+    );
+    await act(async () => root.unmount());
+    root = createRoot(container);
+    await renderOverview();
+    const hidden = container.querySelector('[data-slot="page-header"]');
+    expect(hidden?.querySelector('[data-slot="overview-toolbar"]')).toBeNull();
+    expect(hidden?.querySelector('[aria-label="统计说明"]')).toBeNull();
+  });
+
   it("lets an empty workspace restore its hidden system module", async () => {
     localStorage.setItem(
       OVERVIEW_LAYOUT_STORAGE_KEY,

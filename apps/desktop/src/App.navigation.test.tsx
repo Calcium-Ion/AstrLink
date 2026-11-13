@@ -2142,19 +2142,6 @@ describe("App workspace navigation", () => {
     });
   });
 
-  it("refreshes services and tokens with the usage from the overview header", async () => {
-    await renderApp();
-    const usage = bridgeMocks.getUsageSummary.mock.calls.length;
-    const services = bridgeMocks.listServices.mock.calls.length;
-    const tokens = bridgeMocks.listAccessTokens.mock.calls.length;
-
-    await act(async () => button("刷新").click());
-
-    expect(bridgeMocks.getUsageSummary).toHaveBeenCalledTimes(usage + 1);
-    expect(bridgeMocks.listServices).toHaveBeenCalledTimes(services + 1);
-    expect(bridgeMocks.listAccessTokens).toHaveBeenCalledTimes(tokens + 1);
-  });
-
   it("navigates to the request records page", async () => {
     await renderApp();
 

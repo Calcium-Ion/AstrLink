@@ -20,7 +20,6 @@ import {
   CircleDollarSign,
   Copy,
   Plus,
-  RefreshCw,
   RotateCcw,
   Settings,
   SlidersHorizontal,
@@ -99,7 +98,6 @@ import type { RecordsTarget } from "./request-live-model";
 import { statusLabel, type RequestStatus } from "./request-record-model";
 import { currentLocale, i18n, useT } from "./i18n";
 import { PageHeader } from "./PageHeader";
-import { ActionGroup } from "@/components/ActionGroup";
 import { ScrollWorkspace } from "@/components/ScrollWorkspace";
 import { placeFloatingCard } from "./place-floating-card";
 import type { Service } from "./service-model";
@@ -236,6 +234,9 @@ export function Overview({
   const visibleModules = layout.order.filter(
     (id) => id !== "system" && !layout.hidden.includes(id),
   );
+  // The usage range also sets the figures in the modules below, so its
+  // controls share the page header's row instead of taking one of their own.
+  const usageShown = visibleModules.includes("usage");
   const capabilities = snapshot?.capabilities ?? null;
   const conversionEngine = capabilities?.conversion_engine;
   const statusTone = snapshot ? phaseTone(snapshot.phase) : "neutral";
@@ -384,81 +385,9 @@ export function Overview({
         aria-busy={usage.status === "loading"}
         className="grid min-w-0 grid-cols-1 gap-3"
       >
-        <div
-          className="flex min-w-0 flex-wrap items-center justify-between gap-x-4 gap-y-2"
-          data-slot="overview-toolbar"
-        >
-          <div className="flex items-center gap-1.5">
-            <h2 className="text-sm font-medium" id="usage-heading">
-              {t("overview.usageSummary")}
-            </h2>
-            <HelpPopover label={t("overview.usageDetails")}>
-              <p>
-                {t(
-                  usageRange === "1d"
-                    ? "overview.hourlyUsageNote"
-                    : "overview.usageNote",
-                )}
-              </p>
-              <p className="mt-2">
-                {t(
-                  view !== "trail"
-                    ? "overview.heatmapNote"
-                    : usageRange === "1d"
-                      ? "overview.starTrailModelNote"
-                      : "overview.starTrailNote",
-                )}
-              </p>
-            </HelpPopover>
-          </div>
-          <ActionGroup className="gap-4">
-            <SegmentedControl
-              label={t("overview.viewLabel")}
-              variant="line"
-              value={view}
-              onValueChange={(next) => {
-                setView(next);
-                if (
-                  next === "heatmap" &&
-                  (usageRange === "1d" || usageRange === "7d")
-                )
-                  onUsageRangeChange("1y");
-                // A ring per model for a day, or per day for a week or a
-                // month, fits the disc.
-                if (
-                  next === "trail" &&
-                  !STAR_TRAIL_RANGES.some((range) => range === usageRange)
-                )
-                  onUsageRangeChange("1d");
-              }}
-              options={[
-                { value: "trail", label: t("overview.starTrail") },
-                { value: "heatmap", label: t("overview.heatmap") },
-                { value: "chart", label: t("overview.chart") },
-              ]}
-            />
-            <span aria-hidden="true" className="h-4 w-px bg-border" />
-            <UsageRangePicker
-              ariaLabel={t("overview.rangeLabel")}
-              className="min-w-24"
-              custom={view !== "trail"}
-              onChange={(next) => {
-                if (next !== null) onUsageRangeChange(next);
-              }}
-              // A calendar of one or seven days says less than a bar chart.
-              presets={
-                view === "heatmap"
-                  ? USAGE_RANGE_PRESETS.filter(
-                      (preset) => preset !== "1d" && preset !== "7d",
-                    )
-                  : view === "trail"
-                    ? STAR_TRAIL_RANGES
-                    : USAGE_RANGE_PRESETS
-              }
-              value={usageRange}
-            />
-          </ActionGroup>
-        </div>
+        <h2 className="sr-only" id="usage-heading">
+          {t("overview.usageSummary")}
+        </h2>
         {usage.status === "loading" && !summary ? (
           <UsagePanelSkeleton trail={view === "trail"} />
         ) : (
@@ -881,25 +810,10 @@ export function Overview({
                     <SlidersHorizontal aria-hidden="true" />
                   )}
                 </IconButton>
-                <Button
-                  disabled={!isReady || usage.status === "loading"}
-                  onClick={onRefresh}
-                  size="icon-sm"
-                  type="button"
-                  variant="ghost"
-                  aria-label={t("common.refresh")}
-                >
-                  <RefreshCw
-                    aria-hidden="true"
-                    className={cn(
-                      usage.status === "loading" &&
-                        "animate-spin motion-reduce:animate-none",
-                    )}
-                  />
-                </Button>
-                <StatusBadge tone={statusTone}>
-                  {isReady ? t("overview.gatewayHealthy") : statusLabel}
-                </StatusBadge>
+                {/* The sidebar already says the gateway is ready. */}
+                {isReady ? null : (
+                  <StatusBadge tone={statusTone}>{statusLabel}</StatusBadge>
+                )}
                 {isNativeApp && (!isReady || snapshot?.restart_pending) ? (
                   <Button
                     variant="outline"
@@ -915,10 +829,89 @@ export function Overview({
                         : t("overview.restartGateway")}
                   </Button>
                 ) : null}
+                {/* The range picker is the widest control, so it ends the row. */}
+                {usageShown ? (
+                  <div
+                    className="flex min-w-0 flex-wrap items-center justify-end gap-x-4 gap-y-2"
+                    data-slot="overview-toolbar"
+                  >
+                    <SegmentedControl
+                      label={t("overview.viewLabel")}
+                      variant="line"
+                      value={view}
+                      onValueChange={(next) => {
+                        setView(next);
+                        if (
+                          next === "heatmap" &&
+                          (usageRange === "1d" || usageRange === "7d")
+                        )
+                          onUsageRangeChange("1y");
+                        // A ring per model for a day, or per day for a week or a
+                        // month, fits the disc.
+                        if (
+                          next === "trail" &&
+                          !STAR_TRAIL_RANGES.some(
+                            (range) => range === usageRange,
+                          )
+                        )
+                          onUsageRangeChange("1d");
+                      }}
+                      options={[
+                        { value: "trail", label: t("overview.starTrail") },
+                        { value: "heatmap", label: t("overview.heatmap") },
+                        { value: "chart", label: t("overview.chart") },
+                      ]}
+                    />
+                    <span aria-hidden="true" className="h-4 w-px bg-border" />
+                    <UsageRangePicker
+                      ariaLabel={t("overview.rangeLabel")}
+                      className="min-w-24"
+                      custom={view !== "trail"}
+                      onChange={(next) => {
+                        if (next !== null) onUsageRangeChange(next);
+                      }}
+                      // A calendar of one or seven days says less than a bar
+                      // chart.
+                      presets={
+                        view === "heatmap"
+                          ? USAGE_RANGE_PRESETS.filter(
+                              (preset) => preset !== "1d" && preset !== "7d",
+                            )
+                          : view === "trail"
+                            ? STAR_TRAIL_RANGES
+                            : USAGE_RANGE_PRESETS
+                      }
+                      value={usageRange}
+                    />
+                  </div>
+                ) : null}
               </>
             }
+            actionsClassName="shrink"
             className="mb-0 border-0 py-0"
             title={t("overview.title")}
+            titleSuffix={
+              usageShown ? (
+                <HelpPopover label={t("overview.usageDetails")}>
+                  <p>
+                    {t(
+                      usageRange === "1d"
+                        ? "overview.hourlyUsageNote"
+                        : "overview.usageNote",
+                    )}
+                  </p>
+                  <p className="mt-2">
+                    {t(
+                      view !== "trail"
+                        ? "overview.heatmapNote"
+                        : usageRange === "1d"
+                          ? "overview.starTrailModelNote"
+                          : "overview.starTrailNote",
+                    )}
+                  </p>
+                </HelpPopover>
+              ) : null
+            }
             variant="compact"
           />
           <InferencePortNotice snapshot={snapshot} />
