@@ -48,7 +48,10 @@ func (d *TOMLDocument) Get(key string) (value string, ok, present bool) {
 }
 
 // Set sets a string at a root key.
-func (d *TOMLDocument) Set(key, value string) { SetTOMLString(d.root, key, value) }
+func (d *TOMLDocument) Set(key, value string) error {
+	SetTOMLString(d.root, key, value)
+	return nil
+}
 
 // Remove drops a root key, keeping the comment above it.
 func (d *TOMLDocument) Remove(key string) { d.removeRootKey(key) }
