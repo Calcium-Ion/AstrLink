@@ -112,7 +112,21 @@
     "output": "APIプロバイダーのレスポンス",
     "requestFailed": "APIプロバイダーのテストを実行できませんでした。",
     "notConnected": "テストの前に、このサブスクリプションへサインインしてください。",
-    "unsupported": "直接対応するテキスト生成プロトコルが設定されていません。先に、ネイティブまたは委任のプロトコルを設定してください。"
+    "unsupported": "直接対応するテキスト生成プロトコルが設定されていません。先に、ネイティブまたは委任のプロトコルを設定してください。",
+    "media": {
+      "open": "開く",
+      "download": "ダウンロード",
+      "saved": "{{path}} に保存しました",
+      "saveFailed": "ファイルを保存できませんでした。",
+      "kinds": {
+        "image": "画像",
+        "video": "動画",
+        "audio": "音声",
+        "file": "ファイル"
+      }
+    },
+    "emptyTitle": "テスト結果はまだありません",
+    "generating": "生成の完了を待っています（最大 5 分）…"
   },
   "common": {
     "previousPage": "前のページ",
@@ -152,7 +166,11 @@
     "discardUnsaved": "未保存の変更を破棄しますか？",
     "today": "今日",
     "yesterday": "昨日",
-    "checking": "確認中…"
+    "checking": "確認中…",
+    "justNow": "たった今",
+    "minutesAgo": "{{count}} 分前",
+    "hoursAgo": "{{count}} 時間前",
+    "daysAgo": "{{count}} 日前"
   },
   "nav": {
     "collapse": "サイドバーを折りたたむ",
@@ -170,7 +188,8 @@
     "settings": "設定",
     "gateway": "ゲートウェイ",
     "gatewayStatus": "ゲートウェイ {{status}}",
-    "about": "情報"
+    "about": "情報",
+    "plugins": "プラグイン"
   },
   "chrome": {
     "bar": "ウィンドウ操作",
@@ -376,7 +395,8 @@
       "general": "一般",
       "gateway": "ゲートウェイとネットワーク",
       "tray": "トレイパネル",
-      "sync": "同期とバックアップ"
+      "sync": "同期とバックアップ",
+      "metadata": "メタデータ"
     },
     "sync": {
       "title": "同期とバックアップ",
@@ -1342,6 +1362,12 @@
       "messages": "Claude Code が使用",
       "gemini": "Gemini CLI が使用"
     },
+    "groupPlugins": "プラグイン",
+    "kindPickerPluginHint": "「{{plugin}}」プラグインが中継",
+    "taskUpstream": "上流は別の New API ゲートウェイ",
+    "taskUpstreamHelp": "同じプラグインを入れた別の New API ゲートウェイに送ります。アドレスにそのゲートウェイ、キーにそのトークンを入れてください。",
+    "serviceAccountKey": "サービスアカウント JSON",
+    "serviceAccountKeyHelp": "Google Cloud のサービスアカウントキーのファイル内容をすべて貼り付けてください。ゲートウェイがアクセストークンに交換し、プラグインには渡しません。",
     "vertexProject": "Google Cloud プロジェクト ID",
     "vertexLocation": "ロケーション",
     "vertexLocationHint": "global、us、eu または us-central1 などのリージョンを指定します。選択した場所で利用可能なモデルが必要です。別の場所には自動切替しません。",
@@ -1360,7 +1386,40 @@
     "keyFileReplace": "変更",
     "vertexKeyProject": "キーのプロジェクト: {{project}}",
     "vertexCredentialSaved": "サービスアカウントキーを保存済み",
-    "reorderCardKeys": "カードをドラッグして並べ替えます。ハンドルにフォーカスして矢印キーでも移動できます"
+    "reorderCardKeys": "カードをドラッグして並べ替えます。ハンドルにフォーカスして矢印キーでも移動できます",
+    "pluginSettings": "プラグインの設定",
+    "pluginLogin": {
+      "account": "アカウント",
+      "saveFirst": "先にこのプロバイダーを保存してから、アカウントにログインしてください。",
+      "loggedIn": "ログイン済み",
+      "notLoggedIn": "未ログイン",
+      "needsLogin": "再ログインが必要",
+      "login": "ログイン",
+      "loginAgain": "再ログイン",
+      "title": "ログイン",
+      "starting": "ログインを開始しています…",
+      "inBrowser": "ブラウザでログインページを開きました。ログインが終わると自動で続きます。",
+      "openPage": "ログインページを開く",
+      "pasteHint": "ブラウザでログインし、最後に表示されたページのアドレスを下に貼り付けてください。",
+      "pasted": "ブラウザの最後のアドレス",
+      "continue": "続ける",
+      "deviceHint": "ログインページを開き、下のコードを入力してください。終わると自動で続きます。",
+      "failed": "ログインに失敗しました。",
+      "retry": "やり直す"
+    },
+    "pluginBalance": {
+      "label": "残高",
+      "status": "状態",
+      "reading": "読み込み中…",
+      "unread": "未取得",
+      "resting": "一時停止中",
+      "updated": "{{time}} 更新",
+      "read": "残高を今すぐ取得",
+      "unlimited": "無制限",
+      "window": "枠",
+      "resets": "{{time}} にリセット",
+      "failed": "残高を取得できませんでした。"
+    }
   },
   "packages": {
     "subscriptions": "サブスクリプション",
@@ -1596,6 +1655,7 @@
     "antigravity_subscription": "Antigravity サブスクリプション",
     "copilot_subscription": "GitHub Copilot サブスクリプション",
     "droid_subscription": "Droid サブスクリプション",
+    "plugin": "プラグインのプロバイダー",
     "vertex": "Vertex AI"
   },
   "subscription": {
@@ -1654,6 +1714,7 @@
     "minimaxDescription": "従量課金の MiniMax プラットフォーム APIキーです。プラットフォームの APIキーを使ってください。",
     "doubaoDescription": "従量課金の Volcengine Ark APIキーです。既定は北京です。有効なモデル ID または推論エンドポイント ID（ep-…）を追加してください。",
     "xaiDescription": "従量課金の xAI プラットフォーム APIキーです。Grok Chat、Responses、モデル検出に対応しています。",
+    "pluginDescription": "プラグインが中継するプロバイダー：プラグインがリクエストを組み立てて応答を解析し、送信・キー・フェイルオーバーはゲートウェイが担います。",
     "vertexDescription": "サービスアカウントで Gemini、Claude などのモデルに接続するか、Express API Key で Gemini を呼び出します。"
   },
   "usage": {
@@ -2973,7 +3034,8 @@
       "UPSTREAM": "アップストリーム",
       "RETRY": "再試行",
       "RESTORE": "復元",
-      "RESULT": "結果"
+      "RESULT": "結果",
+      "PLUGIN": "プラグイン"
     },
     "lanes": {
       "client": "クライアント",
@@ -3085,7 +3147,8 @@
       "find": "キーや値を検索します。Enterで次の一致へ移動し、折りたたまれた部分は自動で開きます。いつでも {{shortcut}} を押すと、ここに戻れます。",
       "pinTitle": "最前面に固定",
       "pin": "他のウィンドウより前に浮かび、この呼び出しを保持します。次に選んだ呼び出しは、別のウィンドウで開きます。"
-    }
+    },
+    "plugin": "プラグイン"
   },
   "find": {
     "label": "内容を検索",
@@ -3163,10 +3226,6 @@
     "showLessSubscriptions": "折りたたむ",
     "hourlyChart": "今日の 1 時間ごとのトークン",
     "hourlyPeak": "ピーク {{hour}}:00 · {{tokens}}",
-    "justNow": "たった今",
-    "minutesAgo": "{{count}} 分前",
-    "hoursAgo": "{{count}} 時間前",
-    "daysAgo": "{{count}} 日前",
     "updatedAgo": "更新: {{ago}}",
     "refresh": "更新",
     "version": "AstrLink {{version}}",
@@ -3218,7 +3277,8 @@
     "window": {
       "trajectoryInspector": "AstrLink · 軌跡の呼び出し",
       "trajectoryInspectorPinned": "AstrLink · 軌跡の呼び出し（最前面）",
-      "rawAccessApproval": "AstrLink · 原文アクセス申請"
+      "rawAccessApproval": "AstrLink · 原文アクセス申請",
+      "pluginApproval": "AstrLink · プラグインの確認"
     },
     "rawAccess": {
       "notificationTitle": "Agent が原文の閲覧を申請しています",
@@ -3680,27 +3740,19 @@
   "binding": {
     "tab": "APIプロバイダーの紐付け",
     "settingTitle": "会話内で APIプロバイダーを再利用",
-    "settingHint": "最後に成功した APIプロバイダーを優先します。失敗時は、既存のフェイルオーバー方針に従います。",
     "ttl": "アイドル期限（分）",
-    "ttlHint": "成功したリクエストのたびに、期限を再設定します。1〜1440 分で、60 分を推奨します。",
-    "manageHint": "「リクエスト」→「会話の詳細」→「APIプロバイダーの紐付け」で管理します。",
     "current": "現在の APIプロバイダー優先",
     "release": "APIプロバイダーを再選択",
     "releasing": "解除中…",
-    "releaseHint": "この会話の優先設定を消去します。次のリクエストは APIプロバイダーの順序に従い、同じ APIプロバイダーが選ばれることもあります。",
     "releasedNotice": "紐付けを解除しました。次のリクエストで、APIプロバイダーを選び直します。",
     "releaseFailed": "紐付けを解除できませんでした。再試行してください。",
     "loadFailed": "APIプロバイダーの紐付けを読み込めませんでした",
     "disabled": "APIプロバイダーの再利用はオフです。既存の紐付けは通常のルーティングに影響しません。履歴は引き続き参照できます。",
     "empty": "有効な紐付けなし",
-    "emptyHint": "成功したリクエストは、APIプロバイダーを自動で記憶します。",
-    "emptyDisabled": "ルーティングで「会話内で APIプロバイダーを再利用」を有効にしてください。",
     "removedService": "削除された APIプロバイダー",
     "token": "トークン …{{id}}",
     "expires": "{{time}} まで有効",
-    "strictHint": "選び直しても、進行中のリクエストは中断しません。状態を持つ Responses の継続と、確立済みの WebSocket 接続は、元の APIプロバイダーを使い続けます。",
     "history": "紐付け履歴",
-    "historyHint": "セッションの一致、APIプロバイダーの優先、切り替え、手動解除を記録します。会話の本文はここには保存しません。",
     "noEvents": "紐付け履歴はまだありません",
     "viewRequest": "このリクエストを表示",
     "actions": {
@@ -3726,6 +3778,14 @@
       "echo_id": "ツールまたはレスポンス識別子の一致",
       "fingerprint": "アシスタント本文のフィンガープリント一致"
     },
+    "settingHint": "最後に成功した APIプロバイダーを優先します。失敗時は、既存のフェイルオーバー方針に従います。",
+    "ttlHint": "成功したリクエストのたびに、期限を再設定します。1〜1440 分で、60 分を推奨します。",
+    "manageHint": "「リクエスト」→「会話の詳細」→「APIプロバイダーの紐付け」で管理します。",
+    "releaseHint": "この会話の優先設定を消去します。次のリクエストは APIプロバイダーの順序に従い、同じ APIプロバイダーが選ばれることもあります。",
+    "emptyHint": "成功したリクエストは、APIプロバイダーを自動で記憶します。",
+    "emptyDisabled": "ルーティングで「会話内で APIプロバイダーを再利用」を有効にしてください。",
+    "strictHint": "選び直しても、進行中のリクエストは中断しません。状態を持つ Responses の継続と、確立済みの WebSocket 接続は、元の APIプロバイダーを使い続けます。",
+    "historyHint": "セッションの一致、APIプロバイダーの優先、切り替え、手動解除を記録します。会話の本文はここには保存しません。",
     "retention": "紐付けの監査エントリは、ローカルに最大 50,000 件まで保持されます。"
   },
   "serviceProxy": {
@@ -4594,13 +4654,26 @@
       "missing": "不足",
       "unknownReason": "不明な理由",
       "unexpectedValue": "予期しない値"
-    }
+    },
+    "plugin": "無効なプラグインデータ（{{path}}）: {{detail}}",
+    "metadata": "無効なメタデータ（{{path}}）: {{detail}}"
   },
   "controlErrors": {
     "image_provider_not_found": "画像生成に選んだ APIプロバイダーは、もう存在しません。別の APIプロバイダーを選ぶか、画像生成をオフにしてください。",
     "image_provider_unsupported": "画像生成に選んだ APIプロバイダーには Images API がありません。「APIプロバイダーの Images API」は、OpenAI、OpenAI 互換、New API、MiniMax の APIプロバイダーで使えます。Codex サブスクリプションでは、Responses · image_generation を選んでください。",
     "search_provider_not_found": "ウェブ検索に選んだ APIプロバイダーは、もう存在しません。別の APIプロバイダーを選ぶか、ウェブ検索をオフにしてください。",
-    "search_provider_unsupported": "ウェブ検索に選んだ APIプロバイダーには検索 API がありません。「APIプロバイダーの検索 API」は、Codex サブスクリプションと New API の APIプロバイダーで使えます。その他の APIプロバイダーでは、Responses · web_search を選んでください。"
+    "search_provider_unsupported": "ウェブ検索に選んだ APIプロバイダーには検索 API がありません。「APIプロバイダーの検索 API」は、Codex サブスクリプションと New API の APIプロバイダーで使えます。その他の APIプロバイダーでは、Responses · web_search を選んでください。",
+    "invalid_plugin_settings": "プラグインの設定が無効です。権限、アドレス、設定を確認してください。",
+    "metadata_attribute_conflict": "このキーまたはセッションマーカーは、ほかの属性が使っています。",
+    "metadata_attribute_owned": "この属性はプラグインが登録したものです。値の設定だけができます。",
+    "invalid_metadata_attribute": "属性が無効です。キー、検証ルール、セッションマーカーを確認してください。",
+    "invalid_metadata_value": "属性の検証ルールに合わない値があります。",
+    "invalid_credential": "認証情報は 1〜16384 バイトの 1 行で、プラグインがアクセスできるアドレスに紐付ける必要があります。",
+    "plugin_reload_failed": "プラグインディレクトリをスキャンできませんでした。",
+    "plugin_unavailable": "プラグインの設定を読み込めないか、保存できませんでした。",
+    "metadata_unavailable": "メタデータを読み込めないか、保存できませんでした。",
+    "credential_unavailable": "認証情報を保存できませんでした。",
+    "plaintext_consent_required": "サーバーは平文 HTTP です。保存するには「平文 HTTP を許可」をオンにしてください。"
   },
   "webConsole": {
     "title": "AstrLink コンソール",
@@ -4630,6 +4703,1135 @@
     "copy": "設定をコピー",
     "clipboard": "クリップボードを利用できません。下のテキストを選択してコピーしてください。"
   },
+  "plugins": {
+    "title": "プラグイン",
+    "listLabel": "プラグイン一覧",
+    "loading": "プラグインを読み込んでいます…",
+    "loadFailed": "プラグインを読み込めませんでした。",
+    "detailFailed": "このプラグインを読み込めませんでした。",
+    "statusFailed": "プラグインの状態を読み込めませんでした。",
+    "saveFailed": "変更を保存できませんでした。",
+    "testFailed": "接続テストを実行できませんでした。",
+    "empty": "プラグインはまだありません",
+    "emptyHint": "プラグインをプラグインディレクトリに置いて、再スキャンしてください。",
+    "select": "プラグインを選んでください",
+    "rescan": "再スキャン",
+    "rescanning": "スキャン中…",
+    "directoryHelpLabel": "プラグインディレクトリ",
+    "directoryHelp": "各プラグインはここに自分のフォルダーを持ち、plugin.ts または plugin.js を置きます。フォルダー名がプラグインのキーです。",
+    "rescanHelp": "プラグインを追加・変更したら再スキャンしてください。再起動は不要です。処理中のリクエストは古い版で完了します。",
+    "errorAt": "{{file}} {{line}} 行目",
+    "source": {
+      "builtin": "組み込み",
+      "directory": "ディレクトリ",
+      "override": "組み込みを置換",
+      "github": "GitHub",
+      "market": "マーケットプレイス"
+    },
+    "state": {
+      "running": "実行中",
+      "disabled": "停止中",
+      "failed": "読み込み失敗"
+    },
+    "enable": "有効にする",
+    "disable": "無効にする",
+    "test": "接続テスト",
+    "testing": "テスト中…",
+    "tabsLabel": "プラグインの詳細",
+    "tabs": {
+      "overview": "概要",
+      "settings": "設定",
+      "status": "稼働状況",
+      "develop": "開発",
+      "tasks": "タスク"
+    },
+    "testStatus": {
+      "ok": "接続 OK",
+      "error": "エラー",
+      "failed": "テスト失敗"
+    },
+    "truncated": "上限を超えたため切り詰めました",
+    "overviewNeedsViews": "有効にするときに「ビュー」を許可すると、ここにプラグインの概要が表示されます。",
+    "noCapabilities": "権限の申請なし",
+    "capabilities": {
+      "contextInject": "コンテキストの注入",
+      "requestRead": "ターンのテキストを読む",
+      "network": "ネットワーク",
+      "storage": "プラグインストレージ",
+      "uiViews": "ビュー",
+      "modelTools": "エージェントからの検索",
+      "requestWrite": "リクエストの変更",
+      "requestWriteRaw": "リクエスト本文の書き換え",
+      "requestGate": "リクエストの拒否",
+      "routing": "ルーティングの調整",
+      "responseRead": "レスポンスの読み取り",
+      "responseWrite": "レスポンスの書き換え",
+      "events": "ゲートウェイのイベント",
+      "schedule": "定期実行",
+      "httpServe": "ローカルエンドポイント",
+      "provider": "プロバイダーアダプター",
+      "uiCode": "画面のコード"
+    },
+    "loadErrors": {
+      "not_found": "plugin.ts も plugin.js もありません",
+      "ambiguous": "plugin.ts と plugin.js の両方があります",
+      "too_large": "8 MiB を超えています",
+      "encoding": "UTF-8 ではありません",
+      "syntax": "構文エラー",
+      "async": "async には apiVersion 2 が必要です",
+      "await": "await には apiVersion 2 が必要です",
+      "import": "import は使えません",
+      "reexport": "export … from は使えません",
+      "missing_meta": "meta がエクスポートされていません",
+      "invalid_meta": "meta が無効です",
+      "unknown_export": "meta とフック以外をエクスポートしています",
+      "not_function": "関数でないフックがあります",
+      "load_failed": "トップレベルの実行に失敗しました"
+    },
+    "network": {
+      "originsHelpLabel": "許可するアドレスについて",
+      "originsHelp": "プラグインはこれらのアドレスにだけアクセスできます。スキーム・ホスト・ポートが一致する必要があり、パスは自由です。リダイレクトは追いません。",
+      "originLabel": "許可するアドレス",
+      "invalidOrigin": "ホストを含む http または https のアドレスを入力してください（例: https://memory.example.com:8443）。",
+      "add": "追加",
+      "remove": "{{origin}} を削除",
+      "plaintext": "平文 HTTP",
+      "allowPlaintext": "平文 HTTP を許可",
+      "plaintextHelpLabel": "平文 HTTP について",
+      "plaintextHelp": "このアドレスへのリクエスト（認証情報を含む）は暗号化されず、途中で読み取られる可能性があります。サーバーに TLS を設定するか、SSH トンネル経由でアクセスしてください。",
+      "trusted": "信頼済み",
+      "trustedHelpLabel": "信頼済みについて",
+      "trustedHelp": "オフの場合、プラグインが受け取る検索語とキャプチャするテキストは、信頼していない API プロバイダーと同じくプライバシーポリシーの検査を通ります。オンの場合は原文のまま受け取ります。"
+    },
+    "credentials": {
+      "title": "認証情報",
+      "helpLabel": "認証情報について",
+      "help": "認証情報は AstrLink のローカル鍵ストアに保存されます。Core は、紐付けたアドレス宛てのリクエストにだけ追加し、プラグインは値を読めません。",
+      "configured": "設定済み ···· {{hint}}",
+      "configuredNoHint": "設定済み",
+      "origin": "紐付けるアドレス",
+      "secret": "値",
+      "clear": "削除"
+    },
+    "config": {
+      "help": "64 KiB までの JSON オブジェクトです。プラグインは読み取るだけで変更できません。認証情報はここに書かず、認証情報の欄を使ってください。",
+      "size": "{{size}} KiB / 64 KiB",
+      "invalid": "設定は 1 つの JSON オブジェクトである必要があります。",
+      "tooLarge": "設定が 64 KiB を超えています。"
+    },
+    "status": {
+      "calls": "呼び出し",
+      "timeouts": "タイムアウト",
+      "memoryLimits": "メモリ超過",
+      "failures": "失敗した呼び出し",
+      "reasons": {
+        "timeout": "タイムアウト",
+        "memory_limit": "メモリ超過",
+        "plugin_error": "プラグインのエラー",
+        "invalid_result": "無効な結果",
+        "canceled": "キャンセル",
+        "unavailable": "利用不可"
+      },
+      "networkRequests": "ネットワーク要求",
+      "networkDetail": "拒否 {{denied}} · 失敗 {{errors}}"
+    },
+    "enableDialog": {
+      "purpose": "ネットワークの用途: {{purpose}}",
+      "notice": "プラグインからのお知らせ",
+      "metadata": "登録するメタデータ属性",
+      "marker": "セッションマーカー {{marker}}"
+    },
+    "blocked": "ゲートウェイが動いていません",
+    "blockedHint": "プラグインはゲートウェイの準備ができてから読み込まれます。止まっている場合は、概要に理由が表示されます。",
+    "stale": "ゲートウェイの準備ができていません。前回読み取ったプラグインを表示しています。",
+    "wait": {
+      "label": "最大待機",
+      "helpLabel": "最大待機について",
+      "help": "各ターン最初のリクエストは、プライバシー検査を含めてこの時間までプラグインを待ち、その後は通常どおりモデルに送られます。間に合わなかった結果はこのターンに挿入されません。既定は 2.5 秒です。",
+      "seconds": "{{value}} 秒"
+    },
+    "about": {
+      "label": "このプラグインについて",
+      "does": "このプラグインがすること",
+      "network": "ネットワークの用途",
+      "capabilities": "使用する権限"
+    },
+    "overview": {
+      "noServer": "未設定",
+      "notTested": "未テスト",
+      "bindings": "バインド済みの{{label}}",
+      "sessions": "セッション",
+      "lastUsed": "最終使用",
+      "none": "対象外",
+      "noBindings": "まだ{{label}}にバインドされたセッションはありません",
+      "statusUnread": "読み取れませんでした",
+      "statusErrorLabel": "プラグインのエラー",
+      "gateway": "ローカルゲートウェイ",
+      "uses": "オープンソースプロジェクト {{name}} を使用",
+      "onGitHub": "GitHub で {{name}} を見る",
+      "onGitHubStars_one": "GitHub で {{name}} を見る（スター {{stars}}）",
+      "onGitHubStars_other": "GitHub で {{name}} を見る（スター {{stars}}）"
+    },
+    "settings": {
+      "save": "保存",
+      "revert": "元に戻す",
+      "unsaved": "未保存の変更があります",
+      "more": "その他の設定",
+      "json": "JSON で編集",
+      "jsonTitle": "設定を JSON で編集",
+      "apply": "適用",
+      "gatewayGroup": "ゲートウェイ",
+      "origins": "その他の許可するアドレス",
+      "required": "「{{label}}」は必須です",
+      "number": "「{{label}}」には数値を入力してください",
+      "between": "「{{label}}」は {{min}} から {{max}} の間にしてください",
+      "atLeast": "「{{label}}」は {{min}} 以上にしてください",
+      "atMost": "「{{label}}」は {{max}} 以下にしてください",
+      "address": "「{{label}}」には http または https のアドレスを入力してください",
+      "consent": "「{{label}}」は平文 HTTP です。保存するには「平文 HTTP を許可」をオンにしてください",
+      "replace": "変更",
+      "keep": "変更しない",
+      "noOrigin": "トークンを保存する前にサーバーのアドレスを入力してください",
+      "choices": {
+        "all": "すべて",
+        "none": "なし",
+        "clear": "すべて外す",
+        "selectAll": "すべて選択",
+        "count_one": "{{count}} 件",
+        "count_other": "{{count}} 件",
+        "separator": "、"
+      }
+    },
+    "host": {
+      "pause": "すべてのプラグインを一時停止",
+      "pauseHelp": "一時停止中はどのプラグインも動きません。読み込み・確認・書き込みを行わず、リクエストはそのまま送られます。各ターン最初のリクエストの記録に理由が残ります。再開すると元どおり動きます。",
+      "pausedNotice": "すべてのプラグインを一時停止中です。リクエストはそのまま送られます。",
+      "budget": "注入の上限",
+      "budgetHelp": "すべてのプラグインが 1 回のリクエストに追加できる内容の合計です。超えた場合、順番が後のプラグインのブロックは入らず、リクエスト記録に「注入の上限を超過」と残ります。",
+      "budgetValue": "{{value}} KB",
+      "saveFailed": "プラグイン全体の設定を保存できませんでした。",
+      "open": "プラグイン設定",
+      "title": "プラグイン設定",
+      "pausedShort": "すべてのプラグインを一時停止中",
+      "helpLabel": "{{label}} について"
+    },
+    "clients": {
+      "label": "対象のクライアント",
+      "helpLabel": "対象のクライアントについて",
+      "help": "チェックを外したクライアントのリクエストにはプラグインが関わりません。読み込み・確認・書き込みを行わず、そのまま送られます。判別できないクライアントは「その他」です。クライアント自身の記憶機能と重ならないようにするのに使えます。",
+      "all": "すべてのクライアント",
+      "none": "どのクライアントにも適用しない",
+      "search": "クライアントを検索",
+      "empty": "一致するクライアントはありません",
+      "selectAll": "すべて選択",
+      "clear": "すべて解除",
+      "other": "その他",
+      "count_one": "{{count}} 個のクライアント",
+      "count_other": "{{count}} 個のクライアント"
+    },
+    "workspace": {
+      "label": "ワークスペースで自動紐付け",
+      "helpLabel": "ワークスペースでの自動紐付けについて",
+      "help": "セッションで初めてプロジェクトを選んだとき、「この作業ディレクトリ → このプロジェクト」を記録し、同じディレクトリの新しいセッションは最初のターンから自動で紐付きます。このコンピューターには、ディレクトリパスのフィンガープリントと最後の名前だけを保存します。"
+    },
+    "refresh": {
+      "label": "自動更新",
+      "helpLabel": "自動更新について",
+      "help": "各セッションで最大 10 分に 1 回プラグインのデータが更新されたか確認し、更新があったときだけ新しいブロックに替えます。替えるたびに、このセッションのプロンプトキャッシュはもう一度書き込まれます。既定ではオフです。",
+      "confirmTitle": "自動更新をオンにしますか？",
+      "confirmBody": "プラグインのデータが更新されると、セッションは新しいブロックに替わります。システムプロンプトが変わるため、それ以降の会話全体がもう一度プロンプトキャッシュに書き込まれ、長いセッションでは数万トークン多くかかることがあります。確認は各セッションで最大 10 分に 1 回です。",
+      "confirm": "オンにする"
+    },
+    "stored": {
+      "title": "保存データ",
+      "kinds": {
+        "session_bindings": {
+          "label": "セッションの紐付け",
+          "what": "各セッションが紐付いている値、紐付けた方法、何ターン目か。",
+          "retention": "セッション記録と同じ期間"
+        },
+        "workspace_bindings": {
+          "label": "ワークスペースと値の対応",
+          "what": "作業ディレクトリのパスのフィンガープリントと最後の名前だけで、パス全体は保存しません。同じディレクトリの新しいセッションを自動で紐付けるのに使います。",
+          "retention": "消去するまで"
+        },
+        "plugin_sessions": {
+          "label": "各セッションの最初のターンと一時停止",
+          "what": "プラグインが各セッションで最初に参加したターンと、そのセッションで一時停止しているかどうか。",
+          "retention": "保持"
+        },
+        "request_records": {
+          "label": "プラグインの記録",
+          "what": "各リクエストでプラグインがしたこと：回数・サイズ・所要時間・理由。検索や報告の内容は含みません。",
+          "retention": "リクエスト記録と同じ期間"
+        },
+        "resident_block": {
+          "label": "現在読み込んでいるブロック",
+          "what": "セッションのシステムプロンプトで使っているプロジェクトの記憶。",
+          "retention": "ゲートウェイを再起動すると消えます"
+        },
+        "plugin_values": {
+          "label": "プラグインのストレージ",
+          "what": "プラグイン自身の小さなデータで、無効化後も残ります。プラグインは次のものを保存していると申告しています。",
+          "retention": "消去するまで"
+        },
+        "lookup_credentials": {
+          "label": "検索の認証情報",
+          "what": "各セッションが検索と報告に使う認証情報。ハッシュで保持します。",
+          "retention": "24 時間リクエストがないか再起動で無効"
+        },
+        "plugin_files": {
+          "label": "プラグインのファイル",
+          "what": "プラグインが node:fs で自分のデータディレクトリに読み書きするファイル。アンインストールしても残り、再インストールすると引き続き使われます。",
+          "retention": "消去するまで"
+        }
+      },
+      "holds": {
+        "memory": "記憶の内容を含む",
+        "conversation": "会話内容を含む"
+      },
+      "clear": "消去",
+      "clearTitle": {
+        "workspaces": "ワークスペースの記録を消去しますか？",
+        "values": "プラグインのストレージを消去しますか？",
+        "lookups": "検索の認証情報を無効にしますか？",
+        "files": "プラグインのファイルを消去しますか？"
+      },
+      "clearConfirm": {
+        "workspaces": "消去すると、新しいセッションは作業ディレクトリから自動でプロジェクトに紐付かず、最初のターンで再び確認します。紐付け済みのセッションは変わりません。",
+        "values": "プロジェクトのサーバー上の ID など、プラグイン自身の小さなデータを消去します。必要になったときにプラグインが取り直します。記憶そのものは変わりません。",
+        "lookups": "このプラグインの検索の認証情報がただちに無効になり、モデルが受け取った検索コマンドも使えなくなります。各セッションの次のリクエストで新しい認証情報に替わり、システムプロンプトが変わるため、プロンプトキャッシュがもう一度書き込まれます。",
+        "files": "このプラグインのデータディレクトリにあるファイルをすべて削除します。プラグインは次に必要になったときに最初から始めます。コードと一緒に同梱されたファイルは残ります。"
+      },
+      "clearFailed": "消去できませんでした。",
+      "count_one": "{{count}} 件",
+      "count_other": "{{count}} 件",
+      "files_one": "{{count}} 個のファイル · {{size}}",
+      "files_other": "{{count}} 個のファイル · {{size}}",
+      "revoke": "無効にする",
+      "helpLabel": "保存データについて",
+      "help": "このプラグインのために AstrLink が保存しているものを、保存場所ごとに並べています。明記したもの以外は会話の内容を含みません。",
+      "places": {
+        "database": "AstrLink データベース",
+        "memory": "メモリ内のみ",
+        "records": "リクエスト記録",
+        "disk": "プラグインのディレクトリ"
+      },
+      "retention": "保存期間：{{retention}}。",
+      "declared": "{{label}}（{{retention}}）"
+    },
+    "lookup": {
+      "label": "エージェントの検索を許可",
+      "helpLabel": "エージェントの検索について",
+      "help": "エージェントが詳細を必要とするとき、自分のシェルでプラグインの読み取り専用の検索を実行できます（1 ターンに最大 3 回）。プラグインが報告を受け付けるときは、残しておく価値のある内容をプラグインに渡すこともでき（1 ターンに最大 2 回）、プラグインの設定で報告だけをオフにできます。どちらもセッションに紐づくプロジェクトが対象です。クライアントとゲートウェイが同じコンピューターにあり、リクエストにシェルツールがあるときだけ、システムプロンプトに使い方とこのセッションの認証情報を付けます。プラグインを有効にするときに「エージェントからの検索」を許可してください。このプラグインの検索と報告：",
+      "toolSeparator": "：",
+      "reportMark": "（報告）"
+    },
+    "effects": {
+      "title": "動作状況",
+      "helpLabel": "動作状況について",
+      "help": "直近 7 日間を、このコンピューターのリクエスト記録から集計します。回数・サイズ・所要時間・理由だけで、会話の内容は含まず、どこにも送信しません。読み込みのコストは注入したバイト数から見積もり、およそ 3 バイトを 1 トークンとします。待ち時間は中央値です。小さな柱は日ごとの値で、右端が今日です。キャッシュヒットは入力トークンのうちキャッシュから読んだ割合で、「記憶あり」はプラグインが注入した内容を含むセッションです。",
+      "empty": "直近 7 日間の記録はまだありません。",
+      "load": "読み込みのコスト",
+      "refreshes_one": "更新 {{count}} 回",
+      "refreshes_other": "更新 {{count}} 回",
+      "wait": "待ち時間 約 {{p50}} ms",
+      "lookup": "検索",
+      "hitRate": "ヒット {{rate}}",
+      "refused_one": "拒否 {{count}} 回",
+      "refused_other": "拒否 {{count}} 回",
+      "binding": "紐づけの方法",
+      "changed_one": "自動紐づけ後に変更 {{count}}",
+      "changed_other": "自動紐づけ後に変更 {{count}}",
+      "write": "書き込み",
+      "reported_one": "エージェントの報告 {{count}} 件",
+      "reported_other": "エージェントの報告 {{count}} 件",
+      "problems": "問題",
+      "cache": "キャッシュヒット",
+      "daily": "日ごとの内訳",
+      "dailyHelp": "各行はゲートウェイのタイムゾーンでの 1 日で、動きのない日は灰色です。コストは注入したバイト数、結果は検索で結果があった割合、キャッシュヒットの列は「記憶ありのセッション / その他のセッション」です。そのほかは「動作状況」と同じく、回数・サイズ・理由だけで、会話の内容は含まず、送信もしません。",
+      "dailyHelpLabel": "日ごとの内訳について",
+      "writeCell": "{{ok}}（失敗 {{failed}}）",
+      "cacheCell": "{{with}} / {{without}}",
+      "columns": {
+        "date": "日付",
+        "loads": "読み込み",
+        "injected": "コスト",
+        "lookups": "検索",
+        "hits": "結果",
+        "bindings": "紐づけ",
+        "writes": "書き込み",
+        "problems": "問題",
+        "cache": "キャッシュヒット"
+      },
+      "period": "直近 7 日間",
+      "tokens": "約 {{tokens}} トークン",
+      "loads_one": "読み込み {{count}} 回",
+      "loads_other": "読み込み {{count}} 回",
+      "times_one": "{{count}} 回",
+      "times_other": "{{count}} 回",
+      "lookupSessions_one": "{{count}} セッションで使用",
+      "lookupSessions_other": "{{count}} セッションで使用",
+      "entries_one": "{{count}} 件",
+      "entries_other": "{{count}} 件",
+      "writeFailed_one": "失敗 {{count}} 件",
+      "writeFailed_other": "失敗 {{count}} 件",
+      "noProblems": "正常に動作中",
+      "problemKinds": {
+        "failed_one": "失敗 {{count}}",
+        "failed_other": "失敗 {{count}}",
+        "timeouts_one": "タイムアウト {{count}}",
+        "timeouts_other": "タイムアウト {{count}}",
+        "privacy_one": "プライバシー {{count}}",
+        "privacy_other": "プライバシー {{count}}",
+        "over_budget_one": "予算超過 {{count}}",
+        "over_budget_other": "予算超過 {{count}}"
+      },
+      "ways": {
+        "workspace": "ワークスペースで自動",
+        "picked": "既存を選択",
+        "created": "新規",
+        "declined": "入れない",
+        "unanswered": "未回答"
+      },
+      "cacheSides": {
+        "with": "記憶あり",
+        "without": "その他のセッション"
+      }
+    },
+    "headerHelpLabel": "プラグイン全体の設定について",
+    "develop": {
+      "build": "開発版",
+      "builtAt": "{{time}} にビルド",
+      "loadFailed": "プラグインのログを読み込めません。",
+      "timings": "フックの所要時間",
+      "timingsHelpLabel": "フックの所要時間について",
+      "timingsHelp": "各フックの直近 256 回の呼び出しにかかった時間です。試し実行は含みません。「JS 時間」はスクリプト自体が動いた時間だけで、ネットワークやストレージを待った時間は含みません。Core を再起動すると数え直します。",
+      "noCalls": "まだ呼び出しがありません。",
+      "hook": "フック",
+      "calls": "呼び出し",
+      "failures": "失敗",
+      "p50": "中央値",
+      "p95": "P95",
+      "max": "最長",
+      "script": "JS 時間",
+      "dryRun": "試し実行",
+      "dryRunHelpLabel": "試し実行について",
+      "dryRunHelp": "プラグインの今の設定と許可で、フックをサンドボックス内で一度実行します。試し実行ではネットワークを使えないため、プラグインのリクエストは予算切れで失敗し、リクエスト記録にも残りません。引数はフックに渡す JSON 配列です。",
+      "args": "引数",
+      "argsInvalid": "引数は JSON 配列で書いてください。",
+      "run": "実行",
+      "running": "実行中…",
+      "runFailed": "試し実行が完了しませんでした。",
+      "result": "戻り値",
+      "noResult": "戻り値なし（undefined）",
+      "took": "所要 {{elapsed}}・JS {{script}}",
+      "log": "ログ",
+      "logHelpLabel": "ログについて",
+      "logHelp": "プラグインが console と astrlink.log で書いたログと、失敗した呼び出しとそのスタックです。新しいものが上です。メモリにだけ残り、プラグインごとに最大 400 行、Core を再起動すると消えます。",
+      "noLog": "まだログがありません。",
+      "clear": "クリア",
+      "dryRunTag": "試し実行",
+      "stack": "スタック",
+      "levels": {
+        "debug": "デバッグ",
+        "info": "情報",
+        "warn": "警告",
+        "error": "エラー"
+      },
+      "breaker": "「{{point}}」は最近失敗が多いため、{{time}} までリクエストに参加しません。"
+    },
+    "hooks": {
+      "onRequest": "入口",
+      "route": "ルーティング",
+      "beforeForward": "転送前",
+      "beforeUpstream": "上流への転送前",
+      "rewriteResponse": "レスポンスの書き換え",
+      "onStreamEvent": "ストリームの書き換え",
+      "onResponse": "レスポンスの後",
+      "onEvent": "ゲートウェイのイベント",
+      "onSchedule": "定期実行",
+      "onHttp": "ローカルエンドポイント",
+      "provider": "プロバイダーアダプター",
+      "providerEvent": "アダプターのストリームイベント",
+      "observeTurn": "各ターンの後",
+      "prepareSession": "セッションの読み込み",
+      "prepareTurn": "ターンの補足"
+    },
+    "approval": {
+      "loading": "確認する変更を読み込んでいます…",
+      "nothing": "確認を待っているプラグインの変更はありません",
+      "enableTitle": "「{{name}}」を有効にする",
+      "grantTitle": "「{{name}}」にできることを増やす",
+      "capabilitiesEnable": "プラグインが求める権限です。チェックを外したものは許可されません：",
+      "capabilitiesAdded": "この変更で新たに許可する権限です。チェックを外したものは許可されません：",
+      "noCapabilities": "プラグインは権限を求めていません。",
+      "origins": "新たにアクセスできるアドレス",
+      "plaintext": "平文の HTTP",
+      "plaintextExisting": "平文の HTTP でのアクセスを許可：{{origins}}",
+      "trusted": "信頼済みにする：プライバシーチェックを飛ばし、プラグインは会話をそのまま見ます。",
+      "failClosed": "プラグインの入口フックが失敗またはタイムアウトしたとき、リクエストを通さずに拒否します。",
+      "risk": {
+        "ui_code": "画面のコードは AstrLink の画面と同じ権限を持ちます。リクエスト記録を読み、設定を変えるなど、画面にできることは何でもできます。"
+      },
+      "deny": "拒否",
+      "confirm": "許可",
+      "confirmEnable": "有効にする",
+      "waiting": "この変更は「プラグインの確認」ウィンドウで確認を待っています。",
+      "open": "確認ウィンドウを開く",
+      "pluginWords": "プラグインの説明"
+    },
+    "limits": {
+      "label": "拡張ポイントの時間上限",
+      "helpLabel": "拡張ポイントの時間上限について",
+      "help": "リクエストがプラグインの各拡張ポイントを待つ最大時間です。空欄ならプラグインが宣言した値（欄内の薄い数字）、宣言がなければゲートウェイの既定値を使います。超えると、入口は通し、ルーティングは順序を保ち、転送前はそのまま送り、書き換えはレスポンスやイベントをそのまま返します。プラグインが時間を使うほどリクエストは遅くなります。各ポイントの実際の所要時間は「開発」タブで見られます。",
+      "ms": "ミリ秒",
+      "invalid": "{{point}}の時間上限は 1 から {{max}} までの整数ミリ秒にしてください",
+      "failClosed": "失敗時にリクエストを拒否",
+      "failClosedHelpLabel": "失敗時にリクエストを拒否することについて",
+      "failClosedHelp": "プラグインの希望で、入口フックが失敗またはタイムアウトしたリクエストを通さずに拒否します。必ず通すべき審査などに使います。オンにするとプラグインの不調でリクエストが失敗するため、確認ウィンドウで確認します。"
+    },
+    "order": {
+      "open": "順序を変更",
+      "title": "プラグインの実行順序",
+      "description": "各拡張ポイントでプラグインは上から順に実行され、それぞれが上のプラグインの結果を受け取ります。"
+    },
+    "install": {
+      "open": "プラグインをインストール",
+      "title": "プラグインをインストール",
+      "helpLabel": "GitHub からのインストールについて",
+      "helpLinks": "リポジトリのトップ（最新のバージョンタグ、タグがなければデフォルトブランチをインストール）、tree/ 以下のブランチ・タグ・ディレクトリ、リリース、コミットのリンクを貼り付けられます。プライベートリポジトリはまだ対応していません。",
+      "helpBuild": "AstrLink はこのコンピューターでロックファイルが固定する依存を npm からダウンロードし、ロックファイルのハッシュと 1 つずつ照合してから、内蔵のバンドラーでビルドします。インストールスクリプトは一切実行しません。ネイティブモジュールを含む依存は使えません。",
+      "helpConfirm": "まずここで審査結果を確認してください。インストールは「プラグインの確認」ウィンドウで確定します。インストールしたプラグインは自動では有効になりません。",
+      "link": "GitHub のリンク",
+      "check": "確認",
+      "previewing": "ダウンロードしてビルドしています…",
+      "failed": "このプラグインはインストールできません。",
+      "checkFailed": "更新を確認できませんでした。",
+      "rollbackFailed": "ロールバックできませんでした。",
+      "uninstallFailed": "アンインストールできませんでした。",
+      "install": "インストール",
+      "update": "更新",
+      "confirm": "インストールする",
+      "confirmWeb": "「{{name}}」をインストールすると、そのコードがプラグインディレクトリに置かれます。インストールしますか？",
+      "waiting": "インストールは「プラグインの確認」ウィンドウであなたの確認を待っています。",
+      "registry": "npm レジストリ",
+      "registryLabel": "依存のダウンロード元",
+      "registryHelp": "空欄なら npm 公式レジストリを使い、失敗したときは npmmirror を使います。どの依存もロックファイルのハッシュと照合するので、レジストリを変えてもインストールされる内容は変わりません。",
+      "installTitle": "「{{name}}」をインストール",
+      "updateTitle": "「{{name}}」を更新",
+      "rollbackTitle": "「{{name}}」をロールバック",
+      "rollbackTo": "ロールバック",
+      "rollback": "以前のバージョンに戻す…",
+      "uninstall": "アンインストール",
+      "uninstallTitle": "「{{name}}」をアンインストール",
+      "uninstallDescription": "プラグインのファイルと保存していた以前のバージョンを削除します。設定と保存データは残るので、再インストール後もそのまま使えます。",
+      "uninstallBuiltin": "プラグインのファイルと保存していた以前のバージョンを削除し、同じ名前の内蔵プラグインに戻ります。設定と保存データは残ります。",
+      "source": "入手元",
+      "openRepository": "GitHub で {{repository}} を開く",
+      "checkUpdate": "更新を確認",
+      "checking": "確認しています…",
+      "more": "その他の操作",
+      "pinned": "固定されたコミットからインストールしたため、追従する新しいバージョンはありません。",
+      "latest": "最新のバージョンです。",
+      "available": "新しいバージョン：{{version}}（{{day}}）",
+      "newCommit": "{{ref}} の新しいコミット",
+      "reviewUpdate": "確認して更新",
+      "notes": "更新内容",
+      "unknownVersion": "バージョン不明",
+      "replacedAt": "{{day}}に置き換え",
+      "ref": {
+        "tag": "タグ {{ref}}",
+        "branch": "ブランチ {{ref}}",
+        "version": "バージョン {{ref}}"
+      },
+      "refCommit": "固定コミット",
+      "refAt": "{{ref}} · {{day}}のコミット",
+      "updateFrom": "{{from}} から {{to}} に更新",
+      "rollbackFrom": "{{from}} から {{to}} に戻す",
+      "replaces": {
+        "builtin": "内蔵プラグイン「{{name}}」を置き換えます。",
+        "source": "{{repository}} からインストールした「{{name}}」を置き換えます。",
+        "development": "開発中の「{{name}}」を置き換えます。",
+        "directory": "プラグインディレクトリの「{{name}}」を置き換えます。"
+      },
+      "client": "画面のコードを含みます：有効にするとメインウィンドウで動き、AstrLink の画面でできることは何でもできます。",
+      "changesTitle": "今回の変更",
+      "changes": {
+        "addedCapability": "新たに要求：{{capability}}",
+        "removedCapability": "要求しなくなった：{{capability}}",
+        "client": {
+          "added": "画面のコードを追加",
+          "removed": "画面のコードを削除"
+        },
+        "network": "ネットワークの用途の説明が変わりました",
+        "dependencies": "依存の変更 {{count}} 件"
+      },
+      "capabilities": "要求する機能",
+      "files": "コードと依存",
+      "code": "ビルド後 {{size}}",
+      "dependencies": "依存 {{count}} 個、合計 {{size}}",
+      "noDependencies": "依存なし",
+      "author": "作者 {{author}}",
+      "dependencyList": "依存の一覧",
+      "scripts": "次の依存のインストールスクリプトは実行していません：{{packages}}",
+      "warnings": {
+        "version_mismatch": "package.json とプラグインの宣言でバージョンが違います（{{detail}}）。",
+        "build_warning": "ビルドの注意：{{detail}}",
+        "route_unsupported": "ルート {{detail}} は AstrLink ではまだ中継できません（プラグイン自身の変換が必要か、AstrLink が受け付けないエンドポイントです）。インストール後もこのルートは無効です。"
+      },
+      "failures": {
+        "invalid_link": "読み取れる GitHub リポジトリのリンクではありません。",
+        "repository_not_found": "リポジトリ {{detail}} が見つからないか、プライベートリポジトリです（まだ対応していません）。",
+        "ref_not_found": "リポジトリに {{detail}} がありません。",
+        "rate_limited": "GitHub が一時的にアクセスを制限しています。しばらくしてから再試行してください。",
+        "source_unavailable": "ソースをダウンロードできませんでした：{{detail}}",
+        "too_large": "プラグインまたは依存がサイズの上限を超えています（{{detail}}）。",
+        "no_plugin": "プラグインのエントリーがありません：src/plugin.ts、plugin.ts、または package.json の astrlink.plugin が指すファイル。",
+        "no_lockfile": "依存がありますが、ロックファイル（package-lock.json、pnpm-lock.yaml、bun.lock）がありません。",
+        "lockfile_unsupported": "このロックファイルには対応していません：{{detail}}",
+        "dependency_unsupported": "npm レジストリ以外から取る依存にはまだ対応していません：{{detail}}",
+        "integrity_failed": "{{detail}} のダウンロード内容がロックファイルのハッシュと一致しません。",
+        "registry_unavailable": "npm レジストリから {{detail}} をダウンロードできませんでした。",
+        "native_module": "依存 {{detail}} はネイティブモジュールを含むため、プラグインでは使えません。",
+        "build_failed": "ビルドに失敗しました。",
+        "invalid_plugin": "プラグインがチェックを通りませんでした。",
+        "incompatible": "プラグインは AstrLink {{detail}} を必要とし、このバージョンとは互換性がありません。",
+        "expired": "審査結果の有効期限が切れました。もう一度確認してください。",
+        "busy": "別のプラグインをビルドしています。少し待ってから再試行してください。",
+        "unknown": "インストールできませんでした（{{reason}}）。"
+      },
+      "sourceLabel": "インストール元",
+      "sources": {
+        "github": "GitHub",
+        "market": "マーケットプレイス"
+      },
+      "backToMarket": "ほかを選ぶ",
+      "marketRef": "バージョン {{version}} · 検証済み",
+      "groups": {
+        "source": "提供元",
+        "abilities": "できること",
+        "dependencies": "コードと依存関係",
+        "risks": "リスク"
+      },
+      "taskKind": "タスクプラグイン",
+      "providerKind": "プロバイダープラグイン",
+      "requestKind": "リクエスト処理プラグイン",
+      "keyHosts": "キーの送信先",
+      "highRisk": "高リスクの権限を要求：{{capability}}",
+      "changelog": "更新履歴"
+    },
+    "ui": {
+      "switch": "プラグインの画面",
+      "switchHelp": "オフにするとセーフモードになり、どのプラグインの画面コードも読み込みません。プラグインのバックエンドはそのまま動きます。前回プラグインの画面を読み込んだあとウィンドウが正常に動かなかった場合、次回の起動は自動でセーフモードになります。",
+      "webHelp": "Web コンソールは既定ではプラグインの画面コードを読み込みません。オンにすると、プラグインの画面はこのページで動き、コンソールでできることは何でもできます。",
+      "webConfirmTitle": "Web コンソールでプラグインの画面を読み込む",
+      "webConfirmDescription": "画面を有効にしたプラグインのコードがこのページで動き、リクエスト記録の閲覧や設定の変更など、コンソールでできることは何でもできます。オンにしますか？",
+      "webConfirm": "オンにする",
+      "crashed": "前回プラグインの画面を読み込んだあとウィンドウが正常に動かなかったため、今回は読み込んでいません。",
+      "load": "プラグインの画面を読み込む",
+      "turnedOff": "「{{name}}」の画面がエラーを繰り返したため、オフにしました。プラグインのページで再びオンにできます。",
+      "failed": "「{{name}}」の画面でエラーが起きました：{{message}}",
+      "pageGone": "このプラグインのページはもうありません",
+      "tab": "プラグイン",
+      "pluginSwitch": "このプラグインの画面を読み込む",
+      "pluginSwitchLabel": "画面"
+    },
+    "countLabel_one": "{{count}} 個のプラグイン",
+    "countLabel_other": "{{count}} 個のプラグイン",
+    "metrics": {
+      "label": "プラグインの概況",
+      "installed": "インストール済み",
+      "running": "実行中",
+      "calls": "起動後の呼び出し",
+      "recentCalls": "過去 30 日の処理リクエスト",
+      "tasks": "実行中のタスク",
+      "problems": "問題",
+      "callCount_one": "{{count}} 回の呼び出し",
+      "callCount_other": "{{count}} 回の呼び出し"
+    },
+    "list": {
+      "tabs": "プラグインのセクション",
+      "installed": "インストール済み",
+      "market": "マーケットプレイス",
+      "develop": "開発",
+      "browseMarket": "マーケットプレイスを見る"
+    },
+    "groups": {
+      "providers": "プロバイダープラグイン",
+      "extensions": "拡張プラグイン"
+    },
+    "market": {
+      "failed": "マーケットプレイスを読み込めませんでした。",
+      "source": "マーケットプレイスの提供元",
+      "official": "公式マーケットプレイス",
+      "custom": "ほかのマーケットプレイス",
+      "indexLabel": "マーケットプレイスの index.json のアドレス",
+      "open": "開く",
+      "search": "プラグイン、モデル、コードで検索",
+      "count_one": "{{name}} · {{count}} 個のプラグイン",
+      "count_other": "{{name}} · {{count}} 個のプラグイン",
+      "loading": "マーケットプレイスを読み込んでいます…",
+      "noMatch": "一致するプラグインがありません",
+      "empty": "このマーケットプレイスにはまだプラグインがありません",
+      "listLabel": "マーケットプレイスのプラグイン",
+      "installed": "インストール済み",
+      "update": "{{version}} に更新",
+      "install": "インストール",
+      "models_one": "{{count}} 個のモデル",
+      "models_other": "{{count}} 個のモデル",
+      "noDescription": "このプラグインには説明がありません。",
+      "installedVersion": "{{version}} をインストール済み",
+      "website": "ウェブサイト",
+      "versions": "すべてのバージョン",
+      "installVersion": "このバージョンをインストール",
+      "fewerModels": "折りたたむ",
+      "moreModels_one": "ほか {{count}} 個",
+      "moreModels_other": "ほか {{count}} 個",
+      "incompatible": "非対応",
+      "incompatibleReason": "new-api の{{parts}}が必要ですが、AstrLink ではまだ実行できません。",
+      "parts": {
+        "provider": "プロバイダー部分",
+        "transform": "リクエスト処理部分",
+        "other": "{{part}}"
+      },
+      "partSeparator": "、",
+      "community": "コミュニティ",
+      "recommended": "おすすめ",
+      "by": "作者 {{author}}",
+      "author": "作者",
+      "repository": "ソース",
+      "code": "プラグインコード",
+      "installs": "過去 30 日",
+      "installsCount_one": "{{count}} 件のインストール",
+      "installsCount_other": "{{count}} 件のインストール",
+      "guide": "使い方",
+      "guideSource": "GitHub で見る",
+      "guideLoading": "使い方を読み込んでいます…",
+      "guideFailed": "使い方を読み込めませんでした。しばらくしてからもう一度開いてください。",
+      "notes": "更新内容",
+      "revoked": "公開停止",
+      "revokedReason": "インストール中のこのバージョンはマーケットで公開停止になりました：{{reason}}。別のバージョンに更新するか、アンインストールしてください。",
+      "revokedNoReason": "インストール中のこのバージョンはマーケットで公開停止になりました。別のバージョンに更新するか、アンインストールしてください。",
+      "finding": "コード {{code}} のプラグインを探しています…",
+      "foundByCode": "コード {{code}} のプラグイン",
+      "noCode": "コード {{code}} のプラグインは見つかりません"
+    },
+    "task": {
+      "protocols": {
+        "openai_video": "動画",
+        "openai_image": "画像",
+        "openai_responses": "Responses"
+      },
+      "modes": {
+        "stream": "ストリーミング",
+        "sync": "同期",
+        "background": "バックグラウンド"
+      },
+      "nativeRoutes": "ネイティブルート",
+      "auth": {
+        "api_key": "API キー",
+        "oauth2_jwt": "サービスアカウント（OAuth）",
+        "none": "キー不要"
+      },
+      "status": {
+        "NOT_START": "待機中",
+        "SUBMITTED": "送信済み",
+        "QUEUED": "待機中",
+        "IN_PROGRESS": "生成中",
+        "SUCCESS": "完了",
+        "FAILURE": "失敗",
+        "UNKNOWN": "不明"
+      },
+      "endpoints": "対応するエンドポイント",
+      "noEndpoints": "このプラグインはエンドポイントを宣言していません。",
+      "routeTypes": {
+        "submit": "送信",
+        "query": "照会",
+        "dynamic": "送信または照会"
+      },
+      "connection": "接続",
+      "baseUrl": "既定のアドレス",
+      "noBaseUrl": "プロバイダー追加時に指定",
+      "authLabel": "認証方式",
+      "allowedHosts": "追加のホスト",
+      "author": "作者",
+      "website": "ウェブサイト",
+      "fetchModeLabel": "照会方式",
+      "fetchMode": {
+        "per_task": "1 件ずつ照会",
+        "batch": "まとめて照会"
+      },
+      "metrics": {
+        "models": "モデル",
+        "running": "実行中",
+        "tasks": "全タスク",
+        "providers": "プロバイダー"
+      },
+      "providers": "このプラグインを使うプロバイダー",
+      "addProvider": "プロバイダーを追加",
+      "noProviders": "このプラグインを使うプロバイダーはまだありません。キーを入れてプロバイダーを追加すると、クライアントがそのモデルで生成できます。",
+      "enableFirst": "プロバイダーを追加するにはプラグインを有効にしてください。",
+      "providerOn": "有効",
+      "providerOff": "無効",
+      "about": "プラグインについて",
+      "tasksTitle": "最近のタスク",
+      "runningCount_one": "{{count}} 件実行中",
+      "runningCount_other": "{{count}} 件実行中",
+      "clear": "完了したタスクを消去",
+      "clearTitle": "完了したタスクを消去しますか？",
+      "clearConfirm": "完了・失敗したタスクと、ゲートウェイが保存した結果ファイルを削除します。クライアントからは参照できなくなります。実行中のタスクは残ります。",
+      "clearFailed": "タスクを消去できませんでした。",
+      "tasksFailed": "タスクを読み込めませんでした。",
+      "noTasks": "タスクはまだありません",
+      "loadMore": "さらに読み込む"
+    },
+    "developHome": {
+      "commands": "コマンドライン",
+      "builds": "このコンピューターのプロジェクトからビルドしたプラグイン",
+      "noBuilds": "まだありません。プラグインのプロジェクトで astrlink plugin dev を実行すると、ここに表示され、変更のたびに再読み込みされます。",
+      "command": {
+        "new": "テンプレートからプラグインプロジェクトを作成",
+        "dev": "変更を監視してビルドし、このコンピューターの AstrLink に入れてログを表示",
+        "check": "ビルドしてマニフェスト・権限・API を確認",
+        "test": "tests/ のケースでフックを実行",
+        "build": "plugin.js と client.js をビルド"
+      }
+    },
+    "directoryPath": "パス",
+    "search": "プラグインやモデルを検索",
+    "view": {
+      "label": "プラグインの表示",
+      "map": "スターマップ",
+      "list": "リスト"
+    },
+    "map": {
+      "label": "プラグインのスターマップ",
+      "hubRunning": "ゲートウェイ稼働中",
+      "helpLabel": "{{kind}}について",
+      "enhancersHelp": "拡張プラグインはゲートウェイがリクエストを処理する途中で働きます。セッションへのコンテキストの読み込み、リクエストと応答の書き換え、プロバイダーの選択、出来事の記録などを行います。リクエストはこちら側からゲートウェイに入ります。惑星が大きいほど、過去 30 日によく使われています。",
+      "providersHelp": "プロバイダープラグインはゲートウェイを上流につなぎます。チャット API を中継したり、動画・画像・音楽の生成を取り込んだりします。プロバイダー画面でプロバイダーとして追加し、キーを設定するとクライアントから使えます。惑星が大きいほど、過去 30 日によく使われています。周りを回る衛星は、それを使っているプロバイダーです。",
+      "addEnhancer": "GitHub からインストール",
+      "addProvider": "マーケットプレイスへ",
+      "providers_one": "{{count}} 件のプロバイダーで使用中",
+      "providers_other": "{{count}} 件のプロバイダーで使用中",
+      "noProviders": "まだプロバイダーで使われていません"
+    },
+    "star": {
+      "callCount_one": "{{value}} 回",
+      "callCount_other": "{{value}} 回",
+      "taskCount_one": "{{value}} 件のタスク",
+      "taskCount_other": "{{value}} 件のタスク",
+      "open": "{{name}}、{{fact}}。プラグインを開く",
+      "more_one": "ほか {{count}} 個",
+      "more_other": "ほか {{count}} 個",
+      "calls": "処理したリクエスト",
+      "providers": "使っているプロバイダー",
+      "served": "プロバイダーのリクエスト",
+      "tasks": "生成タスク",
+      "failedTasks": "失敗したタスク",
+      "kind": {
+        "enhancer": "拡張プラグイン",
+        "provider": "プロバイダープラグイン"
+      },
+      "state": {
+        "running": "実行中",
+        "failing": "実行中・失敗あり",
+        "off": "停止中",
+        "failed": "読み込み失敗"
+      },
+      "failed": "失敗",
+      "times": "{{value}} 回",
+      "window": "過去 30 日：{{requests}} 件のリクエストを処理、{{tasks}} 件のタスクを生成",
+      "showList": "すべてのプラグインをリストで見る"
+    },
+    "requestPlugins": {
+      "title": "リクエスト処理インスタンス",
+      "add": "インスタンスを追加",
+      "addTitle": "リクエスト処理インスタンスを追加",
+      "editTitle": "リクエスト処理インスタンスを編集",
+      "edit": "編集",
+      "remove": "削除",
+      "removeTitle": "このインスタンスを削除しますか？",
+      "removeConfirm": "「{{name}}」を削除すると、リクエストを確認しなくなります。プラグイン自体はアンインストールされません。",
+      "empty": "インスタンスはまだありません。追加するとリクエストの確認を始めます。",
+      "enabled": "有効",
+      "name": "名前",
+      "models": "対象モデル",
+      "modelsHelp": "1 行に 1 つ、またはカンマ区切りでモデル名を書きます。これらのモデルへのリクエストだけに適用され、空欄ならすべてのモデルが対象です。モデル名の後ろの @ 指定は照合に影響しません。",
+      "allModels": "すべてのモデル",
+      "config": "設定",
+      "keywords": "1 行に 1 つのキーワード",
+      "invalidJSON": "ここには JSON を入力します。JSON の形式が正しくありません。",
+      "loadFailed": "リクエスト処理インスタンスを読み込めませんでした。",
+      "saveFailed": "リクエスト処理インスタンスを保存できませんでした。",
+      "stages": {
+        "ingress": "入口チェック",
+        "request": "リクエスト設定",
+        "outbound": "送信前の書き換え",
+        "egress": "送信前チェック",
+        "reply": "応答チェック",
+        "report": "レポート"
+      },
+      "dryRun": "試行",
+      "sample": "プラグインのサンプル",
+      "sampleChoose": "サンプルを選ぶ",
+      "format": "リクエスト形式",
+      "body": "リクエスト（JSON）",
+      "reply": "モデルの応答",
+      "replyHelp": "応答を入力すると、非ストリームの応答として応答チェックを実行します。",
+      "runDryRun": "実行",
+      "dryRunFailed": "試行に失敗しました。",
+      "dryRunPassed": "このリクエストは通過します。",
+      "replyAfter": "クライアントが受け取る応答",
+      "bodyAfter": "入口チェック後のリクエスト",
+      "formats": {
+        "openai": "Chat Completions",
+        "openai_responses": "Responses",
+        "claude": "Claude Messages",
+        "gemini": "Gemini"
+      }
+    }
+  },
+  "pluginRecords": {
+    "none": "このリクエストにプラグインの記録はありません。",
+    "status": {
+      "ok": "完了",
+      "skipped": "スキップ",
+      "failed": "失敗"
+    },
+    "elapsed": "所要時間",
+    "skipped": "スキップ理由",
+    "skipReasons": {
+      "no_project": "このセッションにプロジェクトがありません",
+      "short_query": "質問が短すぎます",
+      "no_hits": "一致なし",
+      "server_unavailable": "サーバーを利用できません",
+      "timeout": "タイムアウト",
+      "plugin_error": "プラグインのエラー",
+      "privacy_blocked": "プライバシーポリシーでブロック",
+      "privacy_unavailable": "プライバシー検査を利用できません",
+      "search_failed": "一部の検索が失敗し、一致なし",
+      "paused_all": "すべてのプラグインを一時停止中",
+      "client_disabled": "このクライアントではオフ",
+      "session_paused": "このセッションでは一時停止中",
+      "over_budget": "注入の上限を超過",
+      "invalid_result": "プラグインの結果が無効",
+      "no_system_channel": "追加できるシステムプロンプトがありません",
+      "no_opening_message": "このターンに追加できるユーザーメッセージがありません",
+      "injection_failed": "注入に失敗し、リクエストはそのまま送られました",
+      "rate_limited": "検索が多すぎます",
+      "turn_limit": "このターンの 3 回を使い切りました",
+      "unbound": "セッションにまだプロジェクトがありません",
+      "invalid_input": "パラメーターが正しくありません",
+      "circuit_open": "失敗が多いため一時停止中",
+      "no_request_gate": "リクエストを拒否しようとしましたが、「リクエストの拒否」が許可されていません",
+      "no_request_write": "リクエストを変えようとしましたが、「リクエストの変更」が許可されていません",
+      "no_request_write_raw": "本文を置き換えようとしましたが、「リクエスト本文の書き換え」が許可されていません",
+      "would_exclude_all": "すべてのプロバイダーを除外しようとしたため、何も除外していません",
+      "invalid_body": "返した本文が不正なため、使っていません",
+      "header_denied": "プラグインが設定できないヘッダーは無視しました",
+      "stream_stopped": "続けて失敗したため、このストリームの残りのイベントは渡していません",
+      "memory_limit": "メモリ上限超過",
+      "canceled": "リクエストは終了していました",
+      "unavailable": "プラグインを使えません"
+    },
+    "reportSkipReasons": {
+      "rate_limited": "報告が多すぎます",
+      "turn_limit": "このターンの 2 回の報告を使い切りました"
+    },
+    "injection": "注入",
+    "placement": {
+      "system_append": "システムプロンプト",
+      "turn_message_prefix": "このターンのユーザーメッセージの先頭"
+    },
+    "replayed_one": "以前のブロック {{count}} 件をそのまま",
+    "replayed_other": "以前のブロック {{count}} 件をそのまま",
+    "dropped_one": "予算超過で {{count}} 件を除外",
+    "dropped_other": "予算超過で {{count}} 件を除外",
+    "network": "ネットワーク",
+    "networkCount": "{{requests}} 件 · 拒否 {{denied}} · 失敗 {{errors}} · 待機 {{wait}} ms",
+    "injected": "{{placement}} +{{size}}",
+    "observeLine": "キャプチャ：{{state}}",
+    "networkShort_one": "{{count}} 件 · 待機 {{wait}} ms",
+    "networkShort_other": "{{count}} 件 · 待機 {{wait}} ms",
+    "networkDenied_one": "拒否 {{count}}",
+    "networkDenied_other": "拒否 {{count}}",
+    "networkErrors_one": "失敗 {{count}}",
+    "networkErrors_other": "失敗 {{count}}",
+    "quiet": "このターンに新しい内容はありません",
+    "observe": "キャプチャ",
+    "observeStates": {
+      "queued": "キュー登録済み",
+      "skipped_privacy": "プライバシーポリシーでスキップ",
+      "skipped_binding_turn": "プロジェクトを決めたターンで記録済み",
+      "skipped_continuation": "ターン最初の呼び出しではないため記録しません",
+      "queue_full": "キューが満杯で記録できませんでした",
+      "disabled": "オフ",
+      "awaiting_reply": "応答でプロジェクトが決まるのを待機中",
+      "held_unbound": "プロジェクトが決まるまで保持し、決まったら書き込み",
+      "skipped_unbound": "セッションにプロジェクトがないため記録しません"
+    },
+    "truncated": "上限を超えたため切り詰めました",
+    "metadata": "メタデータ",
+    "metadataSources": {
+      "header": "ヘッダー",
+      "session": "セッション",
+      "token": "トークンの既定値"
+    },
+    "metadataTurn": "{{source}} · {{turn}} ターン目",
+    "metadataIgnored": "{{key}}={{value}} を無視: {{reason}}",
+    "ignoredReasons": {
+      "invalid_value": "検証ルールに合いません",
+      "already_bound": "セッションは設定済みです",
+      "in_code_block": "コードブロック内です"
+    },
+    "metadataEvents": {
+      "bound": "設定:",
+      "rebound": "変更:",
+      "cleared": "解除"
+    },
+    "trigger": "理由",
+    "triggers": {
+      "start": "初回の読み込み",
+      "bound": "プロジェクトを紐付けた直後",
+      "config": "設定または言語が変更された",
+      "compact": "compact 後に更新",
+      "manual": "手動で更新",
+      "auto": "自動更新"
+    },
+    "actionDone": "完了しました",
+    "actionFailed": "完了できませんでした：{{reason}}",
+    "setBy": {
+      "token_default": "トークンの既定値",
+      "model_marker": "モデルのマーカー",
+      "user_marker": "ユーザーのマーカー",
+      "user_answer": "回答と一致",
+      "workspace": "ワークスペース",
+      "manual": "手動",
+      "header": "リクエストヘッダー"
+    },
+    "metadataNew": "新しいプロジェクト",
+    "metadataNormalized": "元の表記 {{value}}",
+    "actionFailedPlain": "完了できませんでした。",
+    "lookup": "検索",
+    "report": "報告",
+    "lookupInput_one": "入力 {{count}} 文字",
+    "lookupInput_other": "入力 {{count}} 文字",
+    "lookupResult": "結果 {{size}}",
+    "lookupHits_one": "{{count}} 件",
+    "lookupHits_other": "{{count}} 件",
+    "commands": "付けた検索",
+    "usageOnly": "検索の使い方だけ · {{placement}} +{{size}}",
+    "usagePart": "うち検索の使い方 {{size}}",
+    "effects": {
+      "deny": "リクエストを拒否",
+      "tag": "タグを付与",
+      "tagged": "タグ：{{tags}}",
+      "order": "プロバイダーの順序を変更",
+      "exclude": "一部のプロバイダーを除外",
+      "model": "モデルを変更",
+      "system": "システムプロンプトに追記",
+      "turn": "このターンの前に内容を追加",
+      "params": "パラメーターを変更",
+      "tools": "ツールを変更",
+      "body": "リクエスト本文を置き換え",
+      "headers": "ヘッダーを追加",
+      "rewrite": "レスポンスを書き換え",
+      "stream": "ストリームのイベントを書き換え",
+      "observed": "レスポンスを確認",
+      "separator": "、"
+    },
+    "streamEvents": "{{count}} 件のイベントを処理",
+    "streamEventsFailed": "{{count}} 件のイベントを処理し、失敗した {{failures}} 件はそのまま通しました"
+  },
+  "metadata": {
+    "title": "メタデータ",
+    "add": "属性を追加",
+    "loading": "属性を読み込んでいます…",
+    "loadFailed": "属性を読み込めませんでした。",
+    "saveFailed": "属性を保存できませんでした。",
+    "deleteFailed": "属性を削除できませんでした。",
+    "empty": "属性はまだありません",
+    "emptyHint": "属性を追加すると、たとえば送信元の環境などでリクエストにタグを付けられます。",
+    "helpLabel": "メタデータについて",
+    "help": {
+      "what": "属性はリクエストに付くタグで、プロジェクトや環境などです。プラグインも独自の属性を登録でき、それらは値の設定だけができます。",
+      "order": "各リクエストは「ヘッダー → セッションの設定 → トークンの既定値」の順に値を取ります。",
+      "none": "none はすべての属性の予約値で、そのリクエストやセッションを対象外にします。",
+      "headers": "属性のヘッダーは X-AstrLink-Meta- にキーを付けたもので、例は X-AstrLink-Meta-Env です。AstrLink は転送前に削除しますが、共有リポジトリにコミットするクライアント設定には書かないでください。AstrLink を通らないと、そのまま API プロバイダーに届きます。"
+    },
+    "columns": {
+      "label": "名前",
+      "key": "キー",
+      "pattern": "検証ルール",
+      "marker": "セッションマーカー",
+      "owner": "定義元"
+    },
+    "ownerUser": "ユーザー",
+    "ownerPlugin": "プラグイン {{plugin}}",
+    "ownerMissing": "プラグイン {{plugin}}（削除済み）",
+    "edit": "{{label}} を編集",
+    "delete": "{{label}} を削除",
+    "addTitle": "属性を追加",
+    "editTitle": "属性を編集",
+    "labelPlaceholder": "環境",
+    "description": "説明",
+    "optional": "任意",
+    "deleteTitle": "この属性を削除しますか？",
+    "deleteDescription": "「{{label}}」と、その値（トークンの既定値とセッションの設定）がすべて削除されます。",
+    "deleteConfirm": "削除",
+    "problems": {
+      "key": "キーは小文字で始め、続けて最大 31 文字の小文字・数字・アンダースコアにしてください。",
+      "label": "名前は 1〜32 文字にしてください。",
+      "anchored": "検証ルールは値全体を検査するよう、^ で始まり $ で終わる必要があります。",
+      "pattern": "検証ルールが有効な正規表現ではありません。",
+      "marker": "セッションマーカーは小文字で始め、続けて最大 31 文字の小文字・数字・ハイフンにし、astrlink を含めないでください。"
+    }
+  },
+  "tokenMetadata": {
+    "open": "{{name}} の既定メタデータ",
+    "title": "既定メタデータ · {{name}}",
+    "helpLabel": "既定メタデータについて",
+    "help": "ヘッダーとセッションに値がないとき、このトークンのリクエストはここの値を使います。1 つのプロジェクト専用のトークンに向いています。",
+    "loading": "読み込み中…",
+    "loadFailed": "既定メタデータを読み込めませんでした。",
+    "saveFailed": "既定メタデータを保存できませんでした。",
+    "empty": "メタデータ属性はまだありません",
+    "emptyHint": "先に「設定 → メタデータ」で属性を追加してください。",
+    "unset": "未設定",
+    "invalidValue": "「{{label}}」の値が検証ルールに合いません。"
+  },
+  "sessionMetadata": {
+    "title": "セッションのメタデータ",
+    "helpLabel": "セッションのメタデータについて",
+    "help": "一覧から既存の値を選ぶか、「新しいプロジェクト…」を選んで名前を入力します。値は属性の検証ルールに合っている必要があります。",
+    "unbindHelp": "解除すると none を保存します。このセッションは読み込み・書き込み・確認の対象外になり、履歴内の古いマーカーで再び紐付くこともありません。必要なときはここで選び直すか、会話でマーカーだけの 1 行を送ってください。",
+    "none": "対象外",
+    "notBound": "未設定",
+    "unboundValue": "未設定",
+    "unbind": "解除",
+    "unboundNotice": "{{label}} を解除しました",
+    "invalidValue": "{{label}} の値が検証ルールに合いません。",
+    "saveFailed": "セッションのメタデータを保存できませんでした。",
+    "turn": "{{source}} · {{turn}} ターン目",
+    "setBy": {
+      "model_marker": "確認して選択",
+      "user_marker": "ユーザーのメッセージ",
+      "manual": "手動で設定",
+      "user_answer": "回答と一致",
+      "workspace": "ワークスペース"
+    },
+    "workspaceHelp": "このセッションは {{name}} ディレクトリで動いています。ディレクトリで最初に選んだ値が、そこで始まる新しいセッションに使われます。",
+    "neverUsed": "未使用",
+    "offered": "最初のターンで提示",
+    "newValue": "新しいプロジェクト…",
+    "newValueLabel": "新しい{{label}}",
+    "newValuePlaceholder": "小文字の英字・数字・. _ -",
+    "workspaceFollow": "今後 {{name}} の新しいセッションもこれを使う（現在は {{previous}}）",
+    "usage_one": "{{count}} セッション · {{ago}}",
+    "usage_other": "{{count}} セッション · {{ago}}"
+  },
   "serviceTerminal": {
     "title": "「{{name}}」をターミナルで開く",
     "description": "このターミナルのクライアントは、この APIプロバイダーだけを使います。プロバイダーでエラーが起きると、リクエストはそのまま失敗します。普段のクライアント設定はそのままです。",
@@ -4650,5 +5852,42 @@
     "failed": "ターミナルを開けませんでした：{{error}}",
     "disabled": "この APIプロバイダーはオフです。オンにするまで、ターミナルからのリクエストは失敗します。",
     "signedOut": "このアカウントはサインインしていません。サインインするまで、ターミナルからのリクエストは失敗します。"
+  },
+  "sessionMemory": {
+    "tab": "記憶",
+    "loadFailed": "このセッションの記憶を読み込めませんでした。",
+    "actionFailed": "操作を完了できませんでした。",
+    "changeProject": "変更",
+    "project": "プロジェクト",
+    "workspace": "作業ディレクトリ",
+    "noPlugins": "ブロックを読み込むプラグインは有効になっていません。",
+    "refresh": "記憶を更新",
+    "pause": "このセッションで一時停止",
+    "resume": "再開",
+    "paused": "一時停止中",
+    "refreshPending": "次のリクエストで読み込み直します",
+    "helpLabel": "セッションの記憶について",
+    "help": "読み込んだ内容はシステムプロンプトの末尾に置かれ、セッション内では変わりません。compact 後、手動更新、または自動更新がオンのときだけ新しくなります。メモリ内にだけあり、ゲートウェイを再起動すると次のリクエストで計算し直します。",
+    "firstTurn": "{{turn}} ターン目から参加",
+    "noBlock": "このセッションは今ブロックを読み込んでいません。ゲートウェイの再起動後は、次のリクエストで計算し直します。",
+    "records": "記録",
+    "confirm": {
+      "refresh": {
+        "title": "「{{name}}」を更新しますか？",
+        "body": "このセッションの次のリクエストで読み込み直します。システムプロンプトが変わるため、プロンプトキャッシュはもう一度書き込まれます。",
+        "action": "更新"
+      },
+      "pause": {
+        "title": "このセッションで「{{name}}」を一時停止しますか？",
+        "body": "一時停止中は読み込みも検索の案内も書き込みも行わず、リクエストはそのまま送られます。このセッションの検索の認証情報は無効になり、すでにコンテキストにある内容は取り消されません。システムプロンプトが変わるため、プロンプトキャッシュはもう一度書き込まれます。",
+        "action": "一時停止"
+      },
+      "resume": {
+        "title": "「{{name}}」を再開しますか？",
+        "body": "読み込みと書き込みを再開します。システムプロンプトが変わるため、プロンプトキャッシュはもう一度書き込まれます。",
+        "action": "再開"
+      }
+    },
+    "lookup": "システムプロンプトに付けた検索の方法（認証情報は伏せています）"
   }
 }

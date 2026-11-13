@@ -19,6 +19,7 @@ import (
 	"github.com/QuantumNous/astrlink/convo"
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/endpoint"
+	"github.com/QuantumNous/astrlink/core/internal/pluginhost"
 	"github.com/QuantumNous/astrlink/core/internal/privacy"
 	"github.com/QuantumNous/astrlink/core/internal/relaykitbridge"
 	"github.com/QuantumNous/astrlink/core/internal/storage"
@@ -229,6 +230,24 @@ type recordSession struct {
 	privacyDecision contract.PrivacyDecision
 	privacyFindings []contract.PrivacyFinding
 	privacyIgnored  []contract.PrivacyIgnored
+	// metadata is the request's metadata, resolved when the session starts.
+	metadata contract.RequestMetadata
+	// plugins is the plugins' part in the request, nil when none takes part;
+	// pluginRecords is what they reported.
+	plugins *pluginhost.Run
+	// extensions runs the extension points of apiVersion 2 plugins;
+	// replyPlugins is the latest attempt's writer of their response hooks,
+	// which keeps the reply's text for onResponse, and servedName the name
+	// of the provider that served the request.
+	extensions *pluginhost.Extensions
+	// requestPlugins runs the request's new-api request processing
+	// instances; requestPluginView shows them its bodies as the privacy
+	// check leaves them.
+	requestPlugins    *pluginhost.RequestRun
+	requestPluginView pluginhost.RequestView
+	replyPlugins      *pluginResponseWriter
+	servedName        string
+	pluginRecords     []contract.RequestPluginRecord
 	// requestExposure is the label of the stored client body; empty until
 	// it is stored.
 	requestExposure storage.AuditExposure
@@ -612,6 +631,12 @@ func (session *recordSession) recordSnapshot(
 		Events:             append([]contract.RequestEvent(nil), session.events...),
 	}
 	record.ConversionDiagnostics = slices.Clone(session.conversionDiagnostics)
+	if !session.metadata.Empty() {
+		metadata := session.metadata
+		metadata.Events = slices.Clone(metadata.Events)
+		record.Metadata = &metadata
+	}
+	record.PluginRecords = slices.Clone(session.pluginRecords)
 	if session.privacyDecision != "" {
 		decision := session.privacyDecision
 		record.PrivacyDecision = &decision
@@ -799,6 +824,7 @@ func (session *recordSession) noteSelected(candidate endpoint.Resolved, plan con
 	session.recovery.UpstreamModel = model
 	endpointID := candidate.Service.ID
 	session.endpointID = &endpointID
+	session.servedName = candidate.CanonicalService().Name
 	planCopy := plan
 	session.plan = &planCopy
 }
@@ -1328,6 +1354,8 @@ func (session *recordSession) demoteCurrentAttemptToChild(
 	// The root carries the turn's preview and what the call carried; an
 	// attempt would only repeat them.
 	child.InputPreview = nil
+	// The plugins took part in the request once, before any attempt.
+	child.PluginRecords = nil
 	child.Context = nil
 	child.Project = nil
 	child.Events = eventsForAttempt(session.events, session.attemptIndex)

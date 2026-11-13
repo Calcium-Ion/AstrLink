@@ -47,6 +47,7 @@ var secretColumns = []secretColumn{
 	{table: subscriptionCredentialsTable, key: "service_id", value: "credential_value"},
 	{table: syncKeyMaterialTable, key: "key", value: "credential_value", flagged: true},
 	{table: syncBaselineTable, key: "key", value: "payload_blob", flagged: true},
+	{table: pluginCredentialsTable, key: "id", value: "credential_value", flagged: true},
 }
 
 // openSecret returns the plaintext of one stored value. It takes ownership of

@@ -89,6 +89,7 @@ import {
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import { Switch } from "@/components/ui/switch";
+import { PluginIcon, pluginAvatar } from "@/components/PluginIcon";
 import {
   Dialog,
   DialogContent,
@@ -122,6 +123,7 @@ import {
   getService,
   getServiceAuthorization,
   getServiceUsage,
+  listPlugins,
   logoutService,
   resetServiceUsage,
   openAuthorizationURL,
@@ -162,6 +164,14 @@ import {
 } from "./LocalImportDialog";
 import { decodeModelEditorValue, encodeModelEditorValue } from "./model-editor";
 import { filterModels } from "./model-groups";
+import { PluginSlot } from "./plugin-ui";
+import { PluginLoginField } from "./PluginLogin";
+import { PluginProviderStateField } from "./PluginProviderState";
+import {
+  ConfigSchemaFields,
+  schemaProperties,
+  startingConfig,
+} from "./RequestPluginInstances";
 import {
   ServiceModelsEditor,
   type UpstreamModelSnapshot,
@@ -200,9 +210,11 @@ import {
   type ServiceCreateInput,
   type ServiceKind,
   type ServicePatchInput,
+  type ServicePlugin,
   type ServiceRecord,
   type SubscriptionServiceKind,
 } from "./service-model";
+import type { PluginList, PluginProvider, PluginTask } from "./plugin-model";
 import type { SubscriptionUsageStatus } from "./SubscriptionUsageMeter";
 import {
   accountAuthorizationFlows,
@@ -226,10 +238,42 @@ export type ServiceEditorTab =
   | "protocols"
   | "failure";
 
+/** A kind of provider a plugin adapts, as the add-provider picker offers it. */
+export interface PluginProviderChoice {
+  plugin: string;
+  pluginName: string;
+  provider: PluginProvider;
+  /** The plugin's icon, as a data URL. */
+  icon?: string;
+  /** What a task plugin declares: its provider runs generation tasks. */
+  task?: PluginTask;
+}
+
+/** The kinds of provider the enabled plugins adapt, a task plugin's among them. */
+export function pluginProviderChoices(
+  list: PluginList,
+): PluginProviderChoice[] {
+  return list.plugins.flatMap((plugin) =>
+    plugin.enabled &&
+    (plugin.kind === "task" ||
+      plugin.kind === "provider" ||
+      plugin.granted_capabilities.includes("provider")) &&
+    plugin.providers
+      ? plugin.providers.map((provider) => ({
+          plugin: plugin.key,
+          pluginName: plugin.name,
+          provider,
+          ...(plugin.icon ? { icon: plugin.icon } : {}),
+          ...(plugin.task ? { task: plugin.task } : {}),
+        }))
+      : [],
+  );
+}
+
 export type ServiceManagerView =
   | { kind: "list" }
   /** The provider type is picked in a dialog before the editor opens. */
-  | { kind: "create"; serviceKind: ServiceKind }
+  | { kind: "create"; serviceKind: ServiceKind; plugin?: PluginProviderChoice }
   | {
       kind: "edit";
       serviceId: string;
@@ -279,6 +323,10 @@ type Draft = {
   capabilities: ServiceCapability[];
   authorizationFlow: AuthorizationFlow | null;
   modelListPath: string;
+  /** The plugin that adapts a provider of kind plugin. */
+  plugin?: ServicePlugin;
+  /** What the task plugin of a new provider declares. */
+  pluginTask?: PluginTask;
   vertexProjectID: string;
   vertexLocation: string;
   vertexImplicitProject: boolean;
@@ -363,6 +411,11 @@ function serviceKindPickerGroups(): DialogPickerGroup<ServiceKind>[] {
   ];
 }
 
+/** What the picker calls a plugin's provider. */
+function pluginChoiceValue(choice: PluginProviderChoice): string {
+  return `plugin:${choice.plugin}/${choice.provider.id}`;
+}
+
 /** Asks for the provider type before the add-provider editor opens. */
 export function ServiceKindPickerDialog({
   onLocalImport,
@@ -373,23 +426,141 @@ export function ServiceKindPickerDialog({
   /** Lists importing from agent tool configs first when given. */
   onLocalImport?: () => void;
   onOpenChange: (open: boolean) => void;
-  onSelect: (kind: ServiceKind) => void;
+  /** plugin is set for a provider a plugin adapts. */
+  onSelect: (kind: ServiceKind, plugin?: PluginProviderChoice) => void;
   open: boolean;
 }) {
   const t = useT();
-  const kinds = serviceKindPickerGroups();
+  // The providers the enabled plugins adapt, read each time the picker opens.
+  const [choices, setChoices] = useState<PluginProviderChoice[]>([]);
+  useEffect(() => {
+    if (!open) return;
+    let current = true;
+    // Without plugins the picker offers the other kinds alone.
+    void Promise.resolve()
+      .then(() => listPlugins())
+      .then((list) => {
+        if (current) setChoices(pluginProviderChoices(list));
+      })
+      .catch(() => {
+        if (current) setChoices([]);
+      });
+    return () => {
+      current = false;
+    };
+  }, [open]);
+  const groups: DialogPickerGroup<string>[] = serviceKindPickerGroups();
+  if (choices.length > 0)
+    groups.push({
+      label: t("services.groupPlugins"),
+      options: choices.map((choice) => ({
+        value: pluginChoiceValue(choice),
+        label: choice.provider.name,
+        description: t("services.kindPickerPluginHint", {
+          plugin: choice.pluginName,
+        }),
+        icon:
+          choice.icon || choice.task ? (
+            <PluginIcon
+              className="size-5 rounded-sm"
+              icon={choice.icon}
+              label={pluginAvatar({
+                name: choice.pluginName,
+                task: choice.task,
+              })}
+            />
+          ) : (
+            <ServiceKindIcon kind="plugin" size={20} />
+          ),
+      })),
+    });
   return (
-    <PickerDialog<ServiceKind | typeof localImportPickerValue>
+    <PickerDialog<string>
       description={t("services.kindPickerDescription")}
-      groups={onLocalImport ? [localImportPickerGroup(t), ...kinds] : kinds}
-      onOpenChange={onOpenChange}
-      onValueChange={(value) =>
-        value === localImportPickerValue ? onLocalImport?.() : onSelect(value)
+      groups={
+        onLocalImport
+          ? [localImportPickerGroup(t) as DialogPickerGroup<string>, ...groups]
+          : groups
       }
+      onOpenChange={onOpenChange}
+      onValueChange={(value) => {
+        if (value === localImportPickerValue) {
+          onLocalImport?.();
+          return;
+        }
+        const choice = choices.find(
+          (candidate) => pluginChoiceValue(candidate) === value,
+        );
+        if (choice) onSelect("plugin", choice);
+        else onSelect(value as ServiceKind);
+      }}
       open={open}
       title={t("services.kindPickerTitle")}
     />
   );
+}
+
+/**
+ * A new provider of a kind a plugin adapts: its address, key, protocols and
+ * models as the plugin declares them, the protocols it does not serve
+ * converted into one it does when it allows that.
+ */
+function pluginProviderDraft(
+  choice: PluginProviderChoice,
+  conversionEngine?: ConversionEngineCapability | null,
+): Draft {
+  const { provider } = choice;
+  const declared = provider.protocols.map((entry) => entry.protocol);
+  const capabilities: ServiceCapability[] = provider.protocols.map((entry) => ({
+    protocol: entry.protocol,
+    mode: "native",
+    streaming: entry.stream,
+  }));
+  if (provider.convert) {
+    for (const protocol of [
+      "openai.responses",
+      "openai.chat",
+      "anthropic.messages",
+      "google.generate_content",
+    ]) {
+      if (declared.includes(protocol)) continue;
+      const target = bestConversionTarget(protocol, declared, conversionEngine);
+      if (target)
+        capabilities.push({
+          protocol,
+          mode: "native",
+          streaming:
+            provider.protocols.find((entry) => entry.protocol === target)
+              ?.stream ?? false,
+          convert_to: target,
+        });
+    }
+  }
+  const scheme = provider.auth.scheme as ServiceAuthScheme;
+  return {
+    kind: "plugin",
+    plugin: { key: choice.plugin, provider: provider.id },
+    ...(choice.task ? { pluginTask: choice.task } : {}),
+    name: provider.name,
+    enabled: true,
+    responsesWebSocket: false,
+    privacyTrusted: false,
+    baseURL: provider.base_url ?? "",
+    authScheme: scheme,
+    headerName: provider.auth.header_name ?? "",
+    secret: "",
+    removeCredential: false,
+    proxy: proxyDraft(),
+    models: [...(provider.models ?? [])],
+    modelRedirects: [],
+    modelProtocols: [],
+    capabilities,
+    authorizationFlow: null,
+    modelListPath: "",
+    vertexProjectID: "",
+    vertexLocation: "",
+    vertexImplicitProject: false,
+  };
 }
 
 /**
@@ -576,7 +747,9 @@ type ModelPreview = {
 function modelDiscoveryProtocols(draft: Draft): ModelDiscoveryProtocol[] {
   if (draft.kind === "vertex")
     return draft.authScheme === "google_api_key" ? [] : ["openai.models"];
-  if (isSubscriptionKind(draft.kind)) return ["openai.models"];
+  // A plugin lists its provider's models; Core ignores the protocol.
+  if (isSubscriptionKind(draft.kind) || draft.kind === "plugin")
+    return ["openai.models"];
   return (["openai.models", "google.models"] as const).filter((protocol) =>
     draft.capabilities.some((capability) => capability.protocol === protocol),
   );
@@ -706,6 +879,7 @@ function draftFromRecord(record: ServiceRecord): Draft {
       wireCapability(capability),
     ),
     modelListPath: service.http.model_list_path ?? "",
+    ...(service.plugin ? { plugin: { ...service.plugin } } : {}),
     vertexProjectID: service.http.vertex?.project_id ?? "",
     vertexLocation:
       service.http.vertex?.location ?? vertexLocation(service.http.base_url),
@@ -1129,6 +1303,7 @@ export function ServiceManager({
     draftForKind("codex_subscription", protocols),
   );
   const [editing, setEditing] = useState<ServiceRecord | null>(null);
+  const pluginProvider = usePluginProvider(draft.plugin);
   const [baseline, setBaseline] = useState<string | null>(null);
   // A preset address stays read-only until the user asks to type their own.
   const [customSite, setCustomSite] = useState(false);
@@ -1235,6 +1410,10 @@ export function ServiceManager({
   conversionEngineRef.current = conversionEngine;
   const viewKind = view.kind;
   const createServiceKind = view.kind === "create" ? view.serviceKind : null;
+  const createPlugin = view.kind === "create" ? view.plugin : undefined;
+  const createPluginKey = createPlugin
+    ? `${createPlugin.plugin}/${createPlugin.provider.id}`
+    : "";
   const editingServiceID = view.kind === "edit" ? view.serviceId : null;
   const requestedEditorTab =
     view.kind === "edit" ? (view.tab ?? "connection") : "connection";
@@ -1355,11 +1534,14 @@ export function ServiceManager({
       return;
     }
     if (view.kind === "create") {
-      const next = draftForKind(
-        view.serviceKind,
-        protocolsRef.current,
-        conversionEngineRef.current,
-      );
+      const next =
+        view.serviceKind === "plugin" && view.plugin
+          ? pluginProviderDraft(view.plugin, conversionEngineRef.current)
+          : draftForKind(
+              view.serviceKind,
+              protocolsRef.current,
+              conversionEngineRef.current,
+            );
       setDraft(next);
       setEditing(null);
       setBaseline(draftSignature(next));
@@ -1384,7 +1566,14 @@ export function ServiceManager({
       .finally(() => {
         if (loadGeneration.current === generation) setLoadingRecord(false);
       });
-  }, [createServiceKind, editingServiceID, requestedEditorTab, t, viewKind]);
+  }, [
+    createServiceKind,
+    createPluginKey,
+    editingServiceID,
+    requestedEditorTab,
+    t,
+    viewKind,
+  ]);
 
   const importCodexModelsAfterLogin = useCallback(
     async (service: Service) => {
@@ -1760,7 +1949,7 @@ export function ServiceManager({
     try {
       const attempts = await Promise.allSettled(
         discoveryProtocols.map((protocol) => {
-          if (isSubscriptionKind(draft.kind)) {
+          if (isSubscriptionKind(draft.kind) || draft.kind === "plugin") {
             return probeServiceModels(editing!.service.id, protocol);
           }
           return probeDraftServiceModels({
@@ -1989,6 +2178,9 @@ export function ServiceManager({
                 : {}),
             },
             capabilities: draft.capabilities.map(wireCapability),
+            ...(draft.kind === "plugin" && draft.plugin
+              ? { plugin: draft.plugin }
+              : {}),
           };
         }
         record = await createService(input);
@@ -2355,8 +2547,12 @@ export function ServiceManager({
         <ServiceKindPickerDialog
           onLocalImport={onLocalImport}
           onOpenChange={setKindPickerOpen}
-          onSelect={(serviceKind) =>
-            onViewChange({ kind: "create", serviceKind })
+          onSelect={(serviceKind, plugin) =>
+            onViewChange({
+              kind: "create",
+              serviceKind,
+              ...(plugin ? { plugin } : {}),
+            })
           }
           open={kindPickerOpen}
         />
@@ -2938,6 +3134,9 @@ export function ServiceManager({
   }
 
   const editingKind = editing?.service.kind;
+  // A task plugin's provider serves the protocols its plugin claims, which
+  // the gateway sets; it has no protocols to choose.
+  const taskProvider = draft.plugin?.provider === "task";
   const canKeepCredential = Boolean(
     editing?.service.http?.credential_ref &&
       editing.service.http.auth.scheme === draft.authScheme,
@@ -3001,8 +3200,12 @@ export function ServiceManager({
           }))
         }
         onDiscoverModels={
-          modelDiscoveryProtocols(draft).length > 0 ||
-          (draft.kind === "custom" && draft.modelListPath.trim() !== "")
+          // A plugin's provider lists its models once it is saved; a task
+          // plugin's models are the ones it declares.
+          draft.plugin?.provider !== "task" &&
+          (draft.kind === "plugin" ? editing !== null : true) &&
+          (modelDiscoveryProtocols(draft).length > 0 ||
+            (draft.kind === "custom" && draft.modelListPath.trim() !== ""))
             ? () => void discoverModels()
             : undefined
         }
@@ -3673,6 +3876,35 @@ export function ServiceManager({
                   ) : null}
                 </>
               ) : null}
+              {draft.pluginTask?.new_api && !editingKind ? (
+                <Field
+                  label={t("services.taskUpstream")}
+                  tooltip={t("services.taskUpstreamHelp")}
+                >
+                  <Switch
+                    aria-label={t("services.taskUpstream")}
+                    checked={draft.plugin?.upstream === "new_api"}
+                    onCheckedChange={(on) =>
+                      setDraft((current) =>
+                        current.plugin
+                          ? {
+                              ...current,
+                              plugin: on
+                                ? { ...current.plugin, upstream: "new_api" }
+                                : {
+                                    key: current.plugin.key,
+                                    provider: current.plugin.provider,
+                                    ...(current.plugin.settings
+                                      ? { settings: current.plugin.settings }
+                                      : {}),
+                                  },
+                            }
+                          : current,
+                      )
+                    }
+                  />
+                </Field>
+              ) : null}
               {draft.kind === "vertex" && !vertexExpress ? (
                 <Field
                   group
@@ -3731,6 +3963,11 @@ export function ServiceManager({
                     }}
                   />
                 </Field>
+              ) : pluginProvider?.login && draft.plugin ? (
+                <PluginLoginField
+                  pluginKey={draft.plugin.key}
+                  serviceId={editing?.service.id}
+                />
               ) : draft.authScheme !== "none" ? (
                 <Field
                   label={
@@ -3738,7 +3975,16 @@ export function ServiceManager({
                       ? canKeepCredential
                         ? t("services.apiKeyKeep")
                         : t("services.apiKeyRequired")
-                      : "API Key"
+                      : draft.pluginTask?.auth === "oauth2_jwt" &&
+                          draft.plugin?.upstream !== "new_api"
+                        ? t("services.serviceAccountKey")
+                        : "API Key"
+                  }
+                  tooltip={
+                    draft.pluginTask?.auth === "oauth2_jwt" &&
+                    draft.plugin?.upstream !== "new_api"
+                      ? t("services.serviceAccountKeyHelp")
+                      : undefined
                   }
                 >
                   <Input
@@ -3758,7 +4004,8 @@ export function ServiceManager({
                               hint: savedKeyHint,
                             })
                           : t("services.apiKeySaved")
-                        : t("services.apiKeyPaste")
+                        : (pluginProvider?.key_hint ??
+                          t("services.apiKeyPaste"))
                     }
                     type="password"
                     value={draft.secret}
@@ -3770,6 +4017,51 @@ export function ServiceManager({
                     }
                   />
                 </Field>
+              ) : null}
+              {pluginProvider && draft.plugin && editing?.service.id ? (
+                <PluginProviderStateField
+                  pluginKey={draft.plugin.key}
+                  readsBalance={pluginProvider.balance === true}
+                  serviceId={editing.service.id}
+                />
+              ) : null}
+              {pluginProvider &&
+              schemaProperties(pluginProvider.config_schema).length > 0 ? (
+                <section
+                  className="grid gap-4 border-t pt-4"
+                  data-testid="plugin-provider-settings"
+                >
+                  <h4 className="text-xs font-medium text-muted-foreground">
+                    {t("services.pluginSettings")}
+                  </h4>
+                  <ConfigSchemaFields
+                    idPrefix="plugin-provider-settings"
+                    onChange={(key, value) =>
+                      setDraft((current) =>
+                        current.plugin
+                          ? {
+                              ...current,
+                              plugin: {
+                                ...current.plugin,
+                                settings: {
+                                  ...startingConfig(
+                                    pluginProvider.config_schema,
+                                    current.plugin.settings,
+                                  ),
+                                  [key]: value,
+                                },
+                              },
+                            }
+                          : current,
+                      )
+                    }
+                    schema={pluginProvider.config_schema}
+                    value={startingConfig(
+                      pluginProvider.config_schema,
+                      draft.plugin?.settings,
+                    )}
+                  />
+                </section>
               ) : null}
               {editing?.service.http?.credential_ref ? (
                 <Label className="flex items-start gap-2 border-t pt-4 text-xs font-normal text-muted-foreground">
@@ -3955,8 +4247,10 @@ export function ServiceManager({
                     ) : null}
                   </TabsTrigger>
                   <TabsTrigger
+                    className={taskProvider ? "hidden" : undefined}
                     data-testid="service-editor-tab-protocols"
                     data-tour-target="protocols"
+                    disabled={taskProvider}
                     onClick={() => setEditorTab("protocols")}
                     type="button"
                     value="protocols"
@@ -4012,6 +4306,14 @@ export function ServiceManager({
                 value="connection"
               >
                 {connectionFields}
+                {/* What plugins' interfaces show of the provider. */}
+                {editingServiceID ? (
+                  <PluginSlot
+                    className="mt-4 grid gap-3"
+                    context={{ service: editingServiceID }}
+                    name="service.section"
+                  />
+                ) : null}
               </TabsContent>
               <TabsContent
                 className="gutter-scroller min-h-0 min-w-0 flex-1 overflow-y-auto pr-4 pb-1"
@@ -4180,4 +4482,38 @@ export function ServiceManager({
       ) : null}
     </section>
   );
+}
+
+/**
+ * The provider a plugin offers for a provider of kind plugin, as the
+ * plugin describes it now: its settings' schema, key hint, and whether it
+ * logs in or reads a balance. null until it is read, and for any other
+ * provider.
+ */
+function usePluginProvider(
+  plugin: ServicePlugin | undefined,
+): PluginProvider | null {
+  const [provider, setProvider] = useState<PluginProvider | null>(null);
+  const key = plugin?.key;
+  const id = plugin?.provider;
+  useEffect(() => {
+    setProvider(null);
+    if (!key || !id || id === "task") return;
+    let current = true;
+    void Promise.resolve()
+      .then(() => listPlugins())
+      .then((list) => {
+        const found = list.plugins
+          .find((candidate) => candidate.key === key)
+          ?.providers?.find((candidate) => candidate.id === id);
+        if (current) setProvider(found ?? null);
+      })
+      .catch(() => {
+        if (current) setProvider(null);
+      });
+    return () => {
+      current = false;
+    };
+  }, [key, id]);
+  return provider;
 }

@@ -314,6 +314,51 @@ fn sidecar_args(
     Ok(arguments)
 }
 
+/// How much of Core's last stderr line an exit message keeps.
+const MAX_EXIT_REASON_CHARS: usize = 300;
+
+/// The message for a Core that exited on its own, with the reason it gave
+/// last when there is one.
+fn termination_message(code: Option<i32>, signal: Option<i32>, reason: Option<&str>) -> String {
+    let termination = match (code, signal) {
+        (Some(code), _) => format!("astrlink-core exited with code {code}"),
+        (_, Some(signal)) => format!("astrlink-core exited after signal {signal}"),
+        _ => "astrlink-core exited unexpectedly".to_string(),
+    };
+    match reason {
+        Some(reason) => format!("{termination}: {reason}"),
+        None => termination,
+    }
+}
+
+/// A Core log line without its program name and timestamp.
+fn core_log_message(line: &str) -> &str {
+    let line = line.trim();
+    let line = line.strip_prefix("astrlink-core: ").unwrap_or(line);
+    // Go's log prefix: "2006/01/02 15:04:05 ".
+    let bytes = line.as_bytes();
+    let stamped = bytes.len() > 20
+        && bytes[..19]
+            .iter()
+            .enumerate()
+            .all(|(index, byte)| match index {
+                4 | 7 => *byte == b'/',
+                10 => *byte == b' ',
+                13 | 16 => *byte == b':',
+                _ => byte.is_ascii_digit(),
+            })
+        && bytes[19] == b' ';
+    if stamped {
+        line.get(20..).unwrap_or(line)
+    } else {
+        line
+    }
+}
+
+fn clip_chars(text: &str, max: usize) -> String {
+    text.chars().take(max).collect()
+}
+
 fn recovery_delay(attempt: u8) -> Duration {
     Duration::from_secs(1_u64 << attempt.saturating_sub(1).min(4))
 }
@@ -411,6 +456,33 @@ pub struct ReadyAnnouncement {
     pub client_inference_url: String,
     pub control_url: String,
 }
+
+/// A file the gateway serves for a task, such as a generated image or video:
+/// its link parsed, when the link points at the gateway's own inference
+/// address (or the localhost one clients use) under a task's artifacts.
+/// The link carries its own access; no other address passes.
+fn gateway_file_url(ready: &ReadyAnnouncement, url: &str) -> Option<reqwest::Url> {
+    let parsed = reqwest::Url::parse(url).ok()?;
+    let same_origin = |base: &str| {
+        reqwest::Url::parse(base).ok().is_some_and(|base| {
+            base.scheme() == parsed.scheme()
+                && base.host_str() == parsed.host_str()
+                && base.port_or_known_default() == parsed.port_or_known_default()
+        })
+    };
+    let path = parsed.path();
+    let artifact = path.starts_with("/v1/tasks/")
+        && path.contains("/artifacts/")
+        && path.ends_with("/content");
+    ((same_origin(&ready.inference_url) || same_origin(&ready.client_inference_url))
+        && artifact
+        && parsed.username().is_empty()
+        && parsed.password().is_none())
+    .then_some(parsed)
+}
+
+/// How long saving a file of the gateway may take: a video is large.
+const GATEWAY_FILE_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct HealthResponse {
@@ -531,6 +603,10 @@ struct CoreInner {
     data_directory: Option<PathBuf>,
     /// Where the running Core's local key lives, for the Settings status line.
     local_key_storage: Option<LocalKeyStorage>,
+    /// What this run of Core last wrote to stderr, and its panic line if it
+    /// panicked: why it stopped, when it exits on its own.
+    stderr_last: Option<String>,
+    stderr_panic: Option<String>,
     #[cfg(windows)]
     job: Option<windows_job::JobObject>,
 }
@@ -572,6 +648,8 @@ impl Default for CoreInner {
             raw_key_replaced: false,
             data_directory: None,
             local_key_storage: None,
+            stderr_last: None,
+            stderr_panic: None,
             #[cfg(windows)]
             job: None,
         }
@@ -1064,6 +1142,8 @@ impl CoreManager {
             inner.generation = inner.generation.wrapping_add(1);
             inner.app_handle = Some(app.clone());
             inner.recovery_scheduled_at = None;
+            inner.stderr_last = None;
+            inner.stderr_panic = None;
             inner.phase = CorePhase::Spawning;
             inner.pid = None;
             inner.clear_handshake();
@@ -1490,6 +1570,51 @@ impl CoreManager {
         changed
     }
 
+    /// The link of a file the running gateway serves for a task, parsed;
+    /// None for any other link, or while Core is not ready.
+    pub fn gateway_file_url(&self, url: &str) -> Option<reqwest::Url> {
+        let ready = self.lock_inner().ready.clone()?;
+        gateway_file_url(&ready, url)
+    }
+
+    /// Saves a file the gateway serves to path, as it streams in. A download
+    /// that breaks off leaves no partial file behind.
+    pub async fn save_gateway_file(
+        &self,
+        url: reqwest::Url,
+        path: &std::path::Path,
+    ) -> Result<(), String> {
+        let mut response = self
+            .client
+            .get(url)
+            .timeout(GATEWAY_FILE_TIMEOUT)
+            .send()
+            .await
+            .map_err(|error| format!("could not read the file from the gateway: {error}"))?;
+        if !response.status().is_success() {
+            return Err(format!("the gateway answered {}", response.status()));
+        }
+        let mut file = std::fs::File::create(path)
+            .map_err(|error| format!("could not create the file: {error}"))?;
+        let written: Result<(), String> = async {
+            while let Some(chunk) = response
+                .chunk()
+                .await
+                .map_err(|error| format!("could not read the file from the gateway: {error}"))?
+            {
+                std::io::Write::write_all(&mut file, &chunk)
+                    .map_err(|error| format!("could not write the file: {error}"))?;
+            }
+            Ok(())
+        }
+        .await;
+        if written.is_err() {
+            drop(file);
+            let _ = std::fs::remove_file(path);
+        }
+        written
+    }
+
     pub fn snapshot(&self) -> CoreSnapshot {
         let inner = self.lock_inner();
         CoreSnapshot {
@@ -1533,7 +1658,9 @@ impl CoreManager {
                 }
                 CommandEvent::Stderr(bytes) => {
                     let line = String::from_utf8_lossy(&bytes);
-                    eprintln!("{}", line.trim());
+                    let line = line.trim();
+                    eprintln!("{line}");
+                    self.note_stderr(generation, line);
                 }
                 CommandEvent::Error(error) => {
                     self.handle_process_error(generation, format!("sidecar event error: {error}"));
@@ -1834,7 +1961,7 @@ impl CoreManager {
         let body = crate::raw_access::decision_body(grant_id, decision, proof)?;
         let path = crate::raw_access::decision_path(grant_id);
         let (status, _, response) = self
-            .authenticated_control_encoded(Method::POST, &path, Some(&body), None)
+            .authenticated_control_encoded(Method::POST, &path, Some(&body), None, false)
             .await?;
         let outcome = crate::raw_access::decision_outcome(status, &response)
             .ok_or_else(|| control_status_error(&Method::POST, &path, status, &response))?;
@@ -1899,7 +2026,7 @@ impl CoreManager {
         body: &[u8],
     ) -> Result<serde_json::Value, String> {
         let (status, _, response) = self
-            .authenticated_control_encoded(Method::POST, path, Some(body), None)
+            .authenticated_control_encoded(Method::POST, path, Some(body), None, false)
             .await?;
         let outcome = crate::raw_access::sealing_outcome(status, &response)
             .ok_or_else(|| control_status_error(&Method::POST, path, status, &response))?;
@@ -2401,6 +2528,192 @@ impl CoreManager {
             .authenticated_control(method, &path, body, None)
             .await?;
         serde_json::from_slice(&body).map_err(|_| "sync returned invalid JSON".into())
+    }
+
+    /// The plugin page: list, rescan, settings, credentials, tests and status.
+    pub async fn plugin_action(
+        &self,
+        action: &str,
+        key: Option<&str>,
+        name: Option<&str>,
+        input: Option<serde_json::Value>,
+    ) -> Result<serde_json::Value, String> {
+        let (method, path, body) = plugin_request(action, key, name, input)?;
+        let (_, body) = self
+            .authenticated_control(method, &path, body, None)
+            .await?;
+        serde_json::from_slice(&body).map_err(|_| "plugins returned invalid JSON".into())
+    }
+
+    /// Saves a plugin's settings. A change that grants the plugin more and
+    /// is not `approved` comes back as `NeedsApproval` with what it grants:
+    /// the user confirms it in the plugin confirmation window, which sends
+    /// it again approved.
+    pub async fn update_plugin(
+        &self,
+        key: &str,
+        input: serde_json::Value,
+        approved: bool,
+    ) -> Result<PluginUpdate, String> {
+        if !valid_plugin_key(key) {
+            return Err("invalid plugin".into());
+        }
+        let path = format!("/control/v1/plugins/{key}");
+        let encoded = serde_json::to_vec(&input)
+            .map_err(|error| format!("unable to encode control request: {error}"))?;
+        let (status, _, body) = self
+            .authenticated_control_encoded(Method::PATCH, &path, Some(&encoded), None, approved)
+            .await?;
+        if status == reqwest::StatusCode::CONFLICT {
+            let parsed: serde_json::Value = serde_json::from_slice(&body).unwrap_or_default();
+            if parsed["error"]["code"] == "approval_required" {
+                return Ok(PluginUpdate::NeedsApproval(parsed["approval"].clone()));
+            }
+        }
+        if !status.is_success() {
+            return Err(control_status_error(&Method::PATCH, &path, status, &body));
+        }
+        serde_json::from_slice(&body)
+            .map(PluginUpdate::Saved)
+            .map_err(|_| "plugins returned invalid JSON".into())
+    }
+
+    /// Installing from source: the review of a GitHub link, the install it
+    /// stages, the update check, the rollback and the uninstall. An install
+    /// or a rollback that is not `approved` comes back as `NeedsApproval`,
+    /// as a change of settings does. Why an install cannot go on comes back
+    /// whole, as Core's JSON, for the page to explain.
+    pub async fn plugin_change(
+        &self,
+        action: &str,
+        key: Option<&str>,
+        input: serde_json::Value,
+        approved: bool,
+    ) -> Result<PluginUpdate, String> {
+        let input = (!input.is_null()).then_some(input);
+        let (method, path, body) = plugin_request(action, key, None, input)?;
+        let encoded = body
+            .map(|body| serde_json::to_vec(&body))
+            .transpose()
+            .map_err(|error| format!("unable to encode control request: {error}"))?;
+        let (status, _, body) = self
+            .authenticated_control_encoded(
+                method.clone(),
+                &path,
+                encoded.as_deref(),
+                None,
+                approved,
+            )
+            .await?;
+        if status.is_success() {
+            return serde_json::from_slice(&body)
+                .map(PluginUpdate::Saved)
+                .map_err(|_| "plugins returned invalid JSON".into());
+        }
+        let parsed: serde_json::Value = serde_json::from_slice(&body).unwrap_or_default();
+        if status == reqwest::StatusCode::CONFLICT && parsed["error"]["code"] == "approval_required"
+        {
+            return Ok(PluginUpdate::NeedsApproval(parsed["approval"].clone()));
+        }
+        if parsed.get("failure").is_some() {
+            return Err(serde_json::json!({
+                "error": parsed["error"],
+                "failure": parsed["failure"],
+            })
+            .to_string());
+        }
+        Err(control_status_error(&method, &path, status, &body))
+    }
+
+    /// A plugin's interface code, or its source map, as Core serves it to
+    /// the main window; the status Core answered when it does not.
+    pub async fn plugin_client(
+        &self,
+        key: &str,
+        file: &str,
+    ) -> Result<Vec<u8>, reqwest::StatusCode> {
+        if !valid_plugin_key(key) || !matches!(file, "client.js" | "client.js.map") {
+            return Err(reqwest::StatusCode::NOT_FOUND);
+        }
+        let path = format!("/control/v1/plugins/{key}/{file}");
+        match self
+            .authenticated_control_encoded(Method::GET, &path, None, None, false)
+            .await
+        {
+            Ok((status, _, body)) if status.is_success() => Ok(body),
+            Ok((status, _, _)) => Err(status),
+            Err(_) => Err(reqwest::StatusCode::SERVICE_UNAVAILABLE),
+        }
+    }
+
+    /// The request attributes of the metadata settings.
+    pub async fn metadata_action(
+        &self,
+        action: &str,
+        key: Option<&str>,
+        input: Option<serde_json::Value>,
+    ) -> Result<serde_json::Value, String> {
+        let (method, path, body) = metadata_request(action, key, input)?;
+        let (_, body) = self
+            .authenticated_control(method, &path, body, None)
+            .await?;
+        if body.is_empty() {
+            return Ok(serde_json::Value::Null);
+        }
+        serde_json::from_slice(&body).map_err(|_| "metadata returned invalid JSON".into())
+    }
+
+    /// An access token's default metadata: read it, or replace it with `input`.
+    pub async fn access_token_metadata(
+        &self,
+        token_id: &str,
+        input: Option<serde_json::Value>,
+    ) -> Result<serde_json::Value, String> {
+        validate_resource_id(token_id)?;
+        let path = format!("/control/v1/access-tokens/{token_id}/metadata");
+        let method = if input.is_some() {
+            Method::PUT
+        } else {
+            Method::GET
+        };
+        let (_, body) = self
+            .authenticated_control(method, &path, input, None)
+            .await?;
+        serde_json::from_slice(&body).map_err(|_| "token metadata returned invalid JSON".into())
+    }
+
+    /// A session's bindings: read them, set one by hand, or unbind one,
+    /// which Core stores as none.
+    pub async fn session_metadata(
+        &self,
+        session_id: &str,
+        key: Option<&str>,
+        input: Option<serde_json::Value>,
+        unbind: bool,
+    ) -> Result<serde_json::Value, String> {
+        validate_resource_id(session_id)?;
+        let (method, path, body) = session_metadata_request(session_id, key, input, unbind)?;
+        let (_, body) = self
+            .authenticated_control(method, &path, body, None)
+            .await?;
+        serde_json::from_slice(&body).map_err(|_| "session metadata returned invalid JSON".into())
+    }
+
+    /// The plugins' part in a session: read it, pause or resume a plugin
+    /// there, or make its next request load the plugin's block again.
+    pub async fn session_plugins(
+        &self,
+        session_id: &str,
+        key: Option<&str>,
+        input: Option<serde_json::Value>,
+        refresh: bool,
+    ) -> Result<serde_json::Value, String> {
+        validate_resource_id(session_id)?;
+        let (method, path, body) = session_plugins_request(session_id, key, input, refresh)?;
+        let (_, body) = self
+            .authenticated_control(method, &path, body, None)
+            .await?;
+        serde_json::from_slice(&body).map_err(|_| "session plugins returned invalid JSON".into())
     }
 
     /// `fresh` asks Core to drop its 30s quota snapshot and query the
@@ -3033,16 +3346,19 @@ impl CoreManager {
             ),
             None => None,
         };
-        self.authenticated_control_encoded(method, path, encoded_body.as_deref(), if_match)
+        self.authenticated_control_encoded(method, path, encoded_body.as_deref(), if_match, false)
             .await
     }
 
+    /// `approved` marks a change of a plugin's settings the user confirmed
+    /// in the plugin confirmation window.
     async fn authenticated_control_encoded(
         &self,
         method: Method,
         path: &str,
         encoded_body: Option<&[u8]>,
         if_match: Option<&str>,
+        approved: bool,
     ) -> Result<(reqwest::StatusCode, Option<String>, Vec<u8>), String> {
         let (base_url, control_token) = {
             let inner = self.lock_inner();
@@ -3070,7 +3386,7 @@ impl CoreManager {
                     &url,
                     path,
                     encoded_body,
-                    if_match,
+                    ControlHeaders { if_match, approved },
                     &control_token,
                 )
                 .await
@@ -3107,7 +3423,7 @@ impl CoreManager {
         url: &str,
         path: &str,
         encoded_body: Option<&[u8]>,
-        if_match: Option<&str>,
+        headers: ControlHeaders<'_>,
         control_token: &str,
     ) -> Result<(reqwest::StatusCode, Option<String>, Vec<u8>), String> {
         let mut request = self
@@ -3115,7 +3431,10 @@ impl CoreManager {
             .request(method.clone(), url)
             .timeout(control_request_timeout(&method, path))
             .header(header::AUTHORIZATION, format!("Bearer {control_token}"));
-        if let Some(etag) = if_match {
+        if headers.approved {
+            request = request.header(PLUGIN_APPROVAL_HEADER, "confirmed");
+        }
+        if let Some(etag) = headers.if_match {
             request = request.header(header::IF_MATCH, etag);
         }
         if let Some(body) = encoded_body {
@@ -3163,17 +3482,36 @@ impl CoreManager {
         Ok((status, etag, body.to_vec()))
     }
 
+    /// Keeps what a run of Core last wrote to stderr, and the line its panic
+    /// began with, for the message shown when it exits on its own.
+    fn note_stderr(&self, generation: u64, line: &str) {
+        let message = core_log_message(line);
+        if message.is_empty() {
+            return;
+        }
+        let mut inner = self.lock_inner();
+        if inner.generation != generation {
+            return;
+        }
+        if inner.stderr_panic.is_none()
+            && (message.starts_with("panic: ") || message.starts_with("fatal error: "))
+        {
+            inner.stderr_panic = Some(clip_chars(message, MAX_EXIT_REASON_CHARS));
+        }
+        inner.stderr_last = Some(clip_chars(message, MAX_EXIT_REASON_CHARS));
+    }
+
     fn handle_terminated(self: &Arc<Self>, generation: u64, payload: TerminatedPayload) {
         let mut inner = self.lock_inner();
         if inner.generation != generation {
             return;
         }
 
-        let termination = match (payload.code, payload.signal) {
-            (Some(code), _) => format!("astrlink-core exited with code {code}"),
-            (_, Some(signal)) => format!("astrlink-core exited after signal {signal}"),
-            _ => "astrlink-core exited unexpectedly".to_string(),
-        };
+        let reason = inner
+            .stderr_panic
+            .as_deref()
+            .or(inner.stderr_last.as_deref());
+        let termination = termination_message(payload.code, payload.signal, reason);
         let next = transition_lifecycle(
             &inner.lifecycle(),
             generation,
@@ -3398,6 +3736,326 @@ fn is_builtin_tool_test(method: &Method, path: &str) -> bool {
         )
 }
 
+/// A lowercase letter, then up to 31 lowercase letters, digits or `extra`.
+/// Whether `value` can name a plugin, as Core's ValidPluginKey: a
+/// lowercase letter or digit, then up to 63 lowercase letters, digits,
+/// hyphens and underscores, as New API's community keys need.
+fn valid_plugin_key(value: &str) -> bool {
+    let mut chars = value.chars();
+    matches!(chars.next(), Some('a'..='z' | '0'..='9'))
+        && value.len() <= 64
+        && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
+}
+
+fn valid_plugin_name(value: &str, extra: char) -> bool {
+    let mut chars = value.chars();
+    matches!(chars.next(), Some('a'..='z'))
+        && value.len() <= 32
+        && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == extra)
+}
+
+/// Translates a plugin page action into the control request it makes.
+/// Marks a plugin change the user confirmed; Core refuses a change that
+/// grants a plugin more without it.
+const PLUGIN_APPROVAL_HEADER: &str = "X-AstrLink-Plugin-Approval";
+
+/// The optional headers of a control request: the ETag a change expects,
+/// and the mark of a plugin change the user confirmed.
+#[derive(Clone, Copy)]
+struct ControlHeaders<'a> {
+    if_match: Option<&'a str>,
+    approved: bool,
+}
+
+/// What saving a plugin's settings came to.
+#[derive(Debug)]
+pub enum PluginUpdate {
+    Saved(serde_json::Value),
+    /// What the change grants, for the user to confirm first.
+    NeedsApproval(serde_json::Value),
+}
+
+fn plugin_request(
+    action: &str,
+    key: Option<&str>,
+    name: Option<&str>,
+    input: Option<serde_json::Value>,
+) -> Result<(Method, String, Option<serde_json::Value>), String> {
+    let base = "/control/v1/plugins";
+    match action {
+        "list" => return Ok((Method::GET, base.into(), None)),
+        "reload" => return Ok((Method::POST, format!("{base}/reload"), None)),
+        // The settings of every plugin at once: the pause, the injection
+        // budget and the interface language.
+        "host" => return Ok((Method::GET, "/control/v1/plugin-host".into(), None)),
+        "update_host" => {
+            return Ok((
+                Method::PATCH,
+                "/control/v1/plugin-host".into(),
+                Some(input.ok_or("plugin host settings are required")?),
+            ))
+        }
+        // A GitHub link fetched, built and reviewed; the install of what
+        // the review staged.
+        "source_preview" => {
+            return Ok((
+                Method::POST,
+                format!("{base}/sources/preview"),
+                Some(input.ok_or("the link is required")?),
+            ))
+        }
+        "source_install" => {
+            return Ok((
+                Method::POST,
+                format!("{base}/sources/install"),
+                Some(input.ok_or("the review is required")?),
+            ))
+        }
+        // What a plugin marketplace offers, the official one unless the
+        // input names another index; with a code, the one plugin of that
+        // code.
+        "market" => {
+            let field = |name: &str| {
+                input
+                    .as_ref()
+                    .and_then(|input| input.get(name))
+                    .and_then(serde_json::Value::as_str)
+                    .filter(|value| !value.is_empty())
+            };
+            if let Some(code) = field("code") {
+                if code.len() != 8 || !code.bytes().all(|byte| byte.is_ascii_digit()) {
+                    return Err("invalid plugin code".into());
+                }
+                return Ok((Method::GET, format!("{base}/market?code={code}"), None));
+            }
+            let path = match field("index") {
+                Some(index) => format!("{base}/market?index={}", percent_encode_query(index)),
+                None => format!("{base}/market"),
+            };
+            return Ok((Method::GET, path, None));
+        }
+        // A marketplace version's usage guide or release notes.
+        "market_doc" => {
+            let input = input.ok_or("the plugin is required")?;
+            let field = |name: &str| {
+                input
+                    .get(name)
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+            };
+            let (key, doc) = (field("key"), field("doc"));
+            if !valid_plugin_key(key) || !matches!(doc, "readme" | "changelog") {
+                return Err("invalid plugin document".into());
+            }
+            let mut path = format!("{base}/market/doc?key={key}&doc={doc}");
+            for name in ["index", "version"] {
+                if !field(name).is_empty() {
+                    path.push_str(&format!("&{name}={}", percent_encode_query(field(name))));
+                }
+            }
+            return Ok((Method::GET, path, None));
+        }
+        _ => {}
+    }
+    let key = key
+        .filter(|key| valid_plugin_key(key))
+        .ok_or("invalid plugin")?;
+    let plugin = format!("{base}/{key}");
+    Ok(match action {
+        "get" => (Method::GET, plugin, None),
+        "update" => (
+            Method::PATCH,
+            plugin,
+            Some(input.ok_or("plugin settings are required")?),
+        ),
+        "test" => (Method::POST, format!("{plugin}/test"), None),
+        "status" => (Method::GET, format!("{plugin}/status"), None),
+        // The GitHub stars of the projects the plugin credits.
+        "credits" => (Method::GET, format!("{plugin}/credits"), None),
+        // The development tab: the log lines after a sequence number, and a
+        // hook run by hand without the network.
+        "journal" => {
+            let since = input
+                .as_ref()
+                .and_then(|input| input.get("since"))
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0);
+            (Method::GET, format!("{plugin}/journal?since={since}"), None)
+        }
+        "dry_run" => (
+            Method::POST,
+            format!("{plugin}/dry-run"),
+            Some(input.ok_or("the dry run is required")?),
+        ),
+        // The login of a provider of the plugin: start, state, submit,
+        // cancel, or the status of the credential it keeps.
+        "login" => (
+            Method::POST,
+            format!("{plugin}/login"),
+            Some(input.ok_or("the login is required")?),
+        ),
+        // The balance of a provider of the plugin, and whether it rests.
+        "provider_state" => (
+            Method::POST,
+            format!("{plugin}/provider-state"),
+            Some(input.ok_or("the provider is required")?),
+        ),
+        // A request processing instance run over a request, not sent.
+        "request_dry_run" => (
+            Method::POST,
+            format!("{plugin}/request-dry-run"),
+            Some(input.ok_or("the dry run is required")?),
+        ),
+        // The plugin's account over its last 1 to 30 days.
+        "stats" => {
+            let days = input
+                .as_ref()
+                .and_then(|input| input.get("days"))
+                .and_then(serde_json::Value::as_u64)
+                .filter(|days| (1..=30).contains(days))
+                .ok_or("the days of the statistics are 1 to 30")?;
+            (Method::GET, format!("{plugin}/stats?days={days}"), None)
+        }
+        "action" => (
+            Method::POST,
+            format!("{plugin}/actions"),
+            Some(input.ok_or("the action is required")?),
+        ),
+        "source_check" => (Method::POST, format!("{plugin}/source/check"), None),
+        // A call of the plugin's interface code to its backend part.
+        "ui_call" => (
+            Method::POST,
+            format!("{plugin}/ui-call"),
+            Some(input.ok_or("the call is required")?),
+        ),
+        "source_rollback" => (
+            Method::POST,
+            format!("{plugin}/source/rollback"),
+            Some(input.ok_or("the version is required")?),
+        ),
+        "source_uninstall" => (Method::DELETE, format!("{plugin}/source"), None),
+        "clear_workspaces" => (Method::DELETE, format!("{plugin}/workspaces"), None),
+        "clear_values" => (Method::DELETE, format!("{plugin}/values"), None),
+        "clear_files" => (Method::DELETE, format!("{plugin}/files"), None),
+        // A task plugin's tasks, the newest first, a page after a cursor;
+        // and clearing those that finished.
+        "tasks" => {
+            let cursor = input
+                .as_ref()
+                .and_then(|input| input.get("cursor"))
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("");
+            let path = if cursor.is_empty() {
+                format!("{plugin}/tasks")
+            } else {
+                format!("{plugin}/tasks?cursor={}", percent_encode_query(cursor))
+            };
+            (Method::GET, path, None)
+        }
+        "clear_tasks" => (Method::DELETE, format!("{plugin}/tasks"), None),
+        // Voids the credentials the model runs the plugin's lookups with.
+        "revoke_lookups" => (Method::DELETE, format!("{plugin}/lookup-credentials"), None),
+        "save_credential" | "delete_credential" => {
+            let name = name
+                .filter(|name| valid_plugin_name(name, '_'))
+                .ok_or("invalid plugin credential")?;
+            let path = format!("{plugin}/credentials/{name}");
+            if action == "save_credential" {
+                (
+                    Method::PUT,
+                    path,
+                    Some(input.ok_or("the credential is required")?),
+                )
+            } else {
+                (Method::DELETE, path, None)
+            }
+        }
+        _ => return Err("unsupported plugin operation".into()),
+    })
+}
+
+/// Translates a metadata settings action into the control request it makes.
+fn metadata_request(
+    action: &str,
+    key: Option<&str>,
+    input: Option<serde_json::Value>,
+) -> Result<(Method, String, Option<serde_json::Value>), String> {
+    let base = "/control/v1/metadata/attributes";
+    match action {
+        "list" => return Ok((Method::GET, base.into(), None)),
+        "create" => {
+            return Ok((
+                Method::POST,
+                base.into(),
+                Some(input.ok_or("the attribute is required")?),
+            ))
+        }
+        _ => {}
+    }
+    let key = key
+        .filter(|key| valid_plugin_name(key, '_'))
+        .ok_or("invalid metadata attribute")?;
+    Ok(match action {
+        "update" => (
+            Method::PATCH,
+            format!("{base}/{key}"),
+            Some(input.ok_or("the attribute is required")?),
+        ),
+        "delete" => (Method::DELETE, format!("{base}/{key}"), None),
+        "values" => (Method::GET, format!("{base}/{key}/values"), None),
+        _ => return Err("unsupported metadata operation".into()),
+    })
+}
+
+/// Translates a session metadata operation into the control request it makes.
+fn session_metadata_request(
+    session_id: &str,
+    key: Option<&str>,
+    input: Option<serde_json::Value>,
+    unbind: bool,
+) -> Result<(Method, String, Option<serde_json::Value>), String> {
+    let base = format!("/control/v1/request-sessions/{session_id}/metadata");
+    let Some(key) = key else {
+        return Ok((Method::GET, base, None));
+    };
+    if !valid_plugin_name(key, '_') {
+        return Err("invalid metadata attribute".into());
+    }
+    if unbind {
+        return Ok((Method::DELETE, format!("{base}/{key}"), None));
+    }
+    Ok((
+        Method::PUT,
+        format!("{base}/{key}"),
+        Some(input.ok_or("the value is required")?),
+    ))
+}
+
+/// Translates an operation on the plugins' part in a session into the control
+/// request it makes: read them all, pause or resume one, or refresh one.
+fn session_plugins_request(
+    session_id: &str,
+    key: Option<&str>,
+    input: Option<serde_json::Value>,
+    refresh: bool,
+) -> Result<(Method, String, Option<serde_json::Value>), String> {
+    let base = format!("/control/v1/request-sessions/{session_id}/plugins");
+    let Some(key) = key else {
+        return Ok((Method::GET, base, None));
+    };
+    if !valid_plugin_key(key) {
+        return Err("invalid plugin".into());
+    }
+    if refresh {
+        return Ok((Method::POST, format!("{base}/{key}/refresh"), None));
+    }
+    Ok((
+        Method::PUT,
+        format!("{base}/{key}"),
+        Some(input.ok_or("the pause is required")?),
+    ))
+}
+
 /// Translates a sync operation into the control request it makes. Kept apart
 /// from the request itself so the mapping is testable without a running Core.
 fn sync_request(
@@ -3447,11 +4105,13 @@ fn control_request_timeout(method: &Method, path: &str) -> Duration {
         };
     }
 
+    // Core gives a provider's test a minute, and the test of a task
+    // plugin's provider five, as it waits for the media generated.
     if method == Method::POST
         && path.starts_with(&format!("{SERVICES_PATH}/"))
         && path.ends_with("/test")
     {
-        return Duration::from_secs(75);
+        return Duration::from_secs(320);
     }
     if method == Method::POST && path.starts_with("/control/v1/pricing/") {
         return Duration::from_secs(150);
@@ -3459,6 +4119,42 @@ fn control_request_timeout(method: &Method, path: &str) -> Duration {
     // A sync run does several remote round trips and may retry the merge.
     if method == Method::POST && path == "/control/v1/sync/run" {
         return Duration::from_secs(320);
+    }
+    // Core gives fetching, building and checking a plugin from source three
+    // minutes; an install, an update check or a rollback a minute.
+    if method == Method::POST && path == "/control/v1/plugins/sources/preview" {
+        return Duration::from_secs(200);
+    }
+    // Core gives reading a marketplace a minute: its index, from a mirror
+    // when GitHub does not answer, then the icons of its plugins.
+    if method == Method::GET && path == "/control/v1/plugins/market" {
+        return Duration::from_secs(75);
+    }
+    // A page of a task plugin's tasks, or clearing the finished ones and the
+    // files kept for them.
+    if path.starts_with("/control/v1/plugins/")
+        && path.ends_with("/tasks")
+        && (method == Method::GET || method == Method::DELETE)
+    {
+        return Duration::from_secs(20);
+    }
+    if path.starts_with("/control/v1/plugins/")
+        && (path.contains("/source")
+            || path.ends_with("/sources/install")
+            || path.ends_with("/ui-call"))
+    {
+        return Duration::from_secs(75);
+    }
+    // Core gives a plugin page hook 10 seconds, and a rescan compiles every
+    // changed plugin.
+    if path.starts_with("/control/v1/plugins/")
+        && ((method == Method::POST
+            && (path.ends_with("/test")
+                || path.ends_with("/reload")
+                || path.ends_with("/actions")))
+            || (method == Method::GET && path.ends_with("/status")))
+    {
+        return Duration::from_secs(20);
     }
     if method == Method::POST
         && (path == SERVICE_MODEL_PROBES_PATH
@@ -6579,7 +7275,12 @@ mod tests {
     fn tool_tests_and_purges_wait_past_two_seconds_and_do_not_repeat_transport_failures() {
         use std::io::{BufRead, Read, Write};
         use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-        for (purge, succeeds) in [(false, true), (false, false), (true, true), (true, false)] {
+        for (call, succeeds) in [
+            ("tool test", true),
+            ("tool test", false),
+            ("purge", true),
+            ("purge", false),
+        ] {
             let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
             listener.set_nonblocking(true).unwrap();
             let address = listener.local_addr().unwrap();
@@ -6639,21 +7340,20 @@ mod tests {
                 .enable_all()
                 .build()
                 .unwrap();
-            let result = if purge {
-                runtime.block_on(
+            let result = match call {
+                "purge" => runtime.block_on(
                     manager
                         .purge_request_records(serde_json::json!({"scope":"all","confirm":true})),
-                )
-            } else {
-                runtime.block_on(manager.builtin_tool_action("web_search".into(), "test".into(), Some(serde_json::json!({"enabled":true,"backend":"upstream","service_id":"service_test","model":"main"}))))
+                ),
+                _ => runtime.block_on(manager.builtin_tool_action("web_search".into(), "test".into(), Some(serde_json::json!({"enabled":true,"backend":"upstream","service_id":"service_test","model":"main"})))),
             };
             stop.store(true, Ordering::SeqCst);
             server.join().unwrap();
-            assert_eq!(result.is_ok(), succeeds, "purge={purge} {result:?}");
+            assert_eq!(result.is_ok(), succeeds, "{call}: {result:?}");
             assert_eq!(
                 calls.load(Ordering::SeqCst),
                 1,
-                "purge={purge}: a tool test or purge must never be automatically retried"
+                "{call}: a tool test or purge must never be automatically retried"
             );
         }
     }
@@ -6800,10 +7500,582 @@ mod tests {
     }
 
     #[test]
+    fn plugin_actions_map_to_their_control_requests() {
+        let settings = serde_json::json!({ "enabled": false });
+        assert_eq!(
+            plugin_request("list", None, None, None).unwrap(),
+            (Method::GET, "/control/v1/plugins".into(), None)
+        );
+        assert_eq!(
+            plugin_request("reload", None, None, None).unwrap(),
+            (Method::POST, "/control/v1/plugins/reload".into(), None)
+        );
+        assert_eq!(
+            plugin_request("update", Some("team-rules"), None, Some(settings.clone())).unwrap(),
+            (
+                Method::PATCH,
+                "/control/v1/plugins/team-rules".into(),
+                Some(settings)
+            )
+        );
+        assert_eq!(
+            plugin_request("status", Some("powercontext"), None, None).unwrap(),
+            (
+                Method::GET,
+                "/control/v1/plugins/powercontext/status".into(),
+                None
+            )
+        );
+        assert_eq!(
+            plugin_request(
+                "delete_credential",
+                Some("powercontext"),
+                Some("api_token"),
+                None
+            )
+            .unwrap(),
+            (
+                Method::DELETE,
+                "/control/v1/plugins/powercontext/credentials/api_token".into(),
+                None
+            )
+        );
+        assert_eq!(
+            plugin_request(
+                "stats",
+                Some("powercontext"),
+                None,
+                Some(serde_json::json!({ "days": 7 }))
+            )
+            .unwrap(),
+            (
+                Method::GET,
+                "/control/v1/plugins/powercontext/stats?days=7".into(),
+                None
+            )
+        );
+        for days in [
+            serde_json::json!({ "days": 0 }),
+            serde_json::json!({ "days": 31 }),
+        ] {
+            assert!(plugin_request("stats", Some("powercontext"), None, Some(days)).is_err());
+        }
+        assert_eq!(
+            plugin_request(
+                "journal",
+                Some("notes"),
+                None,
+                Some(serde_json::json!({ "since": 42 }))
+            )
+            .unwrap(),
+            (
+                Method::GET,
+                "/control/v1/plugins/notes/journal?since=42".into(),
+                None
+            )
+        );
+        let run = serde_json::json!({ "hook": "describeStatus", "args": [] });
+        assert_eq!(
+            plugin_request("dry_run", Some("notes"), None, Some(run.clone())).unwrap(),
+            (
+                Method::POST,
+                "/control/v1/plugins/notes/dry-run".into(),
+                Some(run)
+            )
+        );
+        assert!(plugin_request("dry_run", Some("notes"), None, None).is_err());
+        // The login, the request processing dry run and the provider state
+        // of a provider plugin each post to their route.
+        for (action, path) in [
+            ("login", "login"),
+            ("request_dry_run", "request-dry-run"),
+            ("provider_state", "provider-state"),
+        ] {
+            let input = serde_json::json!({ "service_id": "svc_1" });
+            assert_eq!(
+                plugin_request(action, Some("vendor"), None, Some(input.clone())).unwrap(),
+                (
+                    Method::POST,
+                    format!("/control/v1/plugins/vendor/{path}"),
+                    Some(input)
+                )
+            );
+            assert!(plugin_request(action, Some("vendor"), None, None).is_err());
+        }
+        assert_eq!(
+            plugin_request("credits", Some("powercontext"), None, None).unwrap(),
+            (
+                Method::GET,
+                "/control/v1/plugins/powercontext/credits".into(),
+                None
+            )
+        );
+        assert_eq!(
+            plugin_request("host", None, None, None).unwrap(),
+            (Method::GET, "/control/v1/plugin-host".into(), None)
+        );
+        assert_eq!(
+            plugin_request("market", None, None, None).unwrap(),
+            (Method::GET, "/control/v1/plugins/market".into(), None)
+        );
+        assert_eq!(
+            plugin_request(
+                "market",
+                None,
+                None,
+                Some(serde_json::json!({ "index": "https://example.com/index.json" }))
+            )
+            .unwrap(),
+            (
+                Method::GET,
+                "/control/v1/plugins/market?index=https%3A%2F%2Fexample.com%2Findex.json".into(),
+                None
+            )
+        );
+        assert_eq!(
+            plugin_request(
+                "market",
+                None,
+                None,
+                Some(serde_json::json!({ "code": "46324580" }))
+            )
+            .unwrap(),
+            (
+                Method::GET,
+                "/control/v1/plugins/market?code=46324580".into(),
+                None
+            )
+        );
+        assert!(plugin_request(
+            "market",
+            None,
+            None,
+            Some(serde_json::json!({ "code": "4632&x=1" }))
+        )
+        .is_err());
+        assert_eq!(
+            plugin_request(
+                "market_doc",
+                None,
+                None,
+                Some(serde_json::json!({
+                    "index": "https://www.newapi.ai/api/v1/community/index.json",
+                    "key": "rexcoding-yu_artdance",
+                    "version": "1.0.2",
+                    "doc": "readme"
+                }))
+            )
+            .unwrap(),
+            (
+                Method::GET,
+                "/control/v1/plugins/market/doc?key=rexcoding-yu_artdance&doc=readme&index=https%3A%2F%2Fwww.newapi.ai%2Fapi%2Fv1%2Fcommunity%2Findex.json&version=1.0.2".into(),
+                None
+            )
+        );
+        for input in [
+            serde_json::json!({ "key": "Bad Key", "doc": "readme" }),
+            serde_json::json!({ "key": "sora", "doc": "license" }),
+        ] {
+            assert!(plugin_request("market_doc", None, None, Some(input)).is_err());
+        }
+        assert!(valid_plugin_key("rexcoding-yu_artdance"));
+        assert!(valid_plugin_key("1password"));
+        assert!(!valid_plugin_key("_sora"));
+        assert!(!valid_plugin_key(&"a".repeat(65)));
+        assert_eq!(
+            plugin_request(
+                "tasks",
+                Some("sora"),
+                None,
+                Some(serde_json::json!({ "cursor": "2026-10-25T08:00:00.000000000Z|task_1" }))
+            )
+            .unwrap(),
+            (
+                Method::GET,
+                "/control/v1/plugins/sora/tasks?cursor=2026-10-25T08%3A00%3A00.000000000Z%7Ctask_1"
+                    .into(),
+                None
+            )
+        );
+        assert_eq!(
+            plugin_request("clear_tasks", Some("sora"), None, None).unwrap(),
+            (
+                Method::DELETE,
+                "/control/v1/plugins/sora/tasks".into(),
+                None
+            )
+        );
+        let link = serde_json::json!({ "url": "https://github.com/acme/hello" });
+        assert_eq!(
+            plugin_request("source_preview", None, None, Some(link.clone())).unwrap(),
+            (
+                Method::POST,
+                "/control/v1/plugins/sources/preview".into(),
+                Some(link)
+            )
+        );
+        let token = serde_json::json!({ "token": "abc" });
+        assert_eq!(
+            plugin_request("source_install", None, None, Some(token.clone())).unwrap(),
+            (
+                Method::POST,
+                "/control/v1/plugins/sources/install".into(),
+                Some(token)
+            )
+        );
+        assert!(plugin_request("source_install", None, None, None).is_err());
+        assert_eq!(
+            plugin_request("source_check", Some("hello"), None, None).unwrap(),
+            (
+                Method::POST,
+                "/control/v1/plugins/hello/source/check".into(),
+                None
+            )
+        );
+        let version = serde_json::json!({ "version": "20261023T120000Z-0000abcd" });
+        assert_eq!(
+            plugin_request(
+                "source_rollback",
+                Some("hello"),
+                None,
+                Some(version.clone())
+            )
+            .unwrap(),
+            (
+                Method::POST,
+                "/control/v1/plugins/hello/source/rollback".into(),
+                Some(version)
+            )
+        );
+        assert_eq!(
+            plugin_request("source_uninstall", Some("hello"), None, None).unwrap(),
+            (
+                Method::DELETE,
+                "/control/v1/plugins/hello/source".into(),
+                None
+            )
+        );
+        assert_eq!(
+            control_request_timeout(&Method::POST, "/control/v1/plugins/sources/preview"),
+            Duration::from_secs(200)
+        );
+        assert_eq!(
+            control_request_timeout(&Method::POST, "/control/v1/plugins/hello/source/rollback"),
+            Duration::from_secs(75)
+        );
+        // Reading a marketplace fetches its index and icons from the network.
+        assert_eq!(
+            control_request_timeout(&Method::GET, "/control/v1/plugins/market"),
+            Duration::from_secs(75)
+        );
+        assert_eq!(
+            control_request_timeout(
+                &Method::GET,
+                "/control/v1/plugins/market?index=https%3A%2F%2Fexample.com%2Findex.json"
+            ),
+            Duration::from_secs(75)
+        );
+        assert_eq!(
+            control_request_timeout(&Method::GET, "/control/v1/plugins/sora/tasks?cursor=c1"),
+            Duration::from_secs(20)
+        );
+        assert_eq!(
+            control_request_timeout(&Method::DELETE, "/control/v1/plugins/sora/tasks"),
+            Duration::from_secs(20)
+        );
+        let language = serde_json::json!({ "language": "ja" });
+        assert_eq!(
+            plugin_request("update_host", None, None, Some(language.clone())).unwrap(),
+            (
+                Method::PATCH,
+                "/control/v1/plugin-host".into(),
+                Some(language)
+            )
+        );
+        let click = serde_json::json!({ "action": "refresh", "session": "session_1" });
+        assert_eq!(
+            plugin_request("action", Some("powercontext"), None, Some(click.clone())).unwrap(),
+            (
+                Method::POST,
+                "/control/v1/plugins/powercontext/actions".into(),
+                Some(click)
+            )
+        );
+        for (action, path) in [
+            ("clear_workspaces", "workspaces"),
+            ("clear_values", "values"),
+            ("clear_files", "files"),
+            ("revoke_lookups", "lookup-credentials"),
+        ] {
+            assert_eq!(
+                plugin_request(action, Some("powercontext"), None, None).unwrap(),
+                (
+                    Method::DELETE,
+                    format!("/control/v1/plugins/powercontext/{path}"),
+                    None
+                )
+            );
+        }
+        for (action, key, name, input) in [
+            ("update_host", None, None, None),
+            ("action", Some("powercontext"), None, None),
+            ("get", Some("../services"), None, None),
+            ("get", Some("Team"), None, None),
+            ("update", Some("team-rules"), None, None),
+            (
+                "save_credential",
+                Some("powercontext"),
+                Some("api-token"),
+                Some(serde_json::json!({})),
+            ),
+            (
+                "save_credential",
+                Some("powercontext"),
+                Some("api_token"),
+                None,
+            ),
+            ("uninstall", Some("powercontext"), None, None),
+        ] {
+            assert!(
+                plugin_request(action, key, name, input).is_err(),
+                "{action} {key:?} {name:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn metadata_actions_map_to_their_control_requests() {
+        let attribute = serde_json::json!({ "key": "env" });
+        assert_eq!(
+            metadata_request("create", None, Some(attribute.clone())).unwrap(),
+            (
+                Method::POST,
+                "/control/v1/metadata/attributes".into(),
+                Some(attribute)
+            )
+        );
+        assert_eq!(
+            metadata_request("delete", Some("env"), None).unwrap(),
+            (
+                Method::DELETE,
+                "/control/v1/metadata/attributes/env".into(),
+                None
+            )
+        );
+        assert_eq!(
+            metadata_request("values", Some("project"), None).unwrap(),
+            (
+                Method::GET,
+                "/control/v1/metadata/attributes/project/values".into(),
+                None
+            )
+        );
+        for (action, key) in [
+            ("delete", Some("env/../x")),
+            ("delete", Some("Env")),
+            ("update", Some("env")),
+            ("rename", Some("env")),
+        ] {
+            assert!(
+                metadata_request(action, key, None).is_err(),
+                "{action} {key:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_exit_message_says_why_core_stopped() {
+        assert_eq!(
+            core_log_message("astrlink-core: 2026/10/19 03:21:28 open persistent store: locked"),
+            "open persistent store: locked"
+        );
+        assert_eq!(core_log_message("panic: boom"), "panic: boom");
+        assert_eq!(core_log_message("  "), "");
+        assert_eq!(
+            termination_message(Some(1), None, Some("open persistent store: locked")),
+            "astrlink-core exited with code 1: open persistent store: locked"
+        );
+        assert_eq!(
+            termination_message(None, Some(9), None),
+            "astrlink-core exited after signal 9"
+        );
+        assert_eq!(clip_chars("字字字", 2), "字字");
+    }
+
+    #[test]
+    fn session_metadata_actions_map_to_their_control_requests() {
+        let base = "/control/v1/request-sessions/session_1/metadata";
+        assert_eq!(
+            session_metadata_request("session_1", None, None, false).unwrap(),
+            (Method::GET, base.into(), None)
+        );
+        let value = serde_json::json!({ "value": "astrlink" });
+        assert_eq!(
+            session_metadata_request("session_1", Some("project"), Some(value.clone()), false)
+                .unwrap(),
+            (Method::PUT, format!("{base}/project"), Some(value))
+        );
+        assert_eq!(
+            session_metadata_request("session_1", Some("project"), None, true).unwrap(),
+            (Method::DELETE, format!("{base}/project"), None)
+        );
+        assert!(session_metadata_request("session_1", Some("project"), None, false).is_err());
+        assert!(session_metadata_request("session_1", Some("../x"), None, true).is_err());
+    }
+
+    #[test]
+    fn session_plugin_actions_map_to_their_control_requests() {
+        let base = "/control/v1/request-sessions/session_1/plugins";
+        assert_eq!(
+            session_plugins_request("session_1", None, None, false).unwrap(),
+            (Method::GET, base.into(), None)
+        );
+        let pause = serde_json::json!({ "paused": true });
+        assert_eq!(
+            session_plugins_request(
+                "session_1",
+                Some("powercontext"),
+                Some(pause.clone()),
+                false
+            )
+            .unwrap(),
+            (Method::PUT, format!("{base}/powercontext"), Some(pause))
+        );
+        assert_eq!(
+            session_plugins_request("session_1", Some("powercontext"), None, true).unwrap(),
+            (Method::POST, format!("{base}/powercontext/refresh"), None)
+        );
+        assert!(session_plugins_request("session_1", Some("powercontext"), None, false).is_err());
+        assert!(session_plugins_request("session_1", Some("../x"), None, true).is_err());
+        assert_eq!(
+            control_request_timeout(&Method::POST, "/control/v1/plugins/powercontext/actions"),
+            Duration::from_secs(20)
+        );
+    }
+
+    #[test]
+    fn plugin_hooks_get_room_for_their_core_deadline() {
+        for (method, path) in [
+            (Method::POST, "/control/v1/plugins/reload"),
+            (Method::POST, "/control/v1/plugins/powercontext/test"),
+            (Method::GET, "/control/v1/plugins/powercontext/status"),
+        ] {
+            assert_eq!(
+                control_request_timeout(&method, path),
+                Duration::from_secs(20),
+                "{path}"
+            );
+        }
+        assert_eq!(
+            control_request_timeout(&Method::GET, "/control/v1/plugins/powercontext"),
+            REQUEST_TIMEOUT
+        );
+        assert_eq!(
+            control_request_timeout(&Method::PATCH, "/control/v1/plugins/powercontext"),
+            REQUEST_TIMEOUT
+        );
+    }
+
+    #[test]
+    fn only_task_files_of_the_running_gateway_count_as_its_files() {
+        let ready = ReadyAnnouncement {
+            event: "ready".to_string(),
+            core_version: "0.1.0".to_string(),
+            control_api_version: "1".to_string(),
+            protocol_contract_version: "1".to_string(),
+            inference_url: "http://127.0.0.1:8324".to_string(),
+            client_inference_url: "http://localhost:8324".to_string(),
+            control_url: "http://127.0.0.1:8325".to_string(),
+        };
+        let file = "/v1/tasks/resp_1/artifacts/image-1/content?access=abc";
+        assert!(gateway_file_url(&ready, &format!("http://127.0.0.1:8324{file}")).is_some());
+        assert!(gateway_file_url(&ready, &format!("http://localhost:8324{file}")).is_some());
+        for other in [
+            format!("http://127.0.0.1:9999{file}"),
+            format!("http://127.0.0.1:8325{file}"),
+            format!("https://example.com{file}"),
+            format!("http://user:secret@127.0.0.1:8324{file}"),
+            "http://127.0.0.1:8324/v1/chat/completions".to_string(),
+            "http://127.0.0.1:8324/v1/tasks/resp_1".to_string(),
+        ] {
+            assert!(gateway_file_url(&ready, &other).is_none(), "{other}");
+        }
+    }
+
+    #[test]
+    fn a_gateway_file_saves_as_it_streams_and_a_broken_one_leaves_nothing() {
+        use std::io::{BufRead, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        // The first answer is whole; the second promises more than it sends.
+        let server = std::thread::spawn(move || {
+            let mut authorized = false;
+            for (body, length) in [(&b"image bytes"[..], 11), (&b"half a vid"[..], 100)] {
+                let (mut stream, _) = listener.accept().unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                let mut reader = std::io::BufReader::new(&mut stream);
+                loop {
+                    let mut line = String::new();
+                    if reader.read_line(&mut line).unwrap() == 0 || line == "\r\n" {
+                        break;
+                    }
+                    authorized |= line.to_ascii_lowercase().starts_with("authorization:");
+                }
+                let _ = write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: {length}\r\nConnection: close\r\n\r\n");
+                let _ = stream.write_all(body);
+            }
+            authorized
+        });
+        let manager = CoreManager::new();
+        {
+            let mut inner = manager.lock_inner();
+            inner.phase = CorePhase::Ready;
+            inner.control_token = Some("local-test-token".into());
+            inner.ready = Some(ReadyAnnouncement {
+                event: "ready".into(),
+                core_version: "0.1.0".into(),
+                control_api_version: "v1".into(),
+                protocol_contract_version: "v1".into(),
+                inference_url: format!("http://{address}"),
+                client_inference_url: format!("http://localhost:{}", address.port()),
+                control_url: "http://127.0.0.1:9".into(),
+            });
+        }
+        let directory =
+            std::env::temp_dir().join(format!("astrlink-gateway-file-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&directory);
+        std::fs::create_dir_all(&directory).unwrap();
+        let url = manager
+            .gateway_file_url(&format!(
+                "http://{address}/v1/tasks/resp_1/artifacts/image-1/content?access=abc"
+            ))
+            .unwrap();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let image = directory.join("image-1.png");
+        runtime
+            .block_on(manager.save_gateway_file(url.clone(), &image))
+            .unwrap();
+        assert_eq!(std::fs::read(&image).unwrap(), b"image bytes");
+        let video = directory.join("video.mp4");
+        assert!(runtime
+            .block_on(manager.save_gateway_file(url, &video))
+            .is_err());
+        assert!(!video.exists());
+        // The link carries its own access: the control token stays home.
+        assert!(!server.join().unwrap());
+        let _ = std::fs::remove_dir_all(&directory);
+    }
+
+    #[test]
     fn provider_tests_allow_the_core_deadline_to_finish() {
         assert_eq!(
             control_request_timeout(&Method::POST, "/control/v1/services/service_test/test"),
-            Duration::from_secs(75)
+            Duration::from_secs(320)
         );
         assert_eq!(
             control_request_timeout(&Method::GET, "/control/v1/services/service_test/test"),

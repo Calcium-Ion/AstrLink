@@ -112,6 +112,11 @@ func unixHTTPClient(socket string) *http.Client {
 	return &http.Client{Timeout: requestTimeout, Transport: transport}
 }
 
+// Get reads a Control API path, for astrlink plugin.
+func (client *Client) Get(ctx context.Context, path string, query url.Values) (json.RawMessage, error) {
+	return client.get(ctx, path, query)
+}
+
 func (client *Client) get(ctx context.Context, path string, query url.Values) (json.RawMessage, error) {
 	return client.do(ctx, http.MethodGet, path, query, nil, nil)
 }

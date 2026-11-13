@@ -48,6 +48,7 @@ import { ModelBrandIcon } from "@/components/ModelBrandIcon";
 import { Panel, PanelHeader } from "@/components/Panel";
 import { OrderedList } from "@/components/OrderedList";
 import { useOverviewLayout, type OverviewModuleId } from "./overview-layout";
+import { PluginSlot } from "./plugin-ui";
 import { STAR_TRAIL_RANGES } from "./star-trail-model";
 import { UsageStarTrail, UsageStarTrailSkeleton } from "./UsageStarTrail";
 import { LiveCrew } from "./LiveCrew";
@@ -981,6 +982,10 @@ export function Overview({
             >
               {({ id }) => !layout.hidden.includes(id) && moduleContent[id]}
             </OrderedList>
+            {/* What plugins' interfaces add to the overview. */}
+            {!editingLayout ? (
+              <PluginSlot className="mt-3 grid gap-3" name="overview.widget" />
+            ) : null}
           </>
         )}
       </div>

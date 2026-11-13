@@ -4500,6 +4500,22 @@ components:
           description: Output tokens divided by total generation seconds for streaming requests with positive output and valid latency and TTFT. Each generation duration is max(latency - TTFT, 500 ms).
         cache_samples: { type: integer, minimum: 0 }
         speed_samples: { type: integer, minimum: 0 }
+    UsagePluginGroup:
+      type: object
+      additionalProperties: false
+      description: >-
+        One plugin's part in the window. requests counts the root inference
+        requests of the totals its hooks acted on without failing and
+        failed_requests those where one of its calls failed; a request the
+        plugin only skipped counts in neither. tasks counts the tasks its
+        providers took in the window and failed_tasks those that failed.
+      required: [plugin, requests, failed_requests, tasks, failed_tasks]
+      properties:
+        plugin: { type: string, minLength: 1, maxLength: 32 }
+        requests: { type: integer, minimum: 0 }
+        failed_requests: { type: integer, minimum: 0 }
+        tasks: { type: integer, minimum: 0 }
+        failed_tasks: { type: integer, minimum: 0 }
     UsageSummary:
       type: object
       additionalProperties: false
@@ -4512,6 +4528,7 @@ components:
           by_service,
           by_model,
           by_token,
+          by_plugin,
           by_hour_model,
           by_client,
           by_route,
@@ -4538,6 +4555,10 @@ components:
         by_token:
           type: array
           items: { $ref: "#/components/schemas/UsageGroup" }
+        by_plugin:
+          type: array
+          description: Plugins by requests and failed_requests, then tasks.
+          items: { $ref: "#/components/schemas/UsagePluginGroup" }
         by_hour_model:
           type: array
           description: >-
@@ -5433,9 +5454,13 @@ components:
         - vertex
         - openai_compatible
         - custom
+        - plugin
       description: >
         Product-level service type. Codex, Claude and Grok subscriptions use OAuth.
-        Coding plans and other HTTP services use provider-issued API keys; Vertex uses service account JSON or an Express API key.
+        Coding plans and other HTTP services use provider-issued API keys; Vertex uses service account JSON or an Express API key. A plugin
+        service is adapted by the plugin its plugin field names: the plugin builds
+        the upstream request and reads the answer, while the gateway sends it with
+        the service's address and key.
     VertexConnection:
       type: object
       required: [project_id, location]
@@ -5644,6 +5669,8 @@ components:
           $ref: "#/components/schemas/HTTPServiceConnection"
         subscription:
           $ref: "#/components/schemas/SubscriptionServiceConnection"
+        plugin:
+          $ref: "#/components/schemas/ServicePlugin"
         created_at:
           type: string
           format: date-time
@@ -5690,6 +5717,27 @@ components:
         credential:
           $ref: "#/components/schemas/CredentialInput"
       additionalProperties: false
+    ServicePlugin:
+      type: object
+      required: [key, provider]
+      properties:
+        key:
+          type: string
+          pattern: "^[a-z0-9][a-z0-9_-]{0,63}$"
+          description: The plugin that adapts the service.
+        provider:
+          type: string
+          pattern: "^[a-z][a-z0-9-]{0,31}$"
+          description: Which of the plugin's meta.providers the service is; task for the provider of a task plugin.
+        upstream:
+          type: string
+          enum: [new_api]
+          description: A task plugin's provider that is another new-api gateway with the plugin installed, instead of the vendor.
+        settings:
+          type: object
+          description: What a task plugin reads as the provider's own settings (ctx.userSetting), such as vertexRegion; at most 16 KiB.
+      additionalProperties: false
+      description: Required for, and only valid with, kind plugin; fixed once the service is created.
     ServiceCreate:
       type: object
       required: [name, kind]
@@ -5733,6 +5781,8 @@ components:
           $ref: "#/components/schemas/ServiceModels"
         http:
           $ref: "#/components/schemas/HTTPServiceConnectionInput"
+        plugin:
+          $ref: "#/components/schemas/ServicePlugin"
         subscription_mode:
           type: string
           enum: [legacy, official]
@@ -9908,6 +9958,27 @@ components:
         message:
           type: string
           maxLength: 1001
+        media:
+          type: array
+          description: Files the test produced, as the provider of a task plugin generates images, videos or music. Absent when there are none.
+          items:
+            $ref: "#/components/schemas/ServiceTestMedia"
+    ServiceTestMedia:
+      type: object
+      additionalProperties: false
+      required: [kind, url, name]
+      properties:
+        kind:
+          type: string
+          enum: [image, video, audio, file]
+        url:
+          type: string
+          description: The link the gateway serves the file at, with its own access; relative when the test reached the gateway without a host, as through the web console.
+        mime_type:
+          type: string
+        name:
+          type: string
+          description: The plugin's key for the file, such as image-1.
     ServiceResponsesProbe:
       type: object
       required: [service_id, status_code, ok]

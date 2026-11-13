@@ -296,7 +296,7 @@ describe("SettingsCenter", () => {
       [...container.querySelectorAll('[role="tab"]')].map(
         (node) => node.textContent,
       ),
-    ).toEqual(["常规", "网关与网络", "托盘面板", "同步与备份"]);
+    ).toEqual(["常规", "网关与网络", "托盘面板", "同步与备份", "元信息"]);
     expect(
       [...container.querySelectorAll("h2")].map((node) => node.textContent),
     ).toEqual(["外观", "窗口与启动"]);

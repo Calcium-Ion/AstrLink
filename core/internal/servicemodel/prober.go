@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -51,9 +52,25 @@ type Prober struct {
 	secrets       secretstore.SecretStore
 	subscriptions *subscription.Manager
 	client        *http.Client
+	plugins       PluginProviders
+	transport     *transport.Forwarder
 	vertex        *vertexauth.Manager
 	// officialModels lists what an official Claude account's CLI offers.
 	officialModels func(context.Context, contract.ServiceID) ([]string, error)
+}
+
+// PluginProviders lists the models of providers plugins adapt;
+// *pluginhost.Host satisfies it with ProviderModels.
+type PluginProviders interface {
+	ProviderModels(ctx context.Context, service contract.Service, target transport.Target, roundTrip func(*http.Request, transport.Target) (*http.Response, error)) ([]string, bool, error)
+}
+
+// WithPluginProviders lists the models of a provider of kind plugin with
+// its plugin.
+func (prober *Prober) WithPluginProviders(plugins PluginProviders) *Prober {
+	prober.plugins = plugins
+	prober.transport = transport.New(nil)
+	return prober
 }
 
 func New(secrets secretstore.SecretStore, subscriptions *subscription.Manager, client *http.Client) *Prober {
@@ -91,6 +108,9 @@ func (prober *Prober) ProbeService(
 	ctx, err = networkproxy.Bind(ctx, service, prober.secrets)
 	if err != nil {
 		return Discovery{}, err
+	}
+	if service.Kind == contract.ServiceKindPlugin {
+		return prober.probePlugin(ctx, service)
 	}
 	if !serviceSupportsDiscovery(service, protocol) {
 		return Discovery{}, ErrUnsupported
@@ -172,6 +192,48 @@ func (prober *Prober) ProbeHTTP(
 	}
 	baseURL = providerapi.BaseURL(kind, protocol, baseURL)
 	return prober.probeHTTPPages(probeContext, baseURL.String(), headers, protocol, kind == contract.ServiceKindAnthropic, connection.ModelListPath, false)
+}
+
+// probePlugin asks the plugin that adapts a provider for its models, with
+// the provider's key.
+func (prober *Prober) probePlugin(ctx context.Context, service contract.Service) (Discovery, error) {
+	if prober.plugins == nil || service.HTTP == nil {
+		return Discovery{}, ErrUnsupported
+	}
+	probeContext, cancel := context.WithTimeout(ctx, probeTimeout)
+	defer cancel()
+	var secret []byte
+	if service.HTTP.Auth.Scheme != contract.AuthSchemeNone {
+		if service.HTTP.CredentialRef == "" || prober.secrets == nil {
+			return Discovery{}, ErrCredentialUnavailable
+		}
+		ref, err := secretstore.ParseRef(service.HTTP.CredentialRef)
+		if err != nil {
+			return Discovery{}, ErrCredentialUnavailable
+		}
+		if secret, err = prober.secrets.Get(probeContext, ref); err != nil {
+			return Discovery{}, fmt.Errorf("%w: %v", ErrCredentialUnavailable, err)
+		}
+		defer clear(secret)
+	}
+	headers, err := authorizationHeaders(service.HTTP.Auth, secret)
+	if err != nil {
+		return Discovery{}, err
+	}
+	target := transport.Target{Service: service, ProxyCredentials: prober.secrets, RequestHeaders: headers}
+	models, listed, err := prober.plugins.ProviderModels(probeContext, service, target, prober.transport.RoundTrip)
+	switch {
+	case err != nil:
+		return Discovery{}, fmt.Errorf("%w: %v", ErrUpstream, err)
+	case !listed:
+		return Discovery{}, ErrUnsupported
+	}
+	ids, err := normalizeProbeIDs(models)
+	if err != nil {
+		return Discovery{}, err
+	}
+	slices.Sort(ids)
+	return Discovery{Models: ids}, nil
 }
 
 func (prober *Prober) probeSubscription(

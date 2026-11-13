@@ -1309,6 +1309,166 @@ END`,
           FROM context_sets sets WHERE sets.project = OLD.project AND sets.client_type = OLD.client_type));
 END`,
 		}},
+		{Version: 58, Name: "plugins_request_metadata_extension_points_and_tasks", Statements: []string{
+			// The user's choices for each plugin. Plugins come from the
+			// builtin set and the plugin directory; a row exists once the
+			// user changed something, and a plugin without one is disabled.
+			// excluded_clients_json lists the client types the plugin is off
+			// for; workspace_binding binds a new session to the value its
+			// workspace had; auto_refresh lets the host swap a session's
+			// resident block when the plugin's data changed; lookup_enabled
+			// lets the model run the plugin's queries through the lookup
+			// outlet. hook_limits_json holds the user's time limits of the
+			// plugin's extension points, in milliseconds by hook;
+			// fail_closed the user's consent that a request its entry hook
+			// cannot decide is refused; ui_enabled whether its interface
+			// code loads.
+			`CREATE TABLE plugin_settings (
+    plugin_key TEXT PRIMARY KEY CHECK(length(plugin_key) BETWEEN 1 AND 32),
+    enabled INTEGER NOT NULL DEFAULT 0 CHECK(enabled IN (0, 1)),
+    granted_capabilities_json TEXT NOT NULL DEFAULT '[]',
+    network_origins_json TEXT NOT NULL DEFAULT '[]',
+    privacy_trusted INTEGER NOT NULL DEFAULT 0 CHECK(privacy_trusted IN (0, 1)),
+    turn_wait_ms INTEGER NOT NULL DEFAULT 2500 CHECK(turn_wait_ms BETWEEN 1000 AND 5000),
+    config_json TEXT NOT NULL DEFAULT '{}' CHECK(length(config_json) <= 65536),
+    excluded_clients_json TEXT NOT NULL DEFAULT '[]' CHECK(length(excluded_clients_json) <= 4096),
+    workspace_binding INTEGER NOT NULL DEFAULT 1 CHECK(workspace_binding IN (0, 1)),
+    auto_refresh INTEGER NOT NULL DEFAULT 0 CHECK(auto_refresh IN (0, 1)),
+    lookup_enabled INTEGER NOT NULL DEFAULT 1 CHECK(lookup_enabled IN (0, 1)),
+    hook_limits_json TEXT NOT NULL DEFAULT '{}' CHECK(length(hook_limits_json) <= 4096),
+    fail_closed INTEGER NOT NULL DEFAULT 0 CHECK(fail_closed IN (0, 1)),
+    ui_enabled INTEGER NOT NULL DEFAULT 1 CHECK(ui_enabled IN (0, 1)),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+)`,
+			// The settings of every plugin at once: the pause of them all,
+			// the budget of what they inject into one request, and the
+			// interface language what they inject follows. One row, absent
+			// until the first change.
+			`CREATE TABLE plugin_host_settings (
+    id INTEGER PRIMARY KEY CHECK(id = 1),
+    document_json TEXT NOT NULL CHECK(length(document_json) <= 4096),
+    updated_at TEXT NOT NULL
+)`,
+			// A plugin's part in one session: the turn it first took part in,
+			// which is where it may ask what the session lacks, and whether
+			// the user paused it there. Only numbers, never conversation text.
+			`CREATE TABLE plugin_sessions (
+    plugin_key TEXT NOT NULL REFERENCES plugin_settings(plugin_key) ON DELETE CASCADE,
+    session_id TEXT NOT NULL CHECK(length(session_id) BETWEEN 1 AND 256),
+    first_turn INTEGER NOT NULL CHECK(first_turn >= 0),
+    paused INTEGER NOT NULL DEFAULT 0 CHECK(paused IN (0, 1)),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (plugin_key, session_id)
+)`,
+			// Credential slots a plugin declares, sealed under dek_secrets like
+			// builtin_tool_credentials. id is <plugin_key>/<name>, the key the
+			// seal binds; origin is the one address the host injects it for.
+			`CREATE TABLE plugin_credentials (
+    id TEXT PRIMARY KEY CHECK(length(id) BETWEEN 3 AND 65),
+    plugin_key TEXT NOT NULL REFERENCES plugin_settings(plugin_key) ON DELETE CASCADE,
+    name TEXT NOT NULL CHECK(length(name) BETWEEN 1 AND 32),
+    credential_value BLOB NOT NULL,
+    sealed INTEGER NOT NULL DEFAULT 0 CHECK(sealed IN (0, 1) AND (sealed = 0 OR length(credential_value) >= 30)),
+    origin TEXT NOT NULL CHECK(length(origin) BETWEEN 1 AND 512),
+    hint TEXT NOT NULL DEFAULT '' CHECK(length(hint) <= 8),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE (plugin_key, name)
+)`,
+			// astrlink.store: each plugin's own values, such as project to
+			// scope mappings.
+			`CREATE TABLE plugin_kv (
+    plugin_key TEXT NOT NULL REFERENCES plugin_settings(plugin_key) ON DELETE CASCADE,
+    key TEXT NOT NULL CHECK(length(key) BETWEEN 1 AND 256),
+    value_json TEXT NOT NULL CHECK(length(value_json) <= 65536),
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (plugin_key, key)
+)`,
+			// Request attributes: the user's own and those plugins register.
+			// owner is user or the key of the plugin that registered it.
+			`CREATE TABLE metadata_attributes (
+    key TEXT PRIMARY KEY CHECK(length(key) BETWEEN 1 AND 32),
+    label TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    pattern TEXT NOT NULL,
+    marker TEXT UNIQUE,
+    owner TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+)`,
+			// Values kept for an access token (its default) or a session (its
+			// binding). Values from request headers stay in request records.
+			`CREATE TABLE metadata_values (
+    target_kind TEXT NOT NULL CHECK(target_kind IN ('token', 'session')),
+    target_id TEXT NOT NULL,
+    key TEXT NOT NULL REFERENCES metadata_attributes(key) ON DELETE CASCADE,
+    value TEXT NOT NULL,
+    source TEXT NOT NULL CHECK(source IN ('token_default', 'model_marker', 'user_marker', 'user_answer', 'workspace', 'manual')),
+    turn INTEGER,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (target_kind, target_id, key)
+)`,
+			// The value a workspace was bound to, for a new session there to
+			// start with. workspace is a keyed fingerprint of the directory's
+			// path and name its last element; the path itself is not kept.
+			`CREATE TABLE metadata_workspace_values (
+    key TEXT NOT NULL REFERENCES metadata_attributes(key) ON DELETE CASCADE,
+    workspace TEXT NOT NULL CHECK(length(workspace) = 64),
+    name TEXT NOT NULL CHECK(length(name) <= 256),
+    value TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (key, workspace)
+)`,
+			`ALTER TABLE request_records ADD COLUMN metadata_json TEXT`,
+			`ALTER TABLE request_records ADD COLUMN plugin_records_json TEXT`,
+			// The tasks of task plugins, written for new-api's task plugin
+			// API: one row per generation a client submitted. id is the
+			// public id clients read it by; upstream_task_id the vendor's,
+			// which stays in the gateway. owner is the access token that
+			// submitted it, '' on a gateway without tokens, and only it reads
+			// the task. surface is the protocol or native route it came by,
+			// operation what it asked of it. data_json is the vendor's latest
+			// snapshot, NULL once a route keeps no result; state_json the
+			// plugin's own state between polls; usage_json the usage facts it
+			// reported; request_json what the protocol answers echo.
+			// result_url is the result the vendor named, or stored: for one
+			// kept in the plugin task directory. next_poll_at is when the
+			// poller asks next, NULL once the task ended.
+			`CREATE TABLE plugin_tasks (
+    id TEXT PRIMARY KEY CHECK(length(id) BETWEEN 8 AND 64),
+    plugin_key TEXT NOT NULL CHECK(length(plugin_key) BETWEEN 1 AND 32),
+    plugin_version TEXT NOT NULL,
+    service_id TEXT NOT NULL,
+    owner TEXT NOT NULL DEFAULT '',
+    surface TEXT NOT NULL,
+    operation TEXT NOT NULL DEFAULT '',
+    action TEXT NOT NULL DEFAULT '',
+    model TEXT NOT NULL,
+    upstream_model TEXT NOT NULL,
+    upstream_task_id TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL CHECK(status IN ('NOT_START', 'SUBMITTED', 'QUEUED', 'IN_PROGRESS', 'SUCCESS', 'FAILURE', 'UNKNOWN')),
+    progress TEXT NOT NULL DEFAULT '',
+    fail_reason TEXT NOT NULL DEFAULT '',
+    retain INTEGER NOT NULL DEFAULT 1 CHECK(retain IN (0, 1)),
+    data_json TEXT CHECK(data_json IS NULL OR length(data_json) <= 4194304),
+    state_json TEXT CHECK(state_json IS NULL OR length(state_json) <= 1048576),
+    usage_json TEXT CHECK(usage_json IS NULL OR length(usage_json) <= 65536),
+    request_json TEXT CHECK(request_json IS NULL OR length(request_json) <= 1048576),
+    result_url TEXT NOT NULL DEFAULT '' CHECK(length(result_url) <= 65536),
+    poll_failures INTEGER NOT NULL DEFAULT 0,
+    request_id TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    finished_at TEXT,
+    next_poll_at TEXT
+)`,
+			`CREATE INDEX plugin_tasks_due ON plugin_tasks(next_poll_at) WHERE next_poll_at IS NOT NULL`,
+			`CREATE INDEX plugin_tasks_by_plugin ON plugin_tasks(plugin_key, created_at)`,
+		}},
 	}
 }
 

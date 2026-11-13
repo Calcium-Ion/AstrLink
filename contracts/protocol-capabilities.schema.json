@@ -303,7 +303,8 @@
         "gemini",
         "vertex",
         "openai_compatible",
-        "custom"
+        "custom",
+        "plugin"
       ],
       "description": "HTTP service adapter ID. Capabilities declare enabled protocols. OpenCode adapters additionally select the model's native protocol from their published endpoint tables."
     },

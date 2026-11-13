@@ -607,6 +607,9 @@ func (store *Store) Get(ctx context.Context, ref secretstore.Ref) ([]byte, error
 	if strings.HasPrefix(string(ref), subscriptionRefPrefix) {
 		return store.subscriptionCredential(ctx, ref, "get", nil)
 	}
+	if strings.HasPrefix(string(ref), pluginRefPrefix) {
+		return store.pluginCredential(ctx, ref)
+	}
 	id, err := localServiceID(ref)
 	if err != nil {
 		return nil, err

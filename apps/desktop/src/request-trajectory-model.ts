@@ -28,7 +28,8 @@ export type TrajectoryChip =
   | "UPSTREAM"
   | "RETRY"
   | "RESTORE"
-  | "RESULT";
+  | "RESULT"
+  | "PLUGIN";
 
 export type TrajectoryTone =
   | "ok"
@@ -44,7 +45,8 @@ export type InspectorPart =
   | "response_content"
   | "route"
   | "redirect"
-  | "compression";
+  | "compression"
+  | "plugin";
 
 export function inspectorPart(chip: TrajectoryChip): InspectorPart {
   switch (chip) {
@@ -65,6 +67,8 @@ export function inspectorPart(chip: TrajectoryChip): InspectorPart {
     case "RESTORE":
     case "RESULT":
       return "response_content";
+    case "PLUGIN":
+      return "plugin";
   }
 }
 
@@ -89,7 +93,22 @@ export function inspectorTitle(chip: TrajectoryChip): string {
       return i18n.t("trajectory.restore");
     case "RESULT":
       return i18n.t("trajectory.result");
+    case "PLUGIN":
+      return i18n.t("trajectory.plugin");
   }
+}
+
+/**
+ * The label of a row's phase: a plugin event goes by the name its plugin
+ * gave it, such as 「记忆」; every other phase by its own name.
+ */
+export function trajectoryChipLabel(
+  chip: TrajectoryChip,
+  title?: string,
+): string {
+  return chip === "PLUGIN" && title
+    ? title
+    : i18n.t(`trajectory.chips.${chip}`);
 }
 
 const privacyPlaceholderPattern =
@@ -536,6 +555,9 @@ export interface TrajectoryRow {
   compression?: ImageCompression;
   /** Set on POLICY rows that record a decision. */
   policy?: PolicySummary;
+  /** Set on PLUGIN rows: the plugin's key and its name for the event. */
+  plugin?: string;
+  title?: string;
 }
 
 export const TIMELINE_GAP_COLLAPSE_MS = 2000;
@@ -596,6 +618,7 @@ const chipByKind: Record<RequestEvent["kind"], TrajectoryChip> = {
   upstream: "UPSTREAM",
   restore: "RESTORE",
   completed: "RESULT",
+  plugin: "PLUGIN",
 };
 
 const laneByChip: Record<TrajectoryChip, TrajectoryLane> = {
@@ -609,6 +632,7 @@ const laneByChip: Record<TrajectoryChip, TrajectoryLane> = {
   RETRY: "upstream",
   RESTORE: "gateway",
   RESULT: "client",
+  PLUGIN: "gateway",
 };
 
 export function synthesizeEvents(record: RequestRecord): RequestEvent[] {
@@ -1181,6 +1205,10 @@ function rowFromEvent(
     ...(redirect ? { redirect } : {}),
     ...(compression ? { compression } : {}),
     ...(policy ? { policy } : {}),
+    ...(event.kind === "plugin" && event.plugin
+      ? { plugin: event.plugin }
+      : {}),
+    ...(event.kind === "plugin" && event.title ? { title: event.title } : {}),
   };
 }
 

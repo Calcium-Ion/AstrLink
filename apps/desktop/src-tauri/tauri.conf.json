@@ -28,7 +28,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; connect-src 'self' ipc: http://ipc.localhost ws://localhost:1420 ws://127.0.0.1:1420; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; script-src 'self' 'unsafe-eval'"
+      "csp": "default-src 'self'; connect-src 'self' ipc: http://ipc.localhost ws://localhost:1420 ws://127.0.0.1:1420; img-src 'self' data: http://127.0.0.1:* http://localhost:*; media-src 'self' http://127.0.0.1:* http://localhost:*; style-src 'self' 'unsafe-inline'; font-src 'self'; script-src 'self' 'unsafe-eval' astrlink-plugin: http://astrlink-plugin.localhost"
     }
   },
   "bundle": {
@@ -44,6 +44,14 @@
       "../../../LICENSE": "licenses/LICENSE",
       "../../../LICENSING.md": "licenses/LICENSING.md",
       "../../../LICENSES/AGPL-3.0.txt": "licenses/LICENSES/AGPL-3.0.txt",
+      "../../../LICENSES/affectui-MIT.txt": "licenses/LICENSES/affectui-MIT.txt",
+      "../../../LICENSES/dsh-ptc-moejs-MIT.txt": "licenses/LICENSES/dsh-ptc-moejs-MIT.txt",
+      "../../../LICENSES/events-MIT.txt": "licenses/LICENSES/events-MIT.txt",
+      "../../../LICENSES/nodejs-MIT.txt": "licenses/LICENSES/nodejs-MIT.txt",
+      "../../../LICENSES/punycode-MIT.txt": "licenses/LICENSES/punycode-MIT.txt",
+      "../../../LICENSES/readable-stream-MIT.txt": "licenses/LICENSES/readable-stream-MIT.txt",
+      "../../../LICENSES/string_decoder-MIT.txt": "licenses/LICENSES/string_decoder-MIT.txt",
+      "../../../LICENSES/moejs-THIRD_PARTY_NOTICES.txt": "notices/moejs/THIRD_PARTY_NOTICES.txt",
       "binaries/onnxruntime-1.23.2-LICENSE.txt": "notices/onnxruntime-1.23.2/LICENSE.txt",
       "binaries/onnxruntime-1.23.2-ThirdPartyNotices.txt": "notices/onnxruntime-1.23.2/ThirdPartyNotices.txt"
     },

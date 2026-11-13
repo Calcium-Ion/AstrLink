@@ -101,6 +101,23 @@ type Dependencies struct {
 	// Sync is the configuration engine. Optional; without it the sync surface
 	// reports 503.
 	Sync SyncManager
+	// Plugins and PluginStore serve the plugin page. Optional; without them
+	// the plugin routes report 503.
+	Plugins     PluginRegistry
+	PluginStore storage.PluginStore
+	// Metadata and MetadataStore serve the request attributes. Optional;
+	// without them the metadata routes report 503.
+	Metadata      MetadataRegistry
+	MetadataStore storage.MetadataStore
+	// PluginHost serves the settings of every plugin and the plugins' part
+	// in each session. Optional; without it those routes report 503.
+	PluginHost PluginHost
+	// PluginInstaller installs plugins from source. Optional; without it
+	// those routes report 503.
+	PluginInstaller PluginInstaller
+	// PluginTasks are the tasks of task plugins. Optional; without it the
+	// plugin page lists none.
+	PluginTasks PluginTasks
 }
 
 // RateLimitReleaser restores a service after an operator clears its risk.
@@ -178,6 +195,19 @@ type Handler struct {
 	observers         *observerTracker
 	consoleSessions   ConsoleSessions
 	syncManager       SyncManager
+	plugins           PluginRegistry
+	pluginStore       storage.PluginStore
+	pluginHost        PluginHost
+	pluginInstaller   PluginInstaller
+	pluginTaskEngine  PluginTasks
+	pluginsMu         sync.Mutex
+	// pluginTests are the last connection test of each plugin.
+	pluginTestsMu sync.Mutex
+	pluginTests   map[string]contract.PluginLastTest
+	metadata      MetadataRegistry
+	metadataStore storage.MetadataStore
+	// repoStars are the stars of the GitHub repositories plugins credit.
+	repoStars *repoStars
 }
 
 func New(version contract.VersionResponse) *Handler {
@@ -216,42 +246,50 @@ func newHandler(version contract.VersionResponse, dependencies Dependencies) (*H
 		builtinToolTester: dependencies.BuiltinToolTester,
 		clientIdentities:  dependencies.ClientIdentities,
 		pricingStore:      dependencies.PricingStore, pricingManager: dependencies.PricingManager,
-		routingSettings: routingSettings,
-		version:         version,
-		capabilities:    capabilities,
-		serviceStore:    dependencies.ServiceStore,
-		accessTokens:    dependencies.AccessTokenManager,
-		policyStore:     dependencies.PolicyStore,
-		privacyModels:   dependencies.PrivacyModels,
-		privacyFilter:   dependencies.PrivacyFilter,
-		privacyWarnings: dependencies.PrivacyWarnings,
-		policyChanged:   dependencies.PolicyChanged,
-		preparation:     dependencies.ModelPreparation,
-		requestRecords:  dependencies.RequestRecords,
-		auditSettings:   dependencies.AuditSettings,
-		auditKeys:       dependencies.AuditKeys,
-		auditBlobs:      dependencies.AuditBlobs,
-		contextTexts:    dependencies.ContextTexts,
-		rawVault:        dependencies.RawVault,
-		rawGrants:       newRawGrantManager(),
-		localData:       dependencies.LocalData,
-		subscriptions:   dependencies.Subscriptions,
-		claudeCLI:       dependencies.ClaudeCLI,
-		rateLimits:      dependencies.RateLimits,
-		servicePackages: dependencies.ServicePackages,
-		codingPlans:     dependencies.CodingPlans,
-		serviceModels:   dependencies.ServiceModels,
-		serviceTester:   dependencies.ServiceTester,
-		autoClassifiers: dependencies.AutoClassifiers,
-		autoClassifier:  dependencies.AutoClassifier,
-		controlToken:    []byte(dependencies.ControlToken),
-		observerToken:   []byte(dependencies.ObserverToken),
-		newServiceID:    dependencies.NewServiceID,
-		shutdown:        dependencies.Shutdown,
-		consoleSessions: dependencies.ConsoleSessions,
-		syncManager:     dependencies.Sync,
-		mux:             http.NewServeMux(),
-		observers:       newObserverTracker(),
+		routingSettings:  routingSettings,
+		version:          version,
+		capabilities:     capabilities,
+		serviceStore:     dependencies.ServiceStore,
+		accessTokens:     dependencies.AccessTokenManager,
+		policyStore:      dependencies.PolicyStore,
+		privacyModels:    dependencies.PrivacyModels,
+		privacyFilter:    dependencies.PrivacyFilter,
+		privacyWarnings:  dependencies.PrivacyWarnings,
+		policyChanged:    dependencies.PolicyChanged,
+		preparation:      dependencies.ModelPreparation,
+		requestRecords:   dependencies.RequestRecords,
+		auditSettings:    dependencies.AuditSettings,
+		auditKeys:        dependencies.AuditKeys,
+		auditBlobs:       dependencies.AuditBlobs,
+		contextTexts:     dependencies.ContextTexts,
+		rawVault:         dependencies.RawVault,
+		rawGrants:        newRawGrantManager(),
+		localData:        dependencies.LocalData,
+		subscriptions:    dependencies.Subscriptions,
+		claudeCLI:        dependencies.ClaudeCLI,
+		rateLimits:       dependencies.RateLimits,
+		servicePackages:  dependencies.ServicePackages,
+		codingPlans:      dependencies.CodingPlans,
+		serviceModels:    dependencies.ServiceModels,
+		serviceTester:    dependencies.ServiceTester,
+		autoClassifiers:  dependencies.AutoClassifiers,
+		autoClassifier:   dependencies.AutoClassifier,
+		controlToken:     []byte(dependencies.ControlToken),
+		observerToken:    []byte(dependencies.ObserverToken),
+		newServiceID:     dependencies.NewServiceID,
+		shutdown:         dependencies.Shutdown,
+		consoleSessions:  dependencies.ConsoleSessions,
+		syncManager:      dependencies.Sync,
+		plugins:          dependencies.Plugins,
+		pluginStore:      dependencies.PluginStore,
+		pluginHost:       dependencies.PluginHost,
+		pluginInstaller:  dependencies.PluginInstaller,
+		pluginTaskEngine: dependencies.PluginTasks,
+		metadata:         dependencies.Metadata,
+		metadataStore:    dependencies.MetadataStore,
+		repoStars:        newRepoStars(githubAPIBaseURL),
+		mux:              http.NewServeMux(),
+		observers:        newObserverTracker(),
 	}
 	handler.observers.pending = handler.rawGrants.pendingCount
 	handler.observers.active = handler.rawGrants.activeCount
@@ -263,6 +301,11 @@ func newHandler(version contract.VersionResponse, dependencies Dependencies) (*H
 	handler.mux.HandleFunc(PricingPath+"/", handler.authenticated(handler.pricingResource, RoleObserver))
 	handler.mux.HandleFunc(ModelMetadataPath, handler.authenticated(handler.getOnly(handler.getModelMetadata), RoleObserver))
 	handler.mux.HandleFunc(BuiltinToolsPath, handler.authenticated(handler.builtinToolResource, RoleOperator))
+	handler.mux.HandleFunc(PluginsPath, handler.authenticatedBy(handler.pluginsResource, pluginsRequiredRole))
+	handler.mux.HandleFunc(PluginsPath+"/", handler.authenticatedBy(handler.pluginsResource, pluginsRequiredRole))
+	handler.mux.HandleFunc(PluginHostPath, handler.authenticatedBy(handler.pluginHostResource, pluginHostRequiredRole))
+	handler.mux.HandleFunc(MetadataAttributesPath, handler.authenticated(handler.metadataAttributesResource, RoleObserver))
+	handler.mux.HandleFunc(MetadataAttributesPath+"/", handler.authenticated(handler.metadataAttributesResource, RoleObserver))
 	handler.mux.HandleFunc(RoutingSettingsPath, handler.authenticated(handler.routingSettingsResource, RoleObserver))
 	// Sync configuration names the remote and its credentials, and the
 	// passphrase unlocks the package, so the surface is operator-only. The

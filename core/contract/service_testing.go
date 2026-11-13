@@ -73,4 +73,18 @@ type ServiceTestResult struct {
 	ResponseContentType  string `json:"response_content_type,omitempty"`
 	ErrorCode            string `json:"error_code,omitempty"`
 	Message              string `json:"message,omitempty"`
+	// Media are the files the test produced, as the provider of a task
+	// plugin generates images, videos or music.
+	Media []ServiceTestMedia `json:"media,omitempty"`
+}
+
+// ServiceTestMedia is a file a test produced: its kind (image, video,
+// audio or file), the link the gateway serves it at, and its media type
+// when known.
+type ServiceTestMedia struct {
+	Kind     string `json:"kind"`
+	URL      string `json:"url"`
+	MimeType string `json:"mime_type,omitempty"`
+	// Name is the plugin's key for the file, such as image-1.
+	Name string `json:"name"`
 }

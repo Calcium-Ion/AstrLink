@@ -66,8 +66,21 @@ export function currentLocale(): Locale {
 
 const translate = i18n.t.bind(i18n);
 
+/**
+ * The active language, re-rendering the caller when it changes. Derived text
+ * that is memoised across renders must depend on this, since `i18n.t` reads the
+ * language imperatively and its identity never changes.
+ */
+export function useLocale(): string {
+  return useSyncExternalStore(
+    subscribeLanguage,
+    languageSnapshot,
+    languageSnapshot,
+  );
+}
+
 export function useT(): typeof i18n.t {
-  useSyncExternalStore(subscribeLanguage, languageSnapshot, languageSnapshot);
+  useLocale();
   return translate;
 }
 

@@ -7,6 +7,8 @@ import (
 
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/endpoint"
+	"github.com/QuantumNous/astrlink/core/internal/plugin"
+	"github.com/QuantumNous/astrlink/core/internal/storage"
 )
 
 // ServiceTestObserver observes one in-process test. Callbacks run synchronously
@@ -18,6 +20,9 @@ type ServiceTestObserver struct {
 	Response      func(int)
 	// WrapResponseBody bounds upstream consumption before restoration buffers it.
 	WrapResponseBody func(io.ReadCloser) io.ReadCloser
+	// Media hears the files a task plugin's provider generated, before the
+	// answer ends.
+	Media func([]contract.ServiceTestMedia)
 }
 
 type serviceTestExecution struct {
@@ -41,6 +46,11 @@ func (handler *Handler) ServeServiceTest(
 	if err := input.Validate(service); err != nil {
 		writeInferenceError(writer, http.StatusUnprocessableEntity, "invalid_test", err.Error(), false, nil)
 		return nil
+	}
+	// A task plugin's provider answers a test as it answers clients: with
+	// its plugin's task, run on this provider alone.
+	if service.Kind == contract.ServiceKindPlugin && service.Plugin != nil && service.Plugin.Provider == contract.PluginProviderTask {
+		return handler.serveTaskServiceTest(writer, request, service, input, observer)
 	}
 	// http.NewRequest supplies GetBody for an in-memory payload, unlike an
 	// inbound server request. Use the inspected body so audit capture cannot be
@@ -116,4 +126,86 @@ func (handler *Handler) ServeServiceTest(
 	// Propagate only interrupted bodies, so the parser cannot mistake EOF for a
 	// complete response after headers have been committed.
 	return execution.responseError
+}
+
+// serveTaskServiceTest tests a task plugin's provider with a Responses
+// request, which its plugin answers once the task it starts finishes. The
+// status the observer hears is the gateway's answer: the vendor's comes
+// and goes inside the task.
+func (handler *Handler) serveTaskServiceTest(writer http.ResponseWriter, request *http.Request, service contract.Service, input contract.ServiceTestRequest, observer ServiceTestObserver) error {
+	if handler.tasks == nil {
+		writeInferenceError(writer, http.StatusServiceUnavailable, "provider_unavailable", "plugin tasks are unavailable", false, nil)
+		return nil
+	}
+	if input.Protocol != contract.ProtocolOpenAIResponses {
+		writeInferenceError(writer, http.StatusUnprocessableEntity, "invalid_test", "a task plugin's provider is tested with the Responses protocol", false, nil)
+		return nil
+	}
+	if observer.Outbound != nil {
+		observer.Outbound()
+	}
+	candidate := endpoint.Resolved{
+		Service: service, Mode: contract.CapabilityModeNative, PlanType: contract.PlanTypeNative,
+	}
+	watched := &statusObserver{ResponseWriter: writer, observe: observer.Response}
+	finished := func(task storage.PluginTask) {
+		if observer.Media == nil {
+			return
+		}
+		artifacts, err := handler.tasks.Artifacts(request.Context(), task)
+		if err != nil {
+			return
+		}
+		links := handler.artifactLinks(request, task)
+		media := make([]contract.ServiceTestMedia, 0, len(artifacts))
+		for _, artifact := range artifacts {
+			media = append(media, contract.ServiceTestMedia{
+				Kind: mediaKind(artifact.Type), URL: links(artifact.Key), MimeType: artifact.MimeType, Name: artifact.Key,
+			})
+		}
+		observer.Media(media)
+	}
+	handler.runTaskProtocol(watched, request, plugin.TaskProtocolResponses, "create", input.Model, []endpoint.Resolved{candidate}, finished)
+	return request.Context().Err()
+}
+
+// mediaKind is the kind of a file a task plugin lists: image, video and
+// audio as they are, anything else a file.
+func mediaKind(kind string) string {
+	switch kind {
+	case "image", "video", "audio":
+		return kind
+	}
+	return "file"
+}
+
+// statusObserver tells observe the status of the answer once, as it
+// starts.
+type statusObserver struct {
+	http.ResponseWriter
+	observe func(int)
+	told    bool
+}
+
+func (writer *statusObserver) WriteHeader(status int) {
+	if !writer.told && status >= 200 {
+		writer.told = true
+		if writer.observe != nil {
+			writer.observe(status)
+		}
+	}
+	writer.ResponseWriter.WriteHeader(status)
+}
+
+func (writer *statusObserver) Write(data []byte) (int, error) {
+	if !writer.told {
+		writer.WriteHeader(http.StatusOK)
+	}
+	return writer.ResponseWriter.Write(data)
+}
+
+func (writer *statusObserver) Flush() {
+	if flusher, ok := writer.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
 }

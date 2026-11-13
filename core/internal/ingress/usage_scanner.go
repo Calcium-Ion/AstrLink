@@ -47,6 +47,9 @@ type usageScanner struct {
 	// observerFed guards the non-streaming path: Usage re-parses the buffered
 	// body on every call but the observer must see it only once.
 	observerFed bool
+	// markers reads the marker lines of the reply's visible text for the
+	// plugins; nil when none binds sessions by marker.
+	markers *replyMarkers
 	// output is what the response produces; outputChanged is set when the
 	// stream moved it on and cleared once it was stored.
 	output        contract.OutputActivity
@@ -71,8 +74,12 @@ func (scanner *usageScanner) reset(protocol contract.ProtocolID, streaming bool)
 	if scanner == nil {
 		return
 	}
+	markers := scanner.markers
 	watching := scanner.spawns != nil
 	*scanner = *newUsageScanner(protocol, streaming)
+	if markers != nil {
+		scanner.watchMarkers(markers.newScanner)
+	}
 	if watching {
 		scanner.watchSpawns()
 	}
@@ -273,6 +280,9 @@ func (scanner *usageScanner) parseEventJSON(payload []byte) {
 	}
 	if scanner.observer != nil && (scanner.streaming || !scanner.observerFed) {
 		scanner.observer.ObserveEvent(document)
+		if scanner.markers != nil {
+			scanner.markers.observe(document)
+		}
 		scanner.observerFed = true
 	}
 	scanner.spawns.observe(payload, scanner.streaming)

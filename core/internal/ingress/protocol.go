@@ -50,6 +50,9 @@ type Request struct {
 	Conversation convo.RequestSummary
 	// lastUserText is classifier input only. Never persist, log, or cache it.
 	lastUserText string
+	// body is the client's body as classify read it, for the plugins to read
+	// the turn from. Never persist, log, or forward it.
+	body []byte
 	// RedirectedModel is the routing model chosen by an enabled model
 	// redirect rule. Model keeps the client's original id so records still
 	// report what the client asked for.
@@ -164,6 +167,9 @@ func classify(request *http.Request, maxBodyBytes int64) (Request, error) {
 		if err != nil {
 			return Request{}, err
 		}
+		if result.Conversation.Protocol != "" {
+			result.body = raw
+		}
 		attachAutoClassifyText(&result, request, raw, maxBodyBytes)
 		return validateClassifiedRequest(result)
 	}
@@ -187,6 +193,7 @@ func classify(request *http.Request, maxBodyBytes int64) (Request, error) {
 	result.ConversationID = metadata.ConversationID
 	result.InputPreview = metadata.InputPreview
 	result.Conversation = metadata.Conversation
+	result.body = metadata.raw
 	if result.Protocol == contract.ProtocolOpenAIResponses {
 		result.codexTurn = metadata.codexTurn.or(codexTurnFromHeader(request.Header))
 	}

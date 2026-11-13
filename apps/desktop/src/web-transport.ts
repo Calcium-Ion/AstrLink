@@ -16,6 +16,8 @@ export class ConsoleError extends Error {
     public retryAfter: number,
     /** The first detail's reason, such as why a quota read failed. */
     public reason?: string,
+    /** The error's body, such as what a change that needs confirming grants. */
+    public body?: unknown,
   ) {
     super(
       code === "oauth_loopback_callback_unavailable"
@@ -32,10 +34,13 @@ export async function consoleRequest(
   body?: unknown,
   etag?: string,
   signal?: AbortSignal,
+  approved = false,
 ) {
   if (!/^\/(?:control|console)\/v1\//.test(path))
     throw new Error("Invalid console path");
   const headers: Record<string, string> = {};
+  // The console's own dialog confirmed a change that grants a plugin more.
+  if (approved) headers["X-AstrLink-Plugin-Approval"] = "confirmed";
   if (method !== "GET") headers["X-AstrLink-Console"] = "1";
   if (body !== undefined)
     headers["Content-Type"] =
@@ -70,6 +75,7 @@ export async function consoleRequest(
       error?.code ?? `HTTP ${response.status}`,
       Number(retry),
       error?.details?.find((v: Args) => typeof v.reason === "string")?.reason,
+      value,
     );
   }
   return { value, etag: response.headers.get("ETag") };
@@ -98,6 +104,12 @@ function id(args: Args, key: string): string {
     throw new Error("Invalid resource ID");
   return value;
 }
+/** A plugin key, credential name or attribute key, checked before it is a path. */
+function segment(value: unknown, pattern: RegExp): string {
+  if (typeof value !== "string" || !pattern.test(value))
+    throw new Error("Invalid resource name");
+  return value;
+}
 const service = (a: Args) => `/services/${id(a, "serviceId")}`;
 // Package IDs carry `:` and provider-reported plan keys, so they are escaped
 // as one path segment instead of matched against the resource ID shape.
@@ -112,6 +124,8 @@ function packageID(args: Args): string {
 }
 const request = (a: Args) => `/requests/${id(a, "requestId")}`;
 const session = (a: Args) => `/request-sessions/${id(a, "sessionId")}`;
+/** A plugin key, as Core's ValidPluginKey. */
+const pluginKeyPattern = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const model = (a: Args) => `/privacy-models/${id(a, "installationId")}`;
 const policy = "/policies/policy_privacy_default";
 type Command = (args: Args) => Promise<unknown>;
@@ -357,6 +371,21 @@ const commands: Record<string, Command> = {
     (a) => `${session(a)}/channel-bindings`,
     "DELETE",
   ),
+  session_metadata: (a) => {
+    if (a.key === undefined) return route((b) => `${session(b)}/metadata`)(a);
+    const path = (b: Args) =>
+      `${session(b)}/metadata/${segment(b.key, /^[a-z][a-z0-9_]{0,31}$/)}`;
+    if (a.unbind === true) return route(path, "DELETE")(a);
+    return route(path, "PUT", input)(a);
+  },
+  session_plugins: (a) => {
+    if (a.key === undefined) return route((b) => `${session(b)}/plugins`)(a);
+    const path = (b: Args) =>
+      `${session(b)}/plugins/${segment(b.key, pluginKeyPattern)}`;
+    if (a.refresh === true)
+      return route((b) => `${path(b)}/refresh`, "POST")(a);
+    return route(path, "PUT", input)(a);
+  },
   get_request_record: route(request),
   list_request_record_children: route((a) => `${request(a)}/children`),
   delete_request_record: route(request, "DELETE"),
@@ -477,6 +506,141 @@ const commands: Record<string, Command> = {
         throw new Error("Unsupported pricing operation");
     }
   },
+  plugin_action: (a) => {
+    if (a.action === "list") return route("/plugins")(a);
+    if (a.action === "reload") return route("/plugins/reload", "POST")(a);
+    if (a.action === "host") return route("/plugin-host")(a);
+    if (a.action === "update_host")
+      return consoleRequest(
+        "/control/v1/plugin-host",
+        "PATCH",
+        a.input,
+        undefined,
+        undefined,
+        a.approved === true,
+      ).then((result) => result.value);
+    if (a.action === "source_preview")
+      return route("/plugins/sources/preview", "POST", input)(a);
+    if (a.action === "market")
+      return route(`/plugins/market${query(a.input as Args)}`)(a);
+    if (a.action === "market_doc")
+      return route(`/plugins/market/doc${query(a.input as Args)}`)(a);
+    if (a.action === "source_install")
+      return consoleRequest(
+        "/control/v1/plugins/sources/install",
+        "POST",
+        a.input,
+        undefined,
+        undefined,
+        a.approved === true,
+      ).then((result) => result.value);
+    const plugin = `/plugins/${segment(a.key, pluginKeyPattern)}`;
+    switch (a.action) {
+      case "source_check":
+        return route(`${plugin}/source/check`, "POST")(a);
+      case "ui_call":
+        return route(`${plugin}/ui-call`, "POST", input)(a);
+      case "source_rollback":
+        return consoleRequest(
+          `/control/v1${plugin}/source/rollback`,
+          "POST",
+          a.input,
+          undefined,
+          undefined,
+          a.approved === true,
+        ).then((result) => result.value);
+      case "source_uninstall":
+        return route(`${plugin}/source`, "DELETE")(a);
+      case "get":
+        return route(plugin)(a);
+      case "update":
+        return consoleRequest(
+          `/control/v1${plugin}`,
+          "PATCH",
+          a.input,
+          undefined,
+          undefined,
+          a.approved === true,
+        ).then((result) => result.value);
+      case "test":
+        return route(`${plugin}/test`, "POST")(a);
+      case "status":
+        return route(`${plugin}/status`)(a);
+      case "stats":
+        return route(`${plugin}/stats${query(a.input as Args)}`)(a);
+      case "credits":
+        return route(`${plugin}/credits`)(a);
+      case "journal":
+        return route(`${plugin}/journal${query(a.input as Args)}`)(a);
+      case "dry_run":
+        return route(`${plugin}/dry-run`, "POST", input)(a);
+      case "request_dry_run":
+        return route(`${plugin}/request-dry-run`, "POST", input)(a);
+      case "login":
+        return route(`${plugin}/login`, "POST", input)(a);
+      case "provider_state":
+        return route(`${plugin}/provider-state`, "POST", input)(a);
+      case "action":
+        return route(`${plugin}/actions`, "POST", input)(a);
+      case "clear_workspaces":
+        return route(`${plugin}/workspaces`, "DELETE")(a);
+      case "clear_values":
+        return route(`${plugin}/values`, "DELETE")(a);
+      case "clear_files":
+        return route(`${plugin}/files`, "DELETE")(a);
+      case "tasks":
+        return route(`${plugin}/tasks${query(a.input as Args)}`)(a);
+      case "clear_tasks":
+        return route(`${plugin}/tasks`, "DELETE")(a);
+      case "revoke_lookups":
+        return route(`${plugin}/lookup-credentials`, "DELETE")(a);
+      case "save_credential":
+        return route(
+          `${plugin}/credentials/${segment(a.name, /^[a-z][a-z0-9_]{0,31}$/)}`,
+          "PUT",
+          input,
+        )(a);
+      case "delete_credential":
+        return route(
+          `${plugin}/credentials/${segment(a.name, /^[a-z][a-z0-9_]{0,31}$/)}`,
+          "DELETE",
+        )(a);
+      default:
+        throw new Error("Unsupported plugin operation");
+    }
+  },
+  metadata_action: (a) => {
+    const base = "/metadata/attributes";
+    switch (a.action) {
+      case "list":
+        return route(base)(a);
+      case "create":
+        return route(base, "POST", input)(a);
+      case "update":
+        return route(
+          `${base}/${segment(a.key, /^[a-z][a-z0-9_]{0,31}$/)}`,
+          "PATCH",
+          input,
+        )(a);
+      case "delete":
+        return route(
+          `${base}/${segment(a.key, /^[a-z][a-z0-9_]{0,31}$/)}`,
+          "DELETE",
+        )(a);
+      case "values":
+        return route(
+          `${base}/${segment(a.key, /^[a-z][a-z0-9_]{0,31}$/)}/values`,
+        )(a);
+      default:
+        throw new Error("Unsupported metadata operation");
+    }
+  },
+  access_token_metadata: (a) =>
+    route(
+      `/access-tokens/${id(a, "tokenId")}/metadata`,
+      a.input === undefined ? "GET" : "PUT",
+      a.input === undefined ? undefined : input,
+    )(a),
   builtin_tool_action: (a) => {
     if (a.kind !== "web_search" && a.kind !== "image_generation")
       throw new Error("Invalid builtin tool");

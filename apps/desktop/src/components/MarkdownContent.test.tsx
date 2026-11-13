@@ -68,7 +68,12 @@ it("keeps untrusted HTML and URLs inert and does not fetch model-provided images
   expect(container.querySelector("script, iframe, img")).toBeNull();
   expect(container.querySelector('a[href^="javascript:"]')).toBeNull();
   expect(container.textContent).toContain('<script>alert("bad")</script>');
-  expect(container.textContent).toContain("preview");
+  // An image is a link to it, opened only when clicked.
+  const image = container.querySelector<HTMLAnchorElement>(
+    'a[href="https://example.com/tracker.png"]',
+  );
+  expect(image?.textContent).toBe("preview");
+  expect(image?.getAttribute("rel")).toBe("noopener noreferrer");
   expect(
     container
       .querySelector('a[href="https://example.com/docs"]')

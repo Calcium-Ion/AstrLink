@@ -1,5 +1,5 @@
 import { isWebEdition } from "./edition";
-import { webInvoke, RAW_CHANGED } from "./web-transport";
+import { ConsoleError, webInvoke, RAW_CHANGED } from "./web-transport";
 import {
   parseServiceTestResult,
   type ServiceTestInput,
@@ -181,6 +181,67 @@ import {
 } from "./preferences-model";
 import { parseTrayState, type TrayAction, type TrayState } from "./tray-model";
 import { downloadTextFile } from "./download-text-file";
+import {
+  parseAccessTokenMetadata,
+  parseMetadataAttribute,
+  parseMetadataAttributes,
+  parseMetadataValues,
+  parsePluginActionResult,
+  parsePluginClearResult,
+  parsePluginCreditStars,
+  parsePluginDetail,
+  parsePluginHostSettings,
+  parsePluginList,
+  parsePluginMarket,
+  parsePluginMarketDoc,
+  parseRequestPluginDryRun,
+  parsePluginLoginAnswer,
+  parsePluginProviderState,
+  parsePluginTaskPage,
+  parsePluginStats,
+  parsePluginStatus,
+  parsePluginJournal,
+  parsePluginDryRun,
+  parsePluginApproval,
+  parsePluginInstallFailure,
+  parsePluginInstallReview,
+  parsePluginUpdateCheck,
+  parsePendingPluginApproval,
+  parsePluginApprovalFinished,
+  parsePluginTestResult,
+  parseSessionMetadata,
+  parseSessionPlugins,
+  type MetadataAttribute,
+  type MetadataAttributeInput,
+  type MetadataValueUsage,
+  type PluginActionResult,
+  type PluginClearTarget,
+  type PluginCreditStars,
+  type PluginDetail,
+  type PluginDryRunResult,
+  type PluginProviderState,
+  type PluginJournal,
+  type PluginApproval,
+  type PluginApprovalFinished,
+  type PluginInstallFailure,
+  type PluginInstallReview,
+  type PluginUpdateCheck,
+  type PendingPluginApproval,
+  type PluginHostSettings,
+  type PluginHostSettingsUpdate,
+  type PluginList,
+  type PluginMarket,
+  type PluginMarketDoc,
+  type RequestPluginDryRun,
+  type PluginLoginAnswer,
+  type PluginTaskPage,
+  type PluginSettingsUpdate,
+  type PluginStats,
+  type PluginStatus,
+  type PluginTestResult,
+  type SessionMetadata,
+  type SessionPlugin,
+} from "./plugin-model";
 import {
   parseClientCatalog,
   parseClientConfigApplyOutcome,
@@ -1607,6 +1668,36 @@ export async function saveTextFile(
   });
 }
 
+/**
+ * Saves a file the gateway generated, such as an image or a video: the
+ * desktop asks where to put it; the web console, which shares the
+ * gateway's address, has the browser download it. The path, or null when
+ * the user cancels.
+ */
+export async function saveGatewayFile(
+  url: string,
+  defaultFilename: string,
+): Promise<string | null> {
+  if (!hasNativeBridge()) {
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = defaultFilename;
+    anchor.rel = "noopener";
+    anchor.style.display = "none";
+    document.body.append(anchor);
+    try {
+      anchor.click();
+    } finally {
+      anchor.remove();
+    }
+    return defaultFilename;
+  }
+  return invoke<string | null>("save_gateway_file", {
+    url,
+    defaultFilename,
+  });
+}
+
 export async function getRoutingSettings(): Promise<RoutingSettings> {
   requireNativeBridge();
   return parseRoutingSettings(await invoke<unknown>("get_routing_settings"));
@@ -1635,6 +1726,667 @@ export async function builtinToolAction(
     action,
     input,
   });
+}
+
+/** The plugin page, over the host's `plugin_action` command. */
+export async function listPlugins(): Promise<PluginList> {
+  requireNativeBridge();
+  return parsePluginList(
+    await invoke<unknown>("plugin_action", { action: "list" }),
+  );
+}
+
+/** Rescans the plugin directory and compiles what changed. */
+export async function reloadPlugins(): Promise<PluginList> {
+  requireNativeBridge();
+  return parsePluginList(
+    await invoke<unknown>("plugin_action", { action: "reload" }),
+  );
+}
+
+export async function getPlugin(key: string): Promise<PluginDetail> {
+  requireNativeBridge();
+  return parsePluginDetail(
+    await invoke<unknown>("plugin_action", { action: "get", key }),
+  );
+}
+
+/**
+ * Saves a plugin's settings. A change that grants the plugin more waits for
+ * the user: the desktop holds it for its confirmation window and fails with
+ * `approval_pending`; the web console fails with `approval_required` and
+ * sends it again `approved` once its own dialog confirmed it.
+ */
+export async function updatePlugin(
+  key: string,
+  update: PluginSettingsUpdate,
+  approved = false,
+): Promise<PluginDetail> {
+  requireNativeBridge();
+  return parsePluginDetail(
+    await invoke<unknown>("plugin_action", {
+      action: "update",
+      key,
+      input: update,
+      ...(approved ? { approved: true } : {}),
+    }),
+  );
+}
+
+/** What a change the web console must confirm grants, from its error. */
+export function pluginApprovalOf(error: unknown): PluginApproval | null {
+  if (!(error instanceof ConsoleError) || error.code !== "approval_required")
+    return null;
+  try {
+    return parsePluginApproval(
+      (error.body as { approval?: unknown })?.approval,
+    );
+  } catch {
+    return null;
+  }
+}
+
+/** The change waiting in the plugin confirmation window, for that window. */
+export async function pendingPluginApproval(): Promise<PendingPluginApproval | null> {
+  requireNativeBridge();
+  return parsePendingPluginApproval(
+    await invoke<unknown>("plugin_approval_pending"),
+  );
+}
+
+/**
+ * Decides the change waiting for confirmation, from the confirmation window
+ * alone. `kept` are the added capabilities the user left ticked.
+ */
+export async function decidePluginApproval(
+  id: string,
+  approve: boolean,
+  kept?: string[],
+): Promise<void> {
+  requireNativeBridge();
+  await invoke<unknown>("plugin_approval_decide", { id, approve, kept });
+}
+
+/** Brings the confirmation window back; false when nothing waits in it. */
+export async function openPluginApproval(): Promise<boolean> {
+  requireNativeBridge();
+  return Boolean(await invoke<unknown>("open_plugin_approval"));
+}
+
+/** Calls onFinished once the user decided a change in the confirmation window. */
+export async function listenPluginApprovalFinished(
+  onFinished: (finished: PluginApprovalFinished) => void,
+): Promise<() => void> {
+  if (isWebEdition || !hasNativeBridge()) return () => {};
+  return listen("plugin-approval-finished", (event) => {
+    try {
+      onFinished(parsePluginApprovalFinished(event.payload));
+    } catch {
+      // A malformed announcement changes nothing.
+    }
+  });
+}
+
+/** Calls onChange when a newer change replaced the one waiting. */
+export async function listenPluginApprovalChanged(
+  onChange: () => void,
+): Promise<() => void> {
+  if (isWebEdition || !hasNativeBridge()) return () => {};
+  return listen("plugin-approval-changed", () => onChange());
+}
+
+/**
+ * Fetches the plugin a GitHub link names, builds it in Core and checks it,
+ * for the user to review before installing it.
+ */
+export async function previewPluginInstall(
+  url: string,
+): Promise<PluginInstallReview> {
+  requireNativeBridge();
+  return parsePluginInstallReview(
+    await invoke<unknown>("plugin_action", {
+      action: "source_preview",
+      input: { url },
+    }),
+  );
+}
+
+/**
+ * Installs the build a review staged. It waits for the user as a change
+ * that grants a plugin more does: see updatePlugin.
+ */
+export async function installPlugin(
+  token: string,
+  approved = false,
+): Promise<PluginDetail> {
+  requireNativeBridge();
+  return parsePluginDetail(
+    await invoke<unknown>("plugin_action", {
+      action: "source_install",
+      input: { token },
+      ...(approved ? { approved: true } : {}),
+    }),
+  );
+}
+
+/** Looks for a newer version of a plugin installed from source. */
+export async function checkPluginUpdate(
+  key: string,
+): Promise<PluginUpdateCheck> {
+  requireNativeBridge();
+  return parsePluginUpdateCheck(
+    await invoke<unknown>("plugin_action", { action: "source_check", key }),
+  );
+}
+
+/**
+ * Puts back a version a later install replaced, once the user confirmed
+ * it, as installPlugin.
+ */
+export async function rollbackPlugin(
+  key: string,
+  version: string,
+  approved = false,
+): Promise<PluginDetail> {
+  requireNativeBridge();
+  return parsePluginDetail(
+    await invoke<unknown>("plugin_action", {
+      action: "source_rollback",
+      key,
+      input: { version },
+      ...(approved ? { approved: true } : {}),
+    }),
+  );
+}
+
+/**
+ * Runs a plugin's onUiCall hook for its interface code, in its sandbox and
+ * under its grants; resolves with what the hook returned.
+ */
+export async function callPluginUi(
+  key: string,
+  name: string,
+  input?: unknown,
+): Promise<unknown> {
+  requireNativeBridge();
+  const answer = await invoke<unknown>("plugin_action", {
+    action: "ui_call",
+    key,
+    input: { name, ...(input === undefined ? {} : { input }) },
+  });
+  return (answer as { result?: unknown } | null)?.result ?? null;
+}
+
+/** Removes a plugin installed from source; a builtin of its key comes back. */
+export async function uninstallPlugin(key: string): Promise<PluginList> {
+  requireNativeBridge();
+  return parsePluginList(
+    await invoke<unknown>("plugin_action", { action: "source_uninstall", key }),
+  );
+}
+
+/** Why an install could not go on, from its error. */
+export function pluginInstallFailureOf(
+  error: unknown,
+): PluginInstallFailure | null {
+  let body: unknown;
+  if (error instanceof ConsoleError) {
+    body = error.body;
+  } else {
+    const message = error instanceof Error ? error.message : String(error);
+    const start = message.indexOf("{");
+    if (start < 0) return null;
+    try {
+      body = JSON.parse(message.slice(start));
+    } catch {
+      return null;
+    }
+  }
+  try {
+    return parsePluginInstallFailure(
+      (body as { failure?: unknown } | null)?.failure,
+    );
+  } catch {
+    return null;
+  }
+}
+
+export async function testPlugin(key: string): Promise<PluginTestResult> {
+  requireNativeBridge();
+  return parsePluginTestResult(
+    await invoke<unknown>("plugin_action", { action: "test", key }),
+  );
+}
+
+export async function getPluginStatus(key: string): Promise<PluginStatus> {
+  requireNativeBridge();
+  return parsePluginStatus(
+    await invoke<unknown>("plugin_action", { action: "status", key }),
+  );
+}
+
+/** The plugin's log lines and failures after `since`, and its hooks' timings. */
+export async function getPluginJournal(
+  key: string,
+  since: number,
+): Promise<PluginJournal> {
+  requireNativeBridge();
+  return parsePluginJournal(
+    await invoke<unknown>("plugin_action", {
+      action: "journal",
+      key,
+      input: { since },
+    }),
+  );
+}
+
+/** Runs one hook by hand, without the network. */
+export async function dryRunPlugin(
+  key: string,
+  hook: string,
+  args: unknown[],
+): Promise<PluginDryRunResult> {
+  requireNativeBridge();
+  return parsePluginDryRun(
+    await invoke<unknown>("plugin_action", {
+      action: "dry_run",
+      key,
+      input: { hook, args },
+    }),
+  );
+}
+
+/** Drives the login a plugin logs one of its providers in with. */
+export async function pluginLogin(
+  key: string,
+  input: {
+    service_id: string;
+    action: "start" | "state" | "submit" | "cancel" | "status";
+    pasted?: string;
+    fields?: Record<string, string>;
+  },
+): Promise<PluginLoginAnswer> {
+  requireNativeBridge();
+  return parsePluginLoginAnswer(
+    await invoke<unknown>("plugin_action", {
+      action: "login",
+      key,
+      input,
+    }),
+  );
+}
+
+/**
+ * The balance of a provider of a plugin, read again when refresh is set or
+ * the one kept is old, and whether the plugin rests the provider.
+ */
+export async function getPluginProviderState(
+  key: string,
+  input: { service_id: string; refresh?: boolean },
+): Promise<PluginProviderState> {
+  requireNativeBridge();
+  return parsePluginProviderState(
+    await invoke<unknown>("plugin_action", {
+      action: "provider_state",
+      key,
+      input,
+    }),
+  );
+}
+
+/** Runs a request processing instance of a plugin over a request, without sending it. */
+export async function dryRunRequestPlugin(
+  key: string,
+  input: {
+    config: Record<string, unknown>;
+    format: string;
+    body: unknown;
+    reply?: string;
+  },
+): Promise<RequestPluginDryRun> {
+  requireNativeBridge();
+  return parseRequestPluginDryRun(
+    await invoke<unknown>("plugin_action", {
+      action: "request_dry_run",
+      key,
+      input,
+    }),
+  );
+}
+
+/** A plugin's account over its last days, from this computer's request records. */
+/** How many stars the GitHub repositories the plugin credits have. */
+export async function getPluginCreditStars(
+  key: string,
+): Promise<PluginCreditStars> {
+  requireNativeBridge();
+  return parsePluginCreditStars(
+    await invoke<unknown>("plugin_action", { action: "credits", key }),
+  );
+}
+
+export async function getPluginStats(
+  key: string,
+  days = 7,
+): Promise<PluginStats> {
+  requireNativeBridge();
+  return parsePluginStats(
+    await invoke<unknown>("plugin_action", {
+      action: "stats",
+      key,
+      input: { days },
+    }),
+  );
+}
+
+/** What a plugin marketplace offers: the official one unless index names another. */
+export async function getPluginMarket(index?: string): Promise<PluginMarket> {
+  requireNativeBridge();
+  return parsePluginMarket(
+    await invoke<unknown>("plugin_action", {
+      action: "market",
+      input: index ? { index } : {},
+    }),
+  );
+}
+
+/** The plugin of an 8-digit New API code, as a listing of that one plugin. */
+export async function findPluginByCode(code: string): Promise<PluginMarket> {
+  requireNativeBridge();
+  return parsePluginMarket(
+    await invoke<unknown>("plugin_action", {
+      action: "market",
+      input: { code },
+    }),
+  );
+}
+
+/** A marketplace version's usage guide or release notes. */
+export async function getPluginMarketDoc(input: {
+  index: string;
+  key: string;
+  version?: string;
+  doc: "readme" | "changelog";
+}): Promise<PluginMarketDoc> {
+  requireNativeBridge();
+  return parsePluginMarketDoc(
+    await invoke<unknown>("plugin_action", {
+      action: "market_doc",
+      input,
+    }),
+  );
+}
+
+/** A task plugin's tasks, the newest first, the page after cursor. */
+export async function listPluginTasks(
+  key: string,
+  cursor?: string,
+): Promise<PluginTaskPage> {
+  requireNativeBridge();
+  return parsePluginTaskPage(
+    await invoke<unknown>("plugin_action", {
+      action: "tasks",
+      key,
+      input: cursor ? { cursor } : {},
+    }),
+  );
+}
+
+/** Clears a task plugin's finished tasks; returns how many. */
+export async function clearPluginTasks(key: string): Promise<number> {
+  requireNativeBridge();
+  const result = await invoke<unknown>("plugin_action", {
+    action: "clear_tasks",
+    key,
+  });
+  const deleted =
+    typeof result === "object" && result !== null
+      ? (result as { deleted?: unknown }).deleted
+      : undefined;
+  return typeof deleted === "number" ? deleted : 0;
+}
+
+/** Stores a credential for the one origin Core injects it for. */
+export async function savePluginCredential(
+  key: string,
+  name: string,
+  input: { secret: string; origin: string },
+): Promise<PluginDetail> {
+  requireNativeBridge();
+  return parsePluginDetail(
+    await invoke<unknown>("plugin_action", {
+      action: "save_credential",
+      key,
+      name,
+      input,
+    }),
+  );
+}
+
+export async function deletePluginCredential(
+  key: string,
+  name: string,
+): Promise<PluginDetail> {
+  requireNativeBridge();
+  return parsePluginDetail(
+    await invoke<unknown>("plugin_action", {
+      action: "delete_credential",
+      key,
+      name,
+    }),
+  );
+}
+
+/** The settings of every plugin at once: the pause, the budget, the language. */
+export async function getPluginHostSettings(): Promise<PluginHostSettings> {
+  requireNativeBridge();
+  return parsePluginHostSettings(
+    await invoke<unknown>("plugin_action", { action: "host" }),
+  );
+}
+
+export async function updatePluginHostSettings(
+  update: PluginHostSettingsUpdate,
+  approved = false,
+): Promise<PluginHostSettings> {
+  requireNativeBridge();
+  return parsePluginHostSettings(
+    await invoke<unknown>("plugin_action", {
+      action: "update_host",
+      input: update,
+      ...(approved ? { approved: true } : {}),
+    }),
+  );
+}
+
+/** A click on a button of one of the plugin's records, for its session. */
+export async function runPluginAction(
+  key: string,
+  action: string,
+  session: string,
+): Promise<PluginActionResult> {
+  requireNativeBridge();
+  return parsePluginActionResult(
+    await invoke<unknown>("plugin_action", {
+      action: "action",
+      key,
+      input: { action, session },
+    }),
+  );
+}
+
+const clearActions: Record<PluginClearTarget, string> = {
+  workspaces: "clear_workspaces",
+  values: "clear_values",
+  lookups: "revoke_lookups",
+  files: "clear_files",
+};
+
+/**
+ * Clears what the host keeps for a plugin: the workspaces bound to its
+ * attributes' values, its own stored values, the files of its own
+ * directory, or the credentials of its
+ * lookups, which each session's next request issues anew. Returns how many
+ * it removed.
+ */
+export async function clearPluginData(
+  key: string,
+  what: PluginClearTarget,
+): Promise<number> {
+  requireNativeBridge();
+  return parsePluginClearResult(
+    await invoke<unknown>("plugin_action", { action: clearActions[what], key }),
+  );
+}
+
+/** The plugins' part in a session: the block each keeps, and its pause. */
+export async function getSessionPlugins(
+  sessionId: string,
+): Promise<SessionPlugin[]> {
+  requireNativeBridge();
+  return parseSessionPlugins(
+    await invoke<unknown>("session_plugins", { sessionId }),
+  );
+}
+
+export async function pauseSessionPlugin(
+  sessionId: string,
+  key: string,
+  paused: boolean,
+): Promise<SessionPlugin[]> {
+  requireNativeBridge();
+  return parseSessionPlugins(
+    await invoke<unknown>("session_plugins", {
+      sessionId,
+      key,
+      input: { paused },
+    }),
+  );
+}
+
+/** Makes the session's next request load the plugin's block again. */
+export async function refreshSessionPlugin(
+  sessionId: string,
+  key: string,
+): Promise<SessionPlugin[]> {
+  requireNativeBridge();
+  return parseSessionPlugins(
+    await invoke<unknown>("session_plugins", {
+      sessionId,
+      key,
+      refresh: true,
+    }),
+  );
+}
+
+/** The request attributes, over the host's `metadata_action` command. */
+export async function listMetadataAttributes(): Promise<MetadataAttribute[]> {
+  requireNativeBridge();
+  return parseMetadataAttributes(
+    await invoke<unknown>("metadata_action", { action: "list" }),
+  );
+}
+
+export async function createMetadataAttribute(
+  input: MetadataAttributeInput,
+): Promise<MetadataAttribute> {
+  requireNativeBridge();
+  return parseMetadataAttribute(
+    await invoke<unknown>("metadata_action", { action: "create", input }),
+  );
+}
+
+export async function updateMetadataAttribute(
+  key: string,
+  input: MetadataAttributeInput,
+): Promise<MetadataAttribute> {
+  requireNativeBridge();
+  return parseMetadataAttribute(
+    await invoke<unknown>("metadata_action", { action: "update", key, input }),
+  );
+}
+
+export async function deleteMetadataAttribute(key: string): Promise<void> {
+  requireNativeBridge();
+  await invoke<unknown>("metadata_action", { action: "delete", key });
+}
+
+/** The values of an attribute sessions are bound to, the most recent first. */
+export async function listMetadataValues(
+  key: string,
+): Promise<MetadataValueUsage[]> {
+  requireNativeBridge();
+  return parseMetadataValues(
+    await invoke<unknown>("metadata_action", { action: "values", key }),
+  );
+}
+
+/** An access token's default metadata by attribute key. */
+export async function getAccessTokenMetadata(
+  tokenId: string,
+): Promise<Record<string, string>> {
+  requireNativeBridge();
+  return parseAccessTokenMetadata(
+    await invoke<unknown>("access_token_metadata", { tokenId }),
+  );
+}
+
+export async function saveAccessTokenMetadata(
+  tokenId: string,
+  values: Record<string, string>,
+): Promise<Record<string, string>> {
+  requireNativeBridge();
+  return parseAccessTokenMetadata(
+    await invoke<unknown>("access_token_metadata", {
+      tokenId,
+      input: { values },
+    }),
+  );
+}
+
+/** A session's bindings, by attribute key. */
+export async function getSessionMetadata(
+  sessionId: string,
+): Promise<SessionMetadata> {
+  requireNativeBridge();
+  return parseSessionMetadata(
+    await invoke<unknown>("session_metadata", { sessionId }),
+  );
+}
+
+/**
+ * Binds a session by hand; the value none leaves it out. With workspace, the
+ * session's working directory takes the value too, for the sessions that
+ * start there later.
+ */
+export async function setSessionMetadata(
+  sessionId: string,
+  key: string,
+  value: string,
+  workspace = false,
+): Promise<SessionMetadata> {
+  requireNativeBridge();
+  return parseSessionMetadata(
+    await invoke<unknown>("session_metadata", {
+      sessionId,
+      key,
+      input: workspace ? { value, workspace } : { value },
+    }),
+  );
+}
+
+/**
+ * Unbinds a session: Core stores none, so the markers in the history the
+ * client replays do not bind it again.
+ */
+export async function unbindSessionMetadata(
+  sessionId: string,
+  key: string,
+): Promise<SessionMetadata> {
+  requireNativeBridge();
+  return parseSessionMetadata(
+    await invoke<unknown>("session_metadata", { sessionId, key, unbind: true }),
+  );
 }
 
 /** The configuration-sync surface, over the host's `sync_config` command. */

@@ -157,6 +157,9 @@ func ValidateCredentialRef(value string) error {
 		if parsed.Host == "builtin-tool" && BuiltinToolKind(strings.TrimPrefix(parsed.Path, "/")) {
 			return nil
 		}
+		if parsed.Host == "plugin" && validPluginCredentialRef(value) {
+			return nil
+		}
 		identifier := strings.TrimPrefix(parsed.Path, "/")
 		if (parsed.Host != "service" && parsed.Host != "endpoint" && parsed.Host != "subscription") ||
 			strings.Contains(identifier, "/") || ServiceID(identifier).Validate() != nil {

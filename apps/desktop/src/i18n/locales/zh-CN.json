@@ -112,7 +112,21 @@
     "output": "API 提供商回复",
     "requestFailed": "无法执行API 提供商测试。",
     "notConnected": "请先登录此订阅，再进行测试。",
-    "unsupported": "尚未配置可直接测试的文本生成协议，请先配置原生或委托协议。"
+    "unsupported": "尚未配置可直接测试的文本生成协议，请先配置原生或委托协议。",
+    "media": {
+      "open": "打开",
+      "download": "下载",
+      "saved": "已保存到 {{path}}",
+      "saveFailed": "无法保存文件。",
+      "kinds": {
+        "image": "图片",
+        "video": "视频",
+        "audio": "音频",
+        "file": "文件"
+      }
+    },
+    "emptyTitle": "还没有测试结果",
+    "generating": "正在等待生成完成，最长 5 分钟…"
   },
   "common": {
     "previousPage": "上一页",
@@ -152,7 +166,11 @@
     "discardUnsaved": "放弃未保存的修改？",
     "today": "今天",
     "yesterday": "昨天",
-    "checking": "检查中…"
+    "checking": "检查中…",
+    "justNow": "刚刚",
+    "minutesAgo": "{{count}} 分钟前",
+    "hoursAgo": "{{count}} 小时前",
+    "daysAgo": "{{count}} 天前"
   },
   "nav": {
     "collapse": "折叠侧栏",
@@ -170,7 +188,8 @@
     "settings": "设置",
     "gateway": "网关",
     "gatewayStatus": "网关 {{status}}",
-    "about": "关于"
+    "about": "关于",
+    "plugins": "插件"
   },
   "chrome": {
     "bar": "窗口控制栏",
@@ -376,7 +395,8 @@
       "general": "常规",
       "gateway": "网关与网络",
       "tray": "托盘面板",
-      "sync": "同步与备份"
+      "sync": "同步与备份",
+      "metadata": "元信息"
     },
     "sync": {
       "title": "同步与备份",
@@ -1342,6 +1362,12 @@
       "messages": "Claude Code 使用",
       "gemini": "Gemini CLI 使用"
     },
+    "groupPlugins": "插件",
+    "kindPickerPluginHint": "由「{{plugin}}」插件转接",
+    "taskUpstream": "上游是另一个 New API 网关",
+    "taskUpstreamHelp": "打开后请求发给另一个装了同一插件的 New API 网关：地址填那个网关，密钥填它的令牌。",
+    "serviceAccountKey": "服务账号 JSON",
+    "serviceAccountKeyHelp": "粘贴 Google Cloud 服务账号密钥文件的全部内容。网关用它换取访问令牌，不会发给插件。",
     "vertexProject": "Google Cloud 项目 ID",
     "vertexLocation": "地区",
     "vertexLocationHint": "支持 global、us、eu 或具体地区（如 us-central1）。模型须在所选地区可用，不会自动切换地区。",
@@ -1360,7 +1386,40 @@
     "keyFileReplace": "更换",
     "vertexKeyProject": "密钥项目 {{project}}",
     "vertexCredentialSaved": "已保存服务账号密钥",
-    "reorderCardKeys": "拖动卡片排序；聚焦手柄后也可按方向键移动"
+    "reorderCardKeys": "拖动卡片排序；聚焦手柄后也可按方向键移动",
+    "pluginSettings": "插件设置",
+    "pluginLogin": {
+      "account": "账号",
+      "saveFirst": "先保存这个提供商，再登录账号。",
+      "loggedIn": "已登录",
+      "notLoggedIn": "未登录",
+      "needsLogin": "需要重新登录",
+      "login": "登录",
+      "loginAgain": "重新登录",
+      "title": "登录账号",
+      "starting": "正在开始登录…",
+      "inBrowser": "已在浏览器中打开登录页，登录完成后这里会自动继续。",
+      "openPage": "打开登录页",
+      "pasteHint": "在浏览器里登录，然后把浏览器最后停留的页面地址复制到下面。",
+      "pasted": "浏览器最后停留的地址",
+      "continue": "继续",
+      "deviceHint": "打开登录页，输入下面的代码。完成后这里会自动继续。",
+      "failed": "登录失败。",
+      "retry": "重新开始"
+    },
+    "pluginBalance": {
+      "label": "余额",
+      "status": "状态",
+      "reading": "正在读取…",
+      "unread": "还没读取",
+      "resting": "已暂停",
+      "updated": "{{time}} 更新",
+      "read": "立即读取余额",
+      "unlimited": "不限额",
+      "window": "额度",
+      "resets": "{{time}} 重置",
+      "failed": "读取余额失败。"
+    }
   },
   "packages": {
     "subscriptions": "订阅套餐",
@@ -1596,6 +1655,7 @@
     "antigravity_subscription": "Antigravity 订阅",
     "copilot_subscription": "GitHub Copilot 订阅",
     "droid_subscription": "Droid 订阅",
+    "plugin": "插件提供商",
     "vertex": "Vertex AI"
   },
   "subscription": {
@@ -1654,6 +1714,7 @@
     "minimaxDescription": "MiniMax 开放平台 API Key，按量付费；请使用开放平台密钥。",
     "doubaoDescription": "火山方舟 API Key，按量付费。默认北京地域；请添加已开通的模型 ID 或推理接入点 ID（ep-…）。",
     "xaiDescription": "xAI 开放平台 API Key，按量付费；支持 Grok Chat、Responses 与模型列表。",
+    "pluginDescription": "由插件转接的提供商：插件构造请求、解析响应，网关负责发送、密钥和故障切换。",
     "vertexDescription": "通过服务账号接入 Gemini、Claude 等模型，或使用 Express API Key 调用 Gemini。"
   },
   "usage": {
@@ -2973,7 +3034,8 @@
       "UPSTREAM": "上游",
       "RETRY": "重试",
       "RESTORE": "还原",
-      "RESULT": "结果"
+      "RESULT": "结果",
+      "PLUGIN": "插件"
     },
     "lanes": {
       "client": "客户端",
@@ -3085,7 +3147,8 @@
       "find": "搜键名或值，回车跳到下一处，折叠的部分会自动展开。随时按 {{shortcut}} 回到这里。",
       "pinTitle": "置顶窗口",
       "pin": "保持在最前，并固定显示这次调用；之后点别的调用会另开窗口。"
-    }
+    },
+    "plugin": "插件"
   },
   "find": {
     "label": "查找内容",
@@ -3163,10 +3226,6 @@
     "showLessSubscriptions": "收起",
     "hourlyChart": "今日各小时 tokens",
     "hourlyPeak": "峰值 {{hour}}:00 · {{tokens}}",
-    "justNow": "刚刚",
-    "minutesAgo": "{{count}} 分钟前",
-    "hoursAgo": "{{count}} 小时前",
-    "daysAgo": "{{count}} 天前",
     "updatedAgo": "更新于{{ago}}",
     "refresh": "刷新",
     "version": "AstrLink {{version}}",
@@ -3218,7 +3277,8 @@
     "window": {
       "trajectoryInspector": "AstrLink · 轨迹链路",
       "trajectoryInspectorPinned": "AstrLink · 轨迹链路（已置顶）",
-      "rawAccessApproval": "AstrLink · 原文申请"
+      "rawAccessApproval": "AstrLink · 原文申请",
+      "pluginApproval": "AstrLink · 插件确认"
     },
     "rawAccess": {
       "notificationTitle": "Agent 申请读取原文",
@@ -3680,27 +3740,19 @@
   "binding": {
     "tab": "API 提供商绑定",
     "settingTitle": "同一会话优先复用 API 提供商",
-    "settingHint": "沿用上次成功的 API 提供商，减少会话中的 API 提供商切换；失败时遵循现有故障转移策略。",
     "ttl": "闲置过期时间（分钟）",
-    "ttlHint": "每次请求成功后重新计时，范围 1–1440 分钟，推荐 60 分钟。",
-    "manageHint": "在请求记录的会话详情 → API 提供商绑定中查看记录或重新选择 API 提供商。",
     "current": "当前复用 API 提供商",
     "release": "重新选择 API 提供商",
     "releasing": "正在解除…",
-    "releaseHint": "清除本会话的 API 提供商偏好。下次请求按 API 提供商顺序重新选择，仍可能选中同一 API 提供商。",
     "releasedNotice": "已解除绑定，下次请求将重新选择 API 提供商",
     "releaseFailed": "解除绑定失败，请重试",
     "loadFailed": "无法读取 API 提供商绑定",
     "disabled": "API 提供商复用已关闭。已有绑定暂不参与普通选路，历史记录仍可查看。",
     "empty": "暂无有效绑定",
-    "emptyHint": "请求成功后自动记住 API 提供商，无需手动绑定。",
-    "emptyDisabled": "可在路由设置中开启“同一会话优先复用 API 提供商”。",
     "removedService": "已删除的 API 提供商",
     "token": "令牌 …{{id}}",
     "expires": "有效至 {{time}}",
-    "strictHint": "重新选择不会中断正在进行的请求；依赖上游状态的 Responses 续接和已建立的 WebSocket 连接仍使用原 API 提供商。",
     "history": "绑定记录",
-    "historyHint": "记录会话识别、API 提供商复用、切换与手动解除，不保存对话正文。",
     "noEvents": "暂无绑定记录",
     "viewRequest": "查看这次请求",
     "actions": {
@@ -3726,6 +3778,14 @@
       "echo_id": "工具或响应标识匹配",
       "fingerprint": "助手文本指纹匹配"
     },
+    "settingHint": "沿用上次成功的 API 提供商，减少会话中的 API 提供商切换；失败时遵循现有故障转移策略。",
+    "ttlHint": "每次请求成功后重新计时，范围 1–1440 分钟，推荐 60 分钟。",
+    "manageHint": "在请求记录的会话详情 → API 提供商绑定中查看记录或重新选择 API 提供商。",
+    "releaseHint": "清除本会话的 API 提供商偏好。下次请求按 API 提供商顺序重新选择，仍可能选中同一 API 提供商。",
+    "emptyHint": "请求成功后自动记住 API 提供商，无需手动绑定。",
+    "emptyDisabled": "可在路由设置中开启“同一会话优先复用 API 提供商”。",
+    "strictHint": "重新选择不会中断正在进行的请求；依赖上游状态的 Responses 续接和已建立的 WebSocket 连接仍使用原 API 提供商。",
+    "historyHint": "记录会话识别、API 提供商复用、切换与手动解除，不保存对话正文。",
     "retention": "本地最多保留 50,000 条绑定审计记录。"
   },
   "serviceProxy": {
@@ -4594,13 +4654,26 @@
       "missing": "缺少字段",
       "unknownReason": "未知原因",
       "unexpectedValue": "取值无效"
-    }
+    },
+    "plugin": "插件数据无效（{{path}}）：{{detail}}",
+    "metadata": "元信息数据无效（{{path}}）：{{detail}}"
   },
   "controlErrors": {
     "image_provider_not_found": "图片生成选用的 API 提供商已不存在。请换一个提供商，或关闭图片生成。",
     "image_provider_unsupported": "图片生成选用的 API 提供商没有 Images API。「提供商的 Images API」可以选用 OpenAI、OpenAI 兼容、New API 和 MiniMax 提供商。Codex 订阅请改选「Responses · image_generation」。",
     "search_provider_not_found": "网页搜索选用的 API 提供商已不存在。请换一个提供商，或关闭网页搜索。",
-    "search_provider_unsupported": "网页搜索选用的 API 提供商没有搜索 API。「提供商的搜索 API」可以选用 Codex 订阅和 New API 提供商。其他提供商请改选「Responses · web_search」。"
+    "search_provider_unsupported": "网页搜索选用的 API 提供商没有搜索 API。「提供商的搜索 API」可以选用 Codex 订阅和 New API 提供商。其他提供商请改选「Responses · web_search」。",
+    "invalid_plugin_settings": "插件设置无效，请检查能力、地址和配置。",
+    "metadata_attribute_conflict": "已有其他属性使用这个键或会话标记。",
+    "metadata_attribute_owned": "这个属性由插件登记，只能设值。",
+    "invalid_metadata_attribute": "属性无效，请检查键、校验规则和会话标记。",
+    "invalid_metadata_value": "有值不符合属性的校验规则。",
+    "invalid_credential": "凭据须为 1 至 16384 字节、不含换行，并绑定插件可访问的地址。",
+    "plugin_reload_failed": "无法扫描插件目录。",
+    "plugin_unavailable": "无法读取或保存插件设置。",
+    "metadata_unavailable": "无法读取或保存元信息。",
+    "credential_unavailable": "无法保存凭据。",
+    "plaintext_consent_required": "服务器是明文 HTTP 地址，勾选「允许明文 HTTP」才能保存。"
   },
   "webConsole": {
     "title": "AstrLink 控制台",
@@ -4630,6 +4703,1135 @@
     "copy": "复制配置",
     "clipboard": "剪贴板不可用，请选中下方文本复制。"
   },
+  "plugins": {
+    "title": "插件",
+    "listLabel": "插件列表",
+    "loading": "正在加载插件…",
+    "loadFailed": "无法加载插件。",
+    "detailFailed": "无法加载这个插件。",
+    "statusFailed": "无法加载插件的运行状态。",
+    "saveFailed": "无法保存修改。",
+    "testFailed": "测试连接没有运行。",
+    "empty": "还没有插件",
+    "emptyHint": "把插件放进插件目录，再重新扫描。",
+    "select": "选择一个插件",
+    "rescan": "重新扫描",
+    "rescanning": "正在扫描…",
+    "directoryHelpLabel": "插件目录",
+    "directoryHelp": "每个插件在这里有自己的文件夹，内含 plugin.ts 或 plugin.js；文件夹名就是插件的 key。",
+    "rescanHelp": "添加或修改插件后点重新扫描即可，不用重启。正在处理的请求用旧版本跑完。",
+    "errorAt": "{{file}} 第 {{line}} 行",
+    "source": {
+      "builtin": "内置",
+      "directory": "目录",
+      "override": "替换内置",
+      "github": "GitHub",
+      "market": "插件市场"
+    },
+    "state": {
+      "running": "运行中",
+      "disabled": "已停用",
+      "failed": "加载失败"
+    },
+    "enable": "启用",
+    "disable": "停用",
+    "test": "测试连接",
+    "testing": "测试中…",
+    "tabsLabel": "插件详情",
+    "tabs": {
+      "overview": "概览",
+      "settings": "设置",
+      "status": "运行状态",
+      "develop": "开发",
+      "tasks": "任务"
+    },
+    "testStatus": {
+      "ok": "连接正常",
+      "error": "出错",
+      "failed": "测试失败"
+    },
+    "truncated": "超出上限，已截断",
+    "overviewNeedsViews": "启用时授予「界面视图」，这里才会显示插件提供的概览。",
+    "noCapabilities": "没有申请能力",
+    "capabilities": {
+      "contextInject": "注入上下文",
+      "requestRead": "读取本轮文本",
+      "network": "网络",
+      "storage": "插件存储",
+      "uiViews": "界面视图",
+      "modelTools": "允许 Agent 查询",
+      "requestWrite": "修改请求",
+      "requestWriteRaw": "改写整个请求体",
+      "requestGate": "拒绝请求",
+      "routing": "调整路由",
+      "responseRead": "读取响应",
+      "responseWrite": "改写响应",
+      "events": "网关事件",
+      "schedule": "定时任务",
+      "httpServe": "本机接口",
+      "provider": "供应商适配器",
+      "uiCode": "界面代码"
+    },
+    "loadErrors": {
+      "not_found": "没有 plugin.ts 或 plugin.js",
+      "ambiguous": "同时有 plugin.ts 和 plugin.js",
+      "too_large": "超过 8 MiB",
+      "encoding": "不是 UTF-8",
+      "syntax": "语法错误",
+      "async": "async 需要 apiVersion 2",
+      "await": "await 需要 apiVersion 2",
+      "import": "不支持 import",
+      "reexport": "不支持 export … from",
+      "missing_meta": "没有导出 meta",
+      "invalid_meta": "meta 无效",
+      "unknown_export": "导出了 meta 和钩子以外的内容",
+      "not_function": "有钩子不是函数",
+      "load_failed": "顶层代码执行失败"
+    },
+    "network": {
+      "originsHelpLabel": "关于允许访问的地址",
+      "originsHelp": "插件只能访问这些地址。协议、主机和端口必须一致，路径不限；不跟随重定向。",
+      "originLabel": "要允许的地址",
+      "invalidOrigin": "请输入带主机的 http 或 https 地址，例如 https://memory.example.com:8443。",
+      "add": "添加",
+      "remove": "移除 {{origin}}",
+      "plaintext": "明文 HTTP",
+      "allowPlaintext": "允许明文 HTTP",
+      "plaintextHelpLabel": "关于明文 HTTP",
+      "plaintextHelp": "发往这个地址的请求（包括凭据）以明文传输，途中可能被窃听。建议给服务器加 TLS，或经 SSH 隧道访问。",
+      "trusted": "受信任",
+      "trustedHelpLabel": "关于受信任",
+      "trustedHelp": "关闭时，插件拿到的检索词和捕获文本先经过隐私策略检查，和不受信任的提供商一样；打开后直接拿到原文。"
+    },
+    "credentials": {
+      "title": "凭据",
+      "helpLabel": "关于凭据",
+      "help": "凭据保存在 AstrLink 的本机密钥库里。只有请求发往凭据绑定的地址时，Core 才把它加进请求；插件读不到凭据的值。",
+      "configured": "已配置 ···· {{hint}}",
+      "configuredNoHint": "已配置",
+      "origin": "绑定的地址",
+      "secret": "凭据值",
+      "clear": "清除"
+    },
+    "config": {
+      "help": "一整段 JSON 对象，最多 64 KiB。插件只读，改不了它。凭据不要写在这里，请用凭据位。",
+      "size": "{{size}} KiB / 64 KiB",
+      "invalid": "配置必须是一个 JSON 对象。",
+      "tooLarge": "配置超过了 64 KiB。"
+    },
+    "status": {
+      "calls": "调用",
+      "timeouts": "超时",
+      "memoryLimits": "内存超限",
+      "failures": "失败的调用",
+      "reasons": {
+        "timeout": "超时",
+        "memory_limit": "内存超限",
+        "plugin_error": "插件出错",
+        "invalid_result": "结果无效",
+        "canceled": "已取消",
+        "unavailable": "不可用"
+      },
+      "networkRequests": "网络请求",
+      "networkDetail": "拒绝 {{denied}} · 失败 {{errors}}"
+    },
+    "enableDialog": {
+      "purpose": "网络用途：{{purpose}}",
+      "notice": "插件的提醒",
+      "metadata": "登记的元信息属性",
+      "marker": "会话标记 {{marker}}"
+    },
+    "blocked": "网关没有运行",
+    "blockedHint": "网关就绪后才能加载插件。网关停了的话，概览页会显示原因。",
+    "stale": "网关尚未就绪，当前显示上次读取的插件。",
+    "wait": {
+      "label": "最长等待",
+      "helpLabel": "关于最长等待",
+      "help": "每轮的第一个请求最多等插件这么久（含隐私检查），之后照常发给模型，来晚的结果这一轮不注入。默认 2.5 秒。",
+      "seconds": "{{value}} 秒"
+    },
+    "about": {
+      "label": "关于这个插件",
+      "does": "这个插件做什么",
+      "network": "网络用途",
+      "capabilities": "用到的权限"
+    },
+    "overview": {
+      "noServer": "未设置",
+      "notTested": "还没测试",
+      "bindings": "已绑定的{{label}}",
+      "sessions": "会话",
+      "lastUsed": "最近使用",
+      "none": "不纳入",
+      "noBindings": "还没有会话绑定{{label}}",
+      "statusUnread": "没读出来",
+      "statusErrorLabel": "插件返回的错误",
+      "gateway": "本机网关",
+      "uses": "使用了开源项目 {{name}}",
+      "onGitHub": "在 GitHub 上查看 {{name}}",
+      "onGitHubStars_one": "在 GitHub 上查看 {{name}}，{{stars}} 颗星",
+      "onGitHubStars_other": "在 GitHub 上查看 {{name}}，{{stars}} 颗星"
+    },
+    "settings": {
+      "save": "保存",
+      "revert": "还原",
+      "unsaved": "有改动未保存",
+      "more": "更多设置",
+      "json": "以 JSON 编辑",
+      "jsonTitle": "以 JSON 编辑配置",
+      "apply": "应用",
+      "gatewayGroup": "网关",
+      "origins": "其他允许访问的地址",
+      "required": "「{{label}}」不能为空",
+      "number": "「{{label}}」要填数字",
+      "between": "「{{label}}」要在 {{min}} 到 {{max}} 之间",
+      "atLeast": "「{{label}}」不能小于 {{min}}",
+      "atMost": "「{{label}}」不能大于 {{max}}",
+      "address": "「{{label}}」要填 http 或 https 地址",
+      "consent": "「{{label}}」是明文 HTTP 地址，勾选「允许明文 HTTP」才能保存",
+      "replace": "更换",
+      "keep": "不更换",
+      "noOrigin": "先填好服务器地址，再保存令牌",
+      "choices": {
+        "all": "全部",
+        "none": "都不选",
+        "clear": "全不选",
+        "selectAll": "全选",
+        "count_one": "{{count}} 项",
+        "count_other": "{{count}} 项",
+        "separator": "、"
+      }
+    },
+    "host": {
+      "pause": "暂停所有插件",
+      "pauseHelp": "暂停期间所有插件都不运行：不装载、不询问、不写入，请求原样发出。每轮第一个请求的记录里会写明原因。恢复后照常工作。",
+      "pausedNotice": "所有插件已暂停，请求原样发出。",
+      "budget": "注入总预算",
+      "budgetHelp": "所有插件往一次请求里注入的内容合计不超过这么多。超出时按插件顺序丢掉后面插件的块，请求记录里写明「超出注入总预算」。",
+      "budgetValue": "{{value}} KB",
+      "saveFailed": "无法保存插件的总设置。",
+      "open": "插件设置",
+      "title": "插件设置",
+      "pausedShort": "已暂停所有插件",
+      "helpLabel": "关于「{{label}}」"
+    },
+    "clients": {
+      "label": "对哪些客户端生效",
+      "helpLabel": "关于对哪些客户端生效",
+      "help": "取消勾选的客户端，插件不参与它们的请求：不装载、不询问、不写入，请求原样发出。识别不出来的客户端归在「其他」。可以用来避开客户端自带的记忆。",
+      "all": "全部客户端",
+      "none": "不对任何客户端生效",
+      "search": "搜索客户端",
+      "empty": "没有匹配的客户端",
+      "selectAll": "全选",
+      "clear": "全不选",
+      "other": "其他",
+      "count_one": "{{count}} 个客户端",
+      "count_other": "{{count}} 个客户端"
+    },
+    "workspace": {
+      "label": "按工作区自动绑定",
+      "helpLabel": "关于按工作区自动绑定",
+      "help": "会话第一次选定项目时，记下「这个工作目录 → 这个项目」；同一目录里的新会话第一轮就自动接上，不再询问。只在本机保存目录路径的指纹和最后一级目录名，不存路径。"
+    },
+    "refresh": {
+      "label": "自动刷新",
+      "helpLabel": "关于自动刷新",
+      "help": "每个会话最多每 10 分钟检查一次插件的数据有没有更新，有更新才换上新的装载块。每换一次，这个会话的提示词缓存都要重写一次。默认关闭。",
+      "confirmTitle": "打开自动刷新？",
+      "confirmBody": "插件的数据有更新时，会话会换上新的装载块。系统提示词变了，这个会话之后的整段对话都要重新写入提示词缓存，长会话可能要多付几万 token。每个会话最多每 10 分钟检查一次。",
+      "confirm": "打开"
+    },
+    "stored": {
+      "title": "数据存储",
+      "kinds": {
+        "session_bindings": {
+          "label": "会话绑定的值",
+          "what": "每个会话绑定的值、怎么绑定的、在第几轮绑定。",
+          "retention": "跟会话记录一样"
+        },
+        "workspace_bindings": {
+          "label": "工作区和值的对应",
+          "what": "工作目录路径的指纹和最后一级目录名，不存完整路径，用来让同一目录的新会话自动绑定。",
+          "retention": "直到清除"
+        },
+        "plugin_sessions": {
+          "label": "各会话的第一轮和暂停",
+          "what": "插件在每个会话里第一次参与的是哪一轮，以及这个会话有没有暂停插件。",
+          "retention": "一直保留"
+        },
+        "request_records": {
+          "label": "插件记录",
+          "what": "插件在每个请求里做了什么：次数、字节数、耗时和原因，不含查询和上报的内容。",
+          "retention": "跟请求记录一样"
+        },
+        "resident_block": {
+          "label": "当前装载块",
+          "what": "会话系统提示词里正在用的那份项目记忆。",
+          "retention": "网关重启就没了"
+        },
+        "plugin_values": {
+          "label": "插件存储",
+          "what": "插件自己存的小数据，停用插件后仍保留。插件声明它存了下面这些。",
+          "retention": "直到清除"
+        },
+        "lookup_credentials": {
+          "label": "查询凭证",
+          "what": "各会话运行查询和上报用的凭证，只存哈希。",
+          "retention": "24 小时没有请求或网关重启就作废"
+        },
+        "plugin_files": {
+          "label": "插件文件",
+          "what": "插件用 node:fs 在自己的数据目录里读写的文件。卸载插件后仍保留，重新安装会接着用。",
+          "retention": "直到清除"
+        }
+      },
+      "holds": {
+        "memory": "含记忆内容",
+        "conversation": "含对话内容"
+      },
+      "clear": "清除",
+      "clearTitle": {
+        "workspaces": "清除工作区记录？",
+        "values": "清除插件存储？",
+        "lookups": "作废查询凭证？",
+        "files": "清除插件文件？"
+      },
+      "clearConfirm": {
+        "workspaces": "清除后，新会话不再按工作目录自动接上项目，会在第一轮重新询问。已经绑定的会话不受影响。",
+        "values": "清除插件自己存的小数据，例如项目在服务器上的编号。插件会在下次用到时重新取，记忆本身不受影响。",
+        "lookups": "这个插件的查询凭证立即失效，模型已经拿到的查询命令都不能再用。每个会话的下一个请求会换新凭证，系统提示词随之变化，这些会话的提示词缓存要重写一次。",
+        "files": "删除这个插件数据目录里的全部文件，插件下次用到时从头开始。插件随代码带的文件不受影响。"
+      },
+      "clearFailed": "无法清除。",
+      "count_one": "{{count}} 条",
+      "count_other": "{{count}} 条",
+      "files_one": "{{count}} 个文件 · {{size}}",
+      "files_other": "{{count}} 个文件 · {{size}}",
+      "revoke": "作废",
+      "helpLabel": "关于数据存储",
+      "help": "AstrLink 为这个插件存的东西，按存放的地方分开列出。都不含对话内容，标明的除外。",
+      "places": {
+        "database": "AstrLink 数据库",
+        "memory": "只在内存里",
+        "records": "请求记录",
+        "disk": "插件目录"
+      },
+      "retention": "保留：{{retention}}。",
+      "declared": "{{label}}（{{retention}}）"
+    },
+    "lookup": {
+      "label": "允许 Agent 查询",
+      "helpLabel": "关于允许 Agent 查询",
+      "help": "Agent 需要细节时，可以用自己的 shell 运行插件的只读查询，每轮最多 3 次；插件提供上报时，Agent 也可以把值得长期记住的内容交给插件，每轮最多 2 次，插件设置里可以单独关掉。查的、记的都是会话绑定的项目。只有客户端和网关在同一台电脑上、请求里带着 shell 工具时，才在系统提示词里附上用法和本会话的凭证。启用插件时要勾选「允许 Agent 查询」。插件提供的查询和上报：",
+      "toolSeparator": "：",
+      "reportMark": "（上报）"
+    },
+    "effects": {
+      "title": "运行情况",
+      "helpLabel": "关于运行情况",
+      "help": "最近 7 天，按本机的请求记录汇总：只有次数、大小、耗时和原因，不含对话内容，也不上报到任何地方。装载消耗按注入的字节估算，约 3 个字节算 1 个 token；等待取中位数。小柱是每天的数，最右一根是今天。缓存命中是缓存读取占输入 token 的比例，「开了记忆」指出现过插件注入内容的会话。",
+      "empty": "最近 7 天还没有记录。",
+      "load": "装载消耗",
+      "refreshes_one": "刷新 {{count}} 次",
+      "refreshes_other": "刷新 {{count}} 次",
+      "wait": "等待约 {{p50}} ms",
+      "lookup": "查询",
+      "hitRate": "命中 {{rate}}",
+      "refused_one": "拒绝 {{count}} 次",
+      "refused_other": "拒绝 {{count}} 次",
+      "binding": "绑定方式",
+      "changed_one": "自动绑定后改掉 {{count}} 次",
+      "changed_other": "自动绑定后改掉 {{count}} 次",
+      "write": "写入",
+      "reported_one": "Agent 上报 {{count}} 条",
+      "reported_other": "Agent 上报 {{count}} 条",
+      "problems": "问题",
+      "cache": "缓存命中",
+      "daily": "按天明细",
+      "dailyHelp": "每一行是一天，按网关所在时区，没有活动的日子显示为灰色。消耗是注入的字节数，结果是查询里有结果的比例，缓存命中一栏是「开了记忆的会话 / 其他会话」。其余口径同「运行情况」：只有次数、大小和原因，不含对话内容，也不上报。",
+      "dailyHelpLabel": "关于按天明细",
+      "writeCell": "{{ok}}（失败 {{failed}}）",
+      "cacheCell": "{{with}} / {{without}}",
+      "columns": {
+        "date": "日期",
+        "loads": "装载",
+        "injected": "消耗",
+        "lookups": "查询",
+        "hits": "结果",
+        "bindings": "绑定",
+        "writes": "写入",
+        "problems": "问题",
+        "cache": "缓存命中"
+      },
+      "period": "最近 7 天",
+      "tokens": "约 {{tokens}} token",
+      "loads_one": "装载 {{count}} 次",
+      "loads_other": "装载 {{count}} 次",
+      "times_one": "{{count}} 次",
+      "times_other": "{{count}} 次",
+      "lookupSessions_one": "{{count}} 个会话用过",
+      "lookupSessions_other": "{{count}} 个会话用过",
+      "entries_one": "{{count}} 条",
+      "entries_other": "{{count}} 条",
+      "writeFailed_one": "失败 {{count}} 条",
+      "writeFailed_other": "失败 {{count}} 条",
+      "noProblems": "运行正常",
+      "problemKinds": {
+        "failed_one": "失败 {{count}}",
+        "failed_other": "失败 {{count}}",
+        "timeouts_one": "超时 {{count}}",
+        "timeouts_other": "超时 {{count}}",
+        "privacy_one": "隐私拦截 {{count}}",
+        "privacy_other": "隐私拦截 {{count}}",
+        "over_budget_one": "超出预算 {{count}}",
+        "over_budget_other": "超出预算 {{count}}"
+      },
+      "ways": {
+        "workspace": "按工作区自动",
+        "picked": "选了已有的",
+        "created": "新建",
+        "declined": "不纳入",
+        "unanswered": "没回答"
+      },
+      "cacheSides": {
+        "with": "开了记忆",
+        "without": "其他会话"
+      }
+    },
+    "headerHelpLabel": "关于插件的总设置",
+    "develop": {
+      "build": "开发版",
+      "builtAt": "{{time}} 构建",
+      "loadFailed": "无法读取插件的日志。",
+      "timings": "钩子耗时",
+      "timingsHelpLabel": "关于钩子耗时",
+      "timingsHelp": "每个钩子最近 256 次调用的用时，手动试运行不算在内。「JS 时间」只算脚本自己运行的时间，等网络和存储的时间不算。Core 重启后重新统计。",
+      "noCalls": "还没有调用。",
+      "hook": "钩子",
+      "calls": "调用",
+      "failures": "失败",
+      "p50": "中位",
+      "p95": "P95",
+      "max": "最长",
+      "script": "JS 时间",
+      "dryRun": "试运行",
+      "dryRunHelpLabel": "关于试运行",
+      "dryRunHelp": "按插件现在的设置和授权，在沙箱里跑一次钩子。试运行不访问网络，插件发出的请求会因为没有网络预算而失败；也不写进请求记录。参数是传给钩子的 JSON 数组。",
+      "args": "参数",
+      "argsInvalid": "参数要写成 JSON 数组。",
+      "run": "运行",
+      "running": "运行中…",
+      "runFailed": "试运行没有完成。",
+      "result": "返回值",
+      "noResult": "没有返回值（undefined）",
+      "took": "用时 {{elapsed}} · JS {{script}}",
+      "log": "日志",
+      "logHelpLabel": "关于日志",
+      "logHelp": "插件用 console 和 astrlink.log 写的日志，以及失败的调用和调用栈，最新的在最上面。只存在内存里，每个插件最多 400 行，Core 重启后清空。",
+      "noLog": "还没有日志。",
+      "clear": "清空",
+      "dryRunTag": "试运行",
+      "stack": "调用栈",
+      "levels": {
+        "debug": "调试",
+        "info": "信息",
+        "warn": "警告",
+        "error": "错误"
+      },
+      "breaker": "「{{point}}」最近失败太多，{{time}} 前暂时不参与请求。"
+    },
+    "hooks": {
+      "onRequest": "入口",
+      "route": "路由",
+      "beforeForward": "转发前",
+      "beforeUpstream": "转发到上游前",
+      "rewriteResponse": "改写响应",
+      "onStreamEvent": "流式改写",
+      "onResponse": "响应后",
+      "onEvent": "网关事件",
+      "onSchedule": "定时任务",
+      "onHttp": "本机接口",
+      "provider": "供应商适配器",
+      "providerEvent": "适配器流式事件",
+      "observeTurn": "每轮结束后",
+      "prepareSession": "会话装载",
+      "prepareTurn": "本轮补充"
+    },
+    "approval": {
+      "loading": "正在读取要确认的修改…",
+      "nothing": "没有等待确认的插件修改",
+      "enableTitle": "启用「{{name}}」",
+      "grantTitle": "允许「{{name}}」做更多事",
+      "capabilitiesEnable": "插件申请以下能力，取消勾选的不会授予：",
+      "capabilitiesAdded": "这次要新授予的能力，取消勾选的不会授予：",
+      "noCapabilities": "插件没有申请任何能力。",
+      "origins": "新增可访问的地址",
+      "plaintext": "明文 HTTP",
+      "plaintextExisting": "允许用明文 HTTP 访问：{{origins}}",
+      "trusted": "设为受信任：跳过隐私检查，插件会看到对话原文。",
+      "failClosed": "插件的入口钩子出错或超时时，拦下请求而不是放行。",
+      "risk": {
+        "ui_code": "界面代码和 AstrLink 界面同等权限：能看请求记录、改设置，凡是 AstrLink 界面能做的都能做。"
+      },
+      "deny": "拒绝",
+      "confirm": "同意",
+      "confirmEnable": "启用",
+      "waiting": "这个修改正在等你在「插件确认」窗口里确认。",
+      "open": "打开确认窗口",
+      "pluginWords": "插件的说明"
+    },
+    "limits": {
+      "label": "扩展点时间上限",
+      "helpLabel": "关于扩展点时间上限",
+      "help": "请求最多等插件每个扩展点这么久，留空就按插件声明的（框里灰色的数），插件没声明时用网关的默认值。超时后：入口放行、路由保持原顺序、转发前原样发出、改写响应原样返回、流式改写这条事件原样放过。插件用得越久，请求越慢，「开发」页签能看到每个扩展点实际用了多久。",
+      "ms": "毫秒",
+      "invalid": "{{point}}的时间上限要是 1 到 {{max}} 之间的整数毫秒",
+      "failClosed": "出错时拦下请求",
+      "failClosedHelpLabel": "关于出错时拦下请求",
+      "failClosedHelp": "插件申请：它的入口钩子出错或超时时，拦下请求而不是放行，比如用来做必须执行的内容审查。打开后，插件一出问题请求就会失败，所以要在确认窗口里确认。"
+    },
+    "order": {
+      "open": "调整顺序",
+      "title": "插件的执行顺序",
+      "description": "同一个扩展点上，插件从上到下依次执行，每个插件拿到上一个插件的结果。"
+    },
+    "install": {
+      "open": "安装插件",
+      "title": "安装插件",
+      "helpLabel": "关于从 GitHub 安装",
+      "helpLinks": "可以粘贴仓库首页（装最新的版本标签，没有标签就装默认分支）、tree/ 下的分支、标签或目录、Release 或提交的链接。暂不支持私有仓库。",
+      "helpBuild": "AstrLink 在本机按锁文件从 npm 下载依赖，逐个核对锁文件里的哈希，再用内置的构建器打包，不运行任何安装脚本；带原生模块的依赖用不了。",
+      "helpConfirm": "先在这里看审查结果，安装要在「插件确认」窗口里确认。装好的插件不会自动启用。",
+      "link": "GitHub 链接",
+      "check": "检查",
+      "previewing": "正在下载和构建…",
+      "failed": "无法安装这个插件。",
+      "checkFailed": "无法检查更新。",
+      "rollbackFailed": "无法回滚。",
+      "uninstallFailed": "无法卸载。",
+      "install": "安装",
+      "update": "更新",
+      "confirm": "确认安装",
+      "confirmWeb": "安装「{{name}}」会把它的代码放进插件目录，确认安装吗？",
+      "waiting": "安装正在等你在「插件确认」窗口里确认。",
+      "registry": "npm 源",
+      "registryLabel": "下载依赖用的 npm 源",
+      "registryHelp": "留空就用 npm 官方源；源下载失败时改用 npmmirror。每个依赖都按锁文件里的哈希核对，换源不会改变装上的内容。",
+      "installTitle": "安装「{{name}}」",
+      "updateTitle": "更新「{{name}}」",
+      "rollbackTitle": "回滚「{{name}}」",
+      "rollbackTo": "回滚",
+      "rollback": "回滚到旧版本…",
+      "uninstall": "卸载",
+      "uninstallTitle": "卸载「{{name}}」",
+      "uninstallDescription": "插件文件和保留的旧版本会删除；插件的设置和存储的数据会保留，重新安装后接着用。",
+      "uninstallBuiltin": "插件文件和保留的旧版本会删除，内置的同名插件会恢复；插件的设置和存储的数据会保留。",
+      "source": "来源",
+      "openRepository": "在 GitHub 上打开 {{repository}}",
+      "checkUpdate": "检查更新",
+      "checking": "检查中…",
+      "more": "更多操作",
+      "pinned": "装的是固定的提交，没有可以跟随的新版本。",
+      "latest": "已是最新版本。",
+      "available": "有新版本：{{version}}（{{day}}）",
+      "newCommit": "{{ref}} 的新提交",
+      "reviewUpdate": "查看并更新",
+      "notes": "更新说明",
+      "unknownVersion": "未记录版本",
+      "replacedAt": "{{day}}被替换",
+      "ref": {
+        "tag": "标签 {{ref}}",
+        "branch": "分支 {{ref}}",
+        "version": "版本 {{ref}}"
+      },
+      "refCommit": "固定提交",
+      "refAt": "{{ref}} · {{day}}提交",
+      "updateFrom": "从 {{from}} 更新到 {{to}}",
+      "rollbackFrom": "从 {{from}} 回到 {{to}}",
+      "replaces": {
+        "builtin": "将替换内置插件「{{name}}」。",
+        "source": "将替换来自 {{repository}} 的同名插件「{{name}}」。",
+        "development": "将替换正在开发的同名插件「{{name}}」。",
+        "directory": "将替换插件目录里的同名插件「{{name}}」。"
+      },
+      "client": "带界面代码：启用后在主窗口里运行，能做 AstrLink 界面能做的一切。",
+      "changesTitle": "这次的变化",
+      "changes": {
+        "addedCapability": "新申请：{{capability}}",
+        "removedCapability": "不再申请：{{capability}}",
+        "client": {
+          "added": "新增界面代码",
+          "removed": "去掉了界面代码"
+        },
+        "network": "联网用途的说明变了",
+        "dependencies": "依赖有 {{count}} 处变化"
+      },
+      "capabilities": "申请的能力",
+      "files": "代码和依赖",
+      "code": "构建后 {{size}}",
+      "dependencies": "依赖 {{count}} 个，共 {{size}}",
+      "noDependencies": "没有依赖",
+      "author": "作者 {{author}}",
+      "dependencyList": "依赖列表",
+      "scripts": "这些依赖带安装脚本，没有运行：{{packages}}",
+      "warnings": {
+        "version_mismatch": "package.json 和插件声明的版本不一致（{{detail}}）。",
+        "build_warning": "构建提示：{{detail}}",
+        "route_unsupported": "{{detail}} 这条路由 AstrLink 暂时不能转发（需要插件自己转换，或者不是 AstrLink 接收的接口），装上后这条路由不生效。"
+      },
+      "failures": {
+        "invalid_link": "这不是能识别的 GitHub 仓库链接。",
+        "repository_not_found": "找不到仓库 {{detail}}，或者它是私有仓库（暂不支持）。",
+        "ref_not_found": "仓库里没有 {{detail}}。",
+        "rate_limited": "GitHub 暂时限制了访问，请过一会儿再试。",
+        "source_unavailable": "下载源码失败：{{detail}}",
+        "too_large": "插件或依赖超出了大小限制（{{detail}}）。",
+        "no_plugin": "这里没有插件入口：src/plugin.ts、plugin.ts，或 package.json 里 astrlink.plugin 指定的文件。",
+        "no_lockfile": "插件有依赖，但没有锁文件（package-lock.json、pnpm-lock.yaml 或 bun.lock）。",
+        "lockfile_unsupported": "不支持这个锁文件：{{detail}}",
+        "dependency_unsupported": "依赖不来自 npm 源，暂不支持：{{detail}}",
+        "integrity_failed": "依赖 {{detail}} 下载到的内容和锁文件里的哈希对不上。",
+        "registry_unavailable": "无法从 npm 源下载 {{detail}}。",
+        "native_module": "依赖 {{detail}} 带原生模块，插件里用不了。",
+        "build_failed": "构建失败。",
+        "invalid_plugin": "插件没有通过检查。",
+        "incompatible": "插件要求 AstrLink {{detail}}，和当前版本不兼容。",
+        "expired": "审查结果已过期，请重新检查。",
+        "busy": "正在构建另一个插件，请稍后再试。",
+        "unknown": "无法安装（{{reason}}）。"
+      },
+      "sourceLabel": "安装来源",
+      "sources": {
+        "github": "GitHub",
+        "market": "插件市场"
+      },
+      "backToMarket": "换一个插件",
+      "marketRef": "版本 {{version}} · 已校验",
+      "groups": {
+        "source": "来源",
+        "abilities": "能力",
+        "dependencies": "代码与依赖",
+        "risks": "风险"
+      },
+      "taskKind": "任务插件",
+      "providerKind": "提供商插件",
+      "requestKind": "请求处理插件",
+      "keyHosts": "密钥只发往",
+      "highRisk": "申请了高风险能力：{{capability}}",
+      "changelog": "更新记录"
+    },
+    "ui": {
+      "switch": "插件界面",
+      "switchHelp": "关掉就进入安全模式：不加载任何插件的界面代码，插件的后端部分照常运行。如果上次加载插件界面后窗口没能正常运行，下次启动会自动进入安全模式。",
+      "webHelp": "网页控制台默认不加载插件的界面代码。打开后，插件界面在这个网页里运行，能做控制台能做的一切。",
+      "webConfirmTitle": "在网页控制台加载插件界面",
+      "webConfirmDescription": "启用了界面的插件会把代码放到这个网页里运行，能做控制台能做的一切，包括看请求记录和改设置。确认打开吗？",
+      "webConfirm": "打开",
+      "crashed": "上次加载插件界面后窗口没能正常运行，这次没有加载插件界面。",
+      "load": "加载插件界面",
+      "turnedOff": "「{{name}}」的界面反复出错，已经关掉。可以在插件页重新打开。",
+      "failed": "「{{name}}」的界面出错了：{{message}}",
+      "pageGone": "这个插件页面已经不在了",
+      "tab": "插件",
+      "pluginSwitch": "加载这个插件的界面",
+      "pluginSwitchLabel": "界面"
+    },
+    "countLabel_one": "{{count}} 个插件",
+    "countLabel_other": "{{count}} 个插件",
+    "metrics": {
+      "label": "插件概况",
+      "installed": "已安装",
+      "running": "运行中",
+      "calls": "调用（本次启动后）",
+      "recentCalls": "近 30 天处理的请求",
+      "tasks": "进行中的任务",
+      "problems": "问题",
+      "callCount_one": "{{count}} 次调用",
+      "callCount_other": "{{count}} 次调用"
+    },
+    "list": {
+      "tabs": "插件页签",
+      "installed": "已安装",
+      "market": "插件市场",
+      "develop": "开发",
+      "browseMarket": "去插件市场看看"
+    },
+    "groups": {
+      "providers": "供应商插件",
+      "extensions": "增强插件"
+    },
+    "market": {
+      "failed": "无法读取插件市场。",
+      "source": "插件市场来源",
+      "official": "官方市场",
+      "custom": "其他市场",
+      "indexLabel": "市场的 index.json 地址",
+      "open": "打开",
+      "search": "搜索插件、模型或编码",
+      "count_one": "{{name}} · {{count}} 个插件",
+      "count_other": "{{name}} · {{count}} 个插件",
+      "loading": "正在读取插件市场…",
+      "noMatch": "没有找到匹配的插件",
+      "empty": "这个市场还没有插件",
+      "listLabel": "市场里的插件",
+      "installed": "已安装",
+      "update": "更新到 {{version}}",
+      "install": "安装",
+      "models_one": "{{count}} 个模型",
+      "models_other": "{{count}} 个模型",
+      "noDescription": "插件没有写简介。",
+      "installedVersion": "已装 {{version}}",
+      "website": "官网",
+      "versions": "全部版本",
+      "installVersion": "安装这个版本",
+      "fewerModels": "收起",
+      "moreModels_one": "还有 {{count}} 个",
+      "moreModels_other": "还有 {{count}} 个",
+      "incompatible": "不兼容",
+      "incompatibleReason": "需要 new-api 的{{parts}}，AstrLink 还不能运行。",
+      "parts": {
+        "provider": "提供商插件",
+        "transform": "请求处理插件",
+        "other": "{{part}}"
+      },
+      "partSeparator": "、",
+      "community": "社区市场",
+      "recommended": "推荐",
+      "by": "作者 {{author}}",
+      "author": "作者",
+      "repository": "源码仓库",
+      "code": "插件编码",
+      "installs": "近 30 天",
+      "installsCount_one": "{{count}} 次安装",
+      "installsCount_other": "{{count}} 次安装",
+      "guide": "使用说明",
+      "guideSource": "在 GitHub 上查看",
+      "guideLoading": "正在读取使用说明…",
+      "guideFailed": "使用说明读取失败，可以稍后再打开。",
+      "notes": "更新说明",
+      "revoked": "已下架",
+      "revokedReason": "市场已经下架了你装的这个版本：{{reason}}。建议更新到其他版本，或者卸载。",
+      "revokedNoReason": "市场已经下架了你装的这个版本。建议更新到其他版本，或者卸载。",
+      "finding": "正在查找编码 {{code}} 的插件…",
+      "foundByCode": "编码 {{code}} 的插件",
+      "noCode": "没有找到编码为 {{code}} 的插件"
+    },
+    "task": {
+      "protocols": {
+        "openai_video": "视频",
+        "openai_image": "图片",
+        "openai_responses": "Responses"
+      },
+      "modes": {
+        "stream": "流式",
+        "sync": "同步",
+        "background": "后台"
+      },
+      "nativeRoutes": "原生接口",
+      "auth": {
+        "api_key": "API Key",
+        "oauth2_jwt": "服务账号（OAuth）",
+        "none": "不需要密钥"
+      },
+      "status": {
+        "NOT_START": "排队中",
+        "SUBMITTED": "已提交",
+        "QUEUED": "排队中",
+        "IN_PROGRESS": "生成中",
+        "SUCCESS": "完成",
+        "FAILURE": "失败",
+        "UNKNOWN": "未知"
+      },
+      "endpoints": "支持的接口",
+      "noEndpoints": "插件没有声明接口。",
+      "routeTypes": {
+        "submit": "提交",
+        "query": "查询",
+        "dynamic": "提交或查询"
+      },
+      "connection": "连接",
+      "baseUrl": "默认地址",
+      "noBaseUrl": "添加提供商时填写",
+      "authLabel": "鉴权方式",
+      "allowedHosts": "额外主机",
+      "author": "作者",
+      "website": "官网",
+      "fetchModeLabel": "查询方式",
+      "fetchMode": {
+        "per_task": "逐个查询",
+        "batch": "批量查询"
+      },
+      "metrics": {
+        "models": "模型",
+        "running": "进行中",
+        "tasks": "全部任务",
+        "providers": "提供商"
+      },
+      "providers": "使用这个插件的提供商",
+      "addProvider": "添加提供商",
+      "noProviders": "还没有提供商使用这个插件。添加一个提供商、填上密钥后，客户端就能用它的模型生成。",
+      "enableFirst": "启用插件后才能添加提供商。",
+      "providerOn": "已启用",
+      "providerOff": "已停用",
+      "about": "关于插件",
+      "tasksTitle": "最近的任务",
+      "runningCount_one": "{{count}} 个进行中",
+      "runningCount_other": "{{count}} 个进行中",
+      "clear": "清除已完成的任务",
+      "clearTitle": "清除已完成的任务？",
+      "clearConfirm": "已完成和失败的任务会被删除，网关保存的结果文件一起删除；客户端之后查不到它们。进行中的任务不受影响。",
+      "clearFailed": "无法清除任务。",
+      "tasksFailed": "无法读取任务。",
+      "noTasks": "还没有任务",
+      "loadMore": "加载更多"
+    },
+    "developHome": {
+      "commands": "命令行",
+      "builds": "本机项目构建的插件",
+      "noBuilds": "还没有。在插件项目里运行 astrlink plugin dev，插件会出现在这里并随改动重新加载。",
+      "command": {
+        "new": "从模板新建插件项目",
+        "dev": "监听改动、构建并装进本机 AstrLink，实时输出日志",
+        "check": "构建并检查清单、能力和不该用的 API",
+        "test": "按 tests/ 里的用例跑钩子",
+        "build": "构建出 plugin.js 和 client.js"
+      }
+    },
+    "directoryPath": "路径",
+    "search": "搜索插件或模型",
+    "view": {
+      "label": "插件的显示方式",
+      "map": "星图",
+      "list": "列表"
+    },
+    "map": {
+      "label": "插件星图",
+      "hubRunning": "网关运行中",
+      "helpLabel": "关于{{kind}}",
+      "enhancersHelp": "增强插件在网关处理请求的过程中起作用：给会话装载上下文、改写请求和回复、决定走哪个提供商，或者记下发生了什么。请求从这一侧进入网关。行星越大，近 30 天用得越多。",
+      "providersHelp": "供应商插件把网关接到上游：转接对话接口，或者接入视频、图片、音乐生成。在提供商页把它添加成提供商、填上密钥后，客户端才会用上它。行星越大，近 30 天用得越多；绕着它转的卫星是用它的提供商。",
+      "addEnhancer": "从 GitHub 安装",
+      "addProvider": "去插件市场",
+      "providers_one": "{{count}} 个提供商在用",
+      "providers_other": "{{count}} 个提供商在用",
+      "noProviders": "还没有提供商在用"
+    },
+    "star": {
+      "callCount_one": "{{value}} 次",
+      "callCount_other": "{{value}} 次",
+      "taskCount_one": "{{value}} 个任务",
+      "taskCount_other": "{{value}} 个任务",
+      "open": "{{name}}，{{fact}}，打开插件",
+      "more_one": "还有 {{count}} 个",
+      "more_other": "还有 {{count}} 个",
+      "calls": "处理的请求",
+      "providers": "使用它的提供商",
+      "served": "提供商的请求",
+      "tasks": "生成任务",
+      "failedTasks": "失败的任务",
+      "kind": {
+        "enhancer": "增强插件",
+        "provider": "供应商插件"
+      },
+      "state": {
+        "running": "运行中",
+        "failing": "运行中，有失败",
+        "off": "已停用",
+        "failed": "加载失败"
+      },
+      "failed": "失败",
+      "times": "{{value}} 次",
+      "window": "近 30 天：处理 {{requests}} 次请求，生成 {{tasks}} 个任务",
+      "showList": "在列表中查看全部插件"
+    },
+    "requestPlugins": {
+      "title": "请求处理实例",
+      "add": "添加实例",
+      "addTitle": "添加请求处理实例",
+      "editTitle": "编辑请求处理实例",
+      "edit": "编辑",
+      "remove": "删除",
+      "removeTitle": "删除这个实例？",
+      "removeConfirm": "删除「{{name}}」后，它不再检查请求。插件本身不会卸载。",
+      "empty": "还没有实例。添加一个实例后，它才会检查请求。",
+      "enabled": "启用",
+      "name": "名称",
+      "models": "限定模型",
+      "modelsHelp": "每行或用逗号写一个模型名，只对这些模型的请求生效；留空表示所有模型。模型后面的 @ 参数不影响匹配。",
+      "allModels": "所有模型",
+      "config": "配置",
+      "keywords": "每行一个关键词",
+      "invalidJSON": "这里要填 JSON，格式不对。",
+      "loadFailed": "读取请求处理实例失败。",
+      "saveFailed": "保存请求处理实例失败。",
+      "stages": {
+        "ingress": "入口检查",
+        "request": "请求设置",
+        "outbound": "出站改写",
+        "egress": "发送前检查",
+        "reply": "回复检查",
+        "report": "请求上报"
+      },
+      "dryRun": "试运行",
+      "sample": "插件自带的示例",
+      "sampleChoose": "选一个示例",
+      "format": "请求格式",
+      "body": "请求内容（JSON）",
+      "reply": "模型回复",
+      "replyHelp": "填了回复文本时，会按非流式回复跑一次回复检查。",
+      "runDryRun": "试运行",
+      "dryRunFailed": "试运行失败。",
+      "dryRunPassed": "这个请求会放行。",
+      "replyAfter": "客户端会收到的回复",
+      "bodyAfter": "入口检查之后的请求",
+      "formats": {
+        "openai": "Chat Completions",
+        "openai_responses": "Responses",
+        "claude": "Claude Messages",
+        "gemini": "Gemini"
+      }
+    }
+  },
+  "pluginRecords": {
+    "none": "这个请求没有插件记录。",
+    "status": {
+      "ok": "完成",
+      "skipped": "已跳过",
+      "failed": "失败"
+    },
+    "elapsed": "耗时",
+    "skipped": "跳过原因",
+    "skipReasons": {
+      "no_project": "本会话没有项目",
+      "short_query": "问题太短",
+      "no_hits": "没有命中",
+      "server_unavailable": "服务器不可用",
+      "timeout": "超时",
+      "plugin_error": "插件出错",
+      "privacy_blocked": "被隐私策略拦截",
+      "privacy_unavailable": "隐私检查不可用",
+      "search_failed": "有检索失败，没有命中",
+      "paused_all": "所有插件已暂停",
+      "client_disabled": "这个客户端没有启用插件",
+      "session_paused": "本会话已暂停",
+      "over_budget": "超出注入总预算",
+      "invalid_result": "插件返回的结果无效",
+      "no_system_channel": "请求没有系统提示词可放",
+      "no_opening_message": "这一轮没有可放的用户消息",
+      "injection_failed": "注入失败，请求原样发出",
+      "rate_limited": "查得太频繁",
+      "turn_limit": "这一轮已经查满 3 次",
+      "unbound": "会话还没有绑定项目",
+      "invalid_input": "参数不对",
+      "circuit_open": "失败太多，暂时停用",
+      "no_request_gate": "想拒绝请求，但没有授予「拒绝请求」",
+      "no_request_write": "想改请求，但没有授予「修改请求」",
+      "no_request_write_raw": "想替换请求体，但没有授予「改写整个请求体」",
+      "would_exclude_all": "想排除所有提供商，没有生效",
+      "invalid_body": "返回的请求体无效，没有用",
+      "header_denied": "有请求头不许插件设置，已忽略",
+      "stream_stopped": "连续出错，这次流的后续事件不再交给它",
+      "memory_limit": "内存超限",
+      "canceled": "请求已结束",
+      "unavailable": "插件不可用"
+    },
+    "reportSkipReasons": {
+      "rate_limited": "上报得太频繁",
+      "turn_limit": "这一轮已经上报满 2 次"
+    },
+    "injection": "注入",
+    "placement": {
+      "system_append": "系统提示词",
+      "turn_message_prefix": "本轮用户消息开头"
+    },
+    "replayed_one": "沿用之前的 {{count}} 段",
+    "replayed_other": "沿用之前的 {{count}} 段",
+    "dropped_one": "超预算丢弃 {{count}} 条",
+    "dropped_other": "超预算丢弃 {{count}} 条",
+    "network": "网络",
+    "networkCount": "{{requests}} 个请求 · 拒绝 {{denied}} · 失败 {{errors}} · 等待 {{wait}} ms",
+    "injected": "{{placement}} +{{size}}",
+    "observeLine": "写入：{{state}}",
+    "networkShort_one": "{{count}} 个请求 · 等待 {{wait}} ms",
+    "networkShort_other": "{{count}} 个请求 · 等待 {{wait}} ms",
+    "networkDenied_one": "拒绝 {{count}}",
+    "networkDenied_other": "拒绝 {{count}}",
+    "networkErrors_one": "失败 {{count}}",
+    "networkErrors_other": "失败 {{count}}",
+    "quiet": "这一轮没有新内容",
+    "observe": "写入",
+    "observeStates": {
+      "queued": "已排队",
+      "skipped_privacy": "被隐私策略跳过",
+      "skipped_binding_turn": "这一轮绑定项目时已写过",
+      "skipped_continuation": "不是这一轮的第一个调用，不再写",
+      "queue_full": "队列满了，没写",
+      "disabled": "未开启",
+      "awaiting_reply": "等回复确定项目",
+      "held_unbound": "先记下，会话选定项目后补写",
+      "skipped_unbound": "会话没有项目，没写"
+    },
+    "truncated": "超出上限，已截断",
+    "metadata": "元信息",
+    "metadataSources": {
+      "header": "请求头",
+      "session": "会话绑定",
+      "token": "令牌默认值"
+    },
+    "metadataTurn": "{{source}} · 第 {{turn}} 轮",
+    "metadataIgnored": "已忽略 {{key}}={{value}}：{{reason}}",
+    "ignoredReasons": {
+      "invalid_value": "值不符合校验规则",
+      "already_bound": "会话已绑定",
+      "in_code_block": "在代码块里"
+    },
+    "metadataEvents": {
+      "bound": "绑定为",
+      "rebound": "改绑为",
+      "cleared": "已解除"
+    },
+    "trigger": "原因",
+    "triggers": {
+      "start": "首次装载",
+      "bound": "项目刚绑定",
+      "config": "设置或语言变了",
+      "compact": "compact 后刷新",
+      "manual": "手动刷新",
+      "auto": "自动刷新"
+    },
+    "actionDone": "已完成",
+    "actionFailed": "没能完成：{{reason}}",
+    "setBy": {
+      "token_default": "令牌默认值",
+      "model_marker": "模型标记",
+      "user_marker": "用户标记",
+      "user_answer": "回答直接匹配",
+      "workspace": "工作区",
+      "manual": "手动",
+      "header": "请求头"
+    },
+    "metadataNew": "新建项目",
+    "metadataNormalized": "原写法 {{value}}",
+    "actionFailedPlain": "没能完成。",
+    "lookup": "查询",
+    "report": "上报",
+    "lookupInput_one": "参数 {{count}} 字",
+    "lookupInput_other": "参数 {{count}} 字",
+    "lookupResult": "结果 {{size}}",
+    "lookupHits_one": "{{count}} 条结果",
+    "lookupHits_other": "{{count}} 条结果",
+    "commands": "附上查询",
+    "usageOnly": "只附上查询方法 · {{placement}} +{{size}}",
+    "usagePart": "其中查询方法 {{size}}",
+    "effects": {
+      "deny": "拒绝了请求",
+      "tag": "打了标签",
+      "tagged": "标签：{{tags}}",
+      "order": "调整了提供商顺序",
+      "exclude": "排除了部分提供商",
+      "model": "换了模型",
+      "system": "追加了系统提示词",
+      "turn": "在本轮前加了内容",
+      "params": "改了参数",
+      "tools": "改了工具",
+      "body": "替换了请求体",
+      "headers": "加了请求头",
+      "rewrite": "改写了响应",
+      "stream": "改写了流式事件",
+      "observed": "看过了响应",
+      "separator": "、"
+    },
+    "streamEvents": "处理了 {{count}} 条事件",
+    "streamEventsFailed": "处理了 {{count}} 条事件，{{failures}} 条出错后原样放过"
+  },
+  "metadata": {
+    "title": "元信息",
+    "add": "新增属性",
+    "loading": "正在加载属性…",
+    "loadFailed": "无法加载属性。",
+    "saveFailed": "无法保存属性。",
+    "deleteFailed": "无法删除属性。",
+    "empty": "还没有属性",
+    "emptyHint": "新增一个属性给请求打标签，例如请求来自哪个环境。",
+    "helpLabel": "关于元信息",
+    "help": {
+      "what": "属性是请求带上的标签，例如项目或环境。插件可以登记自己的属性，这类属性只能设值。",
+      "order": "每个请求按「请求头 → 会话绑定 → 令牌默认值」取值。",
+      "none": "none 是所有属性的保留值，表示这个请求或会话不纳入。",
+      "headers": "属性的请求头是 X-AstrLink-Meta- 加上键，例如 X-AstrLink-Meta-Env。AstrLink 转发前会去掉它，但不要写进提交到共享仓库的客户端配置：不经过 AstrLink 时，它会原样发给提供商。"
+    },
+    "columns": {
+      "label": "名称",
+      "key": "键",
+      "pattern": "校验规则",
+      "marker": "会话标记",
+      "owner": "定义来自"
+    },
+    "ownerUser": "用户",
+    "ownerPlugin": "插件 {{plugin}}",
+    "ownerMissing": "插件 {{plugin}}（已移除）",
+    "edit": "编辑{{label}}",
+    "delete": "删除{{label}}",
+    "addTitle": "新增属性",
+    "editTitle": "编辑属性",
+    "labelPlaceholder": "环境",
+    "description": "说明",
+    "optional": "选填",
+    "deleteTitle": "删除这个属性？",
+    "deleteDescription": "「{{label}}」和它的所有取值（令牌默认值和会话绑定）都会被删除。",
+    "deleteConfirm": "删除",
+    "problems": {
+      "key": "键须以小写字母开头，后面最多 31 个小写字母、数字或下划线。",
+      "label": "名称为 1 至 32 个字符。",
+      "anchored": "校验规则须以 ^ 开头、$ 结尾，校验整个值。",
+      "pattern": "校验规则不是有效的正则表达式。",
+      "marker": "会话标记须以小写字母开头，后面最多 31 个小写字母、数字或短横线，且不能包含 astrlink。"
+    }
+  },
+  "tokenMetadata": {
+    "open": "{{name}} 的默认元信息",
+    "title": "默认元信息 · {{name}}",
+    "helpLabel": "关于默认元信息",
+    "help": "请求头和会话都没有设值时，用这个令牌的请求取这里的值。适合专给一个项目用的令牌。",
+    "loading": "加载中…",
+    "loadFailed": "无法加载默认元信息。",
+    "saveFailed": "无法保存默认元信息。",
+    "empty": "还没有元信息属性",
+    "emptyHint": "请先在「设置 → 元信息」里新增属性。",
+    "unset": "未设置",
+    "invalidValue": "「{{label}}」的值不符合校验规则。"
+  },
+  "sessionMetadata": {
+    "title": "会话元信息",
+    "helpLabel": "关于会话元信息",
+    "help": "从列表里选已有的值，或选「新项目…」输入新名字；值要符合属性的校验规则。",
+    "unbindHelp": "解除即改存 none：本会话不装载、不写入、不再询问，历史里的旧标记也不会把它认回来。需要时在这里重新选择，或在对话里单独发一行标记。",
+    "none": "不纳入",
+    "notBound": "未绑定",
+    "unboundValue": "未绑定",
+    "unbind": "解除",
+    "unboundNotice": "已解除「{{label}}」",
+    "invalidValue": "「{{label}}」的值不符合校验规则。",
+    "saveFailed": "无法保存会话元信息。",
+    "turn": "{{source}} · 第 {{turn}} 轮",
+    "setBy": {
+      "model_marker": "询问后选定",
+      "user_marker": "用户消息",
+      "manual": "手动设置",
+      "user_answer": "回答直接匹配",
+      "workspace": "工作区"
+    },
+    "workspaceHelp": "这个会话在 {{name}} 目录里。目录第一次选定的值会给之后在这里开始的新会话用。",
+    "neverUsed": "还没用过",
+    "offered": "首轮列出",
+    "newValue": "新项目…",
+    "newValueLabel": "新的{{label}}",
+    "newValuePlaceholder": "小写字母、数字、点、下划线、短横线",
+    "workspaceFollow": "以后 {{name}} 目录里的新会话也用这个（现在是 {{previous}}）",
+    "usage_one": "{{count}} 个会话 · {{ago}}",
+    "usage_other": "{{count}} 个会话 · {{ago}}"
+  },
   "serviceTerminal": {
     "title": "在终端打开「{{name}}」",
     "description": "这个终端里的客户端只用这个 API 提供商。它出错时，请求直接失败。你平时的客户端设置保持原样。",
@@ -4650,5 +5852,42 @@
     "failed": "打不开终端：{{error}}",
     "disabled": "这个 API 提供商已关闭。打开它之前，终端里的请求都会失败。",
     "signedOut": "这个账号还没登录。登录之前，终端里的请求都会失败。"
+  },
+  "sessionMemory": {
+    "tab": "记忆",
+    "loadFailed": "无法读取这个会话的记忆。",
+    "actionFailed": "没能完成操作。",
+    "changeProject": "更改",
+    "project": "项目",
+    "workspace": "工作目录",
+    "noPlugins": "没有启用会装载内容的插件。",
+    "refresh": "刷新记忆",
+    "pause": "暂停本会话",
+    "resume": "恢复",
+    "paused": "已暂停",
+    "refreshPending": "下一个请求重新装载",
+    "helpLabel": "关于会话的记忆",
+    "help": "装载的内容放在系统提示词末尾，会话内不变：compact 之后、手动刷新或打开自动刷新时才换新的。它只在内存里，网关重启后要等下一个请求才会重新算出。",
+    "firstTurn": "从第 {{turn}} 轮开始参与这个会话",
+    "noBlock": "这个会话现在没有装载内容。网关重启后，要等下一个请求才会重新算出。",
+    "records": "记录",
+    "confirm": {
+      "refresh": {
+        "title": "刷新「{{name}}」？",
+        "body": "这个会话的下一个请求会重新装载。系统提示词变了，这个会话的提示词缓存要重写一次。",
+        "action": "刷新"
+      },
+      "pause": {
+        "title": "暂停「{{name}}」在这个会话里的工作？",
+        "body": "暂停后不装载、不附查询方法、不写入，请求原样发出；本会话的查询凭证随即作废，已经在上下文里的内容不会撤回。系统提示词变了，提示词缓存要重写一次。",
+        "action": "暂停"
+      },
+      "resume": {
+        "title": "恢复「{{name}}」？",
+        "body": "恢复后照常装载和写入。系统提示词变了，提示词缓存要重写一次。",
+        "action": "恢复"
+      }
+    },
+    "lookup": "附在系统提示词里的查询方法（凭证已隐去）"
   }
 }

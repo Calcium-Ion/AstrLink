@@ -36,6 +36,7 @@ export function Metric({
   emphasis = false,
   icon,
   detail,
+  trend,
 }: {
   className?: string;
   label: ReactNode;
@@ -50,6 +51,8 @@ export function Metric({
   icon?: ReactNode;
   /** A short line under the value: a share, a split, or a caveat. */
   detail?: ReactNode;
+  /** A small chart of the value over time, such as a Sparkline. */
+  trend?: ReactNode;
 }) {
   return (
     <div
@@ -99,6 +102,7 @@ export function Metric({
           {detail}
         </dd>
       ) : null}
+      {trend ? <dd className="mt-auto min-w-0 pt-1">{trend}</dd> : null}
     </div>
   );
 }

@@ -7,12 +7,14 @@ require (
 	github.com/QuantumNous/new-api/relaykit v0.3.5
 	github.com/andybalholm/brotli v1.2.8
 	github.com/deepteams/webp v1.2.8
+	github.com/evanw/esbuild v0.28.2
 	github.com/expr-lang/expr v1.17.8
 	github.com/gorilla/websocket v1.5.3
 	github.com/klauspost/compress v1.20.3
 	github.com/tidwall/gjson v1.19.0
 	github.com/tidwall/sjson v1.2.5
 	github.com/zalando/go-keyring v0.2.6
+	go.yaml.in/yaml/v3 v3.0.5
 	golang.org/x/crypto v0.57.0
 	golang.org/x/image v0.45.0
 	golang.org/x/net v0.60.0
@@ -28,6 +30,7 @@ replace github.com/QuantumNous/astrlink/convo => ../convo
 require (
 	al.essio.dev/pkg/shellescape v1.5.1 // indirect
 	cloud.google.com/go/compute/metadata v0.3.0 // indirect
+	github.com/MoeForge/moejs v0.1.0-alpha.11
 	github.com/danieljoos/wincred v1.2.2 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/godbus/dbus/v5 v5.1.0 // indirect

@@ -17,6 +17,7 @@ import {
   LoaderCircle,
   Plus,
   RefreshCw,
+  ScanText,
   Shredder as Trash2,
 } from "@/components/icons";
 
@@ -27,6 +28,7 @@ import { FormMessage } from "@/components/FormMessage";
 import { DataField, DataRow } from "@/components/DataRow";
 import { EmptyState } from "@/components/EmptyState";
 import { HelpPopover } from "@/components/HelpPopover";
+import { IconButton } from "@/components/IconButton";
 import { SegmentedControl } from "@/components/SegmentedControl";
 import { UsagePerformanceMeter } from "@/components/UsagePerformanceMeter";
 import { BillingNote } from "./PricingWorkspace";
@@ -63,6 +65,7 @@ import { currentLocale, i18n } from "./i18n";
 import { notify } from "./notify";
 import { PageHeader } from "./PageHeader";
 import { startOfTodayIso, type ServicePerformance } from "./usage-range";
+import { TokenMetadataDialog } from "./TokenMetadataDialog";
 import { ClientSetupDialog } from "./ClientSetupDialog";
 import { TokenClientMarks, clientNames } from "@/components/TokenClientMarks";
 import {
@@ -187,6 +190,9 @@ export function AccessTokenManager({
   const [copyingID, setCopyingID] = useState<string | null>(null);
   const [copiedID, setCopiedID] = useState<string | null>(null);
   const [setupToken, setSetupToken] = useState<AccessTokenSummary | null>(null);
+  const [metadataToken, setMetadataToken] = useState<AccessTokenSummary | null>(
+    null,
+  );
   const {
     configs: clientConfigs,
     available: clientModels,
@@ -216,6 +222,7 @@ export function AccessTokenManager({
     setCopyingID(null);
     setCopiedID(null);
     setSetupToken(null);
+    setMetadataToken(null);
     setError(null);
   }, [coreSessionKey]);
 
@@ -763,6 +770,16 @@ export function AccessTokenManager({
                           {t("clientSetup.title")}
                         </span>
                       </Button>
+                      <IconButton
+                        disabled={!isReady || deletingID !== null}
+                        label={t("tokenMetadata.open", { name: token.name })}
+                        onClick={() => setMetadataToken(token)}
+                        size="icon-sm"
+                        type="button"
+                        variant="ghost"
+                      >
+                        <ScanText aria-hidden="true" />
+                      </IconButton>
                       <Button
                         size="sm"
                         variant="ghost"
@@ -909,6 +926,10 @@ export function AccessTokenManager({
             onChanged={refreshClientConfigs}
           />
         )}
+      <TokenMetadataDialog
+        onClose={() => setMetadataToken(null)}
+        token={metadataToken}
+      />
       <ConfirmDialog
         cancelLabel={t("common.cancel")}
         confirmLabel={

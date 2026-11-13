@@ -19,6 +19,8 @@ mod macos_app;
 mod macos_widget;
 mod model_updates;
 mod os_lock;
+mod plugin_approval;
+mod plugin_client;
 mod preferences;
 mod privacy_warnings;
 mod provider_import;
@@ -1449,6 +1451,199 @@ async fn sync_config(
 }
 
 #[tauri::command]
+async fn plugin_action(
+    app: tauri::AppHandle,
+    action: String,
+    key: Option<String>,
+    name: Option<String>,
+    input: Option<serde_json::Value>,
+    manager: State<'_, Arc<CoreManager>>,
+    approvals: State<'_, plugin_approval::Approvals>,
+) -> Result<serde_json::Value, String> {
+    // A change of settings that grants the plugin more waits for the user in
+    // the confirmation window; the rest is saved at once.
+    if action == "update" {
+        let key = key.ok_or("invalid plugin")?;
+        let input = input.ok_or("plugin settings are required")?;
+        return match manager.update_plugin(&key, input.clone(), false).await? {
+            sidecar::PluginUpdate::Saved(detail) => Ok(detail),
+            sidecar::PluginUpdate::NeedsApproval(approval) => {
+                approvals.hold(
+                    key,
+                    approval,
+                    plugin_approval::PendingChange::Settings(input),
+                );
+                plugin_approval::open(&app, false)?;
+                Err(plugin_approval::pending_error())
+            }
+        };
+    }
+    // Installing from source: an install or a rollback puts new code in
+    // place, which waits for the confirmation window too.
+    if action.starts_with("source_") {
+        let input = input.unwrap_or(serde_json::Value::Null);
+        return match manager
+            .plugin_change(&action, key.as_deref(), input.clone(), false)
+            .await?
+        {
+            sidecar::PluginUpdate::Saved(value) => Ok(value),
+            sidecar::PluginUpdate::NeedsApproval(approval) => {
+                let key = approval["plugin"]
+                    .as_str()
+                    .map(str::to_string)
+                    .or(key)
+                    .ok_or("invalid plugin")?;
+                approvals.hold(
+                    key,
+                    approval,
+                    plugin_approval::PendingChange::Action { action, input },
+                );
+                plugin_approval::open(&app, false)?;
+                Err(plugin_approval::pending_error())
+            }
+        };
+    }
+    manager
+        .plugin_action(&action, key.as_deref(), name.as_deref(), input)
+        .await
+}
+
+/// The change waiting in the plugin confirmation window, for that window
+/// alone.
+#[tauri::command]
+fn plugin_approval_pending(
+    window: tauri::Window,
+    approvals: State<'_, plugin_approval::Approvals>,
+) -> Result<Option<plugin_approval::PendingApproval>, String> {
+    if window.label() != plugin_approval::LABEL {
+        return Err("only the plugin confirmation window reads the change it confirms".into());
+    }
+    Ok(approvals.current())
+}
+
+/// Decides the change waiting for confirmation. Only the confirmation
+/// window may: what runs in the main window cannot confirm for the user.
+/// `kept` are the added capabilities the user left ticked.
+#[tauri::command]
+async fn plugin_approval_decide(
+    app: tauri::AppHandle,
+    window: tauri::Window,
+    id: String,
+    approve: bool,
+    kept: Option<Vec<String>>,
+    manager: State<'_, Arc<CoreManager>>,
+    approvals: State<'_, plugin_approval::Approvals>,
+) -> Result<(), String> {
+    if window.label() != plugin_approval::LABEL {
+        return Err("only the plugin confirmation window confirms a plugin change".into());
+    }
+    let Some(pending) = approvals.take(&id) else {
+        return Err("the change was already decided or replaced".into());
+    };
+    let mut finished = plugin_approval::Finished {
+        id: pending.id.clone(),
+        key: pending.key.clone(),
+        approved: approve,
+        error: None,
+    };
+    if approve {
+        let sent = match &pending.change {
+            plugin_approval::PendingChange::Settings(input) => {
+                let mut input = input.clone();
+                if let Some(kept) = kept {
+                    let added: Vec<String> = pending.approval["added_capabilities"]
+                        .as_array()
+                        .map(|items| {
+                            items
+                                .iter()
+                                .filter_map(|item| item.as_str().map(str::to_string))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    plugin_approval::narrow_grants(&mut input, &added, &kept);
+                }
+                manager.update_plugin(&pending.key, input, true).await
+            }
+            plugin_approval::PendingChange::Action { action, input } => {
+                manager
+                    .plugin_change(action, Some(&pending.key), input.clone(), true)
+                    .await
+            }
+        };
+        match sent {
+            Ok(sidecar::PluginUpdate::Saved(_)) => {}
+            Ok(sidecar::PluginUpdate::NeedsApproval(_)) => {
+                finished.error = Some("Core asked for the confirmation again".into());
+            }
+            Err(error) => finished.error = Some(error),
+        }
+    }
+    plugin_approval::announce(&app, finished);
+    let _ = window.close();
+    Ok(())
+}
+
+/// Brings the plugin confirmation window back, for a change still waiting.
+#[tauri::command]
+fn open_plugin_approval(
+    app: tauri::AppHandle,
+    approvals: State<'_, plugin_approval::Approvals>,
+) -> Result<bool, String> {
+    if approvals.current().is_none() {
+        return Ok(false);
+    }
+    plugin_approval::open(&app, true)?;
+    Ok(true)
+}
+
+#[tauri::command]
+async fn metadata_action(
+    action: String,
+    key: Option<String>,
+    input: Option<serde_json::Value>,
+    manager: State<'_, Arc<CoreManager>>,
+) -> Result<serde_json::Value, String> {
+    manager
+        .metadata_action(&action, key.as_deref(), input)
+        .await
+}
+
+#[tauri::command]
+async fn access_token_metadata(
+    token_id: String,
+    input: Option<serde_json::Value>,
+    manager: State<'_, Arc<CoreManager>>,
+) -> Result<serde_json::Value, String> {
+    manager.access_token_metadata(&token_id, input).await
+}
+
+#[tauri::command]
+async fn session_metadata(
+    session_id: String,
+    key: Option<String>,
+    input: Option<serde_json::Value>,
+    unbind: Option<bool>,
+    manager: State<'_, Arc<CoreManager>>,
+) -> Result<serde_json::Value, String> {
+    manager
+        .session_metadata(&session_id, key.as_deref(), input, unbind.unwrap_or(false))
+        .await
+}
+
+#[tauri::command]
+async fn session_plugins(
+    session_id: String,
+    key: Option<String>,
+    input: Option<serde_json::Value>,
+    refresh: Option<bool>,
+    manager: State<'_, Arc<CoreManager>>,
+) -> Result<serde_json::Value, String> {
+    manager
+        .session_plugins(&session_id, key.as_deref(), input, refresh.unwrap_or(false))
+        .await
+}
+
+#[tauri::command]
 async fn get_service_usage(
     service_id: String,
     fresh: Option<bool>,
@@ -1561,13 +1756,47 @@ fn open_authorization_url(url: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn open_external_url(url: String) -> Result<(), String> {
+fn open_external_url(url: String, manager: State<'_, Arc<CoreManager>>) -> Result<(), String> {
     let parsed = reqwest::Url::parse(&url).map_err(|_| "invalid external URL".to_string())?;
-    if parsed.scheme() != "https" || parsed.host_str().unwrap_or("").is_empty() {
+    // A file the gateway generated, such as an image, opens there too.
+    let external = parsed.scheme() == "https" && !parsed.host_str().unwrap_or("").is_empty();
+    if !external && manager.gateway_file_url(&url).is_none() {
         return Err("external URL must use https".to_string());
     }
     tauri_plugin_opener::open_url(url, None::<&str>)
         .map_err(|error| format!("unable to open URL in the system browser: {error}"))
+}
+
+/// Saves a file the gateway generated, such as an image or a video, where
+/// the user chooses; None when they cancel.
+#[tauri::command]
+async fn save_gateway_file(
+    app: tauri::AppHandle,
+    manager: State<'_, Arc<CoreManager>>,
+    url: String,
+    default_filename: String,
+) -> Result<Option<String>, String> {
+    let Some(source) = manager.gateway_file_url(&url) else {
+        return Err("not a file of the gateway".to_string());
+    };
+    let name: String = default_filename
+        .chars()
+        .filter(|character| !character.is_control() && !r#"/\:*?"<>|"#.contains(*character))
+        .collect();
+    let chosen = tauri::async_runtime::spawn_blocking(move || {
+        app.dialog()
+            .file()
+            .set_file_name(&name)
+            .blocking_save_file()
+    })
+    .await
+    .map_err(|error| error.to_string())?;
+    let Some(file) = chosen else {
+        return Ok(None);
+    };
+    let path = file.into_path().map_err(|error| error.to_string())?;
+    manager.save_gateway_file(source, &path).await?;
+    Ok(Some(path.to_string_lossy().into_owned()))
 }
 
 #[tauri::command]
@@ -2748,6 +2977,8 @@ pub fn run() {
         .manage(Arc::new(client_updates::ClientUpdateManager::default()))
         .manage(Arc::new(model_updates::PrivacyModelUpdates::default()))
         .manage(provider_import::ProviderImports::default())
+        .manage(plugin_approval::Approvals::default())
+        .register_asynchronous_uri_scheme_protocol(plugin_client::SCHEME, plugin_client::handle)
         .manage(local_import::LocalImports::default())
         .invoke_handler(tauri::generate_handler![
             client_updates::local_client_status,
@@ -2804,6 +3035,7 @@ pub fn run() {
             complete_service_authorization,
             open_authorization_url,
             open_external_url,
+            save_gateway_file,
             save_text_file,
             service_terminal::list_terminal_apps,
             service_terminal::pick_terminal_directory,
@@ -2839,6 +3071,14 @@ pub fn run() {
             acknowledge_raw_key,
             set_raw_password,
             builtin_tool_action,
+            plugin_action,
+            plugin_approval_pending,
+            plugin_approval_decide,
+            open_plugin_approval,
+            metadata_action,
+            access_token_metadata,
+            session_metadata,
+            session_plugins,
             get_routing_settings,
             update_routing_settings,
             get_client_identities,
