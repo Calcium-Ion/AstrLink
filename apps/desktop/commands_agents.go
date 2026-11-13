@@ -34,7 +34,7 @@ import (
 func registerAgentCommands(h *host.Host) {
 	api := &control.API{Caller: h}
 	services := control.Services{API: api}
-	links := imports.NewProviderImports(instance.Current(mygo.IsDev()).LinkScheme())
+	links := imports.NewProviderImports(instance.FromEnvironment().LinkScheme())
 	clients := clientupdates.NewManager(
 		func() bool { return preferences(h).UseSystemProxy },
 		func(snapshot clientupdates.ClientSnapshot) {
@@ -56,7 +56,7 @@ func registerAgentCommands(h *host.Host) {
 		ui.ReceiveLinks(func(link string) { receiveProviderLink(h, links, link) })
 		// The development instance shares the user's agent tools with the
 		// other AstrLink. Only that one refreshes them at startup, so a
-		// development build's skills and CLI do not replace its copies.
+		// development instance's skills and CLI do not replace its copies.
 		if !h.Instance().Isolated {
 			go syncAgentInstalls(h)
 		}

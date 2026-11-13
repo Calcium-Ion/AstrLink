@@ -81,3 +81,35 @@ func TestDirectoriesFollowTauriNaming(t *testing.T) {
 		t.Error("windows without APPDATA")
 	}
 }
+
+// Only the process `mygo dev` starts is the isolated instance; a debug build
+// run on its own is the installed one.
+func TestOnlyMygoDevRunsTheIsolatedInstance(t *testing.T) {
+	for _, c := range []struct {
+		env      map[string]string
+		isolated bool
+	}{
+		{map[string]string{"MYGO_ENV": "development"}, true},
+		{map[string]string{}, false},
+		{map[string]string{"MYGO_ENV": ""}, false},
+		{map[string]string{"MYGO_ENV": "production"}, false},
+		{map[string]string{"MYGO_GENERATE": "src/mygo.ts"}, false},
+		{map[string]string{"MYGO_ENV": "development", "MYGO_GENERATE": "src/mygo.ts"}, true},
+	} {
+		getenv := func(name string) string { return c.env[name] }
+		if got := fromEnvironment(getenv); got.Isolated != c.isolated {
+			t.Errorf("%v: Isolated = %v, want %v", c.env, got.Isolated, c.isolated)
+		}
+	}
+}
+
+func TestFromEnvironmentReadsMygoEnv(t *testing.T) {
+	t.Setenv("MYGO_ENV", "development")
+	if !FromEnvironment().Isolated {
+		t.Fatal("MYGO_ENV=development: want the isolated instance")
+	}
+	t.Setenv("MYGO_ENV", "production")
+	if FromEnvironment().Isolated {
+		t.Fatal("MYGO_ENV=production: want the installed instance")
+	}
+}

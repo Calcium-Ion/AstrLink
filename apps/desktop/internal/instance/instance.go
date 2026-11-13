@@ -36,9 +36,20 @@ type Instance struct {
 	Isolated bool
 }
 
-// Current is the instance of a development build (isolated) or a release
-// build.
-func Current(development bool) Instance { return Instance{Isolated: development} }
+// Current is the isolated development instance or the installed one.
+func Current(isolated bool) Instance { return Instance{Isolated: isolated} }
+
+// FromEnvironment is the instance this process is: the isolated one when
+// `mygo dev` started it, which it does with MYGO_ENV=development, and the
+// installed one otherwise, however it was built. `mygo build -debug` makes a
+// development build that still runs as the installed AstrLink, as the Tauri
+// shell's debug builds did; only the bundle `mygo dev` makes declares the
+// isolated link scheme, icon and App Group (mygo.config.ts).
+func FromEnvironment() Instance { return fromEnvironment(os.Getenv) }
+
+func fromEnvironment(getenv func(string) string) Instance {
+	return Current(getenv("MYGO_ENV") == "development")
+}
 
 // Identifier is the identifier the instance's directories are named after.
 func (i Instance) Identifier() string {

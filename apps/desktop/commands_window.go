@@ -25,7 +25,7 @@ func registerWindowCommands(h *host.Host) {
 	// Installers register the scheme; this repairs portable copies. macOS
 	// takes it from the bundle (urlSchemes in mygo.config.ts).
 	if !generating && runtime.GOOS != "darwin" {
-		scheme := instance.Current(mygo.IsDev()).LinkScheme()
+		scheme := instance.FromEnvironment().LinkScheme()
 		if err := mygo.App.RegisterURLScheme(scheme); err != nil {
 			log.Printf("astrlink: unable to register %s:// links: %v", scheme, err)
 		}

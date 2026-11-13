@@ -267,7 +267,7 @@ func (h *Host) appVersion() string { return mygo.App.Version() }
 // Start loads the preferences, starts Core and opens the main window. It
 // runs on the main thread once the app is ready (App.WhenReady).
 func (h *Host) Start() {
-	h.instance = instance.Current(mygo.IsDev())
+	h.instance = instance.FromEnvironment()
 	dirs, err := h.instance.Dirs()
 	if err != nil {
 		log.Printf("astrlink: unable to resolve the app directories: %v", err)
