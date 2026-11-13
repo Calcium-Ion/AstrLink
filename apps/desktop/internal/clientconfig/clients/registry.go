@@ -14,5 +14,7 @@ func init() {
 	cc.Register(
 		Claude,
 		Codex,
+		Gemini,
+		OpenCode,
 	)
 }

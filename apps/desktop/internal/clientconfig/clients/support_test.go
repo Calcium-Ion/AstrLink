@@ -1,13 +1,13 @@
 package clients
 
 import (
-	"encoding/json"
 	"reflect"
 	"slices"
 	"testing"
 
 	"github.com/QuantumNous/astrlink/desktop/internal/agents"
 	cc "github.com/QuantumNous/astrlink/desktop/internal/clientconfig"
+	"github.com/QuantumNous/astrlink/desktop/internal/clientconfig/format"
 )
 
 // What the tests of every client share: a scratch home, a connection to
@@ -107,8 +107,8 @@ func sameRemovals(t *testing.T, got []cc.Removal, want ...cc.Removal) {
 
 func decode(t *testing.T, text string) any {
 	t.Helper()
-	var value any
-	if err := json.Unmarshal([]byte(text), &value); err != nil {
+	value, err := format.DecodeJSON(text)
+	if err != nil {
 		t.Fatalf("%v: %s", err, text)
 	}
 	return value
