@@ -145,9 +145,11 @@ jobs:
         if: inputs.release_tag == ''
         run: |
           New-Item -ItemType Directory -Force -Path package | Out-Null
-          foreach ($pattern in @("astrlink-setup-*.exe", "*.tar.gz", "install.ps1", "SHA256SUMS")) {
+          foreach ($pattern in @("astrlink-setup-*.exe", "*.tar.gz", "install.ps1")) {
             Copy-Item "build/windows-amd64/$pattern" package/ -Force
           }
+          # mygo build writes the checksums of every platform it builds here.
+          Copy-Item build/SHA256SUMS package/ -Force
       - name: Stage and verify release files
         if: inputs.release_tag != ''
         env:

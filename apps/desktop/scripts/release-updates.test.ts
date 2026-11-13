@@ -20,6 +20,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  assetName,
   attachRelease,
   bridgeTargets,
   collectRelease,
@@ -294,6 +295,26 @@ describe("release updates", () => {
     );
     expect(Object.keys(extended.platforms).sort()).toEqual(
       [...bridgeTargets].sort(),
+    );
+  });
+
+  it("ships files under the names GitHub gives them", () => {
+    expect(assetName("astrlink_1.0.0~rc.1_amd64.deb")).toBe(
+      "astrlink_1.0.0.rc.1_amd64.deb",
+    );
+    expect(assetName("astrlink-setup-1.0.0-rc.1-amd64.exe")).toBe(
+      "astrlink-setup-1.0.0-rc.1-amd64.exe",
+    );
+    const keys = releaseKeys(),
+      packages = staged(keys, releaseTargets as Target[]);
+    const deb = path.join(packages, "astrlink_1.0.0_amd64.deb");
+    cpSync(deb, path.join(packages, "astrlink_1.0.0~rc.1_amd64.deb"));
+    rmSync(deb);
+    const release = path.join(directory(), "release");
+    collectRelease(packages, release, "v1.0.0", publicKeys(keys));
+    expect(readdirSync(release)).toContain("astrlink_1.0.0.rc.1_amd64.deb");
+    expect(readFileSync(path.join(release, "SHA256SUMS"), "utf8")).toContain(
+      "  astrlink_1.0.0.rc.1_amd64.deb\n",
     );
   });
 

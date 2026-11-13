@@ -168,7 +168,7 @@ jobs:
             apps/desktop/build/linux-amd64/*.deb
             apps/desktop/build/linux-amd64/*.tar.gz
             apps/desktop/build/linux-amd64/install.sh
-            apps/desktop/build/linux-amd64/SHA256SUMS
+            apps/desktop/build/SHA256SUMS
           if-no-files-found: error
           retention-days: 14
       - name: Upload startup diagnostics

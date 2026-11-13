@@ -442,7 +442,17 @@ function verifiedPlatform(files, target, tag, version, keys) {
       fragment.platform === mygoPlatforms[target],
     `Version or target mismatch: ${target}`,
   );
-  verifyMyGoUpdate(directory, fragment.platform, tag, keys.mygo);
+  // Manifests link their files by the names they were built with.
+  for (const name of verifyMyGoUpdate(
+    directory,
+    fragment.platform,
+    tag,
+    keys.mygo,
+  ))
+    requireValue(
+      assetName(name) === name,
+      `GitHub would rename a MyGo update file: ${name}`,
+    );
   if (!bridgeTargets.includes(target)) {
     requireValue(fragment.file === null, `Unexpected package: ${target}`);
     return null;
@@ -466,7 +476,13 @@ function verifiedPlatform(files, target, tag, version, keys) {
   return { signature: fragment.signature, url: releaseURL(tag, fragment.file) };
 }
 
-/** The release's files by name; the same file built twice ships once. */
+/**
+ * The name GitHub gives an uploaded file: it renames characters such as the
+ * "~" of a pre-release Debian package (astrlink_1.0.0~rc.1_amd64.deb).
+ */
+export const assetName = (name) => name.replace(/[^A-Za-z0-9._-]/g, ".");
+
+/** The release's files by asset name; the same file built twice ships once. */
 function releaseAssets(files) {
   const assets = new Map();
   for (const file of files.filter((file) =>
@@ -474,7 +490,7 @@ function releaseAssets(files) {
       file,
     ),
   )) {
-    const name = path.basename(file);
+    const name = assetName(path.basename(file));
     const listed = assets.get(name);
     requireValue(
       !listed || sha256(readFileSync(listed)) === sha256(readFileSync(file)),

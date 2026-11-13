@@ -106,7 +106,7 @@ export function patchedMygo({ log = console.error } = {}) {
     root,
     process.platform === "win32" ? "mygo.exe" : "mygo",
   );
-  if (existsSync(binary)) return binary;
+  if (statSync(binary, { throwIfNoEntry: false })?.isFile()) return binary;
 
   mkdirSync(path.dirname(root), { recursive: true });
   const work = mkdtempSync(path.join(path.dirname(root), ".build-"));
@@ -138,12 +138,16 @@ export function patchedMygo({ log = console.error } = {}) {
         stdio: ["ignore", "inherit", "inherit"],
       });
     }
-    const built = path.join(work, path.basename(binary));
+    // Beside the source tree, which is named mygo too.
+    const built = path.join(work, "bin", path.basename(binary));
+    mkdirSync(path.dirname(built));
     execFileSync("go", ["build", "-trimpath", "-o", built, "./cmd/mygo"], {
       cwd: tree,
       env,
       stdio: ["ignore", "inherit", "inherit"],
     });
+    // An earlier run may have left something else at the binary's path.
+    rmSync(root, { recursive: true, force: true });
     mkdirSync(root, { recursive: true });
     renameSync(built, binary);
     log(`Built the patched mygo CLI: ${binary}`);
