@@ -199,9 +199,6 @@ jobs:
       - name: Audit classifier worker
         if: ${{ !cancelled() }}
         run: cargo deny --locked --manifest-path apps/classifier-worker/Cargo.toml check advisories bans sources
-      - name: Audit desktop
-        if: ${{ !cancelled() }}
-        run: cargo deny --locked --manifest-path apps/desktop/src-tauri/Cargo.toml check advisories bans sources
 
   # The suite runs in Node with stubbed platforms, so one OS is enough here;
   # the package workflows still run it on every release platform.
@@ -263,16 +260,16 @@ jobs:
         include:
           - name: Linux x64
             os: ubuntu-22.04
-            bundle: deb
+            platform: linux-amd64
           - name: macOS
             os: macos-latest
-            bundle: app
+            platform: darwin-arm64
           - name: macOS x64
             os: macos-15-intel
-            bundle: app
+            platform: darwin-amd64
           - name: Windows x64
             os: windows-latest
-            bundle: nsis
+            platform: windows-amd64
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -281,21 +278,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Install Linux desktop dependencies
-        if: runner.os == 'Linux'
-        run: >-
-          sudo apt-get update && sudo apt-get install -y
-          libwebkit2gtk-4.1-dev
-          libayatana-appindicator3-dev
-          binutils
-          librsvg2-dev
-          patchelf
+      # The desktop module needs the newest Go; Core and the CLI build with it.
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        # Rust unit checks do not build Go sidecars.
-        if: env.ASTRLINK_CI_BUILD_ARTIFACTS == 'true'
         with:
-          go-version-file: core/go.mod
+          go-version-file: apps/desktop/go.mod
           cache-dependency-path: |
+            apps/desktop/go.mod
+            apps/desktop/go.sum
             core/go.mod
             core/go.sum
             convo/go.mod
@@ -331,26 +320,34 @@ jobs:
           # a job that failed before tests would pin a cache without them.
           save-if: ${{ github.ref == 'refs/heads/main' }}
           workspaces: |
-            apps/desktop/src-tauri
             apps/privacy-worker
             apps/classifier-worker
           cache-directories: apps/privacy-worker/target/onnxruntime
+      - name: Check desktop Go formatting
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [[ -n "$unformatted" ]]; then
+            echo "gofmt would change:" >&2
+            echo "$unformatted" >&2
+            exit 1
+          fi
+      - name: Vet desktop host
+        run: go vet ./...
+      - name: Test desktop host
+        run: go test ./...
+      - name: Test macOS widget model
+        if: runner.os == 'macOS'
+        run: bun scripts/build-macos-widget.mjs --test
       - name: Install frontend dependencies
         # The runtime preparation script uses only built-in modules.
         if: env.ASTRLINK_CI_BUILD_ARTIFACTS == 'true'
         env:
           BUN_INSTALL_CACHE_DIR: ${{ runner.temp }}/bun-cache
         run: bun install --frozen-lockfile
-      - name: Build frontend
-        if: env.ASTRLINK_CI_BUILD_ARTIFACTS == 'true'
-        run: bun run build
       - name: Prepare ONNX Runtime for worker tests
         run: bun scripts/build-sidecar.mjs --test-runtime-only
-      - name: Reject model artifacts from frontend build
-        if: env.ASTRLINK_CI_BUILD_ARTIFACTS == 'true'
-        run: >-
-          bun ../../scripts/check-no-production-models.mjs --packaged
-          dist
       - name: Check privacy worker formatting
         run: cargo fmt --manifest-path ../privacy-worker/Cargo.toml --all -- --check
       - name: Lint privacy worker
@@ -367,17 +364,6 @@ jobs:
         run: cargo test --locked --manifest-path ../classifier-worker/Cargo.toml --all-targets
         env:
           ASTRLINK_CI_SYNTHETIC_MODELS_ONLY: "1"
-      - name: Check Rust formatting
-        run: cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
-      - name: Lint Rust
-        # Unit checks do not launch sidecars or inspect packaged resources.
-        env:
-          TAURI_CONFIG: '{"bundle":{"externalBin":[],"resources":[],"macOS":{"frameworks":[]}}}'
-        run: cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
-      - name: Test Rust lifecycle
-        env:
-          TAURI_CONFIG: '{"bundle":{"externalBin":[],"resources":[],"macOS":{"frameworks":[]}}}'
-        run: cargo test --locked --manifest-path src-tauri/Cargo.toml --all-targets
       - name: Stage Core and worker sidecars
         if: env.ASTRLINK_CI_BUILD_ARTIFACTS == 'true'
         run: bun run sidecar:build
@@ -385,22 +371,31 @@ jobs:
         if: env.ASTRLINK_CI_BUILD_ARTIFACTS == 'true'
         run: >-
           bun ../../scripts/check-no-production-models.mjs --packaged
-          src-tauri/binaries
-      - name: Build Tauri bundle
+          resources/${{ matrix.platform }}
+      - name: Build the desktop widget
+        if: env.ASTRLINK_CI_BUILD_ARTIFACTS == 'true' && runner.os == 'macOS'
+        run: bun scripts/build-macos-widget.mjs
+      - name: Build MyGo package
         if: env.ASTRLINK_CI_BUILD_ARTIFACTS == 'true'
-        run: bun run tauri build --ci --bundles ${{ matrix.bundle }} --config '{"build":{"beforeBuildCommand":null}}' --config src-tauri/binaries/tauri.onnxruntime.conf.json
+        # Builds the frontend first (buildCommand in mygo.config.ts).
+        run: bun scripts/mygo.mjs build
+      - name: Reject model artifacts from frontend build
+        if: env.ASTRLINK_CI_BUILD_ARTIFACTS == 'true'
+        run: >-
+          bun ../../scripts/check-no-production-models.mjs --packaged
+          dist
       - name: Inspect packaged macOS application contents
         if: env.ASTRLINK_CI_BUILD_ARTIFACTS == 'true' && runner.os == 'macOS'
         run: >-
           bun ../../scripts/check-no-production-models.mjs --packaged
-          src-tauri/target/release/bundle/macos
+          build/${{ matrix.platform }}/AstrLink.app
       - name: Extract and inspect packaged Linux application contents
         if: env.ASTRLINK_CI_BUILD_ARTIFACTS == 'true' && runner.os == 'Linux'
         shell: bash
         run: |
           bundle_scan_dir="$RUNNER_TEMP/astrlink-bundle-scan"
           mkdir -p "$bundle_scan_dir"
-          for archive in src-tauri/target/release/bundle/deb/*.deb; do
+          for archive in build/linux-amd64/*.deb; do
             dpkg-deb -x "$archive" "$bundle_scan_dir"
             dependencies="$(dpkg-deb --field "$archive" Depends)"
             for dependency in 'libc6 (>= 2.36)' 'libstdc++6 (>= 12)' 'libgcc-s1'; do
@@ -412,19 +407,17 @@ jobs:
           done
           bun ../../scripts/check-no-production-models.mjs --packaged "$bundle_scan_dir"
 
-          mapfile -t runtimes < <(
-            find "$bundle_scan_dir" -type f \
-              -path "*/onnxruntime/libonnxruntime.so.1.23.2" -print
-          )
-          if [[ "${#runtimes[@]}" -ne 1 ]]; then
-            echo "Expected exactly one packaged Linux ONNX Runtime, found ${#runtimes[@]}." >&2
+          app="$bundle_scan_dir/opt/astrlink"
+          runtime="$app/onnxruntime/libonnxruntime.so.1.23.2"
+          if [[ ! -f "$runtime" ]]; then
+            echo "Missing packaged Linux ONNX Runtime: $runtime" >&2
             exit 1
           fi
 
-          worker="$bundle_scan_dir/usr/bin/astrlink-privacy-worker"
-          classifier="$bundle_scan_dir/usr/bin/astrlink-classifier-worker"
-          core="$bundle_scan_dir/usr/bin/astrlink-core"
-          desktop="$bundle_scan_dir/usr/bin/astrlink-desktop"
+          worker="$app/bin/astrlink-privacy-worker"
+          classifier="$app/bin/astrlink-classifier-worker"
+          core="$app/bin/astrlink-core"
+          desktop="$app/astrlink"
           for executable in "$worker" "$classifier" "$core" "$desktop"; do
             if [[ ! -x "$executable" ]]; then
               echo "Missing packaged executable: $executable" >&2
@@ -441,7 +434,7 @@ jobs:
             exit 1
           fi
 
-          for executable in "$worker" "$classifier" "$core" "$desktop" "${runtimes[0]}"; do
+          for executable in "$worker" "$classifier" "$core" "$desktop" "$runtime"; do
             if ldd "$executable" 2>&1 | grep -F 'not found'; then
               echo "$executable has unresolved shared libraries." >&2
               exit 1
@@ -476,7 +469,7 @@ jobs:
         run: |
           $bundleScanDir = Join-Path $env:RUNNER_TEMP "astrlink-bundle-scan"
           New-Item -ItemType Directory -Force -Path $bundleScanDir | Out-Null
-          Get-ChildItem "src-tauri/target/release/bundle/nsis/*.exe" | ForEach-Object {
+          Get-ChildItem "build/windows-amd64/astrlink-setup-*.exe" | ForEach-Object {
             & 7z x $_.FullName "-o$bundleScanDir" -y | Out-Null
             if ($LASTEXITCODE -ne 0) {
               throw "Unable to inspect $($_.FullName)"
@@ -507,13 +500,14 @@ jobs:
           }
       - name: Archive macOS app with executable modes
         if: env.ASTRLINK_CI_BUILD_ARTIFACTS == 'true' && runner.os == 'macOS'
-        run: tar -czf astrlink-desktop-${{ runner.arch }}.tar.gz -C src-tauri/target/release/bundle/macos AstrLink.app
+        run: tar -czf astrlink-desktop-${{ runner.arch }}.tar.gz -C build/${{ matrix.platform }} AstrLink.app
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: env.ASTRLINK_CI_BUILD_ARTIFACTS == 'true'
         with:
           name: astrlink-desktop-${{ runner.os }}-${{ runner.arch }}
           path: |
             apps/desktop/astrlink-desktop-*.tar.gz
-            apps/desktop/src-tauri/target/release/bundle/deb/*.deb
-            apps/desktop/src-tauri/target/release/bundle/nsis/*.exe
+            apps/desktop/build/linux-amd64/*.deb
+            apps/desktop/build/linux-amd64/*.tar.gz
+            apps/desktop/build/windows-amd64/astrlink-setup-*.exe
           if-no-files-found: error
