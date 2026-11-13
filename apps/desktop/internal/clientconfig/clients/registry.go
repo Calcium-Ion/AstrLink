@@ -21,5 +21,6 @@ func init() {
 		WorkBuddy,
 		CodeBuddy,
 		DeepSeekHarness,
+		QwenCode,
 	)
 }
