@@ -471,7 +471,7 @@ describe("ClientSetupDialog", () => {
     await settle();
   };
 
-  it("lists every client and checks what this token configures or nobody set up", async () => {
+  it("lists every client and checks only what this token configures", async () => {
     bridgeMocks.getClientConfigStatus.mockResolvedValue(
       overview({
         claude: ours("configured", { model: "claude-sonnet-5" }),
@@ -498,14 +498,17 @@ describe("ClientSetupDialog", () => {
     ).toEqual(["claude", "codex", "gemini", "opencode", "pi"]);
     expect(checked("Claude Code")).toBe("true");
     expect(checked("Codex")).toBe("true");
-    expect(checked("Gemini CLI")).toBe("true");
-    // An edited config and another token keep what they have until the user
-    // checks.
+    // A client nobody set up, an edited config and another token keep what
+    // they have until the user checks.
+    expect(checked("Gemini CLI")).toBe("false");
     expect(checked("OpenCode")).toBe("false");
     expect(checked("Pi")).toBe("false");
     expect(row("pi").textContent).toContain("正在使用「家里」");
     expect(row("pi").textContent).toContain("其他令牌");
     expect(row("codex").textContent).toContain("端口待更新");
+    expect(row("gemini").textContent).toContain("未配置");
+    expect(row("gemini").textContent).not.toContain("将写入");
+    await click(box("Gemini CLI"));
     expect(row("gemini").textContent).toContain(
       "未配置 · 将写入 claude-sonnet-5",
     );
@@ -537,6 +540,7 @@ describe("ClientSetupDialog", () => {
     );
     await renderDialog();
 
+    await click(button("全选"));
     await click(button("写入 4 个客户端"));
     expect(bridgeMocks.applyClientConfigs).toHaveBeenCalledOnce();
     const call = bridgeMocks.applyClientConfigs.mock.calls[0][0];
@@ -660,7 +664,7 @@ describe("ClientSetupDialog", () => {
       ],
     });
     await renderDialog();
-    await click(box("Pi"));
+    await click(button("全选"));
     await click(button("写入 3 个客户端"));
 
     // Gemini's keys are someone else's; Pi only moves from another token
@@ -762,6 +766,7 @@ describe("ClientSetupDialog", () => {
       }),
     );
     await renderDialog();
+    await click(box("Claude Code"));
     await click(button("写入 1 个客户端"));
 
     const prompt = confirmation()!;
@@ -876,6 +881,7 @@ describe("ClientSetupDialog", () => {
       ],
     });
     await renderDialog();
+    await click(button("全选"));
     await click(button("写入 6 个客户端"));
     await click(button("取消", confirmation()!));
     await settleClosedLayer();
@@ -953,7 +959,7 @@ describe("ClientSetupDialog", () => {
     // Pi already uses the picked token, so it is checked and kept.
     expect(checked("Pi")).toBe("true");
     expect(row("pi").textContent).toContain("已配置");
-    await click(button("写入 6 个客户端"));
+    await click(button("写入 1 个客户端"));
     expect(bridgeMocks.applyClientConfigs.mock.lastCall?.[0].tokenId).toBe(
       otherToken.id,
     );
@@ -1016,6 +1022,7 @@ describe("ClientSetupDialog", () => {
     );
     expect(bridgeMocks.updateService).not.toHaveBeenCalled();
 
+    await click(button("全选"));
     await click(button("写入 2 个客户端"));
     // One patch adds both clients' entries and keeps the concurrent edit.
     expect(bridgeMocks.updateService).toHaveBeenCalledOnce();
@@ -1053,6 +1060,7 @@ describe("ClientSetupDialog", () => {
     });
     bridgeMocks.updateService.mockRejectedValue(new Error("ETag conflict"));
     await renderDialog({ conversionEngine: engine });
+    await click(button("全选"));
     await click(button("写入 6 个客户端"));
     expect(dialog().textContent).toContain("无法为 Chat provider 开启");
     expect(dialog().textContent).toContain("ETag conflict");
@@ -1061,6 +1069,7 @@ describe("ClientSetupDialog", () => {
 
   it("writes the models a list client switches between", async () => {
     await renderDialog({ conversionEngine: engine });
+    await click(button("全选"));
     await open("opencode");
     const list = pane().querySelector<HTMLElement>(
       '[data-slot="model-checklist"]',
@@ -1157,6 +1166,7 @@ describe("ClientSetupDialog", () => {
     });
     await renderDialog();
     await open("gemini");
+    await click(box("Gemini CLI"));
     await click(button("改动"));
     expect(bridgeMocks.previewClientConfigChanges).toHaveBeenCalledWith({
       tokenId: token.id,
@@ -1200,7 +1210,7 @@ describe("ClientSetupDialog", () => {
       document.querySelector<HTMLElement>("#client-setup-reasoningEffort")!,
       "high",
     );
-    await click(button("写入 6 个客户端"));
+    await click(button("写入 1 个客户端"));
     expect(lastItems().find((item) => item.client === "codex")?.models).toEqual(
       {
         model: "gpt-5.6",
@@ -1217,6 +1227,7 @@ describe("ClientSetupDialog", () => {
     );
     await renderDialog();
     await open("pi");
+    await click(box("Pi"));
     const field = (key: string) =>
       document.querySelector<HTMLInputElement>(`#client-setup-${key}`)!;
     expect(field("contextWindow").placeholder).toContain("128000");
@@ -1227,7 +1238,7 @@ describe("ClientSetupDialog", () => {
 
     await setInput("#client-setup-contextWindow", "400000");
     await setInput("#client-setup-maxTokens", "");
-    await click(button("写入 6 个客户端"));
+    await click(button("写入 1 个客户端"));
     expect(
       lastItems().find((item) => item.client === "pi")?.models,
     ).toMatchObject({ model: "gpt-5.6", contextWindow: 400000 });
@@ -1238,7 +1249,7 @@ describe("ClientSetupDialog", () => {
     // A number Pi cannot take blocks the write.
     await setInput("#client-setup-maxTokens", "12k");
     expect(pane().textContent).toContain("1 到 100000000");
-    expect(button("写入 6 个客户端").disabled).toBe(true);
+    expect(button("写入 1 个客户端").disabled).toBe(true);
     expect(dialog().textContent).toContain("先填好 Pi 的设置");
   });
 
@@ -1307,6 +1318,9 @@ describe("ClientSetupDialog", () => {
       item.getAttribute("data-place"),
     );
     expect(places).toEqual(["codex:", `codex:${wsl}`]);
+    expect(checked(`Codex（WSL · ${wsl}）`)).toBe("false");
+    expect(checked("Codex")).toBe("false");
+    await click(box(`Codex（WSL · ${wsl}）`));
     expect(checked(`Codex（WSL · ${wsl}）`)).toBe("true");
     expect(checked("Codex")).toBe("true");
     expect(dialog().textContent).toContain("Debian 未运行");
@@ -1359,6 +1373,7 @@ describe("ClientSetupDialog", () => {
     await renderDialog();
     // The client CC Switch wrote reads like any other config.
     expect(pane().textContent).not.toContain("CC Switch");
+    await click(box("Claude Code"));
     await click(button("写入 1 个客户端"));
     expect(confirmation()?.textContent).toContain(
       "在 CC Switch 中切换供应商会覆盖这里写入的配置。",
@@ -1468,8 +1483,8 @@ describe("ClientSetupDialog", () => {
       }
       expect(railRows()).toEqual(["claude", "codex", "gemini"]);
 
-      // 全不选 and 全选 reach only the installed clients.
-      await click(button("全不选"));
+      // Nothing starts checked; 全选 and 全不选 reach only the installed
+      // clients.
       expect(checked("Claude Code")).toBe("false");
       expect(checked("Gemini CLI")).toBe("false");
       expect(dialog().textContent).toContain("勾选要写入的客户端");
@@ -1481,6 +1496,8 @@ describe("ClientSetupDialog", () => {
       expect(box("Pi").disabled).toBe(true);
       // Only clients AstrLink writes count toward the write.
       expect(button("写入 3 个客户端").disabled).toBe(false);
+      await click(button("全不选"));
+      expect(checked("Codex")).toBe("false");
     });
 
     it("searches every group and opens the groups with matches", async () => {
@@ -1506,10 +1523,10 @@ describe("ClientSetupDialog", () => {
 
       // 全选 reaches only the installed clients the search shows.
       await search("codex");
-      await click(button("全不选"));
+      await click(button("全选"));
       await search("");
-      expect(checked("Codex")).toBe("false");
-      expect(checked("Claude Code")).toBe("true");
+      expect(checked("Codex")).toBe("true");
+      expect(checked("Claude Code")).toBe("false");
 
       await search("zzz");
       expect(railRows()).toEqual([]);
@@ -1545,6 +1562,7 @@ describe("ClientSetupDialog", () => {
       await renderDialog();
 
       expect(railRows()).toEqual(["workbuddy"]);
+      await click(box("WorkBuddy"));
       expect(row("workbuddy").textContent).toContain("未配置 · 国内版");
       const text = pane().textContent;
       expect(text).toContain("写入位置");
@@ -1599,6 +1617,7 @@ describe("ClientSetupDialog", () => {
         ],
       });
       await renderDialog();
+      await click(box("WorkBuddy"));
       expect(row("workbuddy").textContent).toContain("未配置 · 国内版、国际版");
 
       await click(button("改动"));
@@ -1628,6 +1647,7 @@ describe("ClientSetupDialog", () => {
         .spyOn(navigator.clipboard, "writeText")
         .mockResolvedValue(undefined);
       await renderDialog();
+      await click(button("全选"));
 
       await click(groupHeader("在客户端里填写"));
       expect(row("trae").querySelector('[role="checkbox"]')).toBeNull();
@@ -1675,6 +1695,7 @@ describe("ClientSetupDialog", () => {
       );
       bridgeMocks.openClientImportLink.mockResolvedValue(undefined);
       await renderDialog();
+      await click(button("全选"));
 
       expect(
         row("cherry_studio").querySelector('[role="checkbox"]'),
