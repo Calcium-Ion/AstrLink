@@ -35,5 +35,6 @@ func init() {
 		MistralVibe,
 		CodeWhale,
 		Reasonix,
+		ZCode,
 	)
 }
