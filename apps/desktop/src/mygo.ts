@@ -7,6 +7,76 @@ import { call, event } from "mygo-runtime";
 /** Action is what an item does to its place. */
 export type Action = "write" | "remove";
 
+/**
+ * AgentCLIAccessKind is how a host lets agents run the AstrLink CLI without
+ * asking every time.
+ */
+export type AgentCLIAccessKind = "allow_rules" | "exec_policy" | "prompt" | "unrestricted";
+
+/**
+ * AgentGuardKind is how a host can be kept away from AstrLink's local files.
+ * Only Claude Code has an enforced mechanism; the others rely on prompt
+ * text.
+ */
+export type AgentGuardKind = "deny_rules" | "instructions" | "skill_only";
+
+/** AgentInstallStatus is what is installed for every tool. */
+export interface AgentInstallStatus {
+  cli_binary: boolean;
+  tools: AgentToolStatus[];
+  shared_paths: string[];
+  /**
+   * WSLUnchecked names WSL distributions whose tools went unchecked
+   * because they were not running; checking never starts one.
+   */
+  wsl_unchecked: string[];
+}
+
+/** AgentSkillID names a skill AstrLink installs. */
+export type AgentSkillID = "astrlink-debug" | "redaction-placeholders";
+
+/** AgentSkillStatus is one skill for one tool. */
+export interface AgentSkillStatus {
+  id: AgentSkillID;
+  installed: boolean;
+  /**
+   * PreviewPaths is what installing this skill for the tool writes, apart
+   * from the status-wide shared paths.
+   */
+  preview_paths: string[];
+}
+
+/** AgentToolID names an agent tool skills install into. */
+export type AgentToolID = "cursor" | "claude" | "codex" | "grok" | "pi" | "dsh";
+
+/**
+ * AgentToolStatus is one tool in one home. CLI access and guards come with
+ * `astrlink-debug`; a skill-only install leaves them untouched.
+ */
+export interface AgentToolStatus {
+  id: AgentToolID;
+  /**
+   * WSL is the WSL distribution the tool runs in; nil for the desktop
+   * user's.
+   */
+  wsl: string | null;
+  detected: boolean;
+  skills: AgentSkillStatus[];
+  cli_access: AgentCLIAccessKind;
+  cli_access_installed: boolean;
+  guard: AgentGuardKind;
+  guard_installed: boolean;
+}
+
+/**
+ * AgentToolTarget is a tool selected for install, in the desktop user's
+ * home or in a WSL distribution's.
+ */
+export interface AgentToolTarget {
+  id: AgentToolID;
+  wsl?: string;
+}
+
 /** AppSnapshot is the app's version with Core's state. */
 export interface AppSnapshot {
   app_version: string;
@@ -52,6 +122,24 @@ export interface AuthorizationStart {
   session: unknown;
 }
 
+/**
+ * Candidate is a found provider as the dialog shows it; it never carries a
+ * key.
+ */
+export interface Candidate {
+  id: string;
+  name: string | null;
+  address: string;
+  /**
+   * Protocols are the formats the tools speak to it, as Core protocol
+   * ids.
+   */
+  protocols: string[];
+  models: string[];
+  key: unknown;
+  sources: SourceRef[];
+}
+
 export interface CapabilitiesResponse {
   protocol_contract_version: string;
   protocols: ProtocolDescriptor[];
@@ -87,6 +175,9 @@ export interface ClientCatalog {
   clients: CatalogEntry[];
 }
 
+/** ClientID names a client. */
+export type ClientID = "codex" | "claude" | "cursor" | "pi";
+
 /**
  * ClientOverview is client configs across the desktop user's home and WSL
  * homes.
@@ -102,6 +193,19 @@ export interface ClientOverview {
   wsl_localhost: boolean;
   /** Installed are the link clients installed on this computer. */
   installed: string[];
+}
+
+/** ClientSnapshot is every client's status, published on each change. */
+export interface ClientSnapshot {
+  revision: number;
+  busy: boolean;
+  /** Clients are this computer's, then those found in WSL distributions. */
+  clients: ClientupdatesClientStatus[];
+  /**
+   * WSLUnchecked are distributions left unchecked because they were not
+   * running.
+   */
+  wsl_unchecked: string[];
 }
 
 /** ClientStatus is one place's config. */
@@ -138,6 +242,39 @@ export interface ClientStatus {
    */
   paste_since_unix: number | null;
   paste_into: string[];
+}
+
+/**
+ * ClientTarget is a client to update, on this computer or in a WSL
+ * distribution.
+ */
+export interface ClientTarget {
+  id: ClientID;
+  /**
+   * WSL is the distribution the client lives in; null for this
+   * computer.
+   */
+  wsl: string | null;
+}
+
+/** ClientStatus is what the About page shows for one client. */
+export interface ClientupdatesClientStatus {
+  id: ClientID;
+  /**
+   * WSL is the distribution the client lives in; null for this
+   * computer.
+   */
+  wsl: string | null;
+  phase: string;
+  current_version: string | null;
+  latest_version: string | null;
+  install_method: string;
+  executable: string | null;
+  other_installations: string[];
+  can_update: boolean;
+  checked_at: string | null;
+  error_code: string | null;
+  error_detail: string | null;
 }
 
 /** CloseBehavior is what closing the main window does. */
@@ -263,6 +400,21 @@ export interface InspectorState {
   wide: boolean;
 }
 
+/** InstallReceipt is what the latest install wrote. */
+export interface InstallReceipt {
+  version: number;
+  skills: ReceiptSkill[];
+  installed_at_unix: number;
+  /** CLIBinary is nil when no selected skill drives the CLI. */
+  cli_binary: string | null;
+  files: string[];
+  /**
+   * WSL lists the WSL distributions holding an install, so uninstall and
+   * startup sync reach them. Only the desktop user's receipt lists them.
+   */
+  wsl: string[];
+}
+
 /** Kind is how AstrLink reaches a client. */
 export type Kind = "file" | "paste" | "link" | "guide" | "unsupported";
 
@@ -322,6 +474,12 @@ export interface Models {
  * classifies it.
  */
 export type ObserverReadLevel = "metadata" | "shareable" | "raw";
+
+/** Opened is a new import's session and the sources it may read. */
+export interface Opened {
+  session: string;
+  sources: SourceView[];
+}
 
 /** Phase is where Core is in its lifecycle. */
 export type Phase = "stopped" | "spawning" | "waiting_for_ready" | "handshaking" | "ready" | "stopping" | "exited" | "error";
@@ -501,6 +659,12 @@ export interface RawKeyEvent {
  */
 export type RawKeyEventKind = "raw_password_set" | "raw_password_changed" | "raw_key_reset";
 
+/** ReadResult is what a read offers and what it skipped. */
+export interface ReadResult {
+  candidates: Candidate[];
+  skipped: Skipped[];
+}
+
 /**
  * ReadyEvent is the single machine-readable line emitted to stdout after both
  * listeners are bound. Operational logs belong on stderr.
@@ -519,6 +683,12 @@ export interface ReadyEvent {
    */
   client_inference_url: string;
   control_url: string;
+}
+
+/** ReceiptSkill is one skill an install wrote. */
+export interface ReceiptSkill {
+  id: AgentSkillID;
+  version: string;
 }
 
 /** ReleaseInfo is the release an update installs. */
@@ -558,6 +728,17 @@ export interface ServiceRecord {
   etag: string;
 }
 
+/** ServiceTerminalRequest is the terminal the service page asks for. */
+export interface ServiceTerminalRequest {
+  service_id: string;
+  service_name: string;
+  client: TerminalClient;
+  directory: string;
+  model: string | null;
+  terminal: TerminalApp;
+  inference_url: string;
+}
+
 /**
  * SettingsSnapshot is what the settings page shows: the preferences, the
  * login item as the system reports it, the data backups and where Core's
@@ -578,11 +759,40 @@ export interface Share {
   percent: number;
 }
 
+/** SkipReason is why a read does not offer something it found. */
+export type SkipReason = "chatgpt_login" | "astrlink" | "missing" | "unreadable" | "invalid" | "invalid_address" | "unsupported" | "sign_in";
+
+/** Skipped is something a read found but does not offer, and why. */
+export interface Skipped {
+  reason: SkipReason;
+  tool: Tool;
+  wsl: string | null;
+  name: string | null;
+  path: string | null;
+  detail: string | null;
+}
+
 /** SnippetFile is one file of a manual setup. */
 export interface SnippetFile {
   /** Path is where the file goes, from the home. */
   path: string;
   contents: string;
+}
+
+/** SourceRef is the tool and home an entry was read from. */
+export interface SourceRef {
+  tool: Tool;
+  wsl: string | null;
+}
+
+/** SourceView is one tool in one home, as the consent step lists it. */
+export interface SourceView {
+  id: string;
+  tool: Tool;
+  /** WSL names the WSL distribution, null for the desktop user's home. */
+  wsl: string | null;
+  /** Paths are the files a read opens, with the home shown as `~`. */
+  paths: string[];
 }
 
 /** State is a place's config as the dialog shows it. */
@@ -595,8 +805,23 @@ export interface SubscriptionDigest {
   windows: WindowDigest[];
 }
 
+/** TerminalApp is a terminal app a session can open in. */
+export type TerminalApp = "terminal" | "iterm2" | "warp" | "ghostty" | "wezterm" | "kitty" | "alacritty" | "gnome_terminal" | "konsole" | "xfce4_terminal" | "x_terminal_emulator" | "windows_terminal" | "powershell";
+
+/** TerminalChoice is a terminal app the dialog offers. */
+export interface TerminalChoice {
+  id: TerminalApp;
+  name: string;
+}
+
+/** TerminalClient is the client a terminal session starts. */
+export type TerminalClient = "claude" | "codex";
+
 /** ThemePreference is the theme the user chose. */
 export type ThemePreference = "system" | "light" | "dark";
+
+/** Tool is an agent tool whose config files the import reads. */
+export type Tool = "claude" | "codex" | "pi";
 
 /**
  * TrayAction is an action the popover asks the host to perform:
@@ -1319,7 +1544,8 @@ export const Raw = {
   },
   /**
    * EnrollRawBiometric sets up Touch ID for raw content with the raw
-   * password. Touch ID is not offered yet, so it reports it unavailable.
+   * password, for a password set before Touch ID was offered or after it was
+   * turned off. Refusals come back as outcomes, so the dialog can ask again.
    */
   enrollRawBiometric(password: string): Promise<ProofOutcome> {
     return call("Raw.EnrollRawBiometric", password);
@@ -1348,7 +1574,8 @@ export const Raw = {
   },
   /**
    * RemoveRawBiometric turns Touch ID off for raw content: Core drops the
-   * envelope. The raw password keeps working.
+   * envelope and the keychain item goes with it. The raw password keeps
+   * working.
    */
   removeRawBiometric(): Promise<unknown> {
     return call("Raw.RemoveRawBiometric");
@@ -1360,7 +1587,8 @@ export const Raw = {
   /**
    * SetRawPassword sets, changes, or resets the raw password. password is the
    * new one; proof opens the existing key where Core needs it. Core takes
-   * any Touch ID envelope out with the old password.
+   * any Touch ID envelope out with the old password; where Touch ID is
+   * available the new password sets it up again at once.
    */
   setRawPassword(action: string, password: string | null, arg: ProofArg | null): Promise<ProofOutcome> {
     return call("Raw.SetRawPassword", action, password, arg);
@@ -1581,6 +1809,133 @@ export const Clients = {
    */
   removeClientConfig(client: unknown, target: string | null, distribution: string | null): Promise<void> {
     return call("Clients.RemoveClientConfig", client, target, distribution);
+  },
+} as const;
+
+/**
+ * AgentTools installs AstrLink's skills, CLI access and guards for the
+ * agent tools in the desktop user's home and in WSL homes.
+ */
+export const AgentTools = {
+  /**
+   * AgentDebugStatus is what is installed for every tool. Stopped WSL
+   * distributions are listed unchecked; checking never starts one.
+   */
+  agentDebugStatus(): Promise<AgentInstallStatus> {
+    return call("AgentTools.AgentDebugStatus");
+  },
+  /** InstallAgentDebug installs skillIDs for tools. */
+  installAgentDebug(skillIDs: AgentSkillID[], tools: AgentToolTarget[]): Promise<InstallReceipt> {
+    return call("AgentTools.InstallAgentDebug", skillIDs, tools);
+  },
+  /**
+   * UninstallAgentDebug removes every install. It also reaches recorded WSL
+   * distributions that are stopped, starting them, so no skill is left
+   * pointing at the removed CLI.
+   */
+  uninstallAgentDebug(): Promise<void> {
+    return call("AgentTools.UninstallAgentDebug");
+  },
+} as const;
+
+/** ProviderImport confirms the provider an astrlink:// link describes. */
+export const ProviderImport = {
+  /**
+   * ConfirmProviderImport creates the linked provider from what the dialog
+   * filled in.
+   */
+  confirmProviderImport(id: string, input: unknown): Promise<ServiceRecord> {
+    return call("ProviderImport.ConfirmProviderImport", id, input);
+  },
+  /** DismissProviderImport drops the link id and its key. */
+  dismissProviderImport(id: string): Promise<void> {
+    return call("ProviderImport.DismissProviderImport", id);
+  },
+  /** PendingProviderImport is the link waiting for the user, if any. */
+  pendingProviderImport(): Promise<unknown | null> {
+    return call("ProviderImport.PendingProviderImport");
+  },
+} as const;
+
+/**
+ * LocalImport imports the providers the agent tools on this computer
+ * already use.
+ */
+export const LocalImport = {
+  /** ConfirmLocalImport creates a found provider with the key the read found. */
+  confirmLocalImport(session: string, candidate: string, input: unknown): Promise<ServiceRecord> {
+    return call("LocalImport.ConfirmLocalImport", session, candidate, input);
+  },
+  /** DismissLocalImport ends the import and drops every key it read. */
+  dismissLocalImport(session: string): Promise<void> {
+    return call("LocalImport.DismissLocalImport", session);
+  },
+  /**
+   * LocalImportSources locates the tools' config files without opening any
+   * of them, and starts a new import that replaces any earlier one.
+   */
+  localImportSources(): Promise<Opened> {
+    return call("LocalImport.LocalImportSources");
+  },
+  /**
+   * ProbeLocalImportModels is the one model-list request a found provider
+   * gets before it is created.
+   */
+  probeLocalImportModels(session: string, candidate: string, input: unknown): Promise<unknown> {
+    return call("LocalImport.ProbeLocalImportModels", session, candidate, input);
+  },
+  /**
+   * ReadLocalImport reads the checked sources. The result names keys only by
+   * hint.
+   */
+  readLocalImport(session: string, sources: string[]): Promise<ReadResult> {
+    return call("LocalImport.ReadLocalImport", session, sources);
+  },
+} as const;
+
+/**
+ * LocalClients checks and updates the AI clients installed on this
+ * computer and in WSL.
+ */
+export const LocalClients = {
+  /** LocalClientStatus is the latest status. */
+  localClientStatus(): Promise<ClientSnapshot> {
+    return call("LocalClients.LocalClientStatus");
+  },
+  /** RefreshLocalClients checks every client for updates in the background. */
+  refreshLocalClients(): Promise<ClientSnapshot> {
+    return call("LocalClients.RefreshLocalClients");
+  },
+  /** UpdateLocalClients updates targets in the background. */
+  updateLocalClients(targets: ClientTarget[]): Promise<ClientSnapshot> {
+    return call("LocalClients.UpdateLocalClients", targets);
+  },
+} as const;
+
+/**
+ * Terminal opens a terminal running Claude Code or Codex through one
+ * provider.
+ */
+export const Terminal = {
+  /** ListTerminalApps lists the terminals installed here. */
+  listTerminalApps(): Promise<TerminalChoice[]> {
+    return call("Terminal.ListTerminalApps");
+  },
+  /**
+   * OpenServiceTerminal opens request.Terminal in request.Directory running
+   * the client through one provider. The session uses the token the client
+   * is set up with here, or the first token when AstrLink has not set the
+   * client up.
+   */
+  openServiceTerminal(request: ServiceTerminalRequest): Promise<void> {
+    return call("Terminal.OpenServiceTerminal", request);
+  },
+  /**
+   * PickTerminalDirectory asks for the folder a terminal opens in, starting
+   * at start when it is one. It returns nil when the operator canceled.
+   */
+  pickTerminalDirectory(start: string | null): Promise<string | null> {
+    return call("Terminal.PickTerminalDirectory", start);
   },
 } as const;
 

@@ -12,25 +12,7 @@ const pendingCommands: Record<string, string[]> = {
   // Windows, the tray, inspectors, files and the currency.
   windows: [],
   // Agent tools, imports, terminals and local client updates.
-  agents: [
-    "agent_debug_status",
-    "confirm_local_import",
-    "confirm_provider_import",
-    "dismiss_local_import",
-    "dismiss_provider_import",
-    "install_agent_debug",
-    "list_terminal_apps",
-    "local_client_status",
-    "local_import_sources",
-    "open_service_terminal",
-    "pending_provider_import",
-    "pick_terminal_directory",
-    "probe_local_import_models",
-    "read_local_import",
-    "refresh_local_clients",
-    "uninstall_agent_debug",
-    "update_local_clients",
-  ],
+  agents: [],
   // Only the server edition installs the claude CLI; the desktop never
   // offered it.
   webOnly: ["install_claude_cli"],
