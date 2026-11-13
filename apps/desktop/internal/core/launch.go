@@ -42,13 +42,20 @@ type launchSettings struct {
 	useSystemProxy              bool
 }
 
-// followsSessionLock says whether this host reports the session locking
-// reliably enough for Core to drop its raw unlock idle timeout. It stays
-// false until the desktop follows the session lock, so Core keeps its idle
-// timeout everywhere.
-var followsSessionLock = false
+// followsSessionLock says whether goos reports the session locking reliably
+// enough for Core to drop its raw unlock idle timeout. The desktop ends the
+// raw unlock when the screen locks, the computer sleeps, or the user switches
+// away, so on macOS and Windows Core keeps an unlock open until that lock
+// with --raw-unlock-until-lock. Linux follows logind where it runs, but Core
+// keeps its idle timeout there too, since a desktop without logind sends no
+// signal at all.
+func followsSessionLock(goos string) bool {
+	return goos == "darwin" || goos == "windows"
+}
 
-func sidecarArgs(parentPID int, dataDirectory string, launch launchSettings) []string {
+// sidecarArgs are Core's command-line arguments when the desktop runs on
+// goos.
+func sidecarArgs(goos string, parentPID int, dataDirectory string, launch launchSettings) []string {
 	arguments := []string{
 		"--parent-pid", strconv.Itoa(parentPID),
 		"--data-dir", dataDirectory,
@@ -72,7 +79,7 @@ func sidecarArgs(parentPID int, dataDirectory string, launch launchSettings) []s
 		"--max-request-body-mib", strconv.FormatUint(uint64(launch.maxRequestBodyMiB), 10),
 		"--outbound-proxy="+outbound,
 	)
-	if followsSessionLock {
+	if followsSessionLock(goos) {
 		arguments = append(arguments, "--raw-unlock-until-lock")
 	}
 	return arguments

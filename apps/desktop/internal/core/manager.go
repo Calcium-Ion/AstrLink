@@ -498,7 +498,7 @@ func (m *Manager) Start() error {
 	}
 	spec := spawnSpec{
 		binary: binary,
-		args:   append(sidecarArgs(os.Getpid(), dataDirectory, launch), localKeyArgs(localKey)...),
+		args:   append(sidecarArgs(runtime.GOOS, os.Getpid(), dataDirectory, launch), localKeyArgs(localKey)...),
 		stdin:  sidecarStdin(controlToken, localKey.StdinHex, observerToken),
 	}
 	if runtime.GOOS == "linux" {

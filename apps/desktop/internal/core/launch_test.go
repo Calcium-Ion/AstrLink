@@ -21,7 +21,7 @@ func loopbackLaunch(port uint16) launchSettings {
 func TestSidecarArgsCarryPIDAndDataPathButNoToken(t *testing.T) {
 	launch := loopbackLaunch(8317)
 	launch.responseStartTimeoutSeconds = 0
-	got := sidecarArgs(4242, "/tmp/astrlink-data", launch)
+	got := sidecarArgs("linux", 4242, "/tmp/astrlink-data", launch)
 	want := []string{
 		"--parent-pid", "4242",
 		"--data-dir", "/tmp/astrlink-data",
@@ -35,16 +35,13 @@ func TestSidecarArgsCarryPIDAndDataPathButNoToken(t *testing.T) {
 		"--max-request-body-mib", "0",
 		"--outbound-proxy=system",
 	}
-	if followsSessionLock {
-		want = append(want, "--raw-unlock-until-lock")
-	}
 	if !slices.Equal(got, want) {
 		t.Fatalf("got %q\nwant %q", got, want)
 	}
 
 	launch.maxRequestBodyMiB = 64
 	launch.useSystemProxy = false
-	direct := sidecarArgs(4242, "/tmp/astrlink-data", launch)
+	direct := sidecarArgs("linux", 4242, "/tmp/astrlink-data", launch)
 	if !hasPair(direct, "--max-request-body-mib", "64") || !slices.Contains(direct, "--outbound-proxy=direct") || slices.Contains(direct, "--outbound-proxy=system") {
 		t.Fatalf("direct launch arguments: %q", direct)
 	}
@@ -53,13 +50,28 @@ func TestSidecarArgsCarryPIDAndDataPathButNoToken(t *testing.T) {
 func TestExposedSidecarBindsEveryInterfaceWithoutAPortFallback(t *testing.T) {
 	launch := loopbackLaunch(8317)
 	launch.inference.listen = prefs.ListenAllInterfaces
-	args := sidecarArgs(4242, "/tmp/astrlink-data", launch)
+	args := sidecarArgs("linux", 4242, "/tmp/astrlink-data", launch)
 	if !hasPair(args, "--inference-listen", "0.0.0.0:8317") || slices.Contains(args, "--inference-port-fallback") {
 		t.Fatalf("exposed launch arguments: %q", args)
 	}
 	// The control plane stays on this machine whatever the inference scope.
 	if !hasPair(args, "--control-listen", "127.0.0.1:0") {
 		t.Fatalf("control listener moved: %q", args)
+	}
+}
+
+// Core keeps a raw unlock open until the session locks only where the
+// desktop sees that lock; Linux keeps Core's idle timeout.
+func TestSidecarArgsFollowTheSessionLockOnMacOSAndWindows(t *testing.T) {
+	launch := loopbackLaunch(8317)
+	for goos, want := range map[string]bool{"darwin": true, "windows": true, "linux": false} {
+		args := sidecarArgs(goos, 4242, "/tmp/astrlink-data", launch)
+		if got := slices.Contains(args, "--raw-unlock-until-lock"); got != want {
+			t.Errorf("%s: --raw-unlock-until-lock present = %v, want %v (%q)", goos, got, want, args)
+		}
+		if followsSessionLock(goos) != want {
+			t.Errorf("followsSessionLock(%q) = %v, want %v", goos, !want, want)
+		}
 	}
 }
 
