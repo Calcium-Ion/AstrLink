@@ -2978,7 +2978,14 @@ pub fn run() {
                     &[("error", &error)],
                 ));
             }
-            start_client_config_sync(Arc::clone(&setup_manager), Arc::clone(&preferences));
+            // The development instance shares the user's client configs with
+            // the other AstrLink but never repoints them on its own. Any
+            // rebuild restarts it, and the token check alone has let it take
+            // the other AstrLink's config. It changes a client only when one
+            // is set up from its own window.
+            if !instance::is_isolated() {
+                start_client_config_sync(Arc::clone(&setup_manager), Arc::clone(&preferences));
+            }
             app.manage(preferences);
             app.manage(Arc::new(currency::ExchangeRates::load(&config_directory)));
             let updates =
