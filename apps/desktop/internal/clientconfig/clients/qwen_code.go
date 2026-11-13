@@ -1,7 +1,6 @@
 package clients
 
 import (
-	"fmt"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -68,20 +67,8 @@ func qwenRank(name string) int {
 }
 
 func qwenOwned(entry any) bool {
-	object, _ := entry.(map[string]any)
-	key, _ := object["envKey"].(string)
+	key, _ := field(entry, "envKey")
 	return key == qwenKeyName
-}
-
-// qwenOwnedEntries are AstrLink's entries in the list at list, in order.
-func qwenOwnedEntries(config *cc.Config, list string) []any {
-	value, ok := config.String(list)
-	if !ok {
-		return nil
-	}
-	entries, _ := format.DecodeJSON(value)
-	items, _ := entries.([]any)
-	return items
 }
 
 // qwenEntry is the entry for id, with what the catalog says of its limits.
@@ -139,7 +126,7 @@ func (qwenCode) HoldsConnection(key string) bool { return slices.Contains(qwenLi
 func (qwenCode) CurrentModels(config *cc.Config) cc.CurrentModels {
 	var entries []any
 	for _, list := range qwenLists {
-		entries = append(entries, qwenOwnedEntries(config, list)...)
+		entries = append(entries, configList(config, list)...)
 	}
 	var ids []string
 	for _, entry := range entries {
@@ -214,7 +201,7 @@ func (qwenCode) SyncedKeys(config *cc.Config, record *cc.Record, origin string) 
 		if _, ok := record.Keys[list]; !ok {
 			continue
 		}
-		entries := qwenOwnedEntries(config, list)
+		entries := configList(config, list)
 		for _, entry := range entries {
 			if object, ok := entry.(map[string]any); ok {
 				object["baseUrl"] = qwenEntryURL(list, origin)
@@ -246,18 +233,7 @@ func (qwenSettings) Get(document format.Document, key string) (string, bool, boo
 	if !ok || !slices.Contains(qwenLists, key) {
 		return document.Get(key)
 	}
-	value, _, _ := json.GetJSON(key)
-	items, _ := value.([]any)
-	var entries []any
-	for _, entry := range items {
-		if qwenOwned(entry) {
-			entries = append(entries, entry)
-		}
-	}
-	if len(entries) == 0 {
-		return "", false, false
-	}
-	return format.Encode(entries), true, true
+	return getOwned(json, key, qwenOwned)
 }
 
 func (qwenSettings) Set(document format.Document, key, value string) error {
@@ -265,13 +241,7 @@ func (qwenSettings) Set(document format.Document, key, value string) error {
 	if !ok || !slices.Contains(qwenLists, key) {
 		return document.Set(key, value)
 	}
-	decoded, err := format.DecodeJSON(value)
-	entries, isList := decoded.([]any)
-	if err != nil || !isList {
-		return fmt.Errorf("%s is not a list", key)
-	}
-	json.RemoveItems(key, qwenOwned)
-	return json.PrependItems(key, entries, qwenRank)
+	return setOwned(json, key, value, qwenOwned, qwenRank)
 }
 
 func (qwenSettings) Remove(document format.Document, key string) {
@@ -289,11 +259,7 @@ func (qwenSettings) Tidy(document format.Document) {
 		return
 	}
 	for _, list := range qwenLists {
-		if value, _, _ := json.GetJSON(list); value != nil {
-			if items, isList := value.([]any); isList && len(items) == 0 {
-				json.Remove(list)
-			}
-		}
+		dropEmptyList(json, list)
 	}
 	json.DropEmpty([]string{"modelProviders", "env", "security.auth", "security", "model"})
 }

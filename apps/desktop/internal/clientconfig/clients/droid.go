@@ -1,7 +1,6 @@
 package clients
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -64,21 +63,10 @@ func droidRank(name string) int {
 // droidOwned reports whether an entry sends an AstrLink token to a gateway
 // on this computer.
 func droidOwned(entry any) bool {
-	object, _ := entry.(map[string]any)
-	key, _ := object["apiKey"].(string)
-	url, _ := object["baseUrl"].(string)
+	key, _ := field(entry, "apiKey")
+	url, _ := field(entry, "baseUrl")
 	return strings.HasPrefix(key, "astr_") &&
 		(strings.HasPrefix(url, "http://127.0.0.1:") || strings.HasPrefix(url, "http://localhost:"))
-}
-
-func droidOwnedEntries(config *cc.Config) []any {
-	value, ok := config.String(droidModelsKey)
-	if !ok {
-		return nil
-	}
-	decoded, _ := format.DecodeJSON(value)
-	entries, _ := decoded.([]any)
-	return entries
 }
 
 func droidEntry(id, protocol string, connection *cc.Connection, details cc.Catalog) map[string]any {
@@ -123,7 +111,7 @@ func (droid) ConnectionKeys() []string { return nil }
 func (droid) HoldsConnection(key string) bool { return key == droidModelsKey }
 
 func (droid) CurrentModels(config *cc.Config) cc.CurrentModels {
-	entries := droidOwnedEntries(config)
+	entries := configList(config, droidModelsKey)
 	var ids []string
 	for _, entry := range entries {
 		object, _ := entry.(map[string]any)
@@ -172,7 +160,7 @@ func (droid) DesiredKeys(connection *cc.Connection, details cc.Catalog) []cc.Set
 func (droid) BaseURLKey() string { return "" }
 
 func (droid) SyncedKeys(config *cc.Config, _ *cc.Record, origin string) []cc.Setting {
-	entries := droidOwnedEntries(config)
+	entries := configList(config, droidModelsKey)
 	if len(entries) == 0 {
 		return nil
 	}
@@ -217,18 +205,7 @@ func (droidSettings) Get(document format.Document, key string) (string, bool, bo
 	if !ok || key != droidModelsKey {
 		return document.Get(key)
 	}
-	value, _, _ := json.GetJSON(key)
-	items, _ := value.([]any)
-	var entries []any
-	for _, entry := range items {
-		if droidOwned(entry) {
-			entries = append(entries, entry)
-		}
-	}
-	if len(entries) == 0 {
-		return "", false, false
-	}
-	return format.Encode(entries), true, true
+	return getOwned(json, key, droidOwned)
 }
 
 func (droidSettings) Set(document format.Document, key, value string) error {
@@ -236,13 +213,7 @@ func (droidSettings) Set(document format.Document, key, value string) error {
 	if !ok || key != droidModelsKey {
 		return document.Set(key, value)
 	}
-	decoded, err := format.DecodeJSON(value)
-	entries, isList := decoded.([]any)
-	if err != nil || !isList {
-		return fmt.Errorf("%s is not a list", key)
-	}
-	json.RemoveItems(key, droidOwned)
-	return json.PrependItems(key, entries, droidRank)
+	return setOwned(json, key, value, droidOwned, droidRank)
 }
 
 func (droidSettings) Remove(document format.Document, key string) {
@@ -259,10 +230,6 @@ func (droidSettings) Tidy(document format.Document) {
 	if !ok {
 		return
 	}
-	if value, _, _ := json.GetJSON(droidModelsKey); value != nil {
-		if items, isList := value.([]any); isList && len(items) == 0 {
-			json.Remove(droidModelsKey)
-		}
-	}
+	dropEmptyList(json, droidModelsKey)
 	json.DropEmpty([]string{"sessionDefaultSettings"})
 }

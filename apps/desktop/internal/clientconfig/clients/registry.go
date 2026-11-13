@@ -25,5 +25,6 @@ func init() {
 		KimiCode,
 		GrokBuild,
 		Droid,
+		CopilotCLI,
 	)
 }
