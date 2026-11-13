@@ -41,5 +41,6 @@ func init() {
 		Aider,
 		Chatbox,
 		QoderCLI,
+		TraeCLI,
 	)
 }
