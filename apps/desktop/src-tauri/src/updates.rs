@@ -1160,6 +1160,14 @@ impl UpdateManager {
             self.fail(app, generation, "shutdown", error);
             return Ok(self.snapshot());
         }
+        // Core's helpers may still be exiting and holding files the installer
+        // replaces. The installer has its own guard, so only log a timeout.
+        if let Err(error) = core
+            .wait_for_process_tree_exit(Duration::from_secs(10))
+            .await
+        {
+            eprintln!("installing the update before the gateway fully exited: {error}");
+        }
         let result = tauri::async_runtime::spawn_blocking(move || {
             update.install(bytes).map_err(|e| e.to_string())
         })
