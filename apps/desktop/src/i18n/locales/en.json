@@ -5386,6 +5386,7 @@
       },
       "backToMarket": "Choose another",
       "marketRef": "Version {{version}} · verified",
+      "directorySource": "The version the plugin directory held",
       "groups": {
         "source": "Source",
         "abilities": "What it can do",

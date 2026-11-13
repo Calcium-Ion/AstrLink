@@ -641,7 +641,8 @@ func (installer *Installer) RollbackReview(key, id string, current *Existing) (c
 		return contract.PluginInstallReview{}, &Failure{contract.PluginInstallFailure{Reason: contract.PluginInstallInvalidPlugin, Messages: []string{"the version kept is of another plugin"}}}
 	}
 	if record == nil {
-		record = &contract.PluginInstallRecord{Version: checked.Meta.Version}
+		// A version the plugin directory held came from no source.
+		record = &contract.PluginInstallRecord{Version: checked.Meta.Version, Source: contract.PluginInstallSource{Kind: contract.PluginSourceDirectory}}
 	}
 	review := newReview(checked, pluginBytes, clientBytes, *record)
 	compare(&review, *record, current)

@@ -1001,3 +1001,28 @@ func TestStripJSONCKeepsStrings(t *testing.T) {
 		t.Fatalf("parsed = %v", parsed)
 	}
 }
+
+// A version the plugin directory held, which an install from source
+// replaced, has no install record: its review says it came from the
+// directory, with no ref to follow.
+func TestARollbackToADirectoryVersionSaysItCameFromTheDirectory(t *testing.T) {
+	installer := newFixture(t).installer()
+	id := "20261113T000000Z-0a1b2c3d"
+	dir := installer.versionDir("hello", id)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	source := `export const meta = { apiVersion: 2, key: "hello", name: "Hello", version: "1.0.0", capabilities: [] };
+export async function prepareTurn() { return { text: "hello" }; }
+`
+	if err := os.WriteFile(filepath.Join(dir, "plugin.js"), []byte(source), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	review, err := installer.RollbackReview("hello", id, &Existing{Origin: string(plugin.OriginDirectory), Loaded: true, Name: "Hello", Version: "1.2.0", Capabilities: []string{}})
+	if err != nil {
+		t.Fatalf("RollbackReview: %v", err)
+	}
+	if review.Source.Kind != contract.PluginSourceDirectory || review.Source.RefKind != "" || review.Version != "1.0.0" {
+		t.Fatalf("the review of a directory version = %+v", review.Source)
+	}
+}

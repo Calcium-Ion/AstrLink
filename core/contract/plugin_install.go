@@ -27,7 +27,9 @@ const (
 
 // PluginInstallSource is where a plugin installed from source came from.
 type PluginInstallSource struct {
-	// Kind is github or market.
+	// Kind is github or market; PluginSourceDirectory for a version the
+	// plugin directory held, which an install from source replaced and of
+	// which nothing else is known.
 	Kind string `json:"kind"`
 	// Repository is owner/name; for a marketplace, its name.
 	Repository string `json:"repository"`

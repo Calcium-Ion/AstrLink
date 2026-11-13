@@ -47,14 +47,18 @@ export interface PluginApproval {
 
 /** Where a plugin installed from source came from. */
 export interface PluginInstallSource {
-  /** github, or market for a plugin marketplace in new-api's index format. */
+  /**
+   * github; market for a plugin marketplace in new-api's index format; or
+   * directory for a version the plugin directory held, of no source.
+   */
   kind: string;
   /** owner/name on GitHub; a marketplace's name. */
   repository: string;
   url: string;
   /** The tag, branch or marketplace version installed; absent for a commit. */
   ref?: string;
-  ref_kind: "tag" | "branch" | "commit" | "version";
+  /** Absent for a version the plugin directory held. */
+  ref_kind?: "tag" | "branch" | "commit" | "version";
   /** The commit built; for a marketplace, the sha256 of the plugin's file. */
   commit: string;
   committed_at?: string;
@@ -1665,7 +1669,10 @@ function parseInstallSource(value: unknown, path: string): PluginInstallSource {
     repository: plugin.string(source.repository, `${path}.repository`),
     url: plugin.string(source.url, `${path}.url`),
     ref: plugin.optionalString(source.ref, `${path}.ref`),
-    ref_kind: plugin.oneOf(source.ref_kind, refKinds, `${path}.ref_kind`),
+    ref_kind:
+      source.ref_kind === undefined || source.ref_kind === ""
+        ? undefined
+        : plugin.oneOf(source.ref_kind, refKinds, `${path}.ref_kind`),
     commit: plugin.string(source.commit, `${path}.commit`),
     committed_at: plugin.optionalString(
       source.committed_at,

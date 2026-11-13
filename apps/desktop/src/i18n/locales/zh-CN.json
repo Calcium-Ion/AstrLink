@@ -5386,6 +5386,7 @@
       },
       "backToMarket": "换一个插件",
       "marketRef": "版本 {{version}} · 已校验",
+      "directorySource": "插件目录里原来的版本",
       "groups": {
         "source": "来源",
         "abilities": "能力",

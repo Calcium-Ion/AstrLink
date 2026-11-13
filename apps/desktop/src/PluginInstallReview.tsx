@@ -40,6 +40,7 @@ export function formatDay(iso: string | undefined): string {
  * branch and when its commit was made. A commit reads by its date alone.
  */
 export function sourceRef(source: PluginInstallSource, t: Translate): string {
+  if (!source.ref_kind) return "";
   const day = formatDay(source.committed_at);
   const ref =
     source.ref_kind === "commit"
@@ -64,6 +65,14 @@ export function installFailureText(
 /** Where the plugin comes from: its repository and directory, or its marketplace. */
 function SourceLine({ source }: { source: PluginInstallSource }) {
   const t = useT();
+  if (source.kind === "directory")
+    return (
+      <div className="grid gap-0.5" data-testid="plugin-install-source">
+        <span className="min-w-0 font-medium">
+          {t("plugins.install.directorySource")}
+        </span>
+      </div>
+    );
   if (source.kind === "market")
     return (
       <div className="grid gap-0.5" data-testid="plugin-install-source">

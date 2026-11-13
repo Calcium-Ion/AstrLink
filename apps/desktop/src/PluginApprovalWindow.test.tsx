@@ -149,6 +149,56 @@ describe("PluginApprovalWindow", () => {
     );
   });
 
+  it("shows a rollback to the version the plugin directory held", async () => {
+    mocks.pendingPluginApproval.mockResolvedValue({
+      id: "approval-3",
+      key: "team-rules",
+      approval: {
+        plugin: "team-rules",
+        name: "Team rules",
+        rollback: true,
+        install: {
+          token: "token",
+          expires_at: "2026-11-13T13:00:00Z",
+          // No install record: Core knows only that it came from the
+          // directory.
+          source: {
+            kind: "directory",
+            repository: "",
+            url: "",
+            ref_kind: "",
+            commit: "",
+          },
+          key: "team-rules",
+          name: "Team rules",
+          version: "1.0.0",
+          api_version: 1,
+          capabilities: [],
+          hooks: ["prepareSession"],
+          client: false,
+          plugin_bytes: 2048,
+          dependencies: [],
+          dependency_bytes: 0,
+          replaces: {
+            origin: "source",
+            name: "Team rules",
+            repository: "RexCoding-Yu/AstrLink",
+          },
+        },
+      },
+    });
+    await render();
+    const text = document.body.textContent ?? "";
+    expect(text).toContain("插件目录里原来的版本");
+    expect(text).not.toContain("Invalid plugin data");
+    await act(async () => button("回滚").click());
+    expect(mocks.decidePluginApproval).toHaveBeenCalledWith(
+      "approval-3",
+      true,
+      undefined,
+    );
+  });
+
   it("says so when nothing waits", async () => {
     mocks.pendingPluginApproval.mockResolvedValue(null);
     await render();

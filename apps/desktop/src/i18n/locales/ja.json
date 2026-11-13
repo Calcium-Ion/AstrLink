@@ -5386,6 +5386,7 @@
       },
       "backToMarket": "ほかを選ぶ",
       "marketRef": "バージョン {{version}} · 検証済み",
+      "directorySource": "プラグインディレクトリにあった版",
       "groups": {
         "source": "提供元",
         "abilities": "できること",
