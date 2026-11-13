@@ -143,7 +143,10 @@ vi.mock("./use-privacy-model-update", () => ({
 
 import App, { followTrayNavigation, trayNavigationTarget } from "./App";
 import type { AppSnapshot } from "./core-model";
-import { defaultTrayPreferences } from "./preferences-model";
+import {
+  defaultDesktopToys,
+  defaultTrayPreferences,
+} from "./preferences-model";
 import { defaultFailurePolicy } from "./failure-policy-model";
 import { defaultPrivacyKindRules } from "./privacy-policy-model";
 import { ONBOARDING_STORAGE_KEY } from "./use-onboarding";
@@ -429,6 +432,18 @@ describe("tray navigation targets", () => {
   it("opens known pages and today's failed requests and ignores the rest", () => {
     expect(trayNavigationTarget("records")).toEqual({ kind: "records" });
     expect(trayNavigationTarget("settings")).toEqual({ kind: "settings" });
+    // The pets page exists only where the pets do.
+    expect(trayNavigationTarget("desktopToys")).toBeNull();
+    window.__ASTRLINK_DESKTOP_PLATFORM__ = "macos";
+    Object.assign(window, { __TAURI_INTERNALS__: {} });
+    try {
+      expect(trayNavigationTarget("desktopToys")).toEqual({
+        kind: "desktopToys",
+      });
+    } finally {
+      delete window.__ASTRLINK_DESKTOP_PLATFORM__;
+      delete (window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+    }
     expect(trayNavigationTarget("privacyOverview")).toEqual({
       kind: "safety",
       view: "overview",
@@ -765,6 +780,32 @@ describe("App workspace navigation", () => {
       await Promise.resolve();
     });
   }
+
+  it("gives the desktop pets their own page on macOS, not a settings tab", async () => {
+    await renderApp();
+    expect(() => button("桌宠")).toThrow();
+    await act(async () => root.unmount());
+    root = createRoot(container);
+
+    window.__ASTRLINK_DESKTOP_PLATFORM__ = "macos";
+    Object.assign(window, { __TAURI_INTERNALS__: {} });
+    try {
+      bridgeMocks.getPreferences.mockReturnValue(new Promise(() => {}));
+      await renderApp();
+      await act(async () => button("桌宠").click());
+      expect(workspaceHeading().textContent).toBe("桌宠");
+      expect(button("桌宠").getAttribute("aria-current")).toBe("page");
+      await act(async () => button("设置").click());
+      expect(
+        [...container.querySelectorAll('[role="tab"]')].map(
+          (tab) => tab.textContent,
+        ),
+      ).not.toContain("桌宠");
+    } finally {
+      delete window.__ASTRLINK_DESKTOP_PLATFORM__;
+      delete (window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+    }
+  });
 
   it("opens About independently of gateway readiness and settings", async () => {
     await renderApp();
@@ -1548,6 +1589,7 @@ describe("App workspace navigation", () => {
         display_currency: "auto" as const,
         tray: defaultTrayPreferences(),
         updates: defaultUpdatePreferences(),
+        desktop_toys: defaultDesktopToys(),
       },
       load_warning: null,
       autostart_actual: false,
@@ -1847,6 +1889,7 @@ describe("App workspace navigation", () => {
         display_currency: "auto" as const,
         tray: defaultTrayPreferences(),
         updates: defaultUpdatePreferences(),
+        desktop_toys: defaultDesktopToys(),
       },
       load_warning: null,
       autostart_actual: false,
@@ -1892,6 +1935,7 @@ describe("App workspace navigation", () => {
         display_currency: "auto" as const,
         tray: defaultTrayPreferences(),
         updates: defaultUpdatePreferences(),
+        desktop_toys: defaultDesktopToys(),
       },
       load_warning: null,
       autostart_actual: false,
@@ -1982,6 +2026,7 @@ describe("App workspace navigation", () => {
         display_currency: "auto" as const,
         tray: defaultTrayPreferences(),
         updates: defaultUpdatePreferences(),
+        desktop_toys: defaultDesktopToys(),
       },
       load_warning: null,
       autostart_actual: false,

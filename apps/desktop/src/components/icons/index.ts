@@ -56,6 +56,7 @@ export { Settings } from "./settings";
 export { ShieldCheck } from "./shield-check";
 export { Shredder } from "./shredder";
 export { SlidersHorizontal } from "./sliders-horizontal";
+export { Smile } from "./smile";
 export { SquarePen } from "./square-pen";
 export { SquareStack } from "./square-stack";
 export { Terminal } from "./terminal";

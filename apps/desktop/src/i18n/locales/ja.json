@@ -166,6 +166,7 @@
     "safety": "安全性",
     "records": "リクエスト",
     "routing": "ルーティング",
+    "desktopToys": "デスクトップペット",
     "agentTools": "Agent ツール",
     "settings": "設定",
     "gateway": "ゲートウェイ",
@@ -4726,5 +4727,107 @@
     "failed": "ターミナルを開けませんでした：{{error}}",
     "disabled": "この APIプロバイダーはオフです。オンにするまで、ターミナルからのリクエストは失敗します。",
     "signedOut": "このアカウントはサインインしていません。サインインするまで、ターミナルからのリクエストは失敗します。"
+  },
+  "desktopToys": {
+    "title": "デスクトップペット",
+    "motion": {
+      "title": "見た目と動き",
+      "hint": "すべてのペットに反映されます",
+      "label": "動き"
+    },
+    "levels": {
+      "calm": "控えめ",
+      "normal": "ふつう",
+      "lively": "にぎやか"
+    },
+    "levelText": {
+      "calm": "ペットはその場で作業し、跳ねたり紙吹雪を出したりしません。返信を書き終えると 3 秒手を振ります。",
+      "normal": "作業が変わると歩くか跳んで移動し、返信を書き終えると一度跳ねて 7 秒手を振ります。",
+      "lively": "暇なときも跳ねたり歩き回ったりし、歩くのが速く、火花と紙吹雪が 2 倍になります。"
+    },
+    "character": {
+      "label": "キャラクター",
+      "auto": "自動",
+      "claude_code": "Claude",
+      "codex": "Codex",
+      "deepseek_harness": "DeepSeek"
+    },
+    "size": {
+      "label": "大きさ",
+      "small": "小",
+      "normal": "中",
+      "large": "大"
+    },
+    "show": {
+      "label": "表示",
+      "orb": "モデルの精霊",
+      "status": "状態の吹き出し",
+      "milestone": "節目のお祝い"
+    },
+    "toys": {
+      "pet": {
+        "name": "大きなペット",
+        "hint": "置いた場所に浮かび、フルスクリーンでも表示されます。なでる、つつく、持ち上げて投げることができます"
+      }
+    },
+    "opts": {
+      "play": "操作",
+      "grab": "つまんで投げる",
+      "bubble": "吹き出し",
+      "reply": "返信の完了",
+      "failover": "経路の切り替え"
+    },
+    "acts": {
+      "bash": "コマンドを実行 · {{tool}}",
+      "read": "ファイルを読む",
+      "edit": "ファイルを編集",
+      "search": "ウェブを検索",
+      "write": "返信を書く · {{rate}} tok/s",
+      "think": "考え中",
+      "wait": "返信待ち",
+      "leave": "会話が終了",
+      "times": " ×{{count}}"
+    },
+    "waved": "書き終えました。返信を待っています",
+    "milestone": "今日 {{amount}} トークンを突破",
+    "pet": {
+      "replied": "{{name}} が書き終えました",
+      "look": "見る ›",
+      "failover": "{{name}} が経路を切り替えました",
+      "failoverModel": "いまは {{model}}",
+      "gear": {
+        "star": "星のヘアピンを付けました",
+        "flower": "花のヘアピンを付けました",
+        "bow": "リボンに替えました",
+        "crown": "王冠をかぶりました"
+      },
+      "today_one": "今日の返信 {{count}} 回",
+      "today_other": "今日の返信 {{count}} 回",
+      "pats_one": "なでた回数 {{count}} 回",
+      "pats_other": "なでた回数 {{count}} 回",
+      "poked": "つつかないで",
+      "menu": {
+        "pat": "頭をなでる",
+        "greet": "今日のまとめ",
+        "quiet": "おやすみモード：話しかけない",
+        "open": "AstrLink を開く",
+        "settings": "デスクトップペットの設定…"
+      }
+    },
+    "away": {
+      "title": "離れていた {{duration}} の間に",
+      "replies_one": "返信を {{count}} 回書きました",
+      "replies_other": "返信を {{count}} 回書きました",
+      "tokens": "{{amount}} トークンを使いました",
+      "waiting_one": "{{count}} 件の会話が待っています",
+      "waiting_other": "{{count}} 件の会話が待っています"
+    },
+    "duration": {
+      "minutes_one": "{{count}} 分",
+      "minutes_other": "{{count}} 分",
+      "hours_one": "{{count}} 時間",
+      "hours_other": "{{count}} 時間",
+      "hoursMinutes": "{{hours}} 時間 {{minutes}} 分"
+    }
   }
 }

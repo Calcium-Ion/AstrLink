@@ -32,6 +32,7 @@ mod service_proxy;
 mod service_terminal;
 mod sidecar;
 mod startup_window;
+mod toys;
 mod tray;
 mod updates;
 mod window_reclaim;
@@ -74,7 +75,7 @@ struct WindowChromePreferences {
 }
 
 #[derive(Debug, Serialize)]
-struct SettingsSnapshot {
+pub(crate) struct SettingsSnapshot {
     #[serde(flatten)]
     preferences: PreferencesSnapshot,
     autostart_actual: Option<bool>,
@@ -108,6 +109,8 @@ struct PreferencesInput {
     tray: TrayPreferences,
     #[serde(default)]
     updates: updates::UpdatePreferences,
+    #[serde(default)]
+    desktop_toys: preferences::DesktopToysPreferences,
 }
 
 impl From<PreferencesInput> for Preferences {
@@ -130,6 +133,7 @@ impl From<PreferencesInput> for Preferences {
             display_currency: input.display_currency,
             tray: input.tray,
             updates: input.updates,
+            desktop_toys: input.desktop_toys,
         }
     }
 }
@@ -210,7 +214,10 @@ async fn stop_core(
     Ok(AppSnapshot::capture(&app, &manager))
 }
 
-fn settings_snapshot(app: &tauri::AppHandle, store: &PreferencesStore) -> SettingsSnapshot {
+pub(crate) fn settings_snapshot(
+    app: &tauri::AppHandle,
+    store: &PreferencesStore,
+) -> SettingsSnapshot {
     // Rescanned on every snapshot so a backup the user deletes stops showing.
     let data_backups = app
         .path()
@@ -565,6 +572,9 @@ fn update_preferences(
         );
     }
     tray::refresh(&app);
+    if values.locale != previous.locale {
+        toys::prefs_changed(&app);
+    }
     if let Err(error) = app.emit("quota-display-mode-changed", values.quota_display_mode) {
         eprintln!("unable to broadcast quota display mode: {error}");
     }
@@ -591,8 +601,8 @@ fn theme_background(theme: tauri::Theme) -> tauri::window::Color {
 fn apply_native_theme(app: &tauri::AppHandle, preference: ThemePreference) {
     app.set_theme(preference.native_theme());
     for window in app.webview_windows().values() {
-        // The tray popover paints its own panel on a transparent window.
-        if window.label() != tray::POPOVER_LABEL {
+        // The tray popover and the desktop toys paint on transparent windows.
+        if window.label() != tray::POPOVER_LABEL && !toys::is_toy(window.label()) {
             apply_window_background(window, preference);
         }
     }
@@ -2785,6 +2795,7 @@ pub fn run() {
         .manage(explicit_quit)
         .manage(Mutex::new(InspectorRegistry::default()))
         .manage(tray::TrayState::default())
+        .manage(toys::ToysState::default())
         .manage(window_reclaim::WindowReclaim::default())
         .manage(Arc::new(client_updates::ClientUpdateManager::default()))
         .manage(Arc::new(model_updates::PrivacyModelUpdates::default()))
@@ -2809,6 +2820,9 @@ pub fn run() {
             updates::download_app_update,
             updates::install_app_update,
             updates::update_update_preferences,
+            toys::toys_snapshot,
+            toys::update_desktop_toys,
+            toys::toys_hit,
             core_status,
             window_chrome_preferences,
             get_preferences,
@@ -3005,6 +3019,7 @@ pub fn run() {
                 }
             }
             tray::start(app.handle());
+            toys::apply(app.handle());
             currency::start(app.handle());
             model_updates::start(app.handle());
             // The raw unlock and agent grants end with the session lock.
@@ -3062,7 +3077,7 @@ pub fn run() {
             ..
         } = &event
         {
-            if label != tray::POPOVER_LABEL {
+            if label != tray::POPOVER_LABEL && !toys::is_toy(label) {
                 if let Some(window) = app_handle.get_webview_window(label) {
                     if let Err(error) = window.set_background_color(Some(theme_background(*theme)))
                     {

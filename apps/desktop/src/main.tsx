@@ -26,6 +26,7 @@ import { TrajectoryInspectorWindow } from "./TrajectoryInspectorWindow";
 import { isTrajectoryInspectorWindow } from "./trajectory-inspector-window";
 import { TrayPopoverWindow } from "./TrayPopover";
 import { isTrayPopoverWindow } from "./tray-popover-window";
+import { ToyWindow, toyWindowLabel } from "./toys/ToyWindow";
 import { WindowChrome, WindowChromeProvider } from "./WindowChrome";
 import { getDesktopPlatform } from "./window-chrome";
 import { applyTheme, initializeTheme } from "./theme";
@@ -60,8 +61,14 @@ document.documentElement.dataset.desktopPlatform = desktopPlatform;
 // bar, no page background.
 const trayPopover = isTrayPopoverWindow();
 if (trayPopover) document.documentElement.dataset.surface = "tray-popover";
+// The desktop pet draws on a transparent window in her own fixed look.
+const toy = isWebEdition ? null : toyWindowLabel();
+if (toy) {
+  document.documentElement.dataset.surface = "toy";
+  document.documentElement.dataset.theme = "light";
+}
 
-initializeTheme();
+if (!toy) initializeTheme();
 initializeScrollbarAutoHide();
 initializeScrollbarGutter();
 
@@ -99,7 +106,7 @@ async function loadPreferences(): Promise<void> {
       );
     // Register before reading preferences so an inspector cannot miss a change.
     await listen("theme-preference-changed", ({ payload }) => {
-      if (isThemePreference(payload)) {
+      if (isThemePreference(payload) && !toy) {
         themeUpdated = true;
         applyTheme(payload);
       }
@@ -110,7 +117,7 @@ async function loadPreferences(): Promise<void> {
   const settings = await getPreferences();
   if (!quotaDisplayUpdated)
     applyQuotaDisplayMode(settings.values.quota_display_mode);
-  if (!themeUpdated) applyTheme(settings.values.theme);
+  if (!themeUpdated && !toy) applyTheme(settings.values.theme);
   await applyLocale(settings.values.locale);
 }
 
@@ -137,6 +144,8 @@ const surface = isWebEdition ? (
   <ConsoleEntry>
     <App />
   </ConsoleEntry>
+) : toy ? (
+  <ToyWindow label={toy} />
 ) : trayPopover ? (
   <TrayPopoverWindow />
 ) : isTrajectoryInspectorWindow() ? (
@@ -153,12 +162,12 @@ createRoot(root).render(
       <LocaleGate>
         <TooltipProvider>
           <WindowChromeProvider>
-            {trayPopover || isWebEdition ? null : (
+            {trayPopover || toy || isWebEdition ? null : (
               <WindowChrome platform={desktopPlatform} />
             )}
             <AppErrorBoundary>{surface}</AppErrorBoundary>
           </WindowChromeProvider>
-          {trayPopover ? null : <Toaster position="bottom-right" />}
+          {trayPopover || toy ? null : <Toaster position="bottom-right" />}
         </TooltipProvider>
       </LocaleGate>
     </I18nextProvider>

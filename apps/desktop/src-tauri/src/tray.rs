@@ -112,7 +112,7 @@ const SUBSCRIPTION_KINDS: [&str; 10] = [
     "opencode_go",
 ];
 
-const NAVIGATION_KINDS: [&str; 10] = [
+const NAVIGATION_KINDS: [&str; 11] = [
     "overview",
     "list",
     "tokens",
@@ -125,6 +125,8 @@ const NAVIGATION_KINDS: [&str; 10] = [
     "routing",
     "agentTools",
     "settings",
+    // The desktop pets page.
+    "desktopToys",
 ];
 
 /// libappindicator trays deliver no click events, only a menu. Linux therefore
@@ -518,15 +520,15 @@ fn percent_of(part: i64, whole: i64) -> u8 {
 // Usage collection
 // ---------------------------------------------------------------------------
 
-struct LocalWindows {
-    time_zone: String,
-    today_from: String,
-    today_to: String,
+pub(crate) struct LocalWindows {
+    pub(crate) time_zone: String,
+    pub(crate) today_from: String,
+    pub(crate) today_to: String,
     yesterday_from: String,
     month_from: String,
 }
 
-fn local_windows(now: DateTime<Local>) -> Option<LocalWindows> {
+pub(crate) fn local_windows(now: DateTime<Local>) -> Option<LocalWindows> {
     let midnight = NaiveTime::from_hms_opt(0, 0, 0)?;
     let today = now.date_naive();
     let to_utc = |date: chrono::NaiveDate| -> Option<String> {
@@ -547,7 +549,7 @@ fn local_windows(now: DateTime<Local>) -> Option<LocalWindows> {
     })
 }
 
-fn totals_from(value: &serde_json::Value) -> Option<UsageTotals> {
+pub(crate) fn totals_from(value: &serde_json::Value) -> Option<UsageTotals> {
     let totals = value.get("totals")?;
     Some(UsageTotals {
         requests: totals.get("requests")?.as_i64()?,

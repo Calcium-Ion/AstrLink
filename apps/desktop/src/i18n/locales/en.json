@@ -166,6 +166,7 @@
     "safety": "Safety",
     "records": "Requests",
     "routing": "Routing",
+    "desktopToys": "Desktop pets",
     "agentTools": "Agent tools",
     "settings": "Settings",
     "gateway": "Gateway",
@@ -4726,5 +4727,107 @@
     "failed": "Couldn't open the terminal: {{error}}",
     "disabled": "This API provider is turned off. Requests from the terminal fail until you turn it on.",
     "signedOut": "This account isn't signed in. Requests from the terminal fail until you sign in."
+  },
+  "desktopToys": {
+    "title": "Desktop pets",
+    "motion": {
+      "title": "Look and motion",
+      "hint": "Every pet follows",
+      "label": "Motion"
+    },
+    "levels": {
+      "calm": "Calm",
+      "normal": "Normal",
+      "lively": "Lively"
+    },
+    "levelText": {
+      "calm": "Pets work where they stand: no hops, no confetti, a 3-second wave after a reply.",
+      "normal": "Walks or hops to each new task, hops once after a reply and waves for 7 seconds.",
+      "lively": "Hops and wanders even when idle, walks faster, and throws twice the sparks and confetti."
+    },
+    "character": {
+      "label": "Character",
+      "auto": "Auto",
+      "claude_code": "Claude",
+      "codex": "Codex",
+      "deepseek_harness": "DeepSeek"
+    },
+    "size": {
+      "label": "Size",
+      "small": "Small",
+      "normal": "Medium",
+      "large": "Large"
+    },
+    "show": {
+      "label": "Show",
+      "orb": "Model orb",
+      "status": "Status bubbles",
+      "milestone": "Milestone party"
+    },
+    "toys": {
+      "pet": {
+        "name": "Big pet",
+        "hint": "Floats wherever you drop her, full screen too. Pat her, poke her or pick her up and throw her"
+      }
+    },
+    "opts": {
+      "play": "Play",
+      "grab": "Pick up and throw",
+      "bubble": "Speaks up",
+      "reply": "Reply written",
+      "failover": "Route switched"
+    },
+    "acts": {
+      "bash": "Running a command · {{tool}}",
+      "read": "Reading files",
+      "edit": "Editing files",
+      "search": "Searching the web",
+      "write": "Writing a reply · {{rate}} tok/s",
+      "think": "Thinking",
+      "wait": "Waiting for you",
+      "leave": "Conversation over",
+      "times": " ×{{count}}"
+    },
+    "waved": "Done, waiting for your reply",
+    "milestone": "Today passed {{amount}} tokens",
+    "pet": {
+      "replied": "{{name}} is done",
+      "look": "Open ›",
+      "failover": "{{name}} switched routes",
+      "failoverModel": "Now on {{model}}",
+      "gear": {
+        "star": "Got a star hair clip",
+        "flower": "Put on a flower hair clip",
+        "bow": "Put on a bow",
+        "crown": "Put on a crown"
+      },
+      "today_one": "{{count}} reply written today",
+      "today_other": "{{count}} replies written today",
+      "pats_one": "patted {{count}} time",
+      "pats_other": "patted {{count}} times",
+      "poked": "Stop poking!",
+      "menu": {
+        "pat": "Pat her head",
+        "greet": "Today so far",
+        "quiet": "Do not disturb: no bubbles",
+        "open": "Open AstrLink",
+        "settings": "Desktop pet settings…"
+      }
+    },
+    "away": {
+      "title": "While you were away for {{duration}}",
+      "replies_one": "{{count}} reply written",
+      "replies_other": "{{count}} replies written",
+      "tokens": "{{amount}} tokens used",
+      "waiting_one": "{{count}} conversation waiting for you",
+      "waiting_other": "{{count}} conversations waiting for you"
+    },
+    "duration": {
+      "minutes_one": "{{count}} min",
+      "minutes_other": "{{count}} min",
+      "hours_one": "{{count}} h",
+      "hours_other": "{{count}} h",
+      "hoursMinutes": "{{hours}} h {{minutes}} min"
+    }
   }
 }

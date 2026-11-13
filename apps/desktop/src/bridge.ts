@@ -183,6 +183,7 @@ import {
 import {
   parseSettingsSnapshot,
   type Preferences,
+  type DesktopToysPreferences,
   type SettingsSnapshot,
   type TrayPreferences,
 } from "./preferences-model";
@@ -337,6 +338,16 @@ export async function updatePreferences(
   requireNativeBridge();
   return parseSettingsSnapshot(
     await invoke<unknown>("update_preferences", { input }),
+  );
+}
+
+/** Saves the desktop toy preferences; the host builds or closes the toys. */
+export async function updateDesktopToys(
+  input: DesktopToysPreferences,
+): Promise<SettingsSnapshot> {
+  requireNativeBridge();
+  return parseSettingsSnapshot(
+    await invoke<unknown>("update_desktop_toys", { input }),
   );
 }
 

@@ -166,6 +166,7 @@
     "safety": "安全",
     "records": "请求",
     "routing": "路由",
+    "desktopToys": "桌宠",
     "agentTools": "Agent 工具",
     "settings": "设置",
     "gateway": "网关",
@@ -4726,5 +4727,107 @@
     "failed": "打不开终端：{{error}}",
     "disabled": "这个 API 提供商已关闭。打开它之前，终端里的请求都会失败。",
     "signedOut": "这个账号还没登录。登录之前，终端里的请求都会失败。"
+  },
+  "desktopToys": {
+    "title": "桌宠",
+    "motion": {
+      "title": "样子和动作",
+      "hint": "所有桌宠一起变",
+      "label": "动作"
+    },
+    "levels": {
+      "calm": "安静",
+      "normal": "适中",
+      "lively": "活泼"
+    },
+    "levelText": {
+      "calm": "桌宠在原地干活，不跳、不撒花，写完挥手 3 秒。",
+      "normal": "换活儿时走过去或跳过去，写完跳一下、挥手 7 秒。",
+      "lively": "闲着也会蹦两下、到处溜达，走得更快，火花和彩带加倍。"
+    },
+    "character": {
+      "label": "角色",
+      "auto": "自动",
+      "claude_code": "Claude",
+      "codex": "Codex",
+      "deepseek_harness": "DeepSeek"
+    },
+    "size": {
+      "label": "大小",
+      "small": "小",
+      "normal": "中",
+      "large": "大"
+    },
+    "show": {
+      "label": "显示",
+      "orb": "模型精灵",
+      "status": "状态气泡",
+      "milestone": "用量破档庆祝"
+    },
+    "toys": {
+      "pet": {
+        "name": "大桌宠",
+        "hint": "浮在你拖到的地方，全屏时也在。可以摸头、戳她，或者拎起来扔"
+      }
+    },
+    "opts": {
+      "play": "互动",
+      "grab": "可以拎起来扔",
+      "bubble": "说话",
+      "reply": "写完回复",
+      "failover": "切换线路"
+    },
+    "acts": {
+      "bash": "运行命令 · {{tool}}",
+      "read": "读文件",
+      "edit": "改文件",
+      "search": "搜索网页",
+      "write": "写回复 · {{rate}} tok/s",
+      "think": "思考中",
+      "wait": "等你回复",
+      "leave": "对话结束",
+      "times": " ×{{count}}"
+    },
+    "waved": "写完了，等你回复",
+    "milestone": "今日破 {{amount}} Token",
+    "pet": {
+      "replied": "{{name}} 写完了",
+      "look": "看看 ›",
+      "failover": "{{name}} 切换了线路",
+      "failoverModel": "现在用 {{model}}",
+      "gear": {
+        "star": "戴上了星星发卡",
+        "flower": "戴上了小花发卡",
+        "bow": "换上了蝴蝶结",
+        "crown": "戴上了皇冠"
+      },
+      "today_one": "今天写完 {{count}} 次回复",
+      "today_other": "今天写完 {{count}} 次回复",
+      "pats_one": "摸了 {{count}} 次头",
+      "pats_other": "摸了 {{count}} 次头",
+      "poked": "别戳啦",
+      "menu": {
+        "pat": "摸摸头",
+        "greet": "今天的总结",
+        "quiet": "勿扰：不说话",
+        "open": "打开 AstrLink",
+        "settings": "桌宠设置…"
+      }
+    },
+    "away": {
+      "title": "你离开的 {{duration}}里",
+      "replies_one": "写完回复 {{count}} 次",
+      "replies_other": "写完回复 {{count}} 次",
+      "tokens": "用掉 {{amount}} Token",
+      "waiting_one": "{{count}} 个对话在等你",
+      "waiting_other": "{{count}} 个对话在等你"
+    },
+    "duration": {
+      "minutes_one": "{{count}} 分钟",
+      "minutes_other": "{{count}} 分钟",
+      "hours_one": "{{count}} 小时",
+      "hours_other": "{{count}} 小时",
+      "hoursMinutes": "{{hours}} 小时 {{minutes}} 分"
+    }
   }
 }

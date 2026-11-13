@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   DEFAULT_RESPONSE_START_TIMEOUT_SECONDS,
+  defaultDesktopToys,
   defaultTrayPreferences,
   parseSettingsSnapshot,
 } from "./preferences-model";
@@ -26,6 +27,7 @@ const valid = {
     locale: "zh-CN",
     tray: defaultTrayPreferences(),
     updates: defaultUpdatePreferences(),
+    desktop_toys: defaultDesktopToys(),
   },
   load_warning: null,
   autostart_actual: false,
@@ -56,6 +58,47 @@ describe("preferences IPC contract", () => {
         }),
       ).toThrow("$.values.autostart_hidden");
     }
+  });
+
+  it("validates the desktop toys block", () => {
+    const toys = defaultDesktopToys();
+    const withToys = (patch: Record<string, unknown>) =>
+      parseSettingsSnapshot({
+        ...valid,
+        values: { ...valid.values, desktop_toys: { ...toys, ...patch } },
+      });
+    expect(withToys({ level: "lively" }).values.desktop_toys.level).toBe(
+      "lively",
+    );
+    expect(() => withToys({ level: "wild" })).toThrow(
+      "$.values.desktop_toys.level",
+    );
+    expect(
+      withToys({ orb: false, pet: { ...toys.pet, size: "large" } }).values
+        .desktop_toys,
+    ).toMatchObject({ orb: false, status: true, pet: { size: "large" } });
+    expect(() => withToys({ pet: { ...toys.pet, size: "huge" } })).toThrow(
+      "$.values.desktop_toys.pet.size",
+    );
+    expect(() => withToys({ status: "on" })).toThrow(
+      "$.values.desktop_toys.status",
+    );
+    expect(() => withToys({ egg_shell: "pink" })).toThrow(
+      "$.values.desktop_toys.egg_shell",
+    );
+    expect(() => withToys({ on: { pet: true, dock: true } })).toThrow(
+      "$.values.desktop_toys.on.dock",
+    );
+    expect(
+      withToys({ pet: { ...toys.pet, character: "codex" } }).values.desktop_toys
+        .pet.character,
+    ).toBe("codex");
+    expect(() => withToys({ pet: { ...toys.pet, character: "pi" } })).toThrow(
+      "$.values.desktop_toys.pet.character",
+    );
+    expect(() => withToys({ pet: { ...toys.pet, grab: "yes" } })).toThrow(
+      "$.values.desktop_toys.pet.grab",
+    );
   });
 
   it("validates the tray section", () => {
