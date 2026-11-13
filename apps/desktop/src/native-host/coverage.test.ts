@@ -31,14 +31,6 @@ const pendingCommands: Record<string, string[]> = {
     "uninstall_agent_debug",
     "update_local_clients",
   ],
-  // App and privacy model updates.
-  release: [
-    "app_update_status",
-    "check_app_update",
-    "download_app_update",
-    "install_app_update",
-    "update_update_preferences",
-  ],
   // Only the server edition installs the claude CLI; the desktop never
   // offered it.
   webOnly: ["install_claude_cli"],

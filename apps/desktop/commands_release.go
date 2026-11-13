@@ -3,8 +3,11 @@ package main
 import (
 	"context"
 	"log"
+	"net/http"
+	"path/filepath"
 
 	"github.com/egoist/mygo"
+	"github.com/egoist/mygo/netproxy"
 
 	"github.com/QuantumNous/astrlink/desktop/internal/control"
 	"github.com/QuantumNous/astrlink/desktop/internal/core"
@@ -38,8 +41,61 @@ func registerReleaseCommands(h *host.Host) {
 	}
 	h.OnPrivacyPolicyChanged(models.Wake)
 	h.OnPrivacyReleasesRead(models.Recheck)
-	h.OnStarted(func() { go models.Run(context.Background()) })
-	mygo.Bind(updates.Release{Models: models})
+	release := updates.NewRelease(models)
+	h.OnStarted(func() {
+		app := newAppUpdates(h)
+		updates.Attach(release, app)
+		go app.Run(context.Background())
+		go models.Run(context.Background())
+	})
+	mygo.Bind(release)
+}
+
+// newAppUpdates builds the app updater once the host has its preferences
+// and Core.
+func newAppUpdates(h *host.Host) *updates.Manager {
+	cache, err := mygo.App.Path(mygo.PathCache)
+	if err != nil {
+		log.Printf("astrlink: unable to resolve the cache directory: %v", err)
+	}
+	store := h.PreferencesStore()
+	return updates.NewManager(updates.Config{
+		CurrentVersion:   mygo.App.Version(),
+		Platform:         host.PlatformName(),
+		Arch:             updates.Arch(),
+		Target:           updates.Target(),
+		Development:      mygo.IsDev(),
+		InstallSupported: updates.InstallSupported(),
+		PublicKey:        updates.PublicKey(),
+		CacheDir:         filepath.Join(cache, "updates"),
+		Preferences:      store.Values,
+		SaveUpdates:      store.ReplaceUpdates,
+		Publish: func(snapshot updates.UpdateSnapshot) {
+			if main := h.MainWindow(); main != nil {
+				if err := host.AppUpdateStatus.Emit(main, snapshot); err != nil {
+					log.Printf("astrlink: unable to publish update state: %v", err)
+				}
+			}
+		},
+		Announce: func(kind, version string) {
+			if mainWindowAttended(h) {
+				return
+			}
+			locale := store.Values().Locale
+			showNotification(prefs.T(locale, "about.phase."+kind),
+				prefs.T(locale, "about."+kind+"Notification", "version", version))
+		},
+		Core:     h.CoreManager(),
+		Updater:  updates.MyGo{},
+		Relaunch: func() { mygo.App.Relaunch() },
+		Transport: func(useSystemProxy bool) http.RoundTripper {
+			transport := netproxy.Transport().Clone()
+			if !useSystemProxy {
+				transport.Proxy = nil
+			}
+			return transport
+		},
+	})
 }
 
 func coreReady(h *host.Host) bool {

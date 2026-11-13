@@ -218,6 +218,9 @@ export interface Display {
   system: string;
 }
 
+/** DownloadSource is where an update downloads from. */
+export type DownloadSource = "github" | "download_site";
+
 /** FileChanges is what a write or removal changes in one file. */
 export interface FileChanges {
   path: string;
@@ -518,6 +521,14 @@ export interface ReadyEvent {
   control_url: string;
 }
 
+/** ReleaseInfo is the release an update installs. */
+export interface ReleaseInfo {
+  version: string;
+  notes: string;
+  published_at: string | null;
+  url: string;
+}
+
 /**
  * Route is how a system-proxy-aware client reaches one gateway address:
  * "direct" when the system proxy does not apply, "proxied" when requests
@@ -668,6 +679,9 @@ export interface TrayUsagePreferences {
 /** UpdateChannel is which releases updates offer. */
 export type UpdateChannel = "stable" | "preview";
 
+/** UpdatePhase is where an app update is. */
+export type UpdatePhase = "idle" | "checking" | "no_releases" | "up_to_date" | "available" | "manual" | "downloading" | "ready" | "installing" | "error";
+
 /**
  * UpdatePreferences are the update settings of About, saved apart from the
  * general settings.
@@ -681,6 +695,29 @@ export interface UpdatePreferences {
    * download site instead of GitHub.
    */
   official_mirror: boolean;
+}
+
+/** UpdateSnapshot is the update state About shows (app-update-status). */
+export interface UpdateSnapshot {
+  revision: number;
+  current_version: string;
+  latest_version: string | null;
+  platform: string;
+  arch: string;
+  install_supported: boolean;
+  configured: boolean;
+  development: boolean;
+  preferences: UpdatePreferences;
+  phase: UpdatePhase;
+  release: ReleaseInfo | null;
+  downloaded_bytes: number;
+  total_bytes: number | null;
+  download_source: DownloadSource | null;
+  last_checked_at: string | null;
+  error_code: string | null;
+  error_detail: string | null;
+  /** RetryAt is when GitHub accepts the next check after a rate limit. */
+  retry_at: string | null;
 }
 
 /**
@@ -1549,12 +1586,36 @@ export const Clients = {
 
 /**
  * Release is the service of app and privacy model updates
- * (src/native-host/commands-release.ts).
+ * (src/native-host/commands-release.ts). Checks, downloads and installs
+ * outlive the page that asked for them.
  */
 export const Release = {
+  /** AppUpdateStatus is the app update state. */
+  appUpdateStatus(): Promise<UpdateSnapshot> {
+    return call("Release.AppUpdateStatus");
+  },
+  /** CheckAppUpdate looks for an update now. */
+  checkAppUpdate(): Promise<UpdateSnapshot> {
+    return call("Release.CheckAppUpdate");
+  },
+  /** DownloadAppUpdate downloads and verifies the update a check found. */
+  downloadAppUpdate(): Promise<UpdateSnapshot> {
+    return call("Release.DownloadAppUpdate");
+  },
+  /**
+   * InstallAppUpdate stops Core, installs the update and starts the new
+   * version.
+   */
+  installAppUpdate(): Promise<UpdateSnapshot> {
+    return call("Release.InstallAppUpdate");
+  },
   /** PrivacyModelUpdateStatus is the privacy model reminder, null without one. */
   privacyModelUpdateStatus(): Promise<PrivacyModelUpdate | null> {
     return call("Release.PrivacyModelUpdateStatus");
+  },
+  /** UpdateUpdatePreferences saves the update settings of About. */
+  updateUpdatePreferences(input: unknown): Promise<UpdateSnapshot> {
+    return call("Release.UpdateUpdatePreferences", input);
   },
 } as const;
 
