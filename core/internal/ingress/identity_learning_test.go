@@ -336,8 +336,8 @@ func TestOfficialClaudeClientTeachesIdentityForConvertedRequests(t *testing.T) {
 		t.Fatalf("converted headers = %v", converted)
 	}
 
-	// A converted request never teaches an identity, even one that looks
-	// official and newer.
+	// A Claude Code fingerprint on a protocol Claude Code never sends teaches
+	// nothing, even one that looks official and newer.
 	newer := officialClaudeHeaders("claude-cli/2.1.400 (external, cli)")
 	harness.serve(t, "/v1/chat/completions",
 		`{"model":"claude-sonnet-4-5","max_tokens":64,"messages":[{"role":"user","content":"hello"}]}`, newer)
@@ -509,5 +509,72 @@ func TestLearnedIdentitySurvivesRestartForConvertedRequests(t *testing.T) {
 	baseline, _ := upstream.request(t)
 	if baseline.Get("User-Agent") != accountauth.DefaultClaudeUserAgent {
 		t.Fatalf("User-Agent with learning off = %q", baseline.Get("User-Agent"))
+	}
+}
+
+func apiKeyIdentityCandidate(baseURL string, protocol contract.ProtocolID, model string) endpoint.Resolved {
+	service := contract.Service{
+		ID: "service_api_identity", Name: "API", Kind: contract.ServiceKindCustom, Enabled: true, Models: []string{model},
+		Capabilities: []contract.Capability{{Protocol: protocol, Mode: contract.CapabilityModeNative, Streaming: true}},
+		HTTP: &contract.HTTPConnection{
+			BaseURL: baseURL, Auth: contract.ServiceAuth{Scheme: contract.AuthSchemeBearer},
+			CredentialRef: "local://service/service_api_identity",
+		},
+	}
+	return endpoint.Resolved{Service: service, BaseURL: baseURL, UpstreamProtocol: protocol}
+}
+
+// An official client teaches its identity from its own request, whichever
+// provider serves it; the API key provider still receives the request as the
+// client sent it.
+func TestOfficialClientsTeachIdentityThroughAnyProvider(t *testing.T) {
+	codexStream := codexSSE(codexCompletedWithoutOutput)
+	grokChat := `{"id":"chat_1","object":"chat.completion","model":"grok-composer-2.5-fast","choices":[{"index":0,"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}]}`
+	for _, test := range []struct {
+		name, path, body, model, contentType, response string
+		protocol                                       contract.ProtocolID
+		header                                         http.Header
+		learned                                        func(contract.ClientIdentities) string
+		want                                           string
+	}{
+		{
+			name: "claude code", path: "/v1/messages", body: officialClaudeBody, model: "claude-sonnet-4-5",
+			protocol: contract.ProtocolAnthropicMessages, contentType: "application/json", response: identityClaudeResponse,
+			header:  officialClaudeHeaders(learnedClaudeUA),
+			learned: func(identities contract.ClientIdentities) string { return identities.Claude.LearnedVersion }, want: "2.1.300",
+		},
+		{
+			name: "claude code headers without its user id", path: "/v1/messages", model: "claude-sonnet-4-5",
+			body:     `{"model":"claude-sonnet-4-5","max_tokens":64,"messages":[{"role":"user","content":"hello"}]}`,
+			protocol: contract.ProtocolAnthropicMessages, contentType: "application/json", response: identityClaudeResponse,
+			header:  officialClaudeHeaders(learnedClaudeUA),
+			learned: func(identities contract.ClientIdentities) string { return identities.Claude.LearnedVersion }, want: "",
+		},
+		{
+			name: "codex", path: "/v1/responses", body: officialCodexBody, model: "gpt-6-astra",
+			protocol: contract.ProtocolOpenAIResponses, contentType: "text/event-stream", response: codexStream,
+			header:  officialCodexHeaders(learnedCodexUA, "codex_cli_rs"),
+			learned: func(identities contract.ClientIdentities) string { return identities.Codex.LearnedVersion }, want: "0.160.0",
+		},
+		{
+			name: "grok", path: "/v1/chat/completions", model: "grok-composer-2.5-fast",
+			body:     `{"model":"grok-composer-2.5-fast","messages":[{"role":"user","content":"hello"}]}`,
+			protocol: contract.ProtocolOpenAIChat, contentType: "application/json", response: grokChat,
+			header:  http.Header{"User-Agent": {"grok-shell/1.0.50"}},
+			learned: func(identities contract.ClientIdentities) string { return identities.Grok.LearnedVersion }, want: "1.0.50",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			upstream := newCapturedUpstream(t, http.StatusOK, test.contentType, test.response)
+			harness := newIdentityHarness(t, contract.DefaultRoutingSettings(), nil, apiKeyIdentityCandidate(upstream.url, test.protocol, test.model))
+			harness.serve(t, test.path, test.body, test.header.Clone())
+			forwarded, body := upstream.request(t)
+			if string(body) != test.body || forwarded.Get("User-Agent") != test.header.Get("User-Agent") {
+				t.Fatalf("API key provider received %q %s", forwarded.Get("User-Agent"), body)
+			}
+			if got := test.learned(harness.registry.ClientIdentities()); got != test.want {
+				t.Fatalf("learned version = %q, want %q", got, test.want)
+			}
+		})
 	}
 }

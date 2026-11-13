@@ -4,7 +4,13 @@ import type {
   ImageCompressionMode,
 } from "@/failure-policy-model";
 import { imageCompressionModes } from "@/failure-policy-model";
-import { useT } from "@/i18n";
+import { currentLocale, useT } from "@/i18n";
+import {
+  imageCompressionSavedBytes,
+  imageCompressionSavedShare,
+  type ImageCompressionTotals,
+} from "@/image-compression-totals-model";
+import { formatImageBytes } from "@/request-trajectory-model";
 import { HelpPopover } from "./HelpPopover";
 import { ImageCompressionScene } from "./ImageCompressionScene";
 import {
@@ -39,10 +45,13 @@ export function ImageCompressionEditor({
   value,
   disabled,
   onChange,
+  totals,
 }: {
   value: ImageCompression;
   disabled: boolean;
   onChange: (value: ImageCompression) => void;
+  /** What compression has saved so far; null until Core answers. */
+  totals?: ImageCompressionTotals | null;
 }) {
   const t = useT();
   const id = useId();
@@ -74,6 +83,9 @@ export function ImageCompressionEditor({
           <HelpPopover label={t("imageCompression.help")}>
             <p className="m-0 text-xs leading-relaxed text-muted-foreground">
               {t("imageCompression.demo.notes")}
+            </p>
+            <p className="m-0 mt-2 text-xs leading-relaxed text-muted-foreground">
+              {t("imageCompression.totals.helpTotals")}
             </p>
           </HelpPopover>
         </div>
@@ -162,8 +174,73 @@ export function ImageCompressionEditor({
           <p className="col-start-2 text-xs text-muted-foreground">
             {t(`imageCompression.modeHints.${value.mode}`)}
           </p>
+          {totals && (totals.requests > 0 || value.enabled) ? (
+            <>
+              <span className={optionRowLabel}>
+                {t("imageCompression.totals.label")}
+              </span>
+              <ImageCompressionTotalsLine totals={totals} />
+            </>
+          ) : null}
         </div>
       </SettingSceneBody>
     </Panel>
+  );
+}
+
+/**
+ * One line of what compression has saved since counting began, in the
+ * settings' label column: "少传 1.2 MB · 减小 22% · 压缩 20 张 · …".
+ * When counting began and how many requests it covers sit in the tooltip.
+ */
+function ImageCompressionTotalsLine({
+  totals,
+}: {
+  totals: ImageCompressionTotals;
+}) {
+  const t = useT();
+  const since = new Date(totals.since);
+  const date = new Intl.DateTimeFormat(currentLocale(), {
+    year:
+      since.getFullYear() === new Date().getFullYear() ? undefined : "numeric",
+    month: "short",
+    day: "numeric",
+  }).format(since);
+  const started = t("imageCompression.totals.since", { date });
+  if (totals.requests === 0) {
+    return (
+      <p
+        className="flex min-h-8 items-center text-xs text-muted-foreground"
+        data-testid="image-compression-totals"
+        title={started}
+      >
+        {t("imageCompression.totals.none")}
+      </p>
+    );
+  }
+  const share = imageCompressionSavedShare(totals);
+  const details = [
+    share ? t("imageCompression.totals.savedShare", { percent: share }) : null,
+    t("imageCompression.totals.images", { count: totals.compressed }),
+    `${formatImageBytes(totals.original_bytes)} → ${formatImageBytes(totals.sent_bytes)}`,
+  ].filter((part) => part !== null);
+  return (
+    <p
+      className="flex min-h-8 min-w-0 flex-wrap items-center gap-x-1.5 text-xs text-muted-foreground tabular-nums"
+      data-testid="image-compression-totals"
+      title={[
+        `${started} · ${t("imageCompression.totals.requests", { count: totals.requests })}`,
+        t("imageCompression.totals.savedHint"),
+      ].join("\n")}
+    >
+      <span className="font-medium text-foreground">
+        {t("imageCompression.totals.saved", {
+          size: formatImageBytes(imageCompressionSavedBytes(totals)),
+        })}
+      </span>
+      {details.map((part) => (
+        <span key={part}>· {part}</span>
+      ))}
+    </p>
   );
 }

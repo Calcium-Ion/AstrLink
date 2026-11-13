@@ -23,6 +23,8 @@ const token: AccessTokenSummary = {
   hint: "astr_…K8Q2",
   source: "user",
   created_at: "2026-07-24T10:30:00Z",
+  service_scope: "all",
+  service_ids: [],
 };
 
 function attribute(

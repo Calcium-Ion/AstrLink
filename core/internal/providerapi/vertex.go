@@ -9,9 +9,8 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/QuantumNous/astrlink/core/contract"
-	"github.com/tidwall/gjson"
-	"github.com/tidwall/sjson"
 )
 
 var vertexModelID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._@-]*$`)
@@ -99,11 +98,11 @@ func VertexRequest(request *http.Request, connection *contract.HTTPConnection) e
 		if err != nil {
 			return err
 		}
-		if !gjson.ValidBytes(body) {
+		if !ojson.ValidBytes(body) {
 			return fmt.Errorf("invalid Vertex request JSON")
 		}
-		modelValue := gjson.GetBytes(body, "model")
-		if modelValue.Type != gjson.String {
+		modelValue := ojson.GetBytes(body, "model")
+		if modelValue.Type != ojson.String {
 			return fmt.Errorf("Vertex model must be a string")
 		}
 		model := modelValue.String()
@@ -112,13 +111,13 @@ func VertexRequest(request *http.Request, connection *contract.HTTPConnection) e
 				return fmt.Errorf("Vertex Claude requires an official Claude model ID")
 			}
 			action := "rawPredict"
-			if gjson.GetBytes(body, "stream").Bool() {
+			if ojson.GetBytes(body, "stream").Bool() {
 				action = "streamRawPredict"
 			}
 			request.URL.Path = root + "/publishers/anthropic/models/" + model + ":" + action
-			body, err = sjson.DeleteBytes(body, "model")
+			body, err = ojson.DeleteBytes(body, "model")
 			if err == nil {
-				body, err = sjson.SetBytes(body, "anthropic_version", "vertex-2023-10-16")
+				body, err = ojson.SetBytes(body, "anthropic_version", "vertex-2023-10-16")
 			}
 			if err != nil {
 				return err

@@ -20,14 +20,15 @@ import (
 // new version of the index arrived, and the memory files its calls show
 // written since. Notes and reads come from the calls whose history shows a
 // memory file written or read, and what the user said from the turns they
-// belong to. The rules, skills and MCP tools are those its newest main call
-// carried. Counts are read from the records still kept; nothing else is
-// stored for them.
+// belong to. The rules are those its newest main call carried; the skills
+// and MCP tools those any of its calls in the toolbox's days carried or
+// used. Counts are read from the records still kept; nothing else is stored
+// for them.
 
 const (
 	memoryDay = 24 * time.Hour
-	// memoryActivityScan bounds how many calls that wrote or read memory, or
-	// loaded a skill, a view reads.
+	// memoryActivityScan bounds how many calls that wrote or read memory a
+	// view reads. The toolbox counts every call in its days.
 	memoryActivityScan = 4096
 	// memoryTurnDepth bounds how far a subagent's call is followed up to the
 	// conversation the user spoke in.
@@ -42,7 +43,9 @@ func (store *Store) GetProjectMemory(ctx context.Context, options storage.Projec
 		Entries:  []contract.MemoryEntry{},
 		Stories:  []contract.MemoryStory{},
 		Rules:    []contract.MemoryRules{},
-		Toolbox:  contract.MemoryToolbox{Skills: []contract.ToolboxSkill{}, MCP: []contract.ToolboxServer{}},
+		Toolbox: contract.MemoryToolbox{
+			Since: toolboxSince(options.DayStart), Skills: []contract.ToolboxSkill{}, MCP: []contract.ToolboxServer{},
+		},
 	}
 	projects, err := store.memoryProjects(ctx)
 	if err != nil {
@@ -254,16 +257,13 @@ type memoryView struct {
 	dropped map[string]bool
 	notes   map[string]*memoryNote
 	reads   map[string]*memoryReadLog
-	// skills holds, per skill, the turns that loaded it in the toolbox's
-	// days.
-	skills map[string]map[string]bool
 }
 
 func (store *Store) readMemoryView(ctx context.Context, scope memoryScope, options storage.ProjectMemoryOptions) (*memoryView, error) {
 	view := &memoryView{
 		scope: scope, dayStart: options.DayStart.UTC(), now: options.Now.UTC(),
 		sets: map[int64][]contract.ContextItem{}, dropped: map[string]bool{},
-		notes: map[string]*memoryNote{}, reads: map[string]*memoryReadLog{}, skills: map[string]map[string]bool{},
+		notes: map[string]*memoryNote{}, reads: map[string]*memoryReadLog{},
 	}
 	project, client := textOf(scope.project), string(scope.client)
 	rows, err := store.db.QueryContext(ctx, `SELECT id, items_json FROM context_sets WHERE project = ? AND client_type = ?`, project, client)
@@ -335,13 +335,12 @@ FROM memory_entries WHERE project = ? AND client_type = ?`, project, client)
 }
 
 // readMemoryActivity reads the calls whose history shows a memory file
-// written or read, or a skill loaded: the earliest note of each memory, the
-// turns that read each, and the turns that loaded each skill in the
-// toolbox's days.
+// written or read: the earliest note of each memory and the turns that read
+// each.
 func (store *Store) readMemoryActivity(ctx context.Context, view *memoryView, project, client string) error {
 	rows, err := store.db.QueryContext(ctx, `SELECT id, COALESCE(session_id, id), COALESCE(parent_session_id, ''), turn_index, started_at,
     json_extract(context_json, '$.memory_writes'), json_extract(context_json, '$.memory_reads'),
-    json_extract(context_json, '$.skills_used'), COALESCE(json_extract(audit_json, '$.request_body_captured'), 0)
+    COALESCE(json_extract(audit_json, '$.request_body_captured'), 0)
 FROM request_records
 WHERE context_set_id IN (SELECT id FROM context_sets WHERE project = ? AND client_type = ?)
     AND `+migrate.ContextActivityFilter+`
@@ -350,13 +349,12 @@ ORDER BY started_at DESC LIMIT ?`, project, client, memoryActivityScan)
 		return fmt.Errorf("read memory activity: %w", err)
 	}
 	defer rows.Close()
-	toolboxStart := view.dayStart.Add(-(contract.MemoryToolboxDays - 1) * memoryDay)
 	for rows.Next() {
 		var call memoryCall
 		var turn sql.NullInt64
 		var started string
-		var writes, reads, skills sql.NullString
-		if err := rows.Scan(&call.id, &call.session, &call.parent, &turn, &started, &writes, &reads, &skills, &call.captured); err != nil {
+		var writes, reads sql.NullString
+		if err := rows.Scan(&call.id, &call.session, &call.parent, &turn, &started, &writes, &reads, &call.captured); err != nil {
 			return fmt.Errorf("scan memory activity: %w", err)
 		}
 		if call.at, err = time.Parse(time.RFC3339Nano, started); err != nil {
@@ -389,18 +387,6 @@ ORDER BY started_at DESC LIMIT ?`, project, client, memoryActivityScan)
 				}
 				// Newest first, so the last call kept for a turn is its first.
 				log.turns[call.turnKey()] = call
-			}
-		}
-		if skills.Valid && !call.at.Before(toolboxStart) {
-			var list []string
-			if err := json.Unmarshal([]byte(skills.String), &list); err != nil {
-				return fmt.Errorf("decode skills used: %w", err)
-			}
-			for _, name := range list {
-				if view.skills[name] == nil {
-					view.skills[name] = map[string]bool{}
-				}
-				view.skills[name][call.turnKey()] = true
 			}
 		}
 	}
@@ -743,83 +729,55 @@ FROM request_records WHERE id IN (`+sessionPlaceholders(len(args))+`)`, args...)
 	return nil
 }
 
-// memoryToolbox is the skills and MCP tools the newest main call carried,
-// and how often the calls used each in the toolbox's days: a skill once per
-// turn that loaded it, an MCP tool once per call that made it.
+// toolboxSince is when the toolbox's days begin: MemoryToolboxDays days
+// that end with the day of dayStart.
+func toolboxSince(dayStart time.Time) time.Time {
+	return dayStart.UTC().Add(-(contract.MemoryToolboxDays - 1) * memoryDay)
+}
+
+// memoryToolbox is the skills and MCP tools the client's calls carried or
+// used in the toolbox's days, and how often they used each: a skill once
+// per turn that loaded it, an MCP tool once per call that made it. Every
+// call of those days counts, so within the same days the lists only grow
+// and no count drops; a call leaves them only when its day leaves the
+// toolbox's days.
 func (store *Store) memoryToolbox(ctx context.Context, view *memoryView) (contract.MemoryToolbox, error) {
-	toolbox := contract.MemoryToolbox{Skills: []contract.ToolboxSkill{}, MCP: []contract.ToolboxServer{}}
-	var catalog contract.ContextCatalog
-	var skillsItem, mcpItem *contract.ContextItem
-	var carriedNames []string
-	if call := view.carrying; call != nil {
-		for index := range call.context.Items {
-			switch item := &call.context.Items[index]; item.Kind {
-			case contract.ContextItemSkills:
-				skillsItem = item
-			case contract.ContextItemMCP:
-				mcpItem = item
-			}
-		}
-		for _, item := range view.sets[call.setID] {
-			if item.Kind == contract.ContextItemSkills {
-				carriedNames = item.Names
-			}
-		}
-		if call.catalog != "" {
-			if err := json.Unmarshal([]byte(call.catalog), &catalog); err != nil {
-				return toolbox, fmt.Errorf("decode context catalog: %w", err)
-			}
-		}
-	}
-
-	// Skills: the catalog's, else the names the set kept, then any used
-	// that the newest call no longer carries.
-	described := map[string]string{}
-	for _, skill := range catalog.Skills {
-		described[skill.Name] = skill.Description
-	}
-	names := carriedNames
-	if len(names) == 0 {
-		for _, skill := range catalog.Skills {
-			names = append(names, skill.Name)
-		}
-	}
-	for _, name := range names {
-		toolbox.Skills = append(toolbox.Skills, contract.ToolboxSkill{
-			Name: name, Description: described[name], Uses: len(view.skills[name]), Carried: true,
-		})
-	}
-	for name, turns := range view.skills {
-		if !slices.Contains(names, name) {
-			toolbox.Skills = append(toolbox.Skills, contract.ToolboxSkill{Name: name, Uses: len(turns)})
-		}
-	}
-	slices.SortStableFunc(toolbox.Skills, func(left, right contract.ToolboxSkill) int {
-		if order := cmp.Compare(right.Uses, left.Uses); order != 0 {
-			return order
-		}
-		if left.Uses > 0 {
-			return cmp.Compare(left.Name, right.Name)
-		}
-		return 0
-	})
-
-	// MCP: the catalog's servers and tools, else the servers the item names.
-	uses, err := store.mcpUses(ctx, view)
+	since := toolboxSince(view.dayStart)
+	toolbox := contract.MemoryToolbox{Since: since, Skills: []contract.ToolboxSkill{}, MCP: []contract.ToolboxServer{}}
+	carried, err := store.toolboxCarried(ctx, view, since)
 	if err != nil {
 		return toolbox, err
 	}
-	servers := catalog.MCP
-	if len(servers) == 0 && mcpItem != nil {
-		for _, server := range mcpItem.Servers {
-			servers = append(servers, contract.CatalogServer{Server: server})
+	skillUses, err := store.skillUses(ctx, view, since)
+	if err != nil {
+		return toolbox, err
+	}
+	uses, err := store.mcpUses(ctx, view, since)
+	if err != nil {
+		return toolbox, err
+	}
+
+	// Skills: those the calls carried, then any used that none carried.
+	for _, name := range carried.skills {
+		toolbox.Skills = append(toolbox.Skills, contract.ToolboxSkill{
+			Name: name, Description: carried.described[name], Uses: len(skillUses[name]), Carried: true,
+		})
+	}
+	for name, turns := range skillUses {
+		if !slices.Contains(carried.skills, name) {
+			toolbox.Skills = append(toolbox.Skills, contract.ToolboxSkill{Name: name, Uses: len(turns)})
 		}
 	}
-	tools := map[string]string{}
-	for _, server := range servers {
-		for _, tool := range server.Tools {
-			if _, taken := tools[tool]; !taken {
-				tools[tool] = server.Server
+	slices.SortFunc(toolbox.Skills, func(left, right contract.ToolboxSkill) int {
+		return cmp.Or(cmp.Compare(right.Uses, left.Uses), cmp.Compare(left.Name, right.Name))
+	})
+
+	// MCP: the servers the calls carried, by name, then those only used.
+	owner := map[string]string{}
+	for _, server := range carried.servers {
+		for _, tool := range carried.tools[server] {
+			if _, taken := owner[tool]; !taken {
+				owner[tool] = server
 			}
 		}
 	}
@@ -827,7 +785,7 @@ func (store *Store) memoryToolbox(ctx context.Context, view *memoryView) (contra
 	for name, count := range uses {
 		server, tool := mcpToolOf(name)
 		if server == "" {
-			if server = tools[name]; server == "" {
+			if server = owner[name]; server == "" {
 				continue
 			}
 			tool = name
@@ -837,23 +795,22 @@ func (store *Store) memoryToolbox(ctx context.Context, view *memoryView) (contra
 		}
 		counted[server][tool] += count
 	}
-	idleTools, carriedTools := 0, 0
-	for _, server := range servers {
-		entry := contract.ToolboxServer{Server: server.Server, Tools: []contract.ToolboxTool{}}
-		for _, tool := range server.Tools {
-			count := counted[server.Server][tool]
+	idleTools := 0
+	for _, server := range carried.servers {
+		entry := contract.ToolboxServer{Server: server, Tools: []contract.ToolboxTool{}}
+		for _, tool := range carried.tools[server] {
+			count := counted[server][tool]
 			entry.Tools = append(entry.Tools, contract.ToolboxTool{Name: tool, Uses: count, Carried: true})
-			carriedTools++
 			if count == 0 {
 				idleTools++
 			}
 		}
-		for tool, count := range counted[server.Server] {
-			if !slices.Contains(server.Tools, tool) {
+		for tool, count := range counted[server] {
+			if !slices.Contains(carried.tools[server], tool) {
 				entry.Tools = append(entry.Tools, contract.ToolboxTool{Name: tool, Uses: count})
 			}
 		}
-		delete(counted, server.Server)
+		delete(counted, server)
 		sortToolboxTools(entry.Tools)
 		toolbox.MCP = append(toolbox.MCP, entry)
 	}
@@ -871,32 +828,210 @@ func (store *Store) memoryToolbox(ctx context.Context, view *memoryView) (contra
 		toolbox.MCP = append(toolbox.MCP, entry)
 	}
 
-	// What the idle ones cost each call, in proportion to their share of
-	// what the catalog and the MCP tools carry.
-	if skillsItem != nil && len(names) > 0 {
-		idle := 0
-		for _, skill := range toolbox.Skills {
-			if skill.Carried && skill.Uses == 0 {
-				idle++
+	// What the idle ones still carried cost each call: each its share of
+	// what the newest main call's catalog and MCP tools carry. One that call
+	// no longer carries costs nothing.
+	now := view.carriedNow()
+	idleSkills, idleTools := 0, 0
+	for _, skill := range toolbox.Skills {
+		if skill.Uses == 0 && now.skills[skill.Name] {
+			idleSkills++
+		}
+	}
+	for _, server := range toolbox.MCP {
+		for _, tool := range server.Tools {
+			if tool.Uses == 0 && now.tools[server.Server+"\x00"+tool.Name] {
+				idleTools++
 			}
 		}
-		toolbox.IdleTokens += skillsItem.Tokens * idle / len(names)
 	}
-	if mcpItem != nil && carriedTools > 0 {
-		toolbox.IdleTokens += mcpItem.Tokens * idleTools / carriedTools
+	if len(now.skills) > 0 {
+		toolbox.IdleTokens += now.skillTokens * idleSkills / len(now.skills)
+	}
+	if len(now.tools) > 0 {
+		toolbox.IdleTokens += now.mcpTokens * idleTools / len(now.tools)
 	}
 	return toolbox, nil
 }
 
+// carriedNow is what the newest main call carried: the skills its catalog
+// lists and the MCP tools, each server's by server and name, with what
+// each kind carried in tokens.
+type carriedNow struct {
+	skills      map[string]bool
+	tools       map[string]bool
+	skillTokens int
+	mcpTokens   int
+}
+
+func (view *memoryView) carriedNow() carriedNow {
+	now := carriedNow{skills: map[string]bool{}, tools: map[string]bool{}}
+	call := view.carrying
+	if call == nil {
+		return now
+	}
+	for _, item := range view.sets[call.setID] {
+		if item.Kind == contract.ContextItemSkills {
+			for _, name := range item.Names {
+				now.skills[name] = true
+			}
+		}
+	}
+	var catalog contract.ContextCatalog
+	if call.catalog != "" && json.Unmarshal([]byte(call.catalog), &catalog) == nil {
+		if len(now.skills) == 0 {
+			for _, skill := range catalog.Skills {
+				now.skills[skill.Name] = true
+			}
+		}
+		for _, server := range catalog.MCP {
+			for _, tool := range server.Tools {
+				now.tools[server.Server+"\x00"+tool] = true
+			}
+		}
+	}
+	for _, item := range call.context.Items {
+		switch item.Kind {
+		case contract.ContextItemSkills:
+			now.skillTokens = item.Tokens
+		case contract.ContextItemMCP:
+			now.mcpTokens = item.Tokens
+		}
+	}
+	return now
+}
+
+// toolboxCatalog is the skills and MCP tools the calls carried.
+type toolboxCatalog struct {
+	// skills are by name; described holds what the newest catalog that
+	// describes each says of it.
+	skills    []string
+	described map[string]string
+	// servers are by name; tools holds each server's tools.
+	servers []string
+	tools   map[string][]string
+}
+
+// toolboxCarried reads the skills and MCP tools the client's calls carried
+// since the toolbox's days began: every set a call of those days carried,
+// the newest first, with its catalog.
+func (store *Store) toolboxCarried(ctx context.Context, view *memoryView, since time.Time) (toolboxCatalog, error) {
+	carried := toolboxCatalog{described: map[string]string{}, tools: map[string][]string{}}
+	rows, err := store.db.QueryContext(ctx, `SELECT id, catalog FROM (
+    SELECT s.id, COALESCE(c.catalog_json, '') AS catalog,
+        (SELECT MAX(started_at) FROM request_records WHERE context_set_id = s.id) AS last_at
+    FROM context_sets s LEFT JOIN context_catalogs c ON c.id = s.catalog_id
+    WHERE s.project = ? AND s.client_type = ?)
+WHERE last_at >= ?
+ORDER BY last_at DESC, id DESC`, textOf(view.scope.project), string(view.scope.client), since.Format(time.RFC3339Nano))
+	if err != nil {
+		return carried, fmt.Errorf("read toolbox sets: %w", err)
+	}
+	defer rows.Close()
+	skills := map[string]bool{}
+	servers := map[string]bool{}
+	addTool := func(server, tool string) {
+		if !servers[server] {
+			servers[server] = true
+			carried.servers = append(carried.servers, server)
+		}
+		if tool != "" && !slices.Contains(carried.tools[server], tool) {
+			carried.tools[server] = append(carried.tools[server], tool)
+		}
+	}
+	for rows.Next() {
+		var id int64
+		var encoded string
+		if err := rows.Scan(&id, &encoded); err != nil {
+			return carried, fmt.Errorf("scan toolbox set: %w", err)
+		}
+		var catalog contract.ContextCatalog
+		if encoded != "" {
+			if err := json.Unmarshal([]byte(encoded), &catalog); err != nil {
+				return carried, fmt.Errorf("decode context catalog: %w", err)
+			}
+		}
+		for _, item := range view.sets[id] {
+			switch item.Kind {
+			case contract.ContextItemSkills:
+				for _, name := range item.Names {
+					skills[name] = true
+				}
+			case contract.ContextItemMCP:
+				for _, server := range item.Servers {
+					addTool(server, "")
+				}
+			}
+		}
+		for _, skill := range catalog.Skills {
+			skills[skill.Name] = true
+			if _, ok := carried.described[skill.Name]; !ok && skill.Description != "" {
+				carried.described[skill.Name] = skill.Description
+			}
+		}
+		for _, server := range catalog.MCP {
+			addTool(server.Server, "")
+			for _, tool := range server.Tools {
+				addTool(server.Server, tool)
+			}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return carried, fmt.Errorf("iterate toolbox sets: %w", err)
+	}
+	for name := range skills {
+		carried.skills = append(carried.skills, name)
+	}
+	slices.Sort(carried.skills)
+	slices.Sort(carried.servers)
+	return carried, nil
+}
+
+// skillUses reads, per skill, the turns whose calls loaded it since the
+// toolbox's days began.
+func (store *Store) skillUses(ctx context.Context, view *memoryView, since time.Time) (map[string]map[string]bool, error) {
+	rows, err := store.db.QueryContext(ctx, `SELECT id, COALESCE(session_id, id), turn_index, json_extract(context_json, '$.skills_used')
+FROM request_records
+WHERE context_set_id IN (SELECT id FROM context_sets WHERE project = ? AND client_type = ?)
+    AND `+migrate.ContextActivityFilter+`
+    AND started_at >= ? AND json_type(context_json, '$.skills_used') IS NOT NULL`,
+		textOf(view.scope.project), string(view.scope.client), since.Format(time.RFC3339Nano))
+	if err != nil {
+		return nil, fmt.Errorf("read skill uses: %w", err)
+	}
+	defer rows.Close()
+	uses := map[string]map[string]bool{}
+	for rows.Next() {
+		var call memoryCall
+		var turn sql.NullInt64
+		var encoded string
+		if err := rows.Scan(&call.id, &call.session, &turn, &encoded); err != nil {
+			return nil, fmt.Errorf("scan skill uses: %w", err)
+		}
+		if turn.Valid {
+			value := int(turn.Int64)
+			call.turn = &value
+		}
+		var names []string
+		if err := json.Unmarshal([]byte(encoded), &names); err != nil {
+			return nil, fmt.Errorf("decode skills used: %w", err)
+		}
+		for _, name := range names {
+			if uses[name] == nil {
+				uses[name] = map[string]bool{}
+			}
+			uses[name][call.turnKey()] = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate skill uses: %w", err)
+	}
+	return uses, nil
+}
+
 func sortToolboxTools(tools []contract.ToolboxTool) {
-	slices.SortStableFunc(tools, func(left, right contract.ToolboxTool) int {
-		if order := cmp.Compare(right.Uses, left.Uses); order != 0 {
-			return order
-		}
-		if left.Uses > 0 {
-			return cmp.Compare(left.Name, right.Name)
-		}
-		return 0
+	slices.SortFunc(tools, func(left, right contract.ToolboxTool) int {
+		return cmp.Or(cmp.Compare(right.Uses, left.Uses), cmp.Compare(left.Name, right.Name))
 	})
 }
 
@@ -914,13 +1049,12 @@ func mcpToolOf(name string) (server, tool string) {
 }
 
 // mcpUses counts the tool calls the client's main and subagent calls made
-// in the toolbox's days, by the name each response gave.
-func (store *Store) mcpUses(ctx context.Context, view *memoryView) (map[string]int, error) {
-	since := view.dayStart.Add(-(contract.MemoryToolboxDays - 1) * memoryDay).Format(time.RFC3339Nano)
+// since the toolbox's days began, by the name each response gave.
+func (store *Store) mcpUses(ctx context.Context, view *memoryView, since time.Time) (map[string]int, error) {
 	rows, err := store.db.QueryContext(ctx, `SELECT json_extract(output_json, '$.tools') FROM request_records
 WHERE context_set_id IN (SELECT id FROM context_sets WHERE project = ? AND client_type = ?)
     AND started_at >= ? AND json_type(output_json, '$.tools') IS NOT NULL`,
-		textOf(view.scope.project), string(view.scope.client), since)
+		textOf(view.scope.project), string(view.scope.client), since.Format(time.RFC3339Nano))
 	if err != nil {
 		return nil, fmt.Errorf("read tool uses: %w", err)
 	}

@@ -16,6 +16,7 @@ import (
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/accesstoken"
 	"github.com/QuantumNous/astrlink/core/internal/controlapi"
+	"github.com/QuantumNous/astrlink/core/internal/storage"
 	"github.com/QuantumNous/astrlink/core/internal/storage/rawseal"
 	"github.com/QuantumNous/astrlink/core/internal/storage/sqlite"
 )
@@ -49,6 +50,7 @@ type fixture struct {
 	console *Handler
 	vault   *controlapi.Vault
 	clock   *testClock
+	store   *sqlite.Store
 }
 
 // newFixture wires the console to a real control API and raw vault the way
@@ -60,9 +62,14 @@ func newFixture(t *testing.T, password string) fixture {
 
 func newFixtureWith(t *testing.T, password string, passwordReset bool) fixture {
 	t.Helper()
+	return newFixtureWithVaultStore(t, password, passwordReset, nil)
+}
+
+func newFixtureWithVaultStore(t *testing.T, password string, passwordReset bool, wrap func(storage.RawSealingStore) storage.RawSealingStore) fixture {
+	t.Helper()
 	ctx := context.Background()
 	clock := &testClock{now: time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)}
-	store, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "astrlink.db"))
+	store, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "console-test.sqlite"))
 	if err != nil {
 		t.Fatalf("open SQLite: %v", err)
 	}
@@ -76,7 +83,11 @@ func newFixtureWith(t *testing.T, password string, passwordReset bool) fixture {
 	if err != nil {
 		t.Fatalf("access token manager: %v", err)
 	}
-	vault := controlapi.NewRawVault(store, controlapi.RawVaultOptions{KDF: testKDF, Now: clock.Now})
+	var vaultStore storage.RawSealingStore = store
+	if wrap != nil {
+		vaultStore = wrap(vaultStore)
+	}
+	vault := controlapi.NewRawVault(vaultStore, controlapi.RawVaultOptions{KDF: testKDF, Now: clock.Now})
 	sessions := NewSessions()
 	control, err := controlapi.NewWithDependencies(contract.DefaultVersionResponse("0.1.0-test", "abc1234"), controlapi.Dependencies{
 		ServiceStore:       store,
@@ -102,7 +113,7 @@ func newFixtureWith(t *testing.T, password string, passwordReset bool) fixture {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	return fixture{console: console, vault: vault, clock: clock}
+	return fixture{console: console, vault: vault, clock: clock, store: store}
 }
 
 func (f fixture) rawStatus(t *testing.T) controlapi.RawVaultStatus {
@@ -382,6 +393,127 @@ func TestConsolePasswordChangeEndsEveryOtherSession(t *testing.T) {
 	}
 }
 
+type pausedConsolePassword struct {
+	RawPassword
+	setup    bool
+	verified chan struct{}
+	resume   chan struct{}
+	once     sync.Once
+}
+
+func (password *pausedConsolePassword) pause(ctx context.Context) error {
+	var err error
+	password.once.Do(func() {
+		close(password.verified)
+		select {
+		case <-password.resume:
+		case <-ctx.Done():
+			err = ctx.Err()
+		}
+	})
+	return err
+}
+
+func (password *pausedConsolePassword) Verify(ctx context.Context, proof controlapi.RawProof) (controlapi.RawVaultStatus, error) {
+	status, err := password.RawPassword.Verify(ctx, proof)
+	if err == nil && !password.setup {
+		err = password.pause(ctx)
+	}
+	return status, err
+}
+
+func (password *pausedConsolePassword) ChangePassword(ctx context.Context, action controlapi.RawPasswordAction, value []byte, proof controlapi.RawProof) (controlapi.RawPasswordOutcome, error) {
+	outcome, err := password.RawPassword.ChangePassword(ctx, action, value, proof)
+	if err == nil && password.setup && action == controlapi.RawPasswordSet {
+		err = password.pause(ctx)
+	}
+	return outcome, err
+}
+
+func TestConsolePasswordChangeInvalidatesPendingSignIn(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		setup    bool
+		rejected bool
+	}{
+		{name: "login"},
+		{name: "first-run setup", setup: true},
+		{name: "rejected password change", rejected: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			initialPassword, path := testPassword, LoginPath
+			if test.setup {
+				initialPassword, path = "", SetupPath
+			}
+			f := newFixture(t, initialPassword)
+			var changer *http.Cookie
+			if !test.setup {
+				changer = sessionFrom(t, login(f.console, testPassword))
+			}
+			gate := &pausedConsolePassword{
+				RawPassword: f.vault, setup: test.setup,
+				verified: make(chan struct{}), resume: make(chan struct{}),
+			}
+			f.console.rawPassword = gate
+			ctx, cancel := context.WithCancel(t.Context())
+			done := make(chan struct{})
+			response := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodPost, path, strings.NewReader(passwordBody(testPassword))).WithContext(ctx)
+			request.Header.Set("Content-Type", "application/json")
+			request.Header.Set(RequestHeader, RequestHeaderValue)
+			go func() {
+				defer close(done)
+				f.console.ServeHTTP(response, request)
+			}()
+			t.Cleanup(func() { cancel(); <-done })
+			select {
+			case <-gate.verified:
+			case <-done:
+				t.Fatalf("sign-in ended before verification: %d %s", response.Code, response.Body.String())
+			case <-ctx.Done():
+				t.Fatal("verification was cancelled")
+			}
+			// Setup has stored the password, but has not created its session yet.
+			if test.setup {
+				changer = sessionFrom(t, login(f.console, testPassword))
+			}
+			newPassword, wantChange, wantSignIn := "a brand new password", http.StatusOK, http.StatusUnauthorized
+			if test.rejected {
+				newPassword, wantChange, wantSignIn = "short", http.StatusBadRequest, http.StatusOK
+			}
+			change := rawPasswordAction(changer, `{"action":"change","password":"`+newPassword+`","proof":{"password":"`+testPassword+`"}}`).do(f.console)
+			close(gate.resume)
+			select {
+			case <-done:
+			case <-ctx.Done():
+				t.Fatal("sign-in did not finish after the password change")
+			}
+			if change.Code != wantChange {
+				t.Fatalf("password change=%d %s, want %d", change.Code, change.Body.String(), wantChange)
+			}
+			if response.Code != wantSignIn {
+				t.Fatalf("pending sign-in=%d %s, want %d", response.Code, response.Body.String(), wantSignIn)
+			}
+			if test.rejected {
+				cookie := sessionFrom(t, response)
+				if access := (call{method: http.MethodGet, path: controlapi.AccessTokensPath, cookie: cookie}).do(f.console); access.Code != http.StatusOK {
+					t.Fatalf("valid sign-in lost access after rejected change: %d", access.Code)
+				}
+			} else {
+				if len(response.Result().Cookies()) != 0 {
+					t.Fatal("stale password proof received a session cookie")
+				}
+				if fresh := login(f.console, newPassword); fresh.Code != http.StatusOK {
+					t.Fatalf("new password could not sign in: %d %s", fresh.Code, fresh.Body.String())
+				}
+			}
+			if !statusOf(t, f.console, changer).SignedIn {
+				t.Fatal("the password changer lost its own session")
+			}
+		})
+	}
+}
+
 func TestConsoleRefusesRawPasswordSetAndResetThroughControl(t *testing.T) {
 	f := newFixture(t, testPassword)
 	cookie := sessionFrom(t, login(f.console, testPassword))
@@ -556,13 +688,13 @@ func TestConsoleSessionCookieIsSecureBehindHTTPS(t *testing.T) {
 func TestConsoleSessionLimitEndsTheLeastRecentlyUsed(t *testing.T) {
 	clock := &testClock{now: time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)}
 	store := NewSessions()
-	first, err := store.create(clock.Now())
+	first, err := store.create(clock.Now(), store.currentGeneration())
 	if err != nil {
 		t.Fatal(err)
 	}
 	for range maxSessions - 1 {
 		clock.advance(time.Second)
-		if _, err := store.create(clock.Now()); err != nil {
+		if _, err := store.create(clock.Now(), store.currentGeneration()); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -571,7 +703,7 @@ func TestConsoleSessionLimitEndsTheLeastRecentlyUsed(t *testing.T) {
 		t.Fatal("first session ended early")
 	}
 	clock.advance(time.Second)
-	if _, err := store.create(clock.Now()); err != nil {
+	if _, err := store.create(clock.Now(), store.currentGeneration()); err != nil {
 		t.Fatal(err)
 	}
 	if len(store.sessions) != maxSessions || !store.touch(first, clock.Now()) {

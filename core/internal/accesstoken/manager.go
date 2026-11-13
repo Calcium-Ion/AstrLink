@@ -8,7 +8,6 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -17,6 +16,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/MoeForge/moego/base64"
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/storage"
 )
@@ -31,8 +31,9 @@ const (
 )
 
 var (
-	ErrInvalidName  = errors.New("access token name is invalid")
-	ErrInvalidToken = errors.New("access token is invalid")
+	ErrInvalidName     = errors.New("access token name is invalid")
+	ErrInvalidToken    = errors.New("access token is invalid")
+	ErrInvalidServices = errors.New("access token providers are invalid")
 
 	ErrTokenLimit    = storage.ErrLimitReached
 	ErrNotFound      = storage.ErrNotFound
@@ -74,10 +75,17 @@ func (manager *Manager) EnsureDefault(ctx context.Context) (Token, bool, error) 
 	return token, created, nil
 }
 
-func (manager *Manager) Create(ctx context.Context, name string) (CreatedToken, error) {
+// Create issues a token. With no services it may use every provider.
+func (manager *Manager) Create(ctx context.Context, name string, services ...contract.AccessTokenServices) (CreatedToken, error) {
 	candidate, err := manager.newToken(name)
 	if err != nil {
 		return CreatedToken{}, err
+	}
+	if len(services) > 0 {
+		if err := services[0].Validate(); err != nil {
+			return CreatedToken{}, fmt.Errorf("%w: %v", ErrInvalidServices, err)
+		}
+		candidate.Services = services[0]
 	}
 	token, err := manager.store.CreateAccessToken(ctx, candidate)
 	if err != nil {
@@ -105,6 +113,27 @@ func (manager *Manager) Reveal(ctx context.Context, id contract.AccessTokenID) (
 	return value, nil
 }
 
+// Update renames a token and replaces the providers it may use.
+func (manager *Manager) Update(ctx context.Context, id contract.AccessTokenID, name string, services contract.AccessTokenServices) (Token, error) {
+	if err := id.Validate(); err != nil {
+		return Token{}, fmt.Errorf("%w: %v", storage.ErrInvalidArgument, err)
+	}
+	canonicalName, nameKey, err := normalizeName(name)
+	if err != nil {
+		return Token{}, err
+	}
+	if err := services.Validate(); err != nil {
+		return Token{}, fmt.Errorf("%w: %v", ErrInvalidServices, err)
+	}
+	token, err := manager.store.UpdateAccessToken(ctx, id, storage.AccessTokenUpdate{
+		Name: canonicalName, NameKey: nameKey, Services: services,
+	})
+	if err != nil {
+		return Token{}, fmt.Errorf("update access token: %w", err)
+	}
+	return token, nil
+}
+
 func (manager *Manager) Delete(ctx context.Context, id contract.AccessTokenID) error {
 	if err := id.Validate(); err != nil {
 		return fmt.Errorf("%w: %v", storage.ErrInvalidArgument, err)
@@ -119,23 +148,33 @@ func (manager *Manager) Delete(ctx context.Context, id contract.AccessTokenID) e
 // non-secret identifier. Missing or internally inconsistent records collapse
 // to the same public error and therefore fail closed.
 func (manager *Manager) Authenticate(ctx context.Context, raw string) (contract.AccessTokenID, error) {
+	token, err := manager.AuthenticateToken(ctx, raw)
+	if err != nil {
+		return "", err
+	}
+	return token.ID, nil
+}
+
+// AuthenticateToken is Authenticate returning the token's metadata, including
+// the providers it may use.
+func (manager *Manager) AuthenticateToken(ctx context.Context, raw string) (Token, error) {
 	if !validRawToken(raw) {
-		return "", ErrInvalidToken
+		return Token{}, ErrInvalidToken
 	}
 	sum := sha256.Sum256([]byte(raw))
 	token, err := manager.store.FindAccessTokenByHash(ctx, storage.AccessTokenHash(sum))
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) || errors.Is(err, storage.ErrInvalidRecord) {
-			return "", ErrInvalidToken
+			return Token{}, ErrInvalidToken
 		}
-		return "", fmt.Errorf("authenticate access token: %w", err)
+		return Token{}, fmt.Errorf("authenticate access token: %w", err)
 	}
 	// The stored value stays sealed on this path; the hint still ties the
 	// metadata row to the presented token.
 	if token.Hint != tokenHint(raw) {
-		return "", ErrInvalidToken
+		return Token{}, ErrInvalidToken
 	}
-	return token.ID, nil
+	return token, nil
 }
 
 func (manager *Manager) newToken(name string) (storage.NewAccessToken, error) {

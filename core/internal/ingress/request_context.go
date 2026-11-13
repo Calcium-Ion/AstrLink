@@ -10,8 +10,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/tidwall/gjson"
-
+	"github.com/MoeForge/moego/ojson"
 	"github.com/QuantumNous/astrlink/convo"
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/storage"
@@ -124,8 +123,8 @@ func estimateTokens(text string) int {
 // which is longer than the text it stands for.
 func encryptedTokens(raw string) int { return len(raw) / 8 }
 
-func resultTokens(value gjson.Result) int {
-	if value.Type == gjson.String {
+func resultTokens(value ojson.Result) int {
+	if value.Type == ojson.String {
 		return estimateTokens(value.Str)
 	}
 	return estimateTokens(value.Raw)
@@ -143,12 +142,12 @@ type observedCall struct {
 	id       string
 	name     string
 	key      [32]byte
-	args     gjson.Result
+	args     ojson.Result
 	exchange int
 	resolved bool
 	failed   bool
 	// output is what the call returned, kept for ContextTexts.
-	output gjson.Result
+	output ojson.Result
 }
 
 // contextWalk is the state of one pass over a body.
@@ -184,7 +183,7 @@ func observeRequestContext(protocol contract.ProtocolID, raw []byte) *contextObs
 }
 
 func walkRequestContext(protocol contract.ProtocolID, raw []byte, texts bool) *contextWalk {
-	var walk func(*contextWalk, gjson.Result)
+	var walk func(*contextWalk, ojson.Result)
 	switch protocol {
 	case contract.ProtocolAnthropicMessages:
 		walk = walkAnthropicContext
@@ -195,7 +194,7 @@ func walkRequestContext(protocol contract.ProtocolID, raw []byte, texts bool) *c
 	default:
 		return nil
 	}
-	root := gjson.ParseBytes(raw)
+	root := ojson.ParseBytes(raw)
 	if !root.IsObject() {
 		return nil
 	}
@@ -214,12 +213,12 @@ func walkRequestContext(protocol contract.ProtocolID, raw []byte, texts bool) *c
 	return w
 }
 
-func walkAnthropicContext(w *contextWalk, root gjson.Result) {
+func walkAnthropicContext(w *contextWalk, root ojson.Result) {
 	system := root.Get("system")
 	w.observeContent(system, &w.observation.parts.System, channelSystem, true)
 	w.observeTools(root.Get("tools"))
 	lastAssistantCalls := false
-	root.Get("messages").ForEach(func(_, message gjson.Result) bool {
+	root.Get("messages").ForEach(func(_, message ojson.Result) bool {
 		content := message.Get("content")
 		switch message.Get("role").Str {
 		case "assistant":
@@ -238,14 +237,14 @@ func walkAnthropicContext(w *contextWalk, root gjson.Result) {
 	}
 }
 
-func (w *contextWalk) observeAnthropicAssistant(content gjson.Result) bool {
+func (w *contextWalk) observeAnthropicAssistant(content ojson.Result) bool {
 	parts := &w.observation.parts
-	if content.Type == gjson.String {
+	if content.Type == ojson.String {
 		parts.History += estimateTokens(content.Str)
 		return false
 	}
 	calls := false
-	content.ForEach(func(_, block gjson.Result) bool {
+	content.ForEach(func(_, block ojson.Result) bool {
 		switch block.Get("type").Str {
 		case "text":
 			parts.History += estimateTokens(block.Get("text").Str)
@@ -266,13 +265,13 @@ func (w *contextWalk) observeAnthropicAssistant(content gjson.Result) bool {
 	return calls
 }
 
-func (w *contextWalk) observeAnthropicUser(content gjson.Result) {
+func (w *contextWalk) observeAnthropicUser(content ojson.Result) {
 	parts := &w.observation.parts
-	if content.Type == gjson.String {
+	if content.Type == ojson.String {
 		w.observeText(content.Str, &parts.History, channelUser, false)
 		return
 	}
-	content.ForEach(func(_, block gjson.Result) bool {
+	content.ForEach(func(_, block ojson.Result) bool {
 		switch block.Get("type").Str {
 		case "text":
 			w.observeText(block.Get("text").Str, &parts.History, channelUser, false)
@@ -291,15 +290,15 @@ func (w *contextWalk) observeAnthropicUser(content gjson.Result) {
 	})
 }
 
-func walkResponsesContext(w *contextWalk, root gjson.Result) {
+func walkResponsesContext(w *contextWalk, root ojson.Result) {
 	parts := &w.observation.parts
 	w.observation.stateful = root.Get("previous_response_id").String() != ""
-	if instructions := root.Get("instructions"); instructions.Type == gjson.String {
+	if instructions := root.Get("instructions"); instructions.Type == ojson.String {
 		w.observeText(instructions.Str, &parts.System, channelSystem, true)
 	}
 	w.observeTools(root.Get("tools"))
 	input := root.Get("input")
-	if input.Type == gjson.String {
+	if input.Type == ojson.String {
 		w.lastUser.Reset()
 		w.observeText(input.Str, &parts.History, channelUser, false)
 		return
@@ -313,7 +312,7 @@ func walkResponsesContext(w *contextWalk, root gjson.Result) {
 		}
 		lastResponseCall = call
 	}
-	input.ForEach(func(_, item gjson.Result) bool {
+	input.ForEach(func(_, item ojson.Result) bool {
 		kind := item.Get("type").Str
 		if kind == "" && item.Get("role").Exists() {
 			kind = "message"
@@ -351,7 +350,7 @@ func walkResponsesContext(w *contextWalk, root gjson.Result) {
 			w.resolveCall(item.Get("call_id").Str, output, false)
 		case "reasoning":
 			responseItem(false)
-			item.Get("summary").ForEach(func(_, summary gjson.Result) bool {
+			item.Get("summary").ForEach(func(_, summary ojson.Result) bool {
 				parts.History += estimateTokens(summary.Get("text").Str)
 				return true
 			})
@@ -386,12 +385,12 @@ func walkResponsesContext(w *contextWalk, root gjson.Result) {
 
 // observeResponsesContent reads a Responses message's content: a string, or
 // input_text, output_text and media parts.
-func (w *contextWalk) observeResponsesContent(content gjson.Result, part *int, channel textChannel) {
-	if content.Type == gjson.String {
+func (w *contextWalk) observeResponsesContent(content ojson.Result, part *int, channel textChannel) {
+	if content.Type == ojson.String {
 		w.observeText(content.Str, part, channel, false)
 		return
 	}
-	content.ForEach(func(_, block gjson.Result) bool {
+	content.ForEach(func(_, block ojson.Result) bool {
 		switch block.Get("type").Str {
 		case "input_text", "output_text", "text":
 			w.observeText(block.Get("text").Str, part, channel, false)
@@ -404,11 +403,11 @@ func (w *contextWalk) observeResponsesContent(content gjson.Result, part *int, c
 	})
 }
 
-func walkChatContext(w *contextWalk, root gjson.Result) {
+func walkChatContext(w *contextWalk, root ojson.Result) {
 	parts := &w.observation.parts
 	w.observeTools(root.Get("tools"))
 	opening, lastAssistantCalls := true, false
-	root.Get("messages").ForEach(func(_, message gjson.Result) bool {
+	root.Get("messages").ForEach(func(_, message ojson.Result) bool {
 		content := message.Get("content")
 		switch message.Get("role").Str {
 		case "system", "developer":
@@ -419,7 +418,7 @@ func walkChatContext(w *contextWalk, root gjson.Result) {
 			w.observeContent(content, &parts.History, channelUser, false)
 			parts.History += estimateTokens(message.Get("reasoning_content").Str)
 			lastAssistantCalls = false
-			message.Get("tool_calls").ForEach(func(_, call gjson.Result) bool {
+			message.Get("tool_calls").ForEach(func(_, call ojson.Result) bool {
 				args := call.Get("function.arguments")
 				parts.History += resultTokens(args)
 				w.addCall(call.Get("id").Str, call.Get("function.name").Str, "", args)
@@ -443,16 +442,16 @@ func walkChatContext(w *contextWalk, root gjson.Result) {
 }
 
 // observeContent reads a string or an array of text and media blocks.
-func (w *contextWalk) observeContent(content gjson.Result, part *int, channel textChannel, hashed bool) {
-	if content.Type == gjson.String {
+func (w *contextWalk) observeContent(content ojson.Result, part *int, channel textChannel, hashed bool) {
+	if content.Type == ojson.String {
 		w.observeText(content.Str, part, channel, hashed)
 		return
 	}
-	content.ForEach(func(_, block gjson.Result) bool {
+	content.ForEach(func(_, block ojson.Result) bool {
 		switch {
-		case block.Type == gjson.String:
+		case block.Type == ojson.String:
 			w.observeText(block.Str, part, channel, hashed)
-		case block.Get("text").Type == gjson.String:
+		case block.Get("text").Type == ojson.String:
 			w.observeText(block.Get("text").Str, part, channel, hashed)
 		case strings.Contains(block.Get("type").Str, "image"):
 			w.observation.parts.Other += contextImageTokens
@@ -463,8 +462,8 @@ func (w *contextWalk) observeContent(content gjson.Result, part *int, channel te
 	})
 }
 
-func (w *contextWalk) observeContentHashed(content gjson.Result, part *int, channel textChannel, hashed bool) {
-	if content.Type == gjson.String {
+func (w *contextWalk) observeContentHashed(content ojson.Result, part *int, channel textChannel, hashed bool) {
+	if content.Type == ojson.String {
 		w.observeText(content.Str, part, channel, hashed)
 		return
 	}
@@ -474,13 +473,13 @@ func (w *contextWalk) observeContentHashed(content gjson.Result, part *int, chan
 // observeTools adds tool definitions to the tools part and their digest,
 // and gathers the MCP tools among them: names under mcp__<server>__, or a
 // Responses namespace named mcp__<server>.
-func (w *contextWalk) observeTools(tools gjson.Result) {
+func (w *contextWalk) observeTools(tools ojson.Result) {
 	if !tools.IsArray() {
 		return
 	}
 	w.toolsSeen = true
 	_, _ = w.toolsDigest.Write([]byte(tools.Raw))
-	tools.ForEach(func(_, tool gjson.Result) bool {
+	tools.ForEach(func(_, tool ojson.Result) bool {
 		tokens := estimateTokens(tool.Raw)
 		w.observation.parts.Tools += tokens
 		name := tool.Get("name").Str
@@ -508,7 +507,7 @@ func (w *contextWalk) observeTools(tools gjson.Result) {
 			w.mcp.names = append(w.mcp.names, server)
 		}
 		if tool.Get("type").Str == "namespace" {
-			tool.Get("tools").ForEach(func(_, nested gjson.Result) bool {
+			tool.Get("tools").ForEach(func(_, nested ojson.Result) bool {
 				w.mcp.addTool(server, nested.Get("name").Str)
 				return true
 			})
@@ -542,7 +541,7 @@ func mcpServer(name string) (string, bool) {
 }
 
 // addCall remembers a tool call of the history in order.
-func (w *contextWalk) addCall(id, name, namespace string, args gjson.Result) {
+func (w *contextWalk) addCall(id, name, namespace string, args ojson.Result) {
 	key := sha256.New()
 	_, _ = key.Write([]byte(namespace + "\x00" + name + "\x00" + args.Raw))
 	call := observedCall{id: id, name: name, args: args, exchange: w.exchange}
@@ -555,7 +554,7 @@ func (w *contextWalk) addCall(id, name, namespace string, args gjson.Result) {
 
 // resolveCall notes a tool result: failed when the client flagged it or the
 // output reports a non-zero exit code.
-func (w *contextWalk) resolveCall(id string, output gjson.Result, flagged bool) {
+func (w *contextWalk) resolveCall(id string, output ojson.Result, flagged bool) {
 	index, ok := w.callIndex[id]
 	if !ok {
 		return
@@ -577,13 +576,13 @@ const exitWindow = 2048
 
 // outputText is the text a tool result holds: a string, or the text blocks
 // of an array.
-func outputText(output gjson.Result) string {
-	if output.Type == gjson.String {
+func outputText(output ojson.Result) string {
+	if output.Type == ojson.String {
 		return output.Str
 	}
 	var builder strings.Builder
-	output.ForEach(func(_, block gjson.Result) bool {
-		if value := block.Get("text"); value.Type == gjson.String {
+	output.ForEach(func(_, block ojson.Result) bool {
+		if value := block.Get("text"); value.Type == ojson.String {
 			builder.WriteString(value.Str)
 			builder.WriteByte('\n')
 		}
@@ -592,7 +591,7 @@ func outputText(output gjson.Result) string {
 	return builder.String()
 }
 
-func outputFailed(output gjson.Result) bool {
+func outputFailed(output ojson.Result) bool {
 	text := outputText(output)
 	check := func(window string) bool {
 		for _, match := range toolExitCode.FindAllStringSubmatch(window, -1) {
@@ -732,13 +731,13 @@ func contextSpans(text string, channel textChannel) []itemSpan {
 	}
 	if reminder {
 		if strings.Contains(text, "<skills_instructions>") {
-			spans = append(spans, skillCatalogSpans(text, "<skills_instructions>", "</skills_instructions>")...)
+			spans = append(spans, skillCatalogSpans(text, codexSkillsOpen, "</skills_instructions>")...)
 		}
-		if strings.Contains(text, claudeCodeSkillsIntro) {
-			spans = append(spans, skillCatalogSpans(text, claudeCodeSkillsIntro, "\n\n")...)
+		if strings.Contains(text, "The following skills are ") {
+			spans = append(spans, skillCatalogSpans(text, claudeCodeSkillsOpen, "\n\n")...)
 		}
 		if strings.Contains(text, "<available_skills>") {
-			spans = append(spans, skillCatalogSpans(text, "<available_skills>", "</available_skills>")...)
+			spans = append(spans, skillCatalogSpans(text, piSkillsOpen, "</available_skills>")...)
 		}
 		if strings.Contains(text, "nstructions from: ") {
 			spans = append(spans, harnessInstructionSpans(text)...)
@@ -893,7 +892,17 @@ func codexInstructionSpans(text string) []itemSpan {
 	}
 }
 
-const claudeCodeSkillsIntro = "The following skills are available for use with the Skill tool:\n\n"
+var (
+	codexSkillsOpen = regexp.MustCompile(regexp.QuoteMeta("<skills_instructions>"))
+	piSkillsOpen    = regexp.MustCompile(regexp.QuoteMeta("<available_skills>"))
+	// claudeCodeSkillsOpen heads each skills listing Claude Code sends. The
+	// first lists every skill; later ones list only the skills added or
+	// changed since, some saying so. In code mode a script loads skills
+	// instead of the Skill tool.
+	claudeCodeSkillsOpen = regexp.MustCompile(`The following skills are (?:also )?available` +
+		`(?: for use with the Skill tool|; a script loads one with [^\n]*?)` +
+		`(?:\. This list adds to the skills listed earlier in this conversation and is not the full list)?:\n\n`)
+)
 
 // skillNameLine is a catalog entry, "- name: description", the name in
 // backticks for DeepSeek Harness. Plugin skills have colons in their names.
@@ -936,18 +945,18 @@ func skillEntries(content string) (names, descriptions []string) {
 	return names, descriptions
 }
 
-// skillCatalogSpans reads the catalog between open and close, the names
-// from its entries.
-func skillCatalogSpans(text, open, close string) []itemSpan {
+// skillCatalogSpans reads each catalog from where open matches to close,
+// the names from its entries.
+func skillCatalogSpans(text string, open *regexp.Regexp, close string) []itemSpan {
 	var spans []itemSpan
 	offset := 0
 	for {
-		at := strings.Index(text[offset:], open)
-		if at < 0 {
+		at := open.FindStringIndex(text[offset:])
+		if at == nil {
 			return spans
 		}
-		start := offset + at
-		contentStart := start + len(open)
+		start := offset + at[0]
+		contentStart := offset + at[1]
 		end := len(text)
 		if close != "" {
 			if found := strings.Index(text[contentStart:], close); found >= 0 {
@@ -1035,6 +1044,10 @@ func (w *contextWalk) addItem(span itemSpan) int {
 	if index, ok := w.itemIndex[key]; ok {
 		existing := &w.observation.items[index]
 		existing.tokens += item.tokens
+		if item.kind == contract.ContextItemSkills {
+			existing.addSkills(item)
+			return item.tokens
+		}
 		existing.digest, existing.count, existing.names, existing.text = item.digest, item.count, item.names, item.text
 		existing.descriptions, existing.entries = item.descriptions, item.entries
 		return item.tokens
@@ -1042,6 +1055,36 @@ func (w *contextWalk) addItem(span itemSpan) int {
 	w.itemIndex[key] = len(w.observation.items)
 	w.observation.items = append(w.observation.items, item)
 	return item.tokens
+}
+
+// addSkills adds a later skills listing to a catalog. Claude Code lists only
+// the skills added or changed since its earlier listings, so the catalog is
+// every skill they name, each where it was first listed with its newest
+// description.
+func (item *observedItem) addSkills(later observedItem) {
+	for index, name := range later.names {
+		description := ""
+		if index < len(later.descriptions) {
+			description = later.descriptions[index]
+		}
+		if at := slices.Index(item.names, name); at >= 0 {
+			if description != "" && at < len(item.descriptions) {
+				item.descriptions[at] = description
+			}
+			continue
+		}
+		item.names = append(item.names, name)
+		item.descriptions = append(item.descriptions, description)
+	}
+	item.count = len(item.names)
+	digest := sha256.Sum256(append(slices.Clone(item.digest), later.digest...))
+	item.digest = digest[:]
+	if later.text != "" {
+		if item.text != "" {
+			item.text += "\n\n"
+		}
+		item.text += later.text
+	}
 }
 
 // finish settles what needs the whole body: item paths against the project,
@@ -1137,9 +1180,9 @@ func (observation *contextObservation) noteSkill(name string) {
 
 // callArgs is a tool call's arguments as an object, parsed when the
 // protocol sends them as a JSON string.
-func callArgs(args gjson.Result) gjson.Result {
-	if args.Type == gjson.String && strings.HasPrefix(strings.TrimSpace(args.Str), "{") {
-		return gjson.Parse(args.Str)
+func callArgs(args ojson.Result) ojson.Result {
+	if args.Type == ojson.String && strings.HasPrefix(strings.TrimSpace(args.Str), "{") {
+		return ojson.Parse(args.Str)
 	}
 	return args
 }
@@ -1147,7 +1190,7 @@ func callArgs(args gjson.Result) gjson.Result {
 // readTarget is the one file a tool call reads whole or in part: the read
 // tools of Claude Code, DeepSeek Harness, Pi and others, the text editor
 // tool's view, and a shell command that only prints one file.
-func readTarget(name string, args gjson.Result) string {
+func readTarget(name string, args ojson.Result) string {
 	switch strings.ToLower(name) {
 	case "read", "read_file", "readfile":
 		return firstString(args, "file_path", "path", "filePath", "absolute_path")
@@ -1165,15 +1208,15 @@ func readTarget(name string, args gjson.Result) string {
 
 // shellCommand is the script a shell tool call runs: a command string, or
 // the script of an argument list that runs one through a shell.
-func shellCommand(args gjson.Result) string {
-	if args.Type == gjson.String {
+func shellCommand(args ojson.Result) string {
+	if args.Type == ojson.String {
 		return args.Str
 	}
 	command := args.Get("command")
 	if !command.Exists() {
 		command = args.Get("cmd")
 	}
-	if command.Type == gjson.String {
+	if command.Type == ojson.String {
 		return command.Str
 	}
 	parts := command.Array()
@@ -1276,7 +1319,7 @@ var readLineNumber = regexp.MustCompile(`^ *\d+(?:\t|→)`)
 // readResultText is a file as a read tool returned it, without the line
 // numbers in front of its lines, the reminders a client appends, or the
 // header Codex puts above a command's output.
-func readResultText(output gjson.Result) string {
+func readResultText(output ojson.Result) string {
 	text := outputText(output)
 	if at := strings.Index(text, "<system-reminder>"); at >= 0 {
 		text = text[:at]
@@ -1410,9 +1453,9 @@ type fileChange struct {
 	created bool
 }
 
-func firstString(object gjson.Result, keys ...string) string {
+func firstString(object ojson.Result, keys ...string) string {
 	for _, key := range keys {
-		if value := object.Get(key); value.Type == gjson.String {
+		if value := object.Get(key); value.Type == ojson.String {
 			return value.Str
 		}
 	}
@@ -1421,14 +1464,14 @@ func firstString(object gjson.Result, keys ...string) string {
 
 // editChange reads the lines an edit added: those of its new text that its
 // old text lacked, over every replacement it makes.
-func editChange(args gjson.Result) fileChange {
+func editChange(args ojson.Result) fileChange {
 	change := fileChange{path: firstString(args, "file_path", "path", "filePath")}
 	if args.Get("command").Str == "create" {
 		change.added, change.created = firstString(args, "file_text"), true
 		return change
 	}
 	var added strings.Builder
-	addPair := func(edit gjson.Result) {
+	addPair := func(edit ojson.Result) {
 		old := firstString(edit, "old_string", "oldText", "old_str")
 		replacement := firstString(edit, "new_string", "newText", "new_str")
 		existing := map[string]bool{}
@@ -1443,7 +1486,7 @@ func editChange(args gjson.Result) fileChange {
 		}
 	}
 	addPair(args)
-	args.Get("edits").ForEach(func(_, edit gjson.Result) bool {
+	args.Get("edits").ForEach(func(_, edit ojson.Result) bool {
 		addPair(edit)
 		return true
 	})

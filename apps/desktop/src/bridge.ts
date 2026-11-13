@@ -43,6 +43,10 @@ import {
   type PrivacySummary,
 } from "./privacy-summary-model";
 import {
+  parseImageCompressionTotals,
+  type ImageCompressionTotals,
+} from "./image-compression-totals-model";
+import {
   hourlyUsageWindow,
   type UsageSummary,
   type UsageWindow,
@@ -74,9 +78,12 @@ import {
   parseAccessTokenCreateResult,
   parseAccessTokenCopied,
   parseAccessTokenPage,
+  parseAccessTokenSummary,
   parseAccessTokenUsageResponse,
   type AccessTokenCreateResult,
   type AccessTokenPage,
+  type AccessTokenServices,
+  type AccessTokenSummary,
   type AccessTokenUsageResponse,
 } from "./access-token-model";
 import {
@@ -176,6 +183,7 @@ import {
 import {
   parseSettingsSnapshot,
   type Preferences,
+  type DesktopToysPreferences,
   type SettingsSnapshot,
   type TrayPreferences,
 } from "./preferences-model";
@@ -278,7 +286,7 @@ import {
   type SyncStatus,
 } from "./sync-model";
 
-function hasNativeBridge(): boolean {
+export function hasNativeBridge(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
@@ -394,6 +402,16 @@ export async function updatePreferences(
   );
 }
 
+/** Saves the desktop toy preferences; the host builds or closes the toys. */
+export async function updateDesktopToys(
+  input: DesktopToysPreferences,
+): Promise<SettingsSnapshot> {
+  requireNativeBridge();
+  return parseSettingsSnapshot(
+    await invoke<unknown>("update_desktop_toys", { input }),
+  );
+}
+
 /**
  * The snapshot the tray popover renders. Settings pass a draft of the tray
  * preferences to preview the panel exactly as the tray would show it.
@@ -416,6 +434,23 @@ export async function trayPopoverResize(
 ): Promise<void> {
   requireNativeBridge();
   await invoke<void>("tray_popover_resize", { height, devicePixelRatio });
+}
+
+/**
+ * Shortens a freshly placed main window to the overview's first two modules,
+ * `height` CSS pixels drawn at `devicePixelRatio`. The host applies it once,
+ * never makes the window taller, and leaves a window the operator already
+ * moved or resized alone.
+ */
+export async function fitMainWindowToContent(
+  height: number,
+  devicePixelRatio: number,
+): Promise<boolean> {
+  requireNativeBridge();
+  return invoke<boolean>("fit_main_window_to_content", {
+    height,
+    devicePixelRatio,
+  });
 }
 
 export async function trayPopoverHide(): Promise<void> {
@@ -1200,12 +1235,42 @@ export async function getPrivacySummary(
   );
 }
 
+/** What request image compression has saved since counting began. */
+export async function getImageCompressionTotals(): Promise<ImageCompressionTotals> {
+  requireNativeBridge();
+  return parseImageCompressionTotals(
+    await invoke<unknown>("get_image_compression_totals"),
+  );
+}
+
 export async function createAccessToken(
   name: string,
+  services?: AccessTokenServices,
 ): Promise<AccessTokenCreateResult> {
   requireNativeBridge();
   return parseAccessTokenCreateResult(
-    await invoke<unknown>("create_access_token", { name }),
+    await invoke<unknown>("create_access_token", {
+      name,
+      serviceScope: services?.service_scope ?? null,
+      serviceIds: services?.service_ids ?? null,
+    }),
+  );
+}
+
+/** Renames a token and replaces the providers it may use. */
+export async function updateAccessToken(
+  tokenId: string,
+  name: string,
+  services: AccessTokenServices,
+): Promise<AccessTokenSummary> {
+  requireNativeBridge();
+  return parseAccessTokenSummary(
+    await invoke<unknown>("update_access_token", {
+      tokenId,
+      name,
+      serviceScope: services.service_scope,
+      serviceIds: services.service_ids,
+    }),
   );
 }
 

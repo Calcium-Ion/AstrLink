@@ -91,8 +91,10 @@ x-astrlink-implementation:
     - GET /control/v1/access-token-usage
     - GET /control/v1/usage-summary
     - GET /control/v1/privacy-summary
+    - GET /control/v1/image-compression-totals
     - POST /control/v1/access-tokens
     - GET /control/v1/access-tokens/{token_id}/secret
+    - PATCH /control/v1/access-tokens/{token_id}
     - DELETE /control/v1/access-tokens/{token_id}
     - GET /control/v1/policies
     - GET /control/v1/policies/{policy_id}
@@ -945,7 +947,7 @@ paths:
         "422":
           $ref: "#/components/responses/UnprocessableEntity"
         "502":
-          $ref: "#/components/responses/BadGateway"
+          $ref: "#/components/responses/ModelDiscoveryFailed"
         "504":
           $ref: "#/components/responses/GatewayTimeout"
   /control/v1/service-proxy-probes:
@@ -1038,7 +1040,7 @@ paths:
         "422":
           $ref: "#/components/responses/UnprocessableEntity"
         "502":
-          $ref: "#/components/responses/BadGateway"
+          $ref: "#/components/responses/ModelDiscoveryFailed"
         "504":
           $ref: "#/components/responses/GatewayTimeout"
   /control/v1/services/{service_id}/test:
@@ -1422,6 +1424,37 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "500":
           $ref: "#/components/responses/InternalServerError"
+  /control/v1/image-compression-totals:
+    x-astrlink-implementation-status: implemented
+    get:
+      x-astrlink-role: observer
+      tags: [Requests]
+      operationId: getImageCompressionTotals
+      summary: Read what request image compression has saved since counting began.
+      description: >-
+        Adds up the inline images of every inference request an upstream
+        received with image compression on. A request counts once, from the
+        first attempt an upstream answered; its retries and failovers add
+        nothing. Requests rejected before they left, requests that reached no
+        upstream, and requests without inline images are not counted. Each
+        model call of a built-in tool loop is a request of its own and counts
+        separately. Sizes are decoded image bytes. An image sent as it was,
+        because its WebP was not smaller, adds the same size to
+        original_bytes and sent_bytes. The totals are kept apart from request
+        records: deleting, purging or expiring records does not lower them.
+        Counting began at `since`, the upgrade that added it or the install;
+        earlier requests are not counted.
+      responses:
+        "200":
+          description: The image compression totals.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImageCompressionTotals"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
   /control/v1/privacy/warnings:
     x-astrlink-implementation-status: implemented
     get:
@@ -1547,6 +1580,40 @@ paths:
     x-astrlink-implementation-status: implemented
     parameters:
       - $ref: "#/components/parameters/AccessTokenId"
+    patch:
+      x-astrlink-role: operator
+      tags: [Access Tokens]
+      operationId: updateAccessToken
+      summary: Rename a local inference access token and replace the API providers it may use.
+      description: |
+        The token value stays the same, so clients keep working. A changed
+        provider scope applies to the next request made with the token.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AccessTokenUpdate"
+      responses:
+        "200":
+          description: The updated token metadata.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccessToken"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
     delete:
       x-astrlink-role: operator
       tags: [Access Tokens]
@@ -4044,6 +4111,22 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
+    ModelDiscoveryFailed:
+      description: >-
+        The upstream model list could not be read (code
+        upstream_model_discovery_failed). When known, details[0].reason says
+        why: upstream_unauthorized (HTTP 401 or 403), upstream_not_found (404,
+        405 or 501), upstream_rate_limited (429), upstream_unavailable (other
+        5xx), upstream_status (another HTTP status), upstream_unreachable (no
+        HTTP response), or upstream_invalid_response (the response is not a
+        model list).
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
     GatewayTimeout:
       description: The upstream model-discovery request exceeded its deadline.
       headers:
@@ -4667,6 +4750,41 @@ components:
       properties:
         kind: { type: string }
         count: { type: integer, minimum: 1 }
+    ImageCompressionTotals:
+      type: object
+      additionalProperties: false
+      required:
+        [since, requests, images, compressed, original_bytes, sent_bytes]
+      properties:
+        since:
+          type: string
+          format: date-time
+          description: When counting began.
+        requests:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Requests that went upstream with at least one inline image.
+        images:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Inline images in those requests.
+        compressed:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Images sent as a smaller WebP.
+        original_bytes:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Decoded size of every image as the client sent it.
+        sent_bytes:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Decoded size of every image as it went upstream; original_bytes minus sent_bytes is what compression saved.
     PrivacySummary:
       type: object
       additionalProperties: false
@@ -4726,7 +4844,7 @@ components:
                 $ref: "#/components/schemas/ServicePerformance"
     AccessToken:
       type: object
-      required: [id, name, hint, source, created_at]
+      required: [id, name, hint, source, created_at, service_scope, service_ids]
       properties:
         id:
           $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
@@ -4748,7 +4866,26 @@ components:
         created_at:
           type: string
           format: date-time
+        service_scope:
+          $ref: "#/components/schemas/AccessTokenServiceScope"
+        service_ids:
+          type: array
+          maxItems: 200
+          uniqueItems: true
+          items:
+            $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+          description: |
+            The API providers a selected token may use; empty for all. It may
+            list providers deleted since, which match nothing.
       additionalProperties: false
+    AccessTokenServiceScope:
+      type: string
+      enum: [all, selected]
+      description: |
+        all: the token may use every enabled API provider, including ones
+        added later. selected: only the providers in service_ids. A request
+        outside the scope fails with HTTP 403 and error code
+        access_token_scope.
     AccessTokenCreate:
       type: object
       required: [name]
@@ -4757,6 +4894,33 @@ components:
           type: string
           minLength: 1
           maxLength: 64
+        service_scope:
+          $ref: "#/components/schemas/AccessTokenServiceScope"
+        service_ids:
+          type: array
+          maxItems: 200
+          uniqueItems: true
+          items:
+            $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+          description: Required and non-empty when service_scope is selected; every ID must name an existing API provider.
+      additionalProperties: false
+    AccessTokenUpdate:
+      type: object
+      required: [name, service_scope, service_ids]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 64
+        service_scope:
+          $ref: "#/components/schemas/AccessTokenServiceScope"
+        service_ids:
+          type: array
+          maxItems: 200
+          uniqueItems: true
+          items:
+            $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+          description: Empty for all; non-empty for selected, naming existing API providers.
       additionalProperties: false
     AccessTokenSecret:
       type: object
@@ -7701,6 +7865,7 @@ components:
           rate_limited,
           websocket_disabled,
           websocket_unsupported,
+          access_token_scope,
         ]
       description: |
         disabled: the provider is turned off.
@@ -7714,6 +7879,7 @@ components:
         rate_limited: the upstream answered HTTP 429 for this model and its retry delay has not passed.
         websocket_disabled: Responses WebSocket is turned off for the provider.
         websocket_unsupported: the provider cannot serve this model over a native Responses WebSocket.
+        access_token_scope: the request's access token may not use the provider.
     RequestEvent:
       type: object
       required: [kind, started_at, ended_at, status, summary, attempt_index]
@@ -8348,23 +8514,33 @@ components:
       additionalProperties: false
     MemoryToolbox:
       type: object
-      description: The skills and MCP tools the newest main call carried, and those the calls used in the last 30 days.
-      required: [skills, mcp, idle_tokens]
+      description: >-
+        The skills and MCP tools the client's calls carried or used in the last 30 days. Every call of those days
+        counts, so within the same days the lists only grow and no count drops; a call leaves them when its day
+        does, each midnight of day_start.
+      required: [since, skills, mcp, idle_tokens]
       properties:
+        since:
+          type: string
+          format: date-time
+          description: When those days began, 29 days before day_start.
         skills:
           type: array
-          description: The skills used, the most used first, then those not used in catalog order.
+          description: The skills, the most used first, then by name.
           items:
             $ref: "#/components/schemas/ToolboxSkill"
         mcp:
           type: array
-          description: The MCP servers, in the order the calls carried them.
+          description: The MCP servers the calls carried, by name, then those only used.
           items:
             $ref: "#/components/schemas/ToolboxServer"
         idle_tokens:
           type: integer
           minimum: 0
-          description: Estimated tokens the skills and MCP tools not used add to each call.
+          description: >-
+            Estimated tokens the skills and MCP tools not used add to each call. Each the newest main call still
+            carries adds its share of what that call's catalog and MCP tools carry; one it no longer carries adds
+            nothing.
       additionalProperties: false
     ToolboxSkill:
       type: object
@@ -8377,14 +8553,14 @@ components:
         description:
           type: string
           maxLength: 80
-          description: The catalog's, cleaned like input_preview. Absent when no record may show the client's text.
+          description: The newest catalog's, cleaned like input_preview. Absent when no record may show the client's text.
         uses:
           type: integer
           minimum: 0
           description: Turns that loaded the skill.
         carried:
           type: boolean
-          description: True when the newest main call's catalog lists it.
+          description: True when a call of those days listed it.
       additionalProperties: false
     ToolboxServer:
       type: object
@@ -8396,6 +8572,7 @@ components:
           maxLength: 64
         tools:
           type: array
+          description: The tools, the most used first, then by name.
           items:
             $ref: "#/components/schemas/ToolboxTool"
       additionalProperties: false
@@ -8413,6 +8590,7 @@ components:
           description: Calls that made it.
         carried:
           type: boolean
+          description: True when a call of those days carried it.
       additionalProperties: false
     MemoryEntryDetail:
       type: object

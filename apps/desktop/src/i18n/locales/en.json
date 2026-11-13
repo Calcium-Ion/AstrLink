@@ -184,6 +184,7 @@
     "safety": "Safety",
     "records": "Requests",
     "routing": "Routing",
+    "desktopToys": "Desktop pets",
     "agentTools": "Agent tools",
     "settings": "Settings",
     "gateway": "Gateway",
@@ -577,6 +578,8 @@
     "notifyInstalled": "Installation complete. Open a new agent session to get started.",
     "notifyRemoved": "Agent skills and tools uninstalled. Open a new agent session to apply.",
     "notDetected": "Not detected",
+    "undetectedTools": "Not detected ({{count}})",
+    "undetectedHint": "Install and launch the tool once, then choose Check again to select it.",
     "detected": "Detected",
     "installed": "Installed",
     "notInstalled": "Not installed",
@@ -676,10 +679,10 @@
     "deferredHint": "Continue setup anytime from Setup guide at the bottom right.",
     "serviceTitle": "Add an API provider",
     "serviceShort": "Connect an existing model service",
-    "tokenTitle": "Create an access token",
-    "tokenShort": "Give your client a local key",
+    "tokenTitle": "Check the access token",
+    "tokenShort": "Clients use it to reach the local gateway",
     "clientTitle": "Connect your client",
-    "clientShort": "Make your first successful request",
+    "clientShort": "Configure a client or send a first request",
     "serviceBody": "AstrLink needs a model source. Add an API service or subscription account you already use.",
     "serviceOptions": "Have an API key? Choose your provider and enter its URL and key. Have a subscription? Choose the subscription service and authorize your account.",
     "serviceHelp": "What do I need to prepare?",
@@ -687,15 +690,16 @@
     "manageServices": "Check provider setup",
     "serviceIncomplete": "The provider is not ready yet. Make sure it is enabled, has models, and any subscription authorization is complete.",
     "next": "Continue",
-    "tokenBody": "An access token lets your client connect to the local AstrLink gateway. Create a separate token for each client to track usage.",
-    "tokenHelp": "Create a token with a recognizable name, such as “My coding assistant”. Use this access token as the client’s API key. Keep your upstream API key in the provider configuration.",
-    "finishService": "Connect a provider before creating your client’s access token.",
+    "tokenBody": "Clients connect to the local AstrLink gateway with an access token. The next step configures clients with “{{name}}”.",
+    "tokenMissing": "Clients connect to the local AstrLink gateway with an access token. There is none yet, so create one first.",
+    "tokenHelp": "To track each client’s usage separately, create more tokens with recognizable names, such as “My coding assistant”, and pick one in the next step. Keep your upstream API key in the provider configuration.",
+    "finishService": "Connect a provider before setting up the access token.",
     "manageTokens": "Manage access tokens",
     "createToken": "Go to token creation",
     "clientBody": "Let AstrLink write the client config, or enter the information below in your client’s custom API / provider settings.",
-    "finishSetup": "Finish provider setup and create an access token before connecting a client.",
-    "selectToken": "Select a client access token",
+    "finishSetup": "Connect a provider and set up an access token before connecting a client.",
     "importClient": "Configure a client",
+    "token": "Token for clients",
     "manualSetup": "Configure your client manually",
     "protocol": "Client API protocol",
     "openai": "OpenAI compatible",
@@ -704,9 +708,10 @@
     "copyToken": "Copy access token",
     "tokenCopied": "Access token copied",
     "modelHelp": "Use a model ID enabled in your provider. Choose a protocol supported by your client. The Base URL already matches the selected protocol; do not append /v1 again.",
-    "sendRequest": "Save the client configuration and send a message, then check the connection here. Successful requests will appear in AstrLink’s usage and request records.",
+    "sendRequest": "Setup finishes once Configure a client writes any client, or once a manually configured client sends a successful request.",
     "failedRequest": "A request arrived but has not succeeded. Check the request records for the failure reason, adjust your configuration, and try again.",
-    "success": "Your first request succeeded. You are connected! View usage in Overview and troubleshoot in Request records.",
+    "done": "First-time setup complete",
+    "success": "Setup is complete. View usage in Overview and troubleshoot in Request records.",
     "finish": "Go to Overview",
     "checkRequest": "Check connection result",
     "viewRecords": "View request records",
@@ -1051,6 +1056,8 @@
     "confirmReset": "Reset this account’s usage?",
     "confirmLogout": "Sign out of this subscription account?",
     "deleteBody": "“{{name}}” and its local credentials will be removed. Deletion fails if a route still uses it.",
+    "deleteScopeWarning_one": "After you delete “{{name}}”, the token {{tokens}} has no provider left and its requests are refused. Edit it first to pick another provider.",
+    "deleteScopeWarning_other": "After you delete “{{name}}”, the tokens {{tokens}} have no provider left and their requests are refused. Edit them first to pick another provider.",
     "resetDetailsLoading": "Loading available resets and expiry times…",
     "resetDetailsError": "Reset details could not be loaded. Please retry.",
     "resetDetailsEmpty": "No resets are currently available.",
@@ -1170,7 +1177,6 @@
     "modelIdTooLong": "A model ID cannot exceed 256 characters.",
     "saveBeforeFetch": "Save and finish sign-in before fetching models from upstream.",
     "enableDiscovery": "Enable OpenAI Models or Gemini Models in API capabilities first.",
-    "fetchFailed": "Fetch failed",
     "fetchFailedDetail": "Unable to fetch models from upstream. {{warnings}}",
     "mergeTooMany": "Merging upstream models with the current list would exceed 2,000 entries. The draft was left unchanged.",
     "portsBusy": "Callback ports 1455 and 1457 are both unavailable. Switched to Device Code sign-in.",
@@ -1180,6 +1186,16 @@
     "addedLaterLogin": "Subscription API provider added. Sign-in can be retried from the API provider list.",
     "addedOauthFailed": "The API provider was added, but OAuth sign-in could not start.",
     "addedKey": "API provider added. New requests can use it right away. The API key is stored only in the local credential store.",
+    "addedWithModels_one": "API provider added with {{count}} model from upstream.",
+    "addedWithModels_other": "API provider added with {{count}} models from upstream.",
+    "autoFetchHint": "Saving fetches the model list from upstream",
+    "autoFetching": "Fetching models…",
+    "autoFetchFailed": "API provider not saved: could not fetch its models from upstream. {{reason}}",
+    "autoFetchEmpty": "API provider not saved: upstream returned no models. Check the API address, or add models by hand.",
+    "autoFetchTooMany": "API provider not saved: upstream returned more than 2,000 models. Add the models you need by hand.",
+    "autoFetchUnavailable": "API provider not saved: this provider cannot list its models from upstream. Add at least one model by hand.",
+    "autoFetchRetry": "Fetch again",
+    "autoFetchManual": "Add models by hand",
     "saveFailed": "Failed to save the API provider.",
     "beginLoginFailed": "Unable to start sign-in.",
     "cancelledLogin": "Cancelled sign-in for “{{name}}”.",
@@ -1521,7 +1537,7 @@
     "fetchList": "Fetch model list",
     "addModel": "Add model",
     "pendingIds": "Model IDs to add",
-    "bulkPlaceholder": "One model ID per line, for example:\ngpt-5\nclaude-sonnet-4-5",
+    "bulkPlaceholder": "One model ID per line, for example:\ngpt-5\nclaude-sonnet-5-5",
     "singlePlaceholder": "Enter a model ID and press Return",
     "singleMode": "Single line",
     "bulkMode": "Paste many",
@@ -1627,7 +1643,30 @@
     "detailsFor": "Details and actions for {{name}}",
     "usedBy": "These clients use “{{name}}”: {{clients}}.",
     "removeConfigs": "Also remove the config from these clients",
-    "removeConfigsFailed": "The token was deleted, but the config could not be removed from {{clients}}."
+    "removeConfigsFailed": "The token was deleted, but the config could not be removed from {{clients}}.",
+    "edit": "Edit",
+    "editToken": "Edit “{{name}}”",
+    "editTitle": "Edit access token",
+    "editHint": "Name and provider changes apply at once. Clients keep the same token.",
+    "updated": "Saved “{{name}}”.",
+    "updateFailed": "Couldn't save the access token.",
+    "scopeLabel": "Providers",
+    "scopeAll": "All providers",
+    "scopeAllHint": "Uses every enabled provider by routing, including ones added later.",
+    "scopeSelected": "Selected providers",
+    "scopeSelectedHint": "Requests go only to checked providers, and fail over only among them.",
+    "scopeSearch": "Search providers",
+    "scopePicked": "{{picked}} / {{total}} selected",
+    "scopeServiceMeta": "{{kind}} · {{count}} models",
+    "scopeServiceOff": "Disabled",
+    "scopeNoServices": "No API providers yet.",
+    "scopeRequired": "Check at least one provider.",
+    "scopeStale": "Some checked providers were deleted. Check them again.",
+    "scopeModelsHint": "Clients list only the checked providers' models.",
+    "scopeCount": "{{count}} providers",
+    "scopeTitle": "Can use only: {{names}}",
+    "scopeEmpty": "Provider deleted",
+    "scopeEmptyHint": "Every provider this token may use was deleted, so its requests are refused. Edit the token to pick another provider."
   },
   "kind": {
     "claude_subscription": "Claude Code subscription",
@@ -2843,7 +2882,8 @@
     "scopeProject": "project",
     "scopeLocal": "personal",
     "toolboxTitle": "Toolbox",
-    "toolboxDays": "Last 30 days",
+    "toolboxDays": "30 days · from {{date}}",
+    "toolboxDaysHint": "Moves forward a day each midnight; older calls stop counting.",
     "skillsGroup": "Skills",
     "groupCount_one": "{{count}}",
     "groupCount_other": "{{count}}",
@@ -2857,12 +2897,12 @@
     "moreUsedOnly_one": "{{count}} more used",
     "moreUsedOnly_other": "{{count}} more used",
     "nameSeparator": ", ",
-    "idleNote": "The unused ones add about {{tokens}} tokens to every call.",
+    "idleNote": "Of the unused ones, those still carried add about {{tokens}} tokens to every call.",
     "toolboxNone": "Recent calls carried no skills or MCP tools",
     "emptyClientTitle": "{{client}} hasn't noted anything in this project yet",
     "emptyClientHint": "Its requests carry no memory file and no rules file.",
-    "toolboxSummary_one": "Carries {{count}} skill, {{used}} used in the last 30 days",
-    "toolboxSummary_other": "Carries {{count}} skills, {{used}} used in the last 30 days",
+    "toolboxSummary_one": "{{count}} skill carried in the last 30 days, {{used}} used",
+    "toolboxSummary_other": "{{count}} skills carried in the last 30 days, {{used}} used",
     "usedTimes_one": "Used {{count}} time",
     "usedTimes_other": "Used {{count}} times",
     "untouched": "Unused",
@@ -3485,7 +3525,8 @@
       "circuit_open": "Paused after repeated failures",
       "rate_limited": "Cooling down after an upstream rate limit",
       "websocket_disabled": "Responses WebSocket off",
-      "websocket_unsupported": "Cannot serve this model over WebSocket"
+      "websocket_unsupported": "Cannot serve this model over WebSocket",
+      "access_token_scope": "Token can't use this provider"
     },
     "rejections": {
       "credential_unavailable": "Credential unavailable",
@@ -3740,19 +3781,27 @@
   "binding": {
     "tab": "API provider binding",
     "settingTitle": "Reuse API providers within a conversation",
+    "settingHint": "Prefer the last successful API provider. Failures follow the existing failover policy.",
     "ttl": "Idle expiry (minutes)",
+    "ttlHint": "Renewed after each successful request. Between 1 and 1440 minutes; 60 recommended.",
+    "manageHint": "Manage bindings in Request records → Conversation details → API provider binding.",
     "current": "Current API provider preference",
     "release": "Choose API provider again",
     "releasing": "Releasing…",
+    "releaseHint": "Clear this conversation’s preferences. The next request follows API provider order and may select the same API provider.",
     "releasedNotice": "Binding released. The next request will choose an API provider again.",
     "releaseFailed": "Could not release binding. Try again.",
     "loadFailed": "Could not load API provider bindings",
     "disabled": "API provider reuse is off. Existing bindings do not influence ordinary routing; history remains available.",
     "empty": "No active binding",
+    "emptyHint": "A successful request remembers the API provider automatically.",
+    "emptyDisabled": "Enable “Reuse API providers within a conversation” in Routing.",
     "removedService": "Deleted API provider",
     "token": "Token …{{id}}",
     "expires": "Valid until {{time}}",
+    "strictHint": "Choosing again does not interrupt active requests. Stateful Responses continuations and established WebSocket connections still use their original API provider.",
     "history": "Binding history",
+    "historyHint": "Session matches, API provider preferences, switches and manual releases. Conversation text is not stored here.",
     "noEvents": "No binding history yet",
     "viewRequest": "View this request",
     "actions": {
@@ -3778,14 +3827,6 @@
       "echo_id": "Tool or response identifier match",
       "fingerprint": "Assistant text fingerprint match"
     },
-    "settingHint": "Prefer the last successful API provider. Failures follow the existing failover policy.",
-    "ttlHint": "Renewed after each successful request. Between 1 and 1440 minutes; 60 recommended.",
-    "manageHint": "Manage bindings in Request records → Conversation details → API provider binding.",
-    "releaseHint": "Clear this conversation’s preferences. The next request follows API provider order and may select the same API provider.",
-    "emptyHint": "A successful request remembers the API provider automatically.",
-    "emptyDisabled": "Enable “Reuse API providers within a conversation” in Routing.",
-    "strictHint": "Choosing again does not interrupt active requests. Stateful Responses continuations and established WebSocket connections still use their original API provider.",
-    "historyHint": "Session matches, API provider preferences, switches and manual releases. Conversation text is not stored here.",
     "retention": "Up to 50,000 binding audit entries are retained locally."
   },
   "serviceProxy": {
@@ -3838,6 +3879,7 @@
       "modified": "Changed elsewhere",
       "invalid": "Unreadable config",
       "other_token": "Other token",
+      "manual": "Set up by hand",
       "model_missing_one": "{{count}} model disabled",
       "model_missing_other": "{{count}} models disabled",
       "needs_paste": "One step left"
@@ -3845,6 +3887,7 @@
     "usesToken": "{{client}} currently uses “{{name}}”. Using this token switches it to “{{current}}”.",
     "usesOtherToken": "{{client}} currently uses another token. Using this token switches it to “{{current}}”.",
     "modifiedHint": "This config changed after AstrLink wrote it, so port changes no longer update it. Write it again to restore it.",
+    "manualHint": "This config was pasted by hand, not written by AstrLink, so it cannot be removed here.",
     "elsewhereHint": "{{client}} is connected to another AstrLink on this computer. Using this token connects it to this one instead.",
     "invalidHint": "The config file has a format error, so AstrLink leaves it alone. Fix it, then write again.",
     "placeLocal": "This computer",
@@ -3857,6 +3900,10 @@
     "replaceTitle": "Replace existing settings?",
     "replaceBody": "AstrLink did not write the following settings. Continuing replaces them; removing AstrLink’s config later restores their current values.",
     "replaceConfirm": "Replace and write",
+    "switchTitle": "Switch to “{{current}}”?",
+    "switchConfirm": "Switch and write",
+    "switchAndReplaceTitle": "Switch to “{{current}}” and replace existing settings?",
+    "switchAndReplaceBody": "AstrLink did not write the settings in the tables below. Continuing replaces them; removing AstrLink’s config later restores their current values.",
     "remove": "Remove",
     "removing": "Removing…",
     "removeTitle": "Remove the {{client}} config?",
@@ -3953,8 +4000,12 @@
       "token": "Switch to “{{current}}”; “{{previous}}” is no longer used for {{client}}",
       "unknownToken": "Switch to “{{current}}”; the previous token is no longer used for {{client}}",
       "gateway": "Connect to this AstrLink; {{url}} stops receiving {{client}}’s requests",
-      "key": "{{key}} in {{file}}",
-      "keyWithValue": "{{key}} in {{file}} (now {{current}})"
+      "setting": "Setting",
+      "now": "Now",
+      "next": "After writing",
+      "removed": "Removed",
+      "notShown": "Not shown",
+      "more": "Show {{count}} more"
     },
     "result": {
       "ok": "Done",
@@ -4323,6 +4374,19 @@
       "balanced": "Balanced",
       "sharp": "Sharp",
       "fine": "Finest"
+    },
+    "totals": {
+      "label": "Total",
+      "helpTotals": "Only requests sent upstream count, and a request retried or resent to another provider counts once. The totals are kept separately, so deleting or clearing request records does not lower them.",
+      "saved": "{{size}} saved",
+      "savedHint": "Saved is the difference in image size before and after compression, in decoded bytes. Images whose WebP was not smaller are sent as they are and save nothing.",
+      "savedShare": "{{percent}}% smaller",
+      "images_one": "{{count}} image compressed",
+      "images_other": "{{count}} images compressed",
+      "requests_one": "{{count}} request",
+      "requests_other": "{{count}} requests",
+      "since": "Counting since {{date}}",
+      "none": "No images compressed yet"
     }
   },
   "about": {
@@ -4674,6 +4738,20 @@
     "metadata_unavailable": "The metadata could not be read or saved.",
     "credential_unavailable": "The credential could not be saved.",
     "plaintext_consent_required": "The server is plain HTTP; tick Allow plain HTTP to save it."
+  },
+  "modelDiscoveryErrors": {
+    "httpStatus": " (HTTP {{status}})",
+    "timeout": "Upstream did not answer in time. Try again later, or check the network and proxy.",
+    "unsupported": "This address or provider cannot list models. Add models by hand.",
+    "credential": "The API key could not be read. Enter it again.",
+    "unauthorized": "Upstream rejected the API key{{status}}. Check that the key is correct and has permission.",
+    "notFound": "This address has no model list endpoint{{status}}. Check the API address.",
+    "rateLimited": "Upstream reported too many requests{{status}}. Try again later.",
+    "unavailable": "The upstream service is unavailable right now{{status}}. Try again later.",
+    "unreachable": "Could not connect to upstream. Check the API address, network, and proxy.",
+    "invalidResponse": "This address answered, but not with a model list{{status}}. Check the API address.",
+    "status": "Upstream returned an error{{status}}.",
+    "generic": "Check the API address, API key, and network, then try again."
   },
   "webConsole": {
     "title": "AstrLink console",
@@ -5889,5 +5967,107 @@
       }
     },
     "lookup": "How the system prompt tells the model to run lookups (credential hidden)"
+  },
+  "desktopToys": {
+    "title": "Desktop pets",
+    "motion": {
+      "title": "Look and motion",
+      "hint": "Every pet follows",
+      "label": "Motion"
+    },
+    "levels": {
+      "calm": "Calm",
+      "normal": "Normal",
+      "lively": "Lively"
+    },
+    "levelText": {
+      "calm": "Pets work where they stand: no hops, no confetti, a 3-second wave after a reply.",
+      "normal": "Walks or hops to each new task, hops once after a reply and waves for 7 seconds.",
+      "lively": "Hops and wanders even when idle, walks faster, and throws twice the sparks and confetti."
+    },
+    "character": {
+      "label": "Character",
+      "auto": "Auto",
+      "claude_code": "Claude",
+      "codex": "Codex",
+      "deepseek_harness": "DeepSeek"
+    },
+    "size": {
+      "label": "Size",
+      "small": "Small",
+      "normal": "Medium",
+      "large": "Large"
+    },
+    "show": {
+      "label": "Show",
+      "orb": "Model orb",
+      "status": "Status bubbles",
+      "milestone": "Milestone party"
+    },
+    "toys": {
+      "pet": {
+        "name": "Big pet",
+        "hint": "Floats wherever you drop her, full screen too. Pat her, poke her or pick her up and throw her"
+      }
+    },
+    "opts": {
+      "play": "Play",
+      "grab": "Pick up and throw",
+      "bubble": "Speaks up",
+      "reply": "Reply written",
+      "failover": "Route switched"
+    },
+    "acts": {
+      "bash": "Running a command · {{tool}}",
+      "read": "Reading files",
+      "edit": "Editing files",
+      "search": "Searching the web",
+      "write": "Writing a reply · {{rate}} tok/s",
+      "think": "Thinking",
+      "wait": "Waiting for you",
+      "leave": "Conversation over",
+      "times": " ×{{count}}"
+    },
+    "waved": "Done, waiting for your reply",
+    "milestone": "Today passed {{amount}} tokens",
+    "pet": {
+      "replied": "{{name}} is done",
+      "look": "Open ›",
+      "failover": "{{name}} switched routes",
+      "failoverModel": "Now on {{model}}",
+      "gear": {
+        "star": "Got a star hair clip",
+        "flower": "Put on a flower hair clip",
+        "bow": "Put on a bow",
+        "crown": "Put on a crown"
+      },
+      "today_one": "{{count}} reply written today",
+      "today_other": "{{count}} replies written today",
+      "pats_one": "patted {{count}} time",
+      "pats_other": "patted {{count}} times",
+      "poked": "Stop poking!",
+      "menu": {
+        "pat": "Pat her head",
+        "greet": "Today so far",
+        "quiet": "Do not disturb: no bubbles",
+        "open": "Open AstrLink",
+        "settings": "Desktop pet settings…"
+      }
+    },
+    "away": {
+      "title": "While you were away for {{duration}}",
+      "replies_one": "{{count}} reply written",
+      "replies_other": "{{count}} replies written",
+      "tokens": "{{amount}} tokens used",
+      "waiting_one": "{{count}} conversation waiting for you",
+      "waiting_other": "{{count}} conversations waiting for you"
+    },
+    "duration": {
+      "minutes_one": "{{count}} min",
+      "minutes_other": "{{count}} min",
+      "hours_one": "{{count}} h",
+      "hours_other": "{{count}} h",
+      "hoursMinutes": "{{hours}} h {{minutes}} min"
+    }
   }
 }

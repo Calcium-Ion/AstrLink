@@ -114,7 +114,12 @@ export DISABLE_AUTOUPDATER=1
 	if !answered {
 		t.Fatal("the tool result did not reach the model")
 	}
-	for _, record := range harness.records.records() {
+	// The real CLI's own calls teach its identity.
+	served, _, _ := strings.Cut(strings.TrimPrefix(calls[0].header.Get("User-Agent"), "claude-cli/"), " ")
+	if learned := harness.identities.ClientIdentities().Claude.LearnedVersion; learned != served {
+		t.Fatalf("learned Claude Code version = %q, want %q", learned, served)
+	}
+	for _, record := range harness.settledRecords() {
 		if record.ParentRequestID != nil && (record.RoutingDecision == nil || record.RoutingDecision.Selected != contract.RoutingSelectionClaudeCLI) {
 			t.Fatalf("child = %+v", record)
 		}

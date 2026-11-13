@@ -7,7 +7,8 @@
     "trajectory-inspector-*",
     "tray-popover",
     "raw-access-approval",
-    "plugin-approval"
+    "plugin-approval",
+    "toy-*"
   ],
   "permissions": [
     "core:default",

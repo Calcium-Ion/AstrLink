@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -22,6 +21,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/MoeForge/moego/base64"
 	"github.com/QuantumNous/astrlink/core/internal/buildinfo"
 	"github.com/QuantumNous/astrlink/core/internal/console"
 	"github.com/QuantumNous/astrlink/core/internal/coreapp"

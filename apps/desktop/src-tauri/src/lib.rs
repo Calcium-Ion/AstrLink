@@ -34,6 +34,7 @@ mod service_proxy;
 mod service_terminal;
 mod sidecar;
 mod startup_window;
+mod toys;
 mod tray;
 mod updates;
 mod window_reclaim;
@@ -76,7 +77,7 @@ struct WindowChromePreferences {
 }
 
 #[derive(Debug, Serialize)]
-struct SettingsSnapshot {
+pub(crate) struct SettingsSnapshot {
     #[serde(flatten)]
     preferences: PreferencesSnapshot,
     autostart_actual: Option<bool>,
@@ -110,6 +111,8 @@ struct PreferencesInput {
     tray: TrayPreferences,
     #[serde(default)]
     updates: updates::UpdatePreferences,
+    #[serde(default)]
+    desktop_toys: preferences::DesktopToysPreferences,
 }
 
 impl From<PreferencesInput> for Preferences {
@@ -132,6 +135,7 @@ impl From<PreferencesInput> for Preferences {
             display_currency: input.display_currency,
             tray: input.tray,
             updates: input.updates,
+            desktop_toys: input.desktop_toys,
         }
     }
 }
@@ -212,7 +216,10 @@ async fn stop_core(
     Ok(AppSnapshot::capture(&app, &manager))
 }
 
-fn settings_snapshot(app: &tauri::AppHandle, store: &PreferencesStore) -> SettingsSnapshot {
+pub(crate) fn settings_snapshot(
+    app: &tauri::AppHandle,
+    store: &PreferencesStore,
+) -> SettingsSnapshot {
     // Rescanned on every snapshot so a backup the user deletes stops showing.
     let data_backups = app
         .path()
@@ -567,6 +574,9 @@ fn update_preferences(
         );
     }
     tray::refresh(&app);
+    if values.locale != previous.locale {
+        toys::prefs_changed(&app);
+    }
     if let Err(error) = app.emit("quota-display-mode-changed", values.quota_display_mode) {
         eprintln!("unable to broadcast quota display mode: {error}");
     }
@@ -593,8 +603,8 @@ fn theme_background(theme: tauri::Theme) -> tauri::window::Color {
 fn apply_native_theme(app: &tauri::AppHandle, preference: ThemePreference) {
     app.set_theme(preference.native_theme());
     for window in app.webview_windows().values() {
-        // The tray popover paints its own panel on a transparent window.
-        if window.label() != tray::POPOVER_LABEL {
+        // The tray popover and the desktop toys paint on transparent windows.
+        if window.label() != tray::POPOVER_LABEL && !toys::is_toy(window.label()) {
             apply_window_background(window, preference);
         }
     }
@@ -639,6 +649,22 @@ fn tray_popover_resize(
     device_pixel_ratio: f64,
 ) -> Result<(), String> {
     tray::resize_popover(&app, height, device_pixel_ratio)
+}
+
+/// Shortens a freshly placed main window to the overview's first two
+/// modules, `height` CSS pixels drawn at `device_pixel_ratio`. Applies once
+/// and never makes the window taller.
+#[tauri::command]
+fn fit_main_window_to_content(
+    app: tauri::AppHandle,
+    height: f64,
+    device_pixel_ratio: f64,
+) -> Result<bool, String> {
+    let Some(window) = app.get_webview_window("main") else {
+        return Ok(false);
+    };
+    startup_window::fit_content_height(&window, height, device_pixel_ratio)
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -2523,6 +2549,13 @@ async fn get_privacy_summary(
 }
 
 #[tauri::command]
+async fn get_image_compression_totals(
+    manager: State<'_, Arc<CoreManager>>,
+) -> Result<serde_json::Value, String> {
+    manager.get_image_compression_totals().await
+}
+
+#[tauri::command]
 async fn list_access_token_usage(
     today_from: String,
     manager: State<'_, Arc<CoreManager>>,
@@ -2533,9 +2566,27 @@ async fn list_access_token_usage(
 #[tauri::command]
 async fn create_access_token(
     name: String,
+    service_scope: Option<String>,
+    service_ids: Option<Vec<String>>,
     manager: State<'_, Arc<CoreManager>>,
 ) -> Result<serde_json::Value, String> {
-    manager.create_access_token(&name).await
+    manager
+        .create_access_token(&name, service_scope.as_deref(), service_ids)
+        .await
+}
+
+/// Renames a token and replaces the API providers it may use.
+#[tauri::command]
+async fn update_access_token(
+    token_id: String,
+    name: String,
+    service_scope: String,
+    service_ids: Vec<String>,
+    manager: State<'_, Arc<CoreManager>>,
+) -> Result<serde_json::Value, String> {
+    manager
+        .update_access_token(&token_id, &name, &service_scope, service_ids)
+        .await
 }
 
 /// Copies an access token from Core straight to the clipboard: the token
@@ -2973,6 +3024,7 @@ pub fn run() {
         .manage(explicit_quit)
         .manage(Mutex::new(InspectorRegistry::default()))
         .manage(tray::TrayState::default())
+        .manage(toys::ToysState::default())
         .manage(window_reclaim::WindowReclaim::default())
         .manage(Arc::new(client_updates::ClientUpdateManager::default()))
         .manage(Arc::new(model_updates::PrivacyModelUpdates::default()))
@@ -2999,6 +3051,9 @@ pub fn run() {
             updates::download_app_update,
             updates::install_app_update,
             updates::update_update_preferences,
+            toys::toys_snapshot,
+            toys::update_desktop_toys,
+            toys::toys_hit,
             core_status,
             window_chrome_preferences,
             get_preferences,
@@ -3006,6 +3061,7 @@ pub fn run() {
             tray_state,
             tray_action,
             tray_popover_resize,
+            fit_main_window_to_content,
             tray_popover_hide,
             take_tray_navigation,
             set_main_window_unsaved,
@@ -3090,6 +3146,7 @@ pub fn run() {
             list_access_token_usage,
             get_usage_summary,
             get_privacy_summary,
+            get_image_compression_totals,
             create_access_token,
             copy_access_token,
             open_client_import_link,
@@ -3103,6 +3160,7 @@ pub fn run() {
             preview_client_config_snippet,
             copy_client_config_snippet,
             delete_access_token,
+            update_access_token,
             list_privacy_policies,
             get_privacy_policy,
             update_privacy_policy,
@@ -3174,7 +3232,14 @@ pub fn run() {
                     &[("error", &error)],
                 ));
             }
-            start_client_config_sync(Arc::clone(&setup_manager), Arc::clone(&preferences));
+            // The development instance shares the user's client configs with
+            // the other AstrLink but never repoints them on its own. Any
+            // rebuild restarts it, and the token check alone has let it take
+            // the other AstrLink's config. It changes a client only when one
+            // is set up from its own window.
+            if !instance::is_isolated() {
+                start_client_config_sync(Arc::clone(&setup_manager), Arc::clone(&preferences));
+            }
             app.manage(preferences);
             app.manage(Arc::new(currency::ExchangeRates::load(&config_directory)));
             let updates =
@@ -3194,6 +3259,7 @@ pub fn run() {
                 }
             }
             tray::start(app.handle());
+            toys::apply(app.handle());
             currency::start(app.handle());
             model_updates::start(app.handle());
             // The raw unlock and agent grants end with the session lock.
@@ -3251,7 +3317,7 @@ pub fn run() {
             ..
         } = &event
         {
-            if label != tray::POPOVER_LABEL {
+            if label != tray::POPOVER_LABEL && !toys::is_toy(label) {
                 if let Some(window) = app_handle.get_webview_window(label) {
                     if let Err(error) = window.set_background_color(Some(theme_background(*theme)))
                     {

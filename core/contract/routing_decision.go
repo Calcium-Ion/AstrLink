@@ -65,6 +65,9 @@ const (
 	// RoutingSkipWebSocketUnsupported: the provider cannot serve this model
 	// over a native Responses WebSocket.
 	RoutingSkipWebSocketUnsupported RoutingSkipReason = "websocket_unsupported"
+	// RoutingSkipAccessTokenScope: the request's access token may not use the
+	// provider.
+	RoutingSkipAccessTokenScope RoutingSkipReason = "access_token_scope"
 )
 
 func (reason RoutingSkipReason) Valid() bool {
@@ -72,7 +75,7 @@ func (reason RoutingSkipReason) Valid() bool {
 	case RoutingSkipDisabled, RoutingSkipNotConnected, RoutingSkipRiskPaused, RoutingSkipModelNotListed,
 		RoutingSkipProtocolUnsupported, RoutingSkipStreamingUnsupported,
 		RoutingSkipConversionUnavailable, RoutingSkipCircuitOpen, RoutingSkipRateLimited,
-		RoutingSkipWebSocketDisabled, RoutingSkipWebSocketUnsupported:
+		RoutingSkipWebSocketDisabled, RoutingSkipWebSocketUnsupported, RoutingSkipAccessTokenScope:
 		return true
 	default:
 		return false

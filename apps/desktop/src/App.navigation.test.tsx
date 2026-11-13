@@ -22,12 +22,17 @@ const bridgeMocks = vi.hoisted(() => ({
   getAgentDebugStatus: vi.fn(),
   getAuditSettings: vi.fn(),
   getCoreStatus: vi.fn(),
+  // A browser test has no native window to fit to the overview.
+  hasNativeBridge: () => false,
   getLocalDataStatus: vi.fn(),
   getPreferences: vi.fn(),
   getTrayState: vi
     .fn()
     .mockRejectedValue(new Error("tray unavailable in tests")),
   trayAction: vi.fn().mockRejectedValue(new Error("tray unavailable in tests")),
+  getImageCompressionTotals: vi
+    .fn()
+    .mockRejectedValue(new Error("totals unavailable in tests")),
   getRoutingSettings: vi.fn(),
   getServiceOrder: vi
     .fn()
@@ -35,6 +40,12 @@ const bridgeMocks = vi.hoisted(() => ({
   updateServiceOrder: vi.fn(),
   installAgentDebug: vi.fn(),
   isCCSwitchInstalled: vi.fn().mockResolvedValue(false),
+  applyClientConfigs: vi.fn(),
+  checkClientProxy: vi.fn(),
+  getClientCatalog: vi.fn(),
+  openClientImportLink: vi.fn(),
+  previewClientConfigChanges: vi.fn(),
+  removeClientConfig: vi.fn(),
   getClientConfigStatus: vi.fn().mockResolvedValue({
     clients: [],
     wsl_unchecked: [],
@@ -141,11 +152,127 @@ vi.mock("./use-privacy-model-update", () => ({
 
 import App, { followTrayNavigation, trayNavigationTarget } from "./App";
 import type { AppSnapshot } from "./core-model";
-import { defaultTrayPreferences } from "./preferences-model";
+import {
+  defaultDesktopToys,
+  defaultTrayPreferences,
+} from "./preferences-model";
 import { defaultFailurePolicy } from "./failure-policy-model";
 import { defaultPrivacyKindRules } from "./privacy-policy-model";
 import { ONBOARDING_STORAGE_KEY } from "./use-onboarding";
 import { settleClosedLayer } from "./lib/test-layer-settle";
+import {
+  parseClientConfigOverview,
+  type ClientCatalog,
+  type ClientConfigItem,
+  type ClientConfigOverview,
+  type ClientConfigStatus,
+} from "./client-config-model";
+import { notify } from "./notify";
+
+/**
+ * Claude Code, the one client this computer has, set up by `tokenId`:
+ * written by AstrLink, or pasted by hand from its manual setup.
+ */
+function claudeOverview(
+  tokenId: string | null,
+  setUp: "configured" | "manual" = "configured",
+): ClientConfigOverview {
+  const claude: ClientConfigStatus = {
+    client: "claude",
+    wsl: null,
+    target: null,
+    detected: true,
+    home: "/Users/me",
+    dir: "/Users/me/.claude",
+    paths: ["/Users/me/.claude/settings.json"],
+    exists: [tokenId !== null],
+    state: tokenId === null ? "not_configured" : setUp,
+    token_id: tokenId,
+    models: {},
+    notes: [],
+    paste_since_unix: null,
+    paste_into: [],
+  };
+  return {
+    clients: [claude],
+    wsl_unchecked: [],
+    wsl_localhost: false,
+    installed: [],
+  };
+}
+
+/**
+ * Makes writing a client report success and later status reads list what
+ * the write named, like the host's config record.
+ */
+function recordClientWrites(): void {
+  bridgeMocks.getClientConfigStatus.mockResolvedValue(claudeOverview(null));
+  bridgeMocks.applyClientConfigs.mockImplementation(
+    async ({
+      tokenId,
+      items,
+    }: {
+      tokenId: string;
+      items: ClientConfigItem[];
+    }) => {
+      bridgeMocks.getClientConfigStatus.mockResolvedValue(
+        claudeOverview(tokenId),
+      );
+      return {
+        status: "done",
+        results: items.map((item) => ({
+          client: item.client,
+          wsl: item.wsl,
+          target: item.target,
+          action: item.action,
+          ok: true,
+          error: null,
+        })),
+      };
+    },
+  );
+}
+
+/** The bootstrap token and one created later, listed newest first. */
+const defaultToken = {
+  id: "access_token_bootstrap",
+  name: "默认令牌",
+  hint: "astr_…B00T",
+  source: "system_default",
+  created_at: "2026-10-24T08:00:00Z",
+};
+const laptopToken = {
+  id: "token_laptop",
+  name: "Work laptop",
+  hint: "astr_…L4PT",
+  source: "user",
+  created_at: "2026-10-25T08:00:00Z",
+};
+
+/** Lets the bridge calls a step started settle. */
+async function settle(): Promise<void> {
+  await act(async () => {
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  });
+}
+
+function dialogButton(label: string): HTMLButtonElement {
+  const match = [
+    ...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button'),
+  ].find((candidate) => candidate.textContent?.trim() === label);
+  if (!match) throw new Error(`Missing dialog button: ${label}`);
+  return match;
+}
+
+function tokenRow(name: string): HTMLElement {
+  const match = [
+    ...document.querySelectorAll<HTMLElement>(
+      '[data-testid="access-token-row"]',
+    ),
+  ].find((row) => row.textContent?.includes(name));
+  if (!match) throw new Error(`Missing token row: ${name}`);
+  return match;
+}
 
 const readySnapshot: AppSnapshot = {
   app_version: "0.1.0",
@@ -314,6 +441,18 @@ describe("tray navigation targets", () => {
   it("opens known pages and today's failed requests and ignores the rest", () => {
     expect(trayNavigationTarget("records")).toEqual({ kind: "records" });
     expect(trayNavigationTarget("settings")).toEqual({ kind: "settings" });
+    // The pets page exists only where the pets do.
+    expect(trayNavigationTarget("desktopToys")).toBeNull();
+    window.__ASTRLINK_DESKTOP_PLATFORM__ = "macos";
+    Object.assign(window, { __TAURI_INTERNALS__: {} });
+    try {
+      expect(trayNavigationTarget("desktopToys")).toEqual({
+        kind: "desktopToys",
+      });
+    } finally {
+      delete window.__ASTRLINK_DESKTOP_PLATFORM__;
+      delete (window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+    }
     expect(trayNavigationTarget("privacyOverview")).toEqual({
       kind: "safety",
       view: "overview",
@@ -510,6 +649,32 @@ describe("App workspace navigation", () => {
       ],
     });
     bridgeMocks.listPrivacyModelInstallations.mockResolvedValue({ items: [] });
+    bridgeMocks.getClientCatalog.mockResolvedValue({
+      clients: [
+        {
+          id: "claude",
+          name: "Claude Code",
+          kind: "file",
+          targets: [],
+          protocols: ["anthropic.messages"],
+          list: false,
+        },
+      ],
+    });
+    bridgeMocks.getClientConfigStatus.mockResolvedValue({
+      clients: [],
+      wsl_unchecked: [],
+      wsl_localhost: false,
+    });
+    bridgeMocks.previewClientConfigChanges.mockResolvedValue({
+      files: [],
+      replaced: 0,
+      restored: 0,
+    });
+    bridgeMocks.checkClientProxy.mockResolvedValue({
+      client: { route: "direct" },
+      numeric: null,
+    });
     bridgeMocks.listRequestRecords.mockResolvedValue({
       items: [],
       next_cursor: null,
@@ -625,6 +790,32 @@ describe("App workspace navigation", () => {
       await Promise.resolve();
     });
   }
+
+  it("gives the desktop pets their own page on macOS, not a settings tab", async () => {
+    await renderApp();
+    expect(() => button("桌宠")).toThrow();
+    await act(async () => root.unmount());
+    root = createRoot(container);
+
+    window.__ASTRLINK_DESKTOP_PLATFORM__ = "macos";
+    Object.assign(window, { __TAURI_INTERNALS__: {} });
+    try {
+      bridgeMocks.getPreferences.mockReturnValue(new Promise(() => {}));
+      await renderApp();
+      await act(async () => button("桌宠").click());
+      expect(workspaceHeading().textContent).toBe("桌宠");
+      expect(button("桌宠").getAttribute("aria-current")).toBe("page");
+      await act(async () => button("设置").click());
+      expect(
+        [...container.querySelectorAll('[role="tab"]')].map(
+          (tab) => tab.textContent,
+        ),
+      ).not.toContain("桌宠");
+    } finally {
+      delete window.__ASTRLINK_DESKTOP_PLATFORM__;
+      delete (window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+    }
+  });
 
   it("opens About independently of gateway readiness and settings", async () => {
     await renderApp();
@@ -954,7 +1145,7 @@ describe("App workspace navigation", () => {
     await renderApp();
     expect(
       container.querySelector('[aria-current="step"]')?.textContent,
-    ).toContain("创建访问令牌");
+    ).toContain("确认访问令牌");
     await act(async () => button("前往创建访问令牌").click());
     await act(async () => button("创建令牌").click());
     await setInput("#access-token-name", "My assistant");
@@ -971,13 +1162,197 @@ describe("App workspace navigation", () => {
       container.querySelector('[aria-current="step"]')?.textContent,
     ).toContain("连接客户端");
     expect(button("配置客户端")).toBeTruthy();
+    expect(
+      container.querySelector('[data-slot="onboarding-token"]')?.textContent,
+    ).toContain("My assistant");
     expect(bridgeMocks.previewClientConfigSnippet).toHaveBeenLastCalledWith(
       expect.objectContaining({ tokenId: "token_setup", client: "claude" }),
     );
     expect(container.textContent).not.toContain("test-secret");
   });
 
-  it("uses protocol-specific client URLs and only completes after success", async () => {
+  it("sets clients up with the default token, which the token list then marks", async () => {
+    localStorage.setItem(ONBOARDING_STORAGE_KEY, "active");
+    const success = vi.spyOn(notify, "success");
+    // Listed newest first, as right after creating a token.
+    bridgeMocks.listAccessTokens.mockResolvedValue({
+      items: [laptopToken, defaultToken],
+      next_cursor: null,
+    });
+    recordClientWrites();
+    await renderApp();
+    await settle();
+
+    expect(
+      container.querySelector('[aria-current="step"]')?.textContent,
+    ).toContain("连接客户端");
+    expect(
+      container.querySelector('[data-slot="onboarding-token"]')?.textContent,
+    ).toContain("默认令牌");
+    expect(bridgeMocks.previewClientConfigSnippet).toHaveBeenLastCalledWith(
+      expect.objectContaining({ tokenId: defaultToken.id, client: "claude" }),
+    );
+
+    await act(async () => button("配置客户端").click());
+    await settle();
+    await act(async () => dialogButton("写入 1 个客户端").click());
+    await settle();
+    expect(bridgeMocks.applyClientConfigs).toHaveBeenCalledWith(
+      expect.objectContaining({ tokenId: defaultToken.id }),
+    );
+    // The write results stay readable until the dialog closes.
+    expect(workspaceHeading().textContent).toBe("开始使用 AstrLink");
+    expect(localStorage.getItem(ONBOARDING_STORAGE_KEY)).toBe("active");
+    await act(async () => dialogButton("完成").click());
+    await settleClosedLayer();
+    await settle();
+    expect(localStorage.getItem(ONBOARDING_STORAGE_KEY)).toBe("complete");
+    expect(workspaceHeading().textContent).toBe("运行概览");
+    expect(success).toHaveBeenCalledWith("首次接入已完成");
+
+    await act(async () => button("令牌").click());
+    await settle();
+    expect(
+      tokenRow("默认令牌").querySelector('[aria-label="已配置到 Claude Code"]'),
+    ).not.toBeNull();
+    expect(
+      tokenRow("Work laptop").querySelector('[aria-label^="已配置到"]'),
+    ).toBeNull();
+  });
+
+  it("finishes the guide when the token list sets a client up with another token", async () => {
+    localStorage.setItem(ONBOARDING_STORAGE_KEY, "active");
+    bridgeMocks.listAccessTokens.mockResolvedValue({
+      items: [defaultToken, laptopToken],
+      next_cursor: null,
+    });
+    recordClientWrites();
+    const focus = vi.fn();
+    window.addEventListener("focus", focus);
+    try {
+      await renderApp();
+      await settle();
+      expect(container.textContent).toContain("已完成 2 / 3 步");
+
+      await act(async () => button("令牌").click());
+      await settle();
+      expect(
+        container.querySelector('[data-slot="onboarding-return"]')?.textContent,
+      ).toContain("连接客户端");
+      await act(async () => button("为“Work laptop”配置客户端").click());
+      await settle();
+      await act(async () => dialogButton("写入 1 个客户端").click());
+      await settle();
+      expect(bridgeMocks.applyClientConfigs).toHaveBeenCalledWith(
+        expect.objectContaining({ tokenId: laptopToken.id }),
+      );
+
+      expect(
+        container.querySelector('[data-slot="onboarding-return"]'),
+      ).toBeNull();
+      expect(localStorage.getItem(ONBOARDING_STORAGE_KEY)).toBe("complete");
+      expect(
+        tokenRow("Work laptop").querySelector(
+          '[aria-label="已配置到 Claude Code"]',
+        ),
+      ).not.toBeNull();
+      await act(async () => dialogButton("完成").click());
+      await settleClosedLayer();
+      await act(async () => button("概览").click());
+      await settle();
+      expect(workspaceHeading().textContent).toBe("运行概览");
+      expect(focus).not.toHaveBeenCalled();
+    } finally {
+      window.removeEventListener("focus", focus);
+    }
+  });
+
+  it("finishes the guide once a config pasted from the manual setup appears", async () => {
+    localStorage.setItem(ONBOARDING_STORAGE_KEY, "active");
+    bridgeMocks.listAccessTokens.mockResolvedValue({
+      items: [defaultToken, laptopToken],
+      next_cursor: null,
+    });
+    bridgeMocks.getClientConfigStatus.mockResolvedValue(claudeOverview(null));
+    const success = vi.spyOn(notify, "success");
+    await renderApp();
+    await settle();
+    expect(container.textContent).toContain("已完成 2 / 3 步");
+
+    // The user pastes the snippet into Claude Code and comes back. The
+    // host's answer goes through the same check as a real one.
+    bridgeMocks.getClientConfigStatus.mockImplementation(
+      async (_url: string | null, catalog: ClientCatalog) =>
+        parseClientConfigOverview(
+          claudeOverview(defaultToken.id, "manual"),
+          catalog,
+        ),
+    );
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    await settle();
+    expect(localStorage.getItem(ONBOARDING_STORAGE_KEY)).toBe("complete");
+    expect(workspaceHeading().textContent).toBe("运行概览");
+    expect(success).toHaveBeenCalledWith("首次接入已完成");
+
+    await act(async () => button("令牌").click());
+    await settle();
+    expect(
+      tokenRow("默认令牌").querySelector('[aria-label="已配置到 Claude Code"]'),
+    ).not.toBeNull();
+    expect(
+      tokenRow("Work laptop").querySelector('[aria-label^="已配置到"]'),
+    ).toBeNull();
+  });
+
+  it("closes a guide left open by an earlier run once its steps are done", async () => {
+    // An older build kept the guide open until a request succeeded, even
+    // after a client was set up.
+    localStorage.setItem(ONBOARDING_STORAGE_KEY, "active");
+    bridgeMocks.listAccessTokens.mockResolvedValue({
+      items: [defaultToken],
+      next_cursor: null,
+    });
+    bridgeMocks.getClientConfigStatus.mockResolvedValue(
+      claudeOverview(defaultToken.id),
+    );
+    const success = vi.spyOn(notify, "success");
+    await renderApp();
+    await settle();
+
+    expect(localStorage.getItem(ONBOARDING_STORAGE_KEY)).toBe("complete");
+    expect(workspaceHeading().textContent).toBe("运行概览");
+    expect(success).toHaveBeenCalledWith("首次接入已完成");
+  });
+
+  it("keeps a guide reopened after setup open until the user leaves it", async () => {
+    localStorage.setItem(ONBOARDING_STORAGE_KEY, "complete");
+    bridgeMocks.listAccessTokens.mockResolvedValue({
+      items: [defaultToken],
+      next_cursor: null,
+    });
+    bridgeMocks.getClientConfigStatus.mockResolvedValue(
+      claudeOverview(defaultToken.id),
+    );
+    const success = vi.spyOn(notify, "success");
+    await renderApp();
+    await settle();
+    expect(workspaceHeading().textContent).toBe("运行概览");
+
+    await act(async () => button("上手引导").click());
+    await settle();
+    expect(workspaceHeading().textContent).toBe("开始使用 AstrLink");
+    expect(container.textContent).toContain("已完成 3 / 3 步");
+    expect(localStorage.getItem(ONBOARDING_STORAGE_KEY)).toBe("active");
+    expect(success).not.toHaveBeenCalledWith("首次接入已完成");
+
+    await act(async () => button("进入运行概览").click());
+    expect(localStorage.getItem(ONBOARDING_STORAGE_KEY)).toBe("complete");
+    expect(workspaceHeading().textContent).toBe("运行概览");
+  });
+
+  it("uses protocol-specific client URLs and completes by itself after a success", async () => {
     localStorage.setItem(ONBOARDING_STORAGE_KEY, "active");
     await renderApp();
     await act(async () => button("其他工具").click());
@@ -993,15 +1368,13 @@ describe("App workspace navigation", () => {
     });
     await act(async () => button("检查连接结果").click());
     expect(container.textContent).toContain("已收到请求，但尚未成功");
-    expect(container.textContent).not.toContain("进入运行概览");
+    expect(localStorage.getItem(ONBOARDING_STORAGE_KEY)).toBe("active");
     bridgeMocks.getUsageSummary.mockResolvedValue({
       ...summary,
       scanned_records: 2,
       totals: { ...summary.totals, requests: 1, failed_requests: 1 },
     });
     await act(async () => button("检查连接结果").click());
-    expect(container.textContent).toContain("第一条请求已成功");
-    await act(async () => button("进入运行概览").click());
     expect(localStorage.getItem(ONBOARDING_STORAGE_KEY)).toBe("complete");
     expect(workspaceHeading().textContent).toBe("运行概览");
   });
@@ -1226,6 +1599,7 @@ describe("App workspace navigation", () => {
         display_currency: "auto" as const,
         tray: defaultTrayPreferences(),
         updates: defaultUpdatePreferences(),
+        desktop_toys: defaultDesktopToys(),
       },
       load_warning: null,
       autostart_actual: false,
@@ -1525,6 +1899,7 @@ describe("App workspace navigation", () => {
         display_currency: "auto" as const,
         tray: defaultTrayPreferences(),
         updates: defaultUpdatePreferences(),
+        desktop_toys: defaultDesktopToys(),
       },
       load_warning: null,
       autostart_actual: false,
@@ -1570,6 +1945,7 @@ describe("App workspace navigation", () => {
         display_currency: "auto" as const,
         tray: defaultTrayPreferences(),
         updates: defaultUpdatePreferences(),
+        desktop_toys: defaultDesktopToys(),
       },
       load_warning: null,
       autostart_actual: false,
@@ -1634,8 +2010,10 @@ describe("App workspace navigation", () => {
     expect(workspaceHeading().textContent).toBe("Agent 工具");
     expect(container.textContent).toContain("工具接入");
     expect(container.textContent).toContain("Cursor");
-    expect(container.textContent).toContain("Claude Code");
     expect(container.textContent).toContain("Codex");
+    // Claude Code is not detected, so it folds away until opened.
+    expect(container.textContent).toContain("未检测到的工具");
+    expect(container.textContent).not.toContain("Claude Code");
     expect(bridgeMocks.getAgentDebugStatus).toHaveBeenCalled();
   });
 
@@ -1658,6 +2036,7 @@ describe("App workspace navigation", () => {
         display_currency: "auto" as const,
         tray: defaultTrayPreferences(),
         updates: defaultUpdatePreferences(),
+        desktop_toys: defaultDesktopToys(),
       },
       load_warning: null,
       autostart_actual: false,
@@ -1818,19 +2197,6 @@ describe("App workspace navigation", () => {
     });
   });
 
-  it("refreshes services and tokens with the usage from the overview header", async () => {
-    await renderApp();
-    const usage = bridgeMocks.getUsageSummary.mock.calls.length;
-    const services = bridgeMocks.listServices.mock.calls.length;
-    const tokens = bridgeMocks.listAccessTokens.mock.calls.length;
-
-    await act(async () => button("刷新").click());
-
-    expect(bridgeMocks.getUsageSummary).toHaveBeenCalledTimes(usage + 1);
-    expect(bridgeMocks.listServices).toHaveBeenCalledTimes(services + 1);
-    expect(bridgeMocks.listAccessTokens).toHaveBeenCalledTimes(tokens + 1);
-  });
-
   it("navigates to the request records page", async () => {
     await renderApp();
 
@@ -1937,6 +2303,12 @@ describe("App workspace navigation", () => {
       },
       etag: `"sha256:${"b".repeat(64)}"`,
     });
+    // Saving without models lists the upstream's first.
+    bridgeMocks.probeDraftServiceModels.mockResolvedValue({
+      service_id: "",
+      protocol: "openai.models",
+      model_ids: ["gpt-5"],
+    });
     await renderApp();
 
     await act(async () => button("提供商").click());
@@ -1952,11 +2324,13 @@ describe("App workspace navigation", () => {
     );
     await act(async () => {
       button("保存 API 提供商").click();
-      await Promise.resolve();
-      await Promise.resolve();
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
     });
 
     expect(bridgeMocks.createService).toHaveBeenCalledOnce();
+    expect(bridgeMocks.createService.mock.calls[0]?.[0].models).toEqual([
+      "gpt-5",
+    ]);
     expect(workspaceHeading().textContent).toBe("提供商");
     expect(container.textContent).not.toContain("放弃未保存的修改？");
     expect(document.querySelector('[role="alertdialog"]')).toBeNull();

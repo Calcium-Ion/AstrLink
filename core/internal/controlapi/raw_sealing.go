@@ -222,6 +222,15 @@ func (handler *Handler) postRawPassword(writer http.ResponseWriter, request *htt
 	}
 	defer proof.clear()
 	outcome, err := controller.ChangePassword(request.Context(), action, password, proof.RawProof)
+	if err == nil || outcome.Committed {
+		// Revocation follows the durable write, including when later cleanup or
+		// cache refresh failed. A rejected/uncommitted change preserves sessions.
+		handler.rawGrants.revokeAll()
+		if handler.consoleSessions != nil {
+			handler.consoleSessions.EndOtherSessions(request)
+		}
+		handler.observers.noteRawEvent(rawPasswordEvents[action], RawAccessGrant{ClientName: classifyObserver(request)})
+	}
 	if err != nil {
 		if errors.Is(err, ErrRawPasswordInvalid) {
 			handler.observers.noteRawEvent(RawAccessEventPasswordInvalid, RawAccessGrant{})
@@ -229,12 +238,6 @@ func (handler *Handler) postRawPassword(writer http.ResponseWriter, request *htt
 		handler.writeRawPasswordError(writer, err)
 		return
 	}
-	// Whatever an agent was granted under the old password ends with it.
-	handler.rawGrants.revokeAll()
-	if handler.consoleSessions != nil {
-		handler.consoleSessions.EndOtherSessions(request)
-	}
-	handler.observers.noteRawEvent(rawPasswordEvents[action], RawAccessGrant{ClientName: classifyObserver(request)})
 	view, err := handler.rawSealingStatus(request, outcome.Status)
 	if err != nil {
 		handler.writeAuditSettingsStoreError(writer, err)

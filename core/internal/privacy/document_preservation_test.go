@@ -66,7 +66,7 @@ func TestRedactionTreatsToolPayloadKeysLiterally(t *testing.T) {
 			body := fmt.Sprintf(` { "z":1, "messages":[{"content":[{"input":{
  "z_keep":"\u0061", %s:{"0":[{"email":"alice@example.com","a":false}]}, "a_keep":null
  },"type":"tool_use"}],"role":"assistant"}], "a":2 } `, encodedKey)
-			result, err := mustTestEngine(t).Inspect(t.Context(), tokenPolicy(), contract.ProtocolOpenAIChat, []byte(body))
+			result, err := mustTestEngine(t).Inspect(t.Context(), tokenPolicy(), contract.ProtocolAnthropicMessages, []byte(body))
 			if err != nil || result.Decision != DecisionRedact || len(result.Redactions) != 1 {
 				t.Fatalf("inspect: decision=%s redactions=%d err=%v", result.Decision, len(result.Redactions), err)
 			}

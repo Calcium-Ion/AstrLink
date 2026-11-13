@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const bridgeMocks = vi.hoisted(() => ({
   createAccessToken: vi.fn(),
+  updateAccessToken: vi.fn(),
   deleteAccessToken: vi.fn(),
   listAccessTokenUsage: vi.fn(),
   copyAccessToken: vi.fn(),
@@ -25,6 +26,7 @@ import {
   type AccessTokenCatalog,
 } from "./AccessTokenManager";
 import type { AccessTokenSummary } from "./access-token-model";
+import type { Service } from "./service-model";
 import type {
   ClientCatalog,
   ClientConfigOverview,
@@ -41,6 +43,8 @@ const firstToken: AccessTokenSummary = {
   hint: "astr_…K8Q2",
   source: "user",
   created_at: "2026-07-24T10:30:00Z",
+  service_scope: "all",
+  service_ids: [],
 };
 
 const secondToken: AccessTokenSummary = {
@@ -49,6 +53,8 @@ const secondToken: AccessTokenSummary = {
   hint: "astr_…7HT4",
   source: "user",
   created_at: "2026-07-24T10:31:00Z",
+  service_scope: "all",
+  service_ids: [],
 };
 
 const firstSecret = `astr_${"A".repeat(43)}`;
@@ -208,6 +214,9 @@ describe("AccessTokenManager", () => {
           coreSessionKey={session}
           inferenceURL="http://127.0.0.1:8317"
           isReady
+          onTokenUpdated={() => undefined}
+          services={[]}
+          servicesReady
           onRefresh={() => undefined}
           onTokenCreated={() => undefined}
           onTokenDeleted={() => undefined}
@@ -446,6 +455,9 @@ describe("AccessTokenManager", () => {
           coreSessionKey="session-1"
           inferenceURL="http://127.0.0.1:8317"
           isReady
+          onTokenUpdated={() => undefined}
+          services={[]}
+          servicesReady
           onRefresh={onRefresh}
           onTokenCreated={() => undefined}
           onTokenDeleted={() => undefined}
@@ -488,6 +500,9 @@ describe("AccessTokenManager", () => {
           coreSessionKey="session-1"
           inferenceURL="http://127.0.0.1:8317"
           isReady
+          onTokenUpdated={() => undefined}
+          services={[]}
+          servicesReady
           onRefresh={() => undefined}
           onTokenCreated={(token) => setItems((current) => [token, ...current])}
           onTokenDeleted={(tokenId) =>
@@ -549,6 +564,9 @@ describe("AccessTokenManager", () => {
           coreSessionKey="session-1"
           inferenceURL="http://127.0.0.1:8317"
           isReady
+          onTokenUpdated={() => undefined}
+          services={[]}
+          servicesReady
           onRefresh={() => undefined}
           onTokenCreated={(token) => setItems((current) => [token, ...current])}
           onTokenDeleted={(tokenId) =>
@@ -843,5 +861,159 @@ describe("AccessTokenManager", () => {
     await renderManager(readyCatalog([firstToken]));
     expect(row(firstToken.name).textContent).toContain("今日消耗 · USD—");
     expect(row(firstToken.name).textContent).toContain("今日 Token30");
+  });
+  describe("provider scope", () => {
+    const provider = (id: string, name: string): Service => ({
+      id,
+      name,
+      kind: "newapi",
+      enabled: true,
+      models: ["gpt-5", "claude-sonnet-5"],
+      capabilities: [],
+      created_at: "2026-11-01T00:00:00Z",
+      updated_at: "2026-11-01T00:00:00Z",
+    });
+    const zhang = provider("svc_zhang", "张三的 new-api");
+    const li = provider("svc_li", "李四的 new-api");
+    const scoped = (
+      id: string,
+      name: string,
+      ids: string[],
+    ): AccessTokenSummary => ({
+      ...firstToken,
+      id,
+      name,
+      service_scope: "selected",
+      service_ids: ids,
+    });
+    const dialog = () =>
+      document.querySelector<HTMLElement>('[role="dialog"]')!;
+    const radio = (label: string) =>
+      dialog().querySelector<HTMLButtonElement>(
+        `[role="radio"][aria-label="${label}"]`,
+      )!;
+    const providerBox = (name: string) => {
+      const label = [...dialog().querySelectorAll("label")].find((item) =>
+        item.textContent?.includes(name),
+      );
+      return label!.querySelector<HTMLButtonElement>('[role="checkbox"]')!;
+    };
+
+    const renderScoped = async (
+      tokens: AccessTokenSummary[],
+      onTokenUpdated: (token: AccessTokenSummary) => void = () => undefined,
+    ) => {
+      await act(async () => {
+        reactRoot.render(
+          <AccessTokenManager
+            catalog={readyCatalog(tokens)}
+            coreSessionKey="session-1"
+            inferenceURL="http://127.0.0.1:8317"
+            isReady
+            onRefresh={() => undefined}
+            onTokenCreated={() => undefined}
+            onTokenDeleted={() => undefined}
+            onTokenUpdated={onTokenUpdated}
+            services={[zhang, li]}
+            servicesReady
+          />,
+        );
+        await Promise.resolve();
+      });
+    };
+
+    it("marks limited tokens and leaves unlimited ones as before", async () => {
+      await renderScoped([
+        firstToken,
+        scoped("token_zhang", "张三", [zhang.id]),
+        scoped("token_team", "研发组", [zhang.id, li.id]),
+        scoped("token_gone", "旧测试机", ["svc_deleted"]),
+      ]);
+
+      expect(row(firstToken.name).textContent).not.toContain("提供商");
+      expect(row("张三").textContent).toContain("张三的 new-api");
+      expect(row("研发组").textContent).toContain("2 个提供商");
+      expect(row("旧测试机").textContent).toContain("提供商已删除");
+    });
+
+    it("edits a token's providers and refuses an empty selection", async () => {
+      const saved = scoped("token_zhang", "张三", [li.id]);
+      bridgeMocks.updateAccessToken.mockResolvedValueOnce(saved);
+      const onTokenUpdated = vi.fn();
+      await renderScoped(
+        [scoped("token_zhang", "张三", [zhang.id])],
+        onTokenUpdated,
+      );
+
+      await act(async () => button("编辑", row("张三")).click());
+      expect(dialog().textContent).toContain("编辑访问令牌");
+      expect(radio("指定提供商").getAttribute("aria-checked")).toBe("true");
+      expect(providerBox("张三的 new-api").getAttribute("aria-checked")).toBe(
+        "true",
+      );
+      expect(dialog().textContent).toContain("已选 1 / 2");
+
+      await act(async () => providerBox("张三的 new-api").click());
+      await act(async () => {
+        button("保存", dialog()).click();
+        await Promise.resolve();
+      });
+      expect(dialog().textContent).toContain("至少勾选一个提供商。");
+      expect(bridgeMocks.updateAccessToken).not.toHaveBeenCalled();
+
+      await act(async () => providerBox("李四的 new-api").click());
+      expect(dialog().textContent).not.toContain("至少勾选一个提供商。");
+      await act(async () => {
+        button("保存", dialog()).click();
+        await Promise.resolve();
+      });
+      expect(bridgeMocks.updateAccessToken).toHaveBeenCalledWith(
+        "token_zhang",
+        "张三",
+        { service_scope: "selected", service_ids: [li.id] },
+      );
+      expect(onTokenUpdated).toHaveBeenCalledWith(saved);
+    });
+
+    it("drops deleted providers when editing and can widen back to all", async () => {
+      const saved = { ...firstToken, id: "token_gone", name: "旧测试机" };
+      bridgeMocks.updateAccessToken.mockResolvedValueOnce(saved);
+      await renderScoped([scoped("token_gone", "旧测试机", ["svc_deleted"])]);
+
+      await act(async () => button("编辑", row("旧测试机")).click());
+      expect(dialog().textContent).toContain("已选 0 / 2");
+      await act(async () => radio("全部提供商").click());
+      await act(async () => {
+        button("保存", dialog()).click();
+        await Promise.resolve();
+      });
+      expect(bridgeMocks.updateAccessToken).toHaveBeenCalledWith(
+        "token_gone",
+        "旧测试机",
+        { service_scope: "all", service_ids: [] },
+      );
+    });
+
+    it("creates a token limited to the checked providers", async () => {
+      bridgeMocks.createAccessToken.mockResolvedValueOnce({
+        token: scoped("token_new", "王五", [li.id]),
+        access_token: firstSecret,
+      });
+      await renderScoped([firstToken]);
+
+      await act(async () => button("创建令牌").click());
+      await setInput("#access-token-name", "王五");
+      expect(dialog().querySelector('[role="checkbox"]')).toBeNull();
+      await act(async () => radio("指定提供商").click());
+      await act(async () => providerBox("李四的 new-api").click());
+      await act(async () => {
+        button("创建", dialog()).click();
+        await Promise.resolve();
+      });
+      expect(bridgeMocks.createAccessToken).toHaveBeenCalledWith("王五", {
+        service_scope: "selected",
+        service_ids: [li.id],
+      });
+    });
   });
 });

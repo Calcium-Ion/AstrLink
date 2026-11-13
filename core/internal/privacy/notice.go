@@ -3,9 +3,9 @@ package privacy
 import (
 	"strings"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/systemprompt"
-	"github.com/tidwall/gjson"
 )
 
 // The placeholder notices explain the token placeholder convention to the model.
@@ -56,21 +56,21 @@ func injectPlaceholderNotice(document *jsonDocument, protocol contract.ProtocolI
 	switch protocol {
 	case contract.ProtocolOpenAIResponses, contract.ProtocolOpenAIResponsesCompact:
 		// A client may replay the notice in input after converting protocols.
-		if messagesContainNotice(gjson.GetBytes(document.body, "input")) ||
-			contentContainsNotice(gjson.GetBytes(document.body, "instructions")) {
+		if messagesContainNotice(ojson.GetBytes(document.body, "input")) ||
+			contentContainsNotice(ojson.GetBytes(document.body, "instructions")) {
 			return false, nil
 		}
 	case contract.ProtocolAnthropicMessages:
-		if contentContainsNotice(gjson.GetBytes(document.body, "system")) {
+		if contentContainsNotice(ojson.GetBytes(document.body, "system")) {
 			return false, nil
 		}
 	case contract.ProtocolOpenAIChat:
-		if messagesContainNotice(gjson.GetBytes(document.body, "messages")) {
+		if messagesContainNotice(ojson.GetBytes(document.body, "messages")) {
 			return false, nil
 		}
 	case contract.ProtocolGoogleGenerateContent:
-		if contentContainsNotice(gjson.GetBytes(document.body, "systemInstruction.parts")) ||
-			contentContainsNotice(gjson.GetBytes(document.body, "system_instruction.parts")) {
+		if contentContainsNotice(ojson.GetBytes(document.body, "systemInstruction.parts")) ||
+			contentContainsNotice(ojson.GetBytes(document.body, "system_instruction.parts")) {
 			return false, nil
 		}
 	default:
@@ -97,24 +97,24 @@ const placeholderSkillName = "redaction-placeholders"
 func placeholderSkillListed(protocol contract.ProtocolID, body []byte) bool {
 	switch protocol {
 	case contract.ProtocolOpenAIResponses, contract.ProtocolOpenAIResponsesCompact:
-		instructions := gjson.GetBytes(body, "instructions")
-		return instructions.Type == gjson.String && skillListingNames(instructions.Str) ||
-			systemMessagesListSkill(gjson.GetBytes(body, "input"))
+		instructions := ojson.GetBytes(body, "instructions")
+		return instructions.Type == ojson.String && skillListingNames(instructions.Str) ||
+			systemMessagesListSkill(ojson.GetBytes(body, "input"))
 	case contract.ProtocolAnthropicMessages:
 		// Claude Code sends its catalogue as a system-role message after the
 		// first user turn rather than in the top-level system prompt.
-		return contentListsSkill(gjson.GetBytes(body, "system")) ||
-			systemMessagesListSkill(gjson.GetBytes(body, "messages"))
+		return contentListsSkill(ojson.GetBytes(body, "system")) ||
+			systemMessagesListSkill(ojson.GetBytes(body, "messages"))
 	case contract.ProtocolOpenAIChat:
-		return systemMessagesListSkill(gjson.GetBytes(body, "messages"))
+		return systemMessagesListSkill(ojson.GetBytes(body, "messages"))
 	case contract.ProtocolGoogleGenerateContent:
-		return contentListsSkill(gjson.GetBytes(body, "systemInstruction.parts"))
+		return contentListsSkill(ojson.GetBytes(body, "systemInstruction.parts"))
 	default:
 		return false
 	}
 }
 
-func systemMessagesListSkill(messages gjson.Result) bool {
+func systemMessagesListSkill(messages ojson.Result) bool {
 	if messages.IsArray() {
 		for _, message := range messages.Array() {
 			role := message.Get("role").Str
@@ -126,13 +126,13 @@ func systemMessagesListSkill(messages gjson.Result) bool {
 	return false
 }
 
-func contentListsSkill(content gjson.Result) bool {
-	if content.Type == gjson.String {
+func contentListsSkill(content ojson.Result) bool {
+	if content.Type == ojson.String {
 		return skillListingNames(content.Str)
 	}
 	if content.IsArray() {
 		for _, block := range content.Array() {
-			if text := block.Get("text"); text.Type == gjson.String && skillListingNames(text.Str) {
+			if text := block.Get("text"); text.Type == ojson.String && skillListingNames(text.Str) {
 				return true
 			}
 		}
@@ -190,7 +190,7 @@ func noticeAlreadyPresent(value string) bool {
 // Scan every system/developer message before choosing where to insert. Clients
 // may add a new prefix ahead of an already annotated message on the next turn.
 // User or assistant quotations do not count as system-channel instructions.
-func messagesContainNotice(messages gjson.Result) bool {
+func messagesContainNotice(messages ojson.Result) bool {
 	if messages.IsArray() {
 		for _, message := range messages.Array() {
 			role := message.Get("role").Str
@@ -202,13 +202,13 @@ func messagesContainNotice(messages gjson.Result) bool {
 	return false
 }
 
-func contentContainsNotice(content gjson.Result) bool {
-	if content.Type == gjson.String {
+func contentContainsNotice(content ojson.Result) bool {
+	if content.Type == ojson.String {
 		return noticeAlreadyPresent(content.Str)
 	}
 	if content.IsArray() {
 		for _, block := range content.Array() {
-			if text := block.Get("text"); text.Type == gjson.String && noticeAlreadyPresent(text.Str) {
+			if text := block.Get("text"); text.Type == ojson.String && noticeAlreadyPresent(text.Str) {
 				return true
 			}
 		}

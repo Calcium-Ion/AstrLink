@@ -17,6 +17,7 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/astrlink/core/contract"
+	"github.com/QuantumNous/astrlink/core/internal/accountauth"
 	"github.com/QuantumNous/astrlink/core/internal/claudecli"
 	"github.com/QuantumNous/astrlink/core/internal/claudecli/fakeclaude"
 	"github.com/QuantumNous/astrlink/core/internal/claudeofficial"
@@ -106,6 +107,8 @@ type officialHarness struct {
 	configDir string
 	official  *claudeofficial.Runtime
 	service   contract.ServiceID
+	// identities learns from the requests the gateway serves.
+	identities *accountauth.IdentityRegistry
 
 	mu       sync.Mutex
 	calls    []proxiedCall
@@ -244,11 +247,13 @@ func newOfficialHarnessWith(t *testing.T, binary string) *officialHarness {
 	}})
 	t.Cleanup(official.Close)
 	harness.official, harness.service = official, service.ID
+	harness.identities = accountauth.NewIdentityRegistry(nil, nil)
 	handler := NewWithDependencies(Dependencies{
 		Resolver:         officialResolver{service: service, baseURL: "http://provider.invalid"},
 		RequestRecords:   harness.records,
 		ConversionEngine: relaykitbridge.NewEngine(),
 		ClaudeOfficial:   official,
+		Identities:       harness.identities,
 		AccessTokenAuthenticator: AccessTokenAuthenticatorFunc(func(_ context.Context, token string) (contract.AccessTokenID, error) {
 			if token != "local-token" {
 				return "", fmt.Errorf("unknown token")
@@ -299,6 +304,14 @@ func (harness *officialHarness) post(t *testing.T, path, body string) (int, stri
 		t.Fatal(err)
 	}
 	return response.StatusCode, string(raw)
+}
+
+// settledRecords stops the gateway, which waits for the requests it is
+// still serving, and returns their records. The CLI's loopback calls finish
+// their records after the outer answer may already have reached the client.
+func (harness *officialHarness) settledRecords() []contract.RequestRecord {
+	harness.server.Close()
+	return harness.records.records()
 }
 
 func (harness *officialHarness) secret(t *testing.T) string {
@@ -375,7 +388,7 @@ func TestOfficialClaudeServesThroughTheCLIAndItsLoopback(t *testing.T) {
 		t.Fatalf("the CLI's own requests = %q, %v", own, err)
 	}
 
-	records := harness.records.records()
+	records := harness.settledRecords()
 	roots := map[contract.RequestID]contract.RequestRecord{}
 	var children []contract.RequestRecord
 	for _, record := range records {
@@ -435,6 +448,11 @@ func TestOfficialClaudeServesConvertedRequests(t *testing.T) {
 	calls := harness.proxied()
 	if len(calls) != 1 || !strings.Contains(fmt.Sprint(calls[0].body["system"]), "Be brief.") {
 		t.Fatalf("upstream calls = %+v", calls)
+	}
+	// The serving CLI is the user's own Claude Code, so its call teaches the
+	// identity even when the outer request came from another client.
+	if got := harness.identities.ClientIdentities().Claude.LearnedVersion; got != "2.1.300" {
+		t.Fatalf("learned Claude Code version = %q, want the serving CLI's", got)
 	}
 }
 

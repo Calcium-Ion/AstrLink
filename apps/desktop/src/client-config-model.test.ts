@@ -186,6 +186,7 @@ describe("client-config status parsing", () => {
     ["an unknown state", { state: "stale" }],
     ["a malformed token ID", { state: "configured", token_id: "X" }],
     ["a configured client without a token", { state: "modified" }],
+    ["a config set up by hand without a token", { state: "manual" }],
     ["an unconfigured client with a token", { token_id: "token_01" }],
     ["a state CC Switch once had", { state: "cc_switch" }],
     ["models that are not an object", { models: ["gpt-5"] }],
@@ -475,12 +476,16 @@ describe("client-config apply parsing", () => {
             {
               path: "/Users/me/.gemini/.env",
               key: "GEMINI_API_KEY",
-              current: null,
+              current: "…12",
+              next: null,
+              removed: true,
             },
             {
               path: "/Users/me/.gemini/settings.json",
               key: "security.auth.selectedType",
               current: "oauth-personal",
+              next: "gemini-api-key",
+              removed: false,
             },
           ],
           gateway: null,
@@ -566,6 +571,29 @@ describe("client-config apply parsing", () => {
       ],
     ],
     [
+      "a removed key with a value after the write",
+      [
+        {
+          client: "gemini",
+          wsl: null,
+          target: null,
+          dir: "/x",
+          remove: false,
+          keys: [
+            {
+              path: "/x/.env",
+              key: "K",
+              current: "a",
+              next: "b",
+              removed: true,
+            },
+          ],
+          gateway: null,
+          token_id: null,
+        },
+      ],
+    ],
+    [
       "a revealed token",
       [
         {
@@ -575,7 +603,13 @@ describe("client-config apply parsing", () => {
           dir: "/x",
           remove: false,
           keys: [
-            { path: "/x/.env", key: "K", current: `astr_${"A".repeat(43)}` },
+            {
+              path: "/x/.env",
+              key: "K",
+              current: null,
+              next: `astr_${"A".repeat(43)}`,
+              removed: false,
+            },
           ],
           gateway: null,
           token_id: null,
@@ -742,6 +776,20 @@ describe("missing models", () => {
     // Unknown until the catalog loads; another token's config is not ours.
     expect(configAttention(config, "token_01", null)).toBeNull();
     expect(configAttention(config, "token_02", available)).toBeNull();
+  });
+
+  it("reads a config set up by hand with its token, which needs nothing", () => {
+    const [claude] = parseStatuses(
+      statuses({
+        claude: {
+          state: "manual",
+          token_id: "token_01",
+          models: { model: "gone" },
+        },
+      }),
+    ) as ClientConfigStatus[];
+    expect(claude).toMatchObject({ state: "manual", token_id: "token_01" });
+    expect(configAttention(claude, "token_01", new Set())).toBeNull();
   });
 
   it("ranks what a config needs", () => {

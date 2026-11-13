@@ -1,12 +1,12 @@
 import { useWorkspaceSnapshot } from "./workspace-snapshots";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 
 import { AgentToolIcon } from "@/components/AgentToolIcon";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { CopyableValue } from "@/components/CopyableValue";
 import { DataRow } from "@/components/DataRow";
 import { FormMessage } from "@/components/FormMessage";
-import { HelpDisclosure } from "@/components/HelpDisclosure";
+import { DisclosureToggle, HelpDisclosure } from "@/components/HelpDisclosure";
 import { HelpPopover } from "@/components/HelpPopover";
 import { RefreshCw, ShieldCheck } from "@/components/icons";
 import { Panel, PanelFooter, PanelHeader } from "@/components/Panel";
@@ -182,6 +182,8 @@ export function AgentDebugSettings({
   // fresh status.
   const [fresh, setFresh] = useState(false);
   const [selectedTools, setSelectedTools] = useState<ToolKey[]>([]);
+  const [showFolded, setShowFolded] = useState(false);
+  const foldedId = useId();
 
   const refreshGeneration = useRef(0);
   const refresh = async (
@@ -300,6 +302,113 @@ export function AgentDebugSettings({
         : current.filter((item) => item !== key && !group.includes(item)),
     );
   };
+  // Until a status arrives every row shows; after that, tools that are
+  // neither detected nor set up fold behind one toggle.
+  const listed = (row: AgentToolTarget): boolean => {
+    const tool = toolAt(row);
+    return (
+      status === null ||
+      Boolean(
+        tool?.detected || anySkillInstalled(tool) || tool?.cli_access_installed,
+      )
+    );
+  };
+  const listedRows = rows.filter(listed);
+  const foldedRows = rows.filter((row) => !listed(row));
+  const detectedInstallRows = installRows.filter(
+    (row) => toolAt(row)?.detected,
+  );
+  const undetectedInstallRows = installRows.filter(
+    (row) => !toolAt(row)?.detected,
+  );
+  const renderToolRow = (row: AgentToolTarget) => {
+    const { id } = row;
+    const tool = toolAt(row);
+    return (
+      <TableRow key={toolKey(row)}>
+        <TableCell className="py-3 pl-4">
+          <span className="flex items-center gap-2.5">
+            <span className="flex size-8 shrink-0 items-center justify-center rounded-md border bg-background">
+              <AgentToolIcon id={id} />
+            </span>
+            <span className="flex min-w-0 items-center gap-0.5">
+              <span className="font-medium">{t(`agentDebug.tools.${id}`)}</span>
+              {row.wsl !== null ? (
+                <span className="ml-1.5 text-xs text-muted-foreground">
+                  {t("agentDebug.wslPlace", { name: row.wsl })}
+                </span>
+              ) : null}
+              <StatusDot
+                label={t(
+                  !status
+                    ? checking
+                      ? "common.checking"
+                      : "agentDebug.unavailable"
+                    : tool?.detected
+                      ? "agentDebug.detected"
+                      : "agentDebug.notDetected",
+                )}
+                tone={
+                  tool?.detected
+                    ? "positive"
+                    : !status && checking
+                      ? "pending"
+                      : "neutral"
+                }
+              />
+            </span>
+          </span>
+        </TableCell>
+        <TableCell className="pr-4 text-right">
+          <AgentSetupCell checked={status !== null} tool={tool} />
+        </TableCell>
+      </TableRow>
+    );
+  };
+  const renderInstallRow = (row: AgentToolTarget) => {
+    const { id } = row;
+    const key = toolKey(row);
+    const tool = toolAt(row);
+    const group = sharedGroup(key);
+    const shared = group.length > 1;
+    const members = detected.filter((item) => group.includes(toolKey(item)));
+    const inputId = `agent-install-${row.wsl === null ? "" : `wsl-${row.wsl}-`}${shared ? members.map((item) => item.id).join("-") : id}`;
+    return (
+      <Label className="min-w-0 items-start gap-2" htmlFor={inputId} key={key}>
+        <Checkbox
+          checked={selectedTools.includes(key)}
+          disabled={locked || !tool?.detected}
+          id={inputId}
+          onCheckedChange={(checked) => toggleTool(key, checked === true)}
+        />
+        <span className="grid min-w-0 gap-0.5">
+          <span className="text-foreground">
+            {shared
+              ? t("agentDebug.sharedTools", {
+                  names: members
+                    .map((item) => t(`agentDebug.tools.${item.id}`))
+                    .join(" / "),
+                })
+              : t(`agentDebug.tools.${id}`)}
+            {row.wsl !== null ? (
+              <span className="ml-1.5 text-xs font-normal text-muted-foreground">
+                {t("agentDebug.wslPlace", { name: row.wsl })}
+              </span>
+            ) : null}
+          </span>
+          <span className="flex flex-wrap gap-x-2 gap-y-0.5 text-xs font-normal text-muted-foreground">
+            {shared
+              ? members.map((item) => (
+                  <span key={toolKey(item)}>
+                    {t(`agentDebug.tools.${item.id}`)} · {toolStatusLabel(item)}
+                  </span>
+                ))
+              : toolStatusLabel(tool)}
+          </span>
+        </span>
+      </Label>
+    );
+  };
   const previewPaths =
     status && selectedSkills.length > 0 && selectedTools.length > 0
       ? [
@@ -314,19 +423,13 @@ export function AgentDebugSettings({
         ]
       : [];
 
-  // Every skill starts selected, and reopening keeps the tools that already
-  // have one, so an update does not silently narrow the setup. A preselected
-  // skill starts alone, on every detected tool when nothing is installed yet.
+  // Every skill starts selected, or only the preselected one, on every
+  // detected tool here and in WSL. Installed tools stay selected too: an
+  // install records only the tools it ran for, so leaving one out would drop
+  // it from what uninstall removes, and reinstalling brings it up to date.
   const openInstall = (skill?: AgentSkillId): void => {
-    const configured = detected.filter(
-      (tool) => anySkillInstalled(tool) || tool.cli_access_installed,
-    );
     setSelectedSkills(skill ? [skill] : [...SKILL_IDS]);
-    setSelectedTools(
-      withShared(
-        (skill && configured.length === 0 ? detected : configured).map(toolKey),
-      ),
-    );
+    setSelectedTools(withShared(detected.map(toolKey)));
     setConfirm("install");
   };
 
@@ -420,52 +523,26 @@ export function AgentDebugSettings({
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {rows.map((row) => {
-                  const { id } = row;
-                  const tool = toolAt(row);
-                  return (
-                    <TableRow key={toolKey(row)}>
-                      <TableCell className="py-3 pl-4">
-                        <span className="flex items-center gap-2.5">
-                          <span className="flex size-8 shrink-0 items-center justify-center rounded-md border bg-background">
-                            <AgentToolIcon id={id} />
-                          </span>
-                          <span className="flex min-w-0 items-center gap-0.5">
-                            <span className="font-medium">
-                              {t(`agentDebug.tools.${id}`)}
-                            </span>
-                            {row.wsl !== null ? (
-                              <span className="ml-1.5 text-xs text-muted-foreground">
-                                {t("agentDebug.wslPlace", { name: row.wsl })}
-                              </span>
-                            ) : null}
-                            <StatusDot
-                              label={t(
-                                !status
-                                  ? checking
-                                    ? "common.checking"
-                                    : "agentDebug.unavailable"
-                                  : tool?.detected
-                                    ? "agentDebug.detected"
-                                    : "agentDebug.notDetected",
-                              )}
-                              tone={
-                                tool?.detected
-                                  ? "positive"
-                                  : !status && checking
-                                    ? "pending"
-                                    : "neutral"
-                              }
-                            />
-                          </span>
-                        </span>
-                      </TableCell>
-                      <TableCell className="pr-4 text-right">
-                        <AgentSetupCell checked={status !== null} tool={tool} />
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
+                {listedRows.map(renderToolRow)}
+                {foldedRows.length > 0 ? (
+                  <TableRow className="hover:bg-transparent has-aria-expanded:bg-transparent">
+                    <TableCell className="py-2.5 pl-4" colSpan={2}>
+                      <DisclosureToggle
+                        aria-controls={foldedId}
+                        onClick={() => setShowFolded((open) => !open)}
+                        open={showFolded}
+                      >
+                        {t("agentDebug.undetectedTools", {
+                          count: foldedRows.length,
+                        })}
+                      </DisclosureToggle>
+                    </TableCell>
+                  </TableRow>
+                ) : null}
+              </TableBody>
+              {/* Below the toggle, so opening it does not move the toggle. */}
+              <TableBody id={foldedId}>
+                {showFolded ? foldedRows.map(renderToolRow) : null}
               </TableBody>
             </Table>
 
@@ -657,67 +734,31 @@ export function AgentDebugSettings({
                 <legend className="mb-2 text-sm font-medium text-foreground">
                   {t("agentDebug.selectTools")}
                 </legend>
-                <div className="grid grid-cols-2 gap-x-4 gap-y-3">
-                  {installRows.map((row) => {
-                    const { id } = row;
-                    const key = toolKey(row);
-                    const tool = toolAt(row);
-                    const group = sharedGroup(key);
-                    const shared = group.length > 1;
-                    const members = detected.filter((item) =>
-                      group.includes(toolKey(item)),
-                    );
-                    const inputId = `agent-install-${row.wsl === null ? "" : `wsl-${row.wsl}-`}${shared ? members.map((item) => item.id).join("-") : id}`;
-                    return (
-                      <Label
-                        className="min-w-0 items-start gap-2"
-                        htmlFor={inputId}
-                        key={key}
-                      >
-                        <Checkbox
-                          checked={selectedTools.includes(key)}
-                          disabled={locked || !tool?.detected}
-                          id={inputId}
-                          onCheckedChange={(checked) =>
-                            toggleTool(key, checked === true)
-                          }
-                        />
-                        <span className="grid min-w-0 gap-0.5">
-                          <span className="text-foreground">
-                            {shared
-                              ? t("agentDebug.sharedTools", {
-                                  names: members
-                                    .map((item) =>
-                                      t(`agentDebug.tools.${item.id}`),
-                                    )
-                                    .join(" / "),
-                                })
-                              : t(`agentDebug.tools.${id}`)}
-                            {row.wsl !== null ? (
-                              <span className="ml-1.5 text-xs font-normal text-muted-foreground">
-                                {t("agentDebug.wslPlace", { name: row.wsl })}
-                              </span>
-                            ) : null}
-                          </span>
-                          <span className="flex flex-wrap gap-x-2 gap-y-0.5 text-xs font-normal text-muted-foreground">
-                            {shared
-                              ? members.map((item) => (
-                                  <span key={toolKey(item)}>
-                                    {t(`agentDebug.tools.${item.id}`)} ·{" "}
-                                    {toolStatusLabel(item)}
-                                  </span>
-                                ))
-                              : toolStatusLabel(tool)}
-                          </span>
-                        </span>
-                      </Label>
-                    );
-                  })}
-                </div>
+                {detectedInstallRows.length > 0 ? (
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-3">
+                    {detectedInstallRows.map(renderInstallRow)}
+                  </div>
+                ) : (
+                  <FormMessage>{t("agentDebug.noTools")}</FormMessage>
+                )}
                 {sharesSkills ? (
                   <p className="text-xs text-muted-foreground">
                     {t("agentDebug.sharedSkills")}
                   </p>
+                ) : null}
+                {undetectedInstallRows.length > 0 ? (
+                  <HelpDisclosure
+                    title={t("agentDebug.undetectedTools", {
+                      count: undetectedInstallRows.length,
+                    })}
+                  >
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-3">
+                      {undetectedInstallRows.map(renderInstallRow)}
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      {t("agentDebug.undetectedHint")}
+                    </p>
+                  </HelpDisclosure>
                 ) : null}
               </fieldset>
               <p>{t("agentDebug.selectionHint")}</p>

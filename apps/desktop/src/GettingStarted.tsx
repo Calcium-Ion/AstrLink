@@ -19,6 +19,7 @@ import { Panel, PanelBody } from "@/components/Panel";
 import { SegmentedControl } from "@/components/SegmentedControl";
 import { SetupSteps } from "@/components/SetupSteps";
 import { InferencePortNotice } from "@/components/InferencePortNotice";
+import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
@@ -40,6 +41,7 @@ import {
 } from "./client-config-model";
 import {
   builtinClientProtocols,
+  defaultModel,
   modelCandidates,
   requiredEntry,
 } from "./client-delivery-model";
@@ -51,7 +53,7 @@ import { PageHeader } from "./PageHeader";
 import { useT } from "./i18n";
 import { notify } from "./notify";
 import { protocolLabel } from "./service-presets";
-import type { useOnboarding } from "./use-onboarding";
+import { onboardingToken, type useOnboarding } from "./use-onboarding";
 import type { UsageState } from "./usage-range";
 
 export function GettingStarted({
@@ -103,9 +105,10 @@ export function GettingStarted({
   const mounted = useRef(true);
   const copyPending = useRef(false);
   const snippetCopyPending = useRef(false);
+  // The user's pick stays; otherwise the token the guide always starts with.
   const token =
     tokenCatalog.items.find((item) => item.id === tokenId) ??
-    tokenCatalog.items[0];
+    onboardingToken(tokenCatalog.items);
   const inferenceURL =
     snapshot?.ready?.client_inference_url?.replace(/\/+$/, "") ?? "";
   const baseURL = inferenceURL
@@ -116,11 +119,6 @@ export function GettingStarted({
     onboarding.serviceReady &&
     onboarding.tokenReady &&
     Boolean(baseURL);
-  const complete =
-    onboarding.catalogsReady &&
-    onboarding.serviceReady &&
-    onboarding.tokenReady &&
-    onboarding.requestReady;
   const steps = [
     {
       title: t("onboarding.serviceTitle"),
@@ -135,7 +133,7 @@ export function GettingStarted({
     {
       title: t("onboarding.clientTitle"),
       description: t("onboarding.clientShort"),
-      complete: onboarding.requestReady,
+      complete: onboarding.connected,
     },
   ];
   const completedCount = steps.filter((step) => step.complete).length;
@@ -159,26 +157,30 @@ export function GettingStarted({
       ? candidate.startsWith("openai.")
       : candidate === "anthropic.messages",
   );
-  // The snippet shows the first model a client reaches through an entry its
-  // provider already has, as the other tools view does. Every client but
-  // Claude Code needs one to start.
+  // The snippet shows the default model (see `defaultModel`) of those a
+  // client reaches through an entry its provider already has, as the other
+  // tools view does. Every client but Claude Code needs one to start.
   const snippetCatalog = { services: catalog.items, redirects: [] };
   const snippetModel =
     manualClient === "other"
       ? undefined
-      : modelCandidates(
-          snippetCatalog,
-          [builtinClientProtocols[manualClient]],
-          conversionEngine,
-        ).find(
-          (model) =>
-            !requiredEntry(
-              snippetCatalog,
-              model,
-              builtinClientProtocols[manualClient],
-              conversionEngine,
-            ),
+      : defaultModel(
+          modelCandidates(
+            snippetCatalog,
+            [builtinClientProtocols[manualClient]],
+            conversionEngine,
+          ).filter(
+            (model) =>
+              !requiredEntry(
+                snippetCatalog,
+                model,
+                builtinClientProtocols[manualClient],
+                conversionEngine,
+              ),
+          ),
+          catalog.items,
         );
+  const shownModel = defaultModel(models, catalog.items);
   const snippetTarget: ClientConfigTarget | null =
     manualClient !== "other" &&
     token &&
@@ -204,6 +206,13 @@ export function GettingStarted({
   useEffect(() => {
     if (!canConnect) setImportOpen(false);
   }, [canConnect]);
+  // The guide closes once a client is set up; the dialog's results and
+  // paste steps stay readable until the user closes it.
+  const { hold } = onboarding;
+  useEffect(() => {
+    hold(importOpen);
+    return () => hold(false);
+  }, [hold, importOpen]);
   useEffect(() => {
     if (!snippetKey) return;
     let cancelled = false;
@@ -354,9 +363,12 @@ export function GettingStarted({
                   {t(
                     [
                       "onboarding.serviceBody",
-                      "onboarding.tokenBody",
+                      token
+                        ? "onboarding.tokenBody"
+                        : "onboarding.tokenMissing",
                       "onboarding.clientBody",
                     ][selectedStep],
+                    { name: token?.name },
                   )}
                 </p>
               </div>
@@ -440,31 +452,67 @@ export function GettingStarted({
               ) : (
                 <>
                   <div className="grid gap-3">
-                    {tokenCatalog.items.length > 1 ? (
-                      <Select value={token?.id} onValueChange={setTokenId}>
-                        <SelectTrigger aria-label={t("onboarding.selectToken")}>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {tokenCatalog.items.map((item) => (
-                            <SelectItem key={item.id} value={item.id}>
-                              {item.name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    ) : null}
-                    <Button
-                      variant="outline"
-                      className="w-fit"
-                      onClick={() => setImportOpen(true)}
+                    <div
+                      className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1.5"
+                      data-slot="onboarding-token"
                     >
-                      <Cable aria-hidden="true" />
-                      {t("onboarding.importClient")}
-                    </Button>
+                      {tokenCatalog.items.length > 1 ? (
+                        <>
+                          <Label
+                            className="text-xs font-medium text-text-secondary"
+                            htmlFor="onboarding-token"
+                          >
+                            {t("onboarding.token")}
+                          </Label>
+                          <Select
+                            value={token?.id}
+                            // Radix reports a blank value while its options change.
+                            onValueChange={(value) =>
+                              value && setTokenId(value)
+                            }
+                          >
+                            <SelectTrigger
+                              className="w-55"
+                              id="onboarding-token"
+                            >
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {tokenCatalog.items.map((item) => (
+                                <SelectItem key={item.id} value={item.id}>
+                                  <span className="truncate">{item.name}</span>
+                                  <span className="font-mono text-muted-foreground">
+                                    {item.hint}
+                                  </span>
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </>
+                      ) : token ? (
+                        <>
+                          <span className="text-xs font-medium text-text-secondary">
+                            {t("onboarding.token")}
+                          </span>
+                          <span className="min-w-0 truncate text-sm">
+                            {token.name}
+                          </span>
+                          <span className="font-mono text-xs text-muted-foreground">
+                            {token.hint}
+                          </span>
+                        </>
+                      ) : null}
+                      <Button
+                        variant="outline"
+                        onClick={() => setImportOpen(true)}
+                      >
+                        <Cable aria-hidden="true" />
+                        {t("onboarding.importClient")}
+                      </Button>
+                    </div>
                     <HelpDisclosure
                       title={t("onboarding.manualSetup")}
-                      open={!complete}
+                      open={!onboarding.finished}
                     >
                       <SegmentedControl
                         label={t("onboarding.manualClient")}
@@ -520,10 +568,10 @@ export function GettingStarted({
                             </Button>
                           </div>
                           <p>{t("onboarding.modelHelp")}</p>
-                          {models[0] ? (
+                          {shownModel ? (
                             <CopyableValue
                               label={t("onboarding.model")}
-                              value={models[0]}
+                              value={shownModel}
                               placeholder=""
                               copyLabel={t("onboarding.copyModel")}
                             />
@@ -595,7 +643,7 @@ export function GettingStarted({
                   <div className="mt-auto grid gap-3 border-t pt-4">
                     <p className="text-sm leading-relaxed" role="status">
                       {t(
-                        complete
+                        onboarding.finished
                           ? "onboarding.success"
                           : usage.summary?.totals.failed_requests
                             ? "onboarding.failedRequest"
@@ -603,7 +651,8 @@ export function GettingStarted({
                       )}
                     </p>
                     <div className="flex flex-wrap gap-2">
-                      {complete ? (
+                      {/* Reached only by reopening a guide already done. */}
+                      {onboarding.finished ? (
                         <Button onClick={onboarding.complete}>
                           <Check aria-hidden="true" />
                           {t("onboarding.finish")}

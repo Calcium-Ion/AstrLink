@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/QuantumNous/astrlink/core/contract"
-	"github.com/tidwall/gjson"
 )
 
 // outputPart is what one piece of a response says about its output: the
@@ -34,8 +34,8 @@ func (part *outputPart) tool(name string) {
 // classifyStreamPart reads one decoded stream event. Several parts in one
 // event leave the last one as the event's part.
 func classifyStreamPart(protocol contract.ProtocolID, payload []byte) outputPart {
-	doc := gjson.ParseBytes(payload)
-	nonempty := func(value gjson.Result) bool { return value.Type == gjson.String && value.Str != "" }
+	doc := ojson.ParseBytes(payload)
+	nonempty := func(value ojson.Result) bool { return value.Type == ojson.String && value.Str != "" }
 	var part outputPart
 	switch protocol {
 	case contract.ProtocolOpenAIResponses, contract.ProtocolOpenAIResponsesCompact:
@@ -89,7 +89,7 @@ func classifyStreamPart(protocol contract.ProtocolID, payload []byte) outputPart
 // outputFromBody reads a whole non-streaming response. Nil when it holds no
 // output this gateway recognizes.
 func outputFromBody(protocol contract.ProtocolID, body []byte) *contract.OutputActivity {
-	doc := gjson.ParseBytes(body)
+	doc := ojson.ParseBytes(body)
 	var part outputPart
 	switch protocol {
 	case contract.ProtocolOpenAIResponses, contract.ProtocolOpenAIResponsesCompact:
@@ -124,7 +124,7 @@ func outputFromBody(protocol contract.ProtocolID, body []byte) *contract.OutputA
 	return output
 }
 
-func responsesItemPart(part *outputPart, item gjson.Result) {
+func responsesItemPart(part *outputPart, item ojson.Result) {
 	switch itemType := item.Get("type").Str; {
 	case itemType == "reasoning":
 		part.note(contract.OutputKindReasoning, true)
@@ -142,7 +142,7 @@ func responsesItemPart(part *outputPart, item gjson.Result) {
 	}
 }
 
-func anthropicBlockPart(part *outputPart, block gjson.Result) {
+func anthropicBlockPart(part *outputPart, block ojson.Result) {
 	switch block.Get("type").Str {
 	case "thinking", "redacted_thinking":
 		part.note(contract.OutputKindReasoning, true)
@@ -153,7 +153,7 @@ func anthropicBlockPart(part *outputPart, block gjson.Result) {
 	}
 }
 
-func geminiParts(part *outputPart, parts gjson.Result) {
+func geminiParts(part *outputPart, parts ojson.Result) {
 	for _, item := range parts.Array() {
 		if item.Get("text").Str != "" {
 			if item.Get("thought").Bool() {

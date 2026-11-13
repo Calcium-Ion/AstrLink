@@ -18,6 +18,7 @@ import {
   Server,
   Settings,
   ShieldCheck,
+  Smile,
   type AnimatedIcon,
 } from "@/components/icons";
 
@@ -70,6 +71,7 @@ import { RawKeyReplacedGate } from "./RawSealingControls";
 import { useRawSealingStatus } from "./use-raw-sealing-status";
 import { LocalDataNotice } from "./LocalDataNotice";
 import { SettingsCenter } from "./SettingsCenter";
+import { DesktopToysPage, hasDesktopToys } from "./toys/DesktopToysPage";
 import { About } from "./About";
 import { useAppUpdates } from "./use-app-updates";
 import { usePrivacyModelUpdate } from "./use-privacy-model-update";
@@ -118,6 +120,7 @@ type WorkspacePage =
   /** A page a plugin's interface registered, by its registration. */
   | { kind: "pluginPage"; entry: string }
   | { kind: "settings" }
+  | { kind: "desktopToys" }
   | { kind: "about" }
   | ServiceManagerView;
 
@@ -131,7 +134,8 @@ type IconName =
   | "route"
   | "server"
   | "settings"
-  | "shield";
+  | "shield"
+  | "smile";
 
 const emptyCatalog: ServiceCatalog = {
   status: "blocked",
@@ -240,6 +244,8 @@ export function trayNavigationTarget(
     case "about":
     case "list":
       return { kind };
+    case "desktopToys":
+      return hasDesktopToys() ? { kind } : null;
     default:
       return null;
   }
@@ -256,6 +262,7 @@ const icons: Record<IconName, AnimatedIcon> = {
   server: Server,
   settings: Settings,
   shield: ShieldCheck,
+  smile: Smile,
 };
 
 function Icon({ className, name }: { className?: string; name: IconName }) {
@@ -467,7 +474,14 @@ export default function App() {
       : null;
   const rawSealing = useRawSealingStatus(coreSessionKey, isReady);
   usePluginLanguageSync(coreSessionKey);
-  const onboarding = useOnboarding({ isReady, catalog, tokenCatalog, usage });
+  const onboarding = useOnboarding({
+    isReady,
+    catalog,
+    tokenCatalog,
+    usage,
+    inferenceURL: snapshot?.ready?.client_inference_url ?? "",
+    enabled: !isWebEdition,
+  });
 
   // Silent refreshes read the rendered state to stay out of a visible load.
   const catalogRef = useRef(catalog);
@@ -858,6 +872,16 @@ export default function App() {
     if (!isWebEdition && onboarding.active) setPage({ kind: "overview" });
   };
 
+  const handleTokenUpdated = (token: AccessTokenSummary) => {
+    tokenCatalogGeneration.current += 1;
+    setTokenCatalog((current) => ({
+      status: "ready",
+      items: current.items.map((item) => (item.id === token.id ? token : item)),
+      error: null,
+      stale: false,
+    }));
+  };
+
   const handleTokenDeleted = (tokenId: string) => {
     tokenCatalogGeneration.current += 1;
     setTokenCatalog((current) => ({
@@ -969,6 +993,14 @@ export default function App() {
                 label={t("nav.routing")}
                 onClick={() => navigate({ kind: "routing" })}
               />
+              {!isWebEdition && hasDesktopToys() ? (
+                <NavButton
+                  active={page.kind === "desktopToys"}
+                  icon="smile"
+                  label={t("nav.desktopToys")}
+                  onClick={() => navigate({ kind: "desktopToys" })}
+                />
+              ) : null}
             </div>
 
             <Separator className="mx-2 my-2 bg-sidebar-border data-[orientation=horizontal]:w-auto" />
@@ -1201,6 +1233,9 @@ export default function App() {
                 onRefresh={() => void refreshAccessTokens()}
                 onTokenCreated={handleTokenCreated}
                 onTokenDeleted={handleTokenDeleted}
+                onTokenUpdated={handleTokenUpdated}
+                services={catalog.items}
+                servicesReady={catalog.status === "ready" && !catalog.stale}
               />
             ) : page.kind === "safety" ? (
               <SafetyPolicy
@@ -1250,6 +1285,8 @@ export default function App() {
               />
             ) : page.kind === "pluginPage" ? (
               <PluginPage entry={page.entry} />
+            ) : page.kind === "desktopToys" ? (
+              <DesktopToysPage />
             ) : page.kind === "about" ? (
               <About
                 snapshot={updates.snapshot}
@@ -1284,6 +1321,7 @@ export default function App() {
                 onRefresh={() => void refreshServices()}
                 onServiceRemoved={handleServiceRemoved}
                 onServiceSaved={handleServiceSaved}
+                accessTokens={tokenCatalog.items}
                 onViewChange={(next) => navigate(next)}
                 onLocalImport={startLocalImport}
                 protocols={protocols}

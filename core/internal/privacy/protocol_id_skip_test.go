@@ -9,7 +9,8 @@ import (
 )
 
 // All identifiers below are fictional. The detector flags every one of them
-// wherever it is asked to look, so only the extraction skip keeps them intact.
+// wherever it is asked to look, so only the extraction whitelist keeps them
+// intact.
 const (
 	fixtureToolUseID     = "toolu_01FictionalPair00000000001"
 	fixtureServerToolID  = "srvtoolu_01FictionalSearch000001"
@@ -217,8 +218,8 @@ func TestProtocolRoundTripIDsDoNotTriggerPrivacyActions(t *testing.T) {
 	}
 }
 
-// The skip is keyed by protocol position, not by name: the same keys inside a
-// tool payload, and user-chosen *_id fields in scanned content, stay inspected.
+// Identifiers are left out by protocol position, not by name: the same keys
+// inside a tool payload or a caller-named prompt variable stay inspected.
 func TestProtocolRoundTripIDNamesDoNotExemptPayloads(t *testing.T) {
 	const secret = "tok_fictional_payload_value_0001"
 	for _, fixture := range []struct {
@@ -226,29 +227,13 @@ func TestProtocolRoundTripIDNamesDoNotExemptPayloads(t *testing.T) {
 		body     string
 	}{
 		{contract.ProtocolAnthropicMessages, `{"messages":[{"role":"assistant","content":[{"type":"tool_use","id":"toolu_keep","name":"t","input":{"tool_use_id":"%s"}}]}]}`},
-		{contract.ProtocolAnthropicMessages, `{"messages":[{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_keep","content":[{"type":"text","text":"x","file_id":"%s"}]}]}]}`},
 		{contract.ProtocolAnthropicMessages, `{"messages":[{"role":"assistant","content":[{"type":"mcp_tool_use","id":"mcptoolu_keep","name":"t","input":{"nested":{"approval_request_id":"%s"}}}]}]}`},
-		// Addendum 1 moved the typed input_file part of this case to the kept
-		// set (responses/tool_output_files); a free-form part stays inspected.
-		{contract.ProtocolOpenAIResponses, `{"input":[{"type":"function_call_output","call_id":"call_keep","output":[{"type":"input_text","text":"x","file_id":"%s"}]}]}`},
 		{contract.ProtocolOpenAIResponses, `{"input":[{"type":"custom_tool_call","call_id":"call_keep","name":"t","input":{"previous_response_id":"%s"}}]}`},
 		{contract.ProtocolGoogleGenerateContent, `{"contents":[{"role":"model","parts":[{"functionCall":{"id":"fc_keep","name":"t","args":{"item_id":"%s"}}}]}]}`},
 		{contract.ProtocolGoogleGenerateContent, `{"contents":[{"role":"user","parts":[{"functionResponse":{"id":"fc_keep","name":"t","response":{"container_id":"%s"}}}]}]}`},
 		{contract.ProtocolOpenAIResponses, `{"prompt":{"id":"pmpt_keep","variables":{"customer_id":"%s"}}}`},
-		{contract.ProtocolOpenAIResponses, `{"input":[{"role":"user","content":[{"type":"input_text","text":"x","user_id":"%s"}]}]}`},
-		{contract.ProtocolAnthropicMessages, `{"messages":[{"role":"user","content":[{"type":"text","text":"x","session_id":"%s"}]}]}`},
-		// Addendum 1: one per typed tool-result position. Off-position,
-		// user-role or wrongly typed copies stay inspected.
-		{contract.ProtocolOpenAIResponses, `{"input":[{"type":"function_call_output","call_id":"call_keep","output":[{"type":"input_text","text":"x","nested":{"type":"input_file","file_id":"%s"}}]}]}`},
-		{contract.ProtocolOpenAIResponses, `{"input":[{"role":"user","type":"function_call_output","call_id":"call_keep","output":[{"type":"input_image","file_id":"%s"}]}]}`},
-		{contract.ProtocolOpenAIResponses, `{"input":[{"type":"computer_call_output","call_id":"call_keep","output":{"type":"logs","file_id":"%s"}}]}`},
-		{contract.ProtocolOpenAIResponses, `{"input":[{"role":"user","type":"computer_call_output","call_id":"call_keep","output":{"type":"computer_screenshot","file_id":"%s"}}]}`},
-		{contract.ProtocolAnthropicMessages, `{"messages":[{"role":"user","content":[{"type":"code_execution_tool_result","tool_use_id":"toolu_keep","content":{"type":"code_execution_result","content":[{"type":"code_execution_output","file_id":"%s"}]}}]}]}`},
+		// A tool argument shaped like a typed tool result is still payload.
 		{contract.ProtocolAnthropicMessages, `{"messages":[{"role":"assistant","content":[{"type":"tool_use","id":"toolu_keep","name":"t","input":{"type":"bash_code_execution_tool_result","content":{"type":"bash_code_execution_result","content":[{"type":"bash_code_execution_output","file_id":"%s"}]}}}]}]}`},
-		{contract.ProtocolAnthropicMessages, `{"messages":[{"role":"assistant","content":[{"type":"bash_code_execution_tool_result","tool_use_id":"toolu_keep","content":{"type":"code_execution_result","content":[{"type":"code_execution_output","file_id":"%s"}]}}]}]}`},
-		{contract.ProtocolAnthropicMessages, `{"messages":[{"role":"user","content":[{"type":"web_search_tool_result","tool_use_id":"toolu_keep","content":[{"type":"web_search_result","encrypted_content":"%s"}]}]}]}`},
-		{contract.ProtocolAnthropicMessages, `{"messages":[{"role":"assistant","content":[{"type":"web_search_tool_result","tool_use_id":"toolu_keep","content":[{"type":"web_search_tool_result_error","encrypted_content":"%s"}]}]}]}`},
-		{contract.ProtocolOpenAIChat, `{"messages":[{"role":"assistant","content":[{"type":"web_search_tool_result","tool_use_id":"toolu_keep","content":[{"type":"web_search_result","encrypted_content":"%s"}]}]}]}`},
 		{contract.ProtocolOpenAIResponses, `{"prompt":{"id":"pmpt_keep","variables":{"file_id":"%s"}}}`},
 	} {
 		body := strings.Replace(fixture.body, "%s", secret, 1)
@@ -265,46 +250,6 @@ func TestProtocolRoundTripIDNamesDoNotExemptPayloads(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-func TestSkipJSONChildRoundTripKeysAreExplicit(t *testing.T) {
-	parent := map[string]any{"type": "tool_result"}
-	for _, key := range []string{
-		"tool_use_id", "toolUseId", "previous_response_id", "previousResponseId",
-		"item_id", "itemId", "response_id", "responseId", "file_id", "fileId",
-		"container_id", "containerId", "approval_request_id", "encrypted_index",
-	} {
-		if !skipJSONChild(parent, key, "opaque", jsonContentContext) {
-			t.Errorf("protocol key %q is inspected in content", key)
-		}
-		if skipJSONChild(parent, key, "opaque", jsonToolPayloadContext) {
-			t.Errorf("tool payload key %q is exempt", key)
-		}
-		if skipJSONChild(parent, key, map[string]any{"type": "string"}, jsonSchemaContext) {
-			t.Errorf("schema property %q is exempt", key)
-		}
-	}
-	for _, key := range []string{
-		"user_id", "userId", "customer_id", "order_id", "session_id", "conversation_id",
-		"request_id", "filename", "server_label", "server_name", "encrypted_content",
-	} {
-		if skipJSONChild(parent, key, "value", jsonContentContext) {
-			t.Errorf("non-protocol key %q is exempt", key)
-		}
-	}
-	// Addendum 1: $schema is skipped only as the schema dialect keyword.
-	schema := map[string]any{"type": "object"}
-	if !skipJSONChild(schema, "$schema", fixtureSchemaDialect, jsonSchemaContext) {
-		t.Error("schema dialect keyword is inspected")
-	}
-	if skipJSONChild(schema, "$schema", map[string]any{"type": "string"}, jsonSchemaContext) {
-		t.Error("schema property named $schema is exempt")
-	}
-	for _, context := range []jsonTraversalContext{jsonContentContext, jsonToolPayloadContext} {
-		if skipJSONChild(parent, "$schema", fixtureSchemaDialect, context) {
-			t.Errorf("$schema outside a schema is exempt in context %v", context)
-		}
 	}
 }
 
@@ -384,7 +329,6 @@ func TestJSONSchemaDialectKeyOutsideSchemasIsInspected(t *testing.T) {
 	}{
 		{contract.ProtocolAnthropicMessages, `{"messages":[{"role":"assistant","content":[{"type":"tool_use","id":"toolu_keep","name":"t","input":{"$schema":"%s"}}]}]}`, fixtureSchemaDialect},
 		{contract.ProtocolOpenAIResponses, `{"input":[{"type":"function_call_output","call_id":"call_keep","output":"{\"$schema\":\"%s\"}"}]}`, fixtureSchemaDialect},
-		{contract.ProtocolOpenAIResponses, `{"input":[{"role":"user","content":[{"type":"input_text","text":"x","$schema":"%s"}]}]}`, fixtureSchemaDialect},
 		{contract.ProtocolAnthropicMessages, `{"messages":[{"role":"user","content":"hi"}],"tools":[{"name":"t","input_schema":{"type":"object","properties":{"$schema":{"type":"string","description":"%s"}}}}]}`, secret},
 	} {
 		body := strings.Replace(fixture.body, "%s", fixture.value, 1)

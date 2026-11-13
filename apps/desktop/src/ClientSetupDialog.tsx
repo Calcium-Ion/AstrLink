@@ -97,6 +97,7 @@ import {
 import {
   checkedByDefault,
   clientMatches,
+  defaultModel,
   draftModels,
   draftProblem,
   entryTarget,
@@ -142,6 +143,7 @@ import {
 } from "./pricing-bridge";
 import type { Service, ServiceCapability } from "./service-model";
 import { protocolLabel } from "./service-presets";
+import { clientConfigsChanged } from "./use-client-configs";
 
 interface Failure {
   message: string;
@@ -241,6 +243,150 @@ const linkProviderNames: Record<string, string> = {
  * Translated text whose `code` placeholders render as code, such as a file
  * and the key inside it; `plain` ones stay text.
  */
+/** Rows a place's confirmation shows before the rest folds away. */
+const confirmRowsShown = 4;
+
+/** A setting, its value now and after the write, one row each. */
+const confirmColumns =
+  "grid grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1fr)] gap-3 px-2.5 text-muted-foreground";
+
+/** One value in the confirmation: a line that truncates, whole on hover. */
+function ConfirmValue({
+  className,
+  value,
+}: {
+  className?: string;
+  value: string | null;
+}) {
+  return value === null ? (
+    <span aria-label={i18n.t("clientSetup.confirm.notShown")}>—</span>
+  ) : (
+    <code className={cn("block truncate font-mono", className)} title={value}>
+      {value}
+    </code>
+  );
+}
+
+/**
+ * One place in the write confirmation: the client and where its config
+ * lives, what the write changes, and the settings AstrLink did not write,
+ * one per line with the value they hold now.
+ */
+function ConfirmationPlace({
+  changes,
+  dir,
+  fileOf,
+  item,
+  label,
+  pathOf,
+}: {
+  changes: ReactNode[];
+  dir: string;
+  fileOf: (path: string) => string;
+  item: ClientConfigConfirmation;
+  label: string;
+  pathOf: (path: string) => string;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  // What the write sets comes before what it only takes out.
+  const ordered = [...item.keys].sort(
+    (a, b) => Number(a.removed) - Number(b.removed),
+  );
+  const paths = [...new Set(ordered.map((key) => key.path))];
+  // A short list shows whole; folding one or two rows away saves nothing.
+  const folds = !expanded && ordered.length > confirmRowsShown + 2;
+  const keys = folds ? ordered.slice(0, confirmRowsShown) : ordered;
+  const groups = paths
+    .map((path) => ({ path, keys: keys.filter((key) => key.path === path) }))
+    .filter((group) => group.keys.length > 0);
+  const where = paths.length === 1 ? pathOf(paths[0]) : dir;
+  return (
+    <section
+      className="min-w-0 rounded-md border text-xs"
+      data-slot="client-confirmation"
+    >
+      <header className="flex min-w-0 items-center gap-2 px-2.5 py-2 font-medium text-foreground">
+        <ClientMark client={item.client} size={16} />
+        <span className="shrink-0">{label}</span>
+        <code
+          className="ml-auto min-w-0 truncate font-mono text-micro font-normal text-muted-foreground"
+          title={where}
+        >
+          {where}
+        </code>
+      </header>
+      {changes.length > 0 ? (
+        <ul className="grid gap-0.5 border-t px-2.5 py-2 text-text-secondary">
+          {changes.map((change, index) => (
+            <li key={index}>{change}</li>
+          ))}
+        </ul>
+      ) : null}
+      {item.keys.length > 0 ? (
+        <div className="border-t" data-slot="client-confirmation-keys">
+          <div className={cn(confirmColumns, "pt-1.5 pb-0.5 text-micro")}>
+            <span>{i18n.t("clientSetup.confirm.setting")}</span>
+            <span>{i18n.t("clientSetup.confirm.now")}</span>
+            <span>{i18n.t("clientSetup.confirm.next")}</span>
+          </div>
+          {groups.map((group) => (
+            <div key={group.path} data-slot="client-confirmation-file">
+              {paths.length > 1 ? (
+                <div className="px-2.5 pt-1.5 font-mono text-micro text-muted-foreground">
+                  {fileOf(group.path)}
+                </div>
+              ) : null}
+              <dl>
+                {group.keys.map((key) => (
+                  <div key={key.key} className={cn(confirmColumns, "py-0.5")}>
+                    <dt className="min-w-0">
+                      <ConfirmValue
+                        className="text-foreground"
+                        value={key.key}
+                      />
+                    </dt>
+                    <dd className="min-w-0">
+                      <ConfirmValue value={key.current} />
+                    </dd>
+                    <dd className="min-w-0">
+                      {key.removed ? (
+                        <span className="text-warning-foreground">
+                          {i18n.t("clientSetup.confirm.removed")}
+                        </span>
+                      ) : (
+                        <ConfirmValue
+                          className="text-foreground"
+                          value={key.next}
+                        />
+                      )}
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+            </div>
+          ))}
+          {folds ? (
+            <Button
+              className="mx-1 mb-1 text-muted-foreground"
+              onClick={() => setExpanded(true)}
+              size="xs"
+              type="button"
+              variant="ghost"
+            >
+              <ChevronDown aria-hidden="true" />
+              {i18n.t("clientSetup.confirm.more", {
+                count: item.keys.length - keys.length,
+              })}
+            </Button>
+          ) : (
+            <div className="h-1.5" />
+          )}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 function withCode(
   key: string,
   code: Record<string, string>,
@@ -321,7 +467,6 @@ function DesktopClientSetupDialog({
   conversionEngine,
   attentionFirst = false,
   onClose,
-  onChanged,
 }: {
   /** The token the dialog opens with; the user can pick another. */
   token: AccessTokenSummary;
@@ -332,8 +477,6 @@ function DesktopClientSetupDialog({
   /** Lists and checks first the clients whose config needs attention. */
   attentionFirst?: boolean;
   onClose: () => void;
-  /** Called after a client config was written or removed. */
-  onChanged?: () => void;
 }) {
   const t = i18n.t.bind(i18n);
   const tokenChoices = tokens.some((item) => item.id === token.id)
@@ -353,10 +496,25 @@ function DesktopClientSetupDialog({
   const [statusRead, setStatusRead] = useState(0);
   // Switching providers in CC Switch overwrites what AstrLink writes.
   const [ccSwitch, setCCSwitch] = useState(false);
-  const [catalog, setCatalog] = useState<ModelCatalog>({
+  const [fullCatalog, setCatalog] = useState<ModelCatalog>({
     services: [],
     redirects: [],
   });
+  // A limited token only reaches its providers' models; offer no others.
+  const scopeKey =
+    currentToken.service_scope === "selected"
+      ? currentToken.service_ids.join("\n")
+      : null;
+  const catalog = useMemo<ModelCatalog>(() => {
+    if (scopeKey === null) return fullCatalog;
+    const allowed = new Set(scopeKey.split("\n"));
+    return {
+      ...fullCatalog,
+      services: fullCatalog.services.filter((service) =>
+        allowed.has(service.id),
+      ),
+    };
+  }, [fullCatalog, scopeKey]);
   const [catalogStatus, setCatalogStatus] = useState<
     "loading" | "ready" | "error"
   >("loading");
@@ -643,6 +801,7 @@ function DesktopClientSetupDialog({
           : status.models,
       },
       candidatesOf(status.client),
+      catalog.services,
     );
   const draftOf = (status: ClientConfigStatus) =>
     drafts[placeKey(status)] ?? baseDraft(status);
@@ -816,7 +975,8 @@ function DesktopClientSetupDialog({
       ? selected.entry
       : null;
   const guideModel = guideEntry
-    ? (guideModels[guideEntry.id] ?? candidatesOf(guideEntry.id)[0] ?? "")
+    ? (guideModels[guideEntry.id] ??
+      defaultModel(candidatesOf(guideEntry.id), catalog.services))
     : "";
 
   // Official details: Pi's limits for its default model, the reasoning
@@ -1102,7 +1262,7 @@ function DesktopClientSetupDialog({
       setOutcomes((current) =>
         retry && current ? { ...current, ...next } : next,
       );
-      if (outcome.results.some((result) => result.ok)) onChanged?.();
+      if (outcome.results.some((result) => result.ok)) clientConfigsChanged();
       await refresh();
     } catch (cause) {
       if (active.current)
@@ -1133,7 +1293,7 @@ function DesktopClientSetupDialog({
         ),
       }));
       setOutcomes(null);
-      onChanged?.();
+      clientConfigsChanged();
       await refresh();
     } catch (cause) {
       if (active.current)
@@ -1158,10 +1318,12 @@ function DesktopClientSetupDialog({
   const otherTokenName = (status: ClientConfigStatus) =>
     tokenChoices.find((item) => item.id === status.token_id)?.name;
   // Another token's config is removed from that token's dialog. A token this
-  // gateway lacks has no dialog, so its config can be removed from any.
+  // gateway lacks has no dialog, so its config can be removed from any. A
+  // config set up by hand has no record of what AstrLink would put back.
   const removable = (status: ClientConfigStatus) =>
     status.token_id !== null &&
     status.state !== "invalid" &&
+    status.state !== "manual" &&
     (status.token_id === tokenId || !otherTokenName(status));
 
   const listCount = (status: ClientConfigStatus) =>
@@ -1227,7 +1389,7 @@ function DesktopClientSetupDialog({
     if (
       status.token_id !== null &&
       status.token_id !== tokenId &&
-      ["configured", "outdated", "modified"].includes(status.state)
+      ["configured", "outdated", "modified", "manual"].includes(status.state)
     ) {
       const name = otherTokenName(status);
       return name
@@ -1605,6 +1767,12 @@ function DesktopClientSetupDialog({
       items.push(
         <FormMessage key="state" tone="warning">
           {t("clientSetup.modifiedHint")}
+        </FormMessage>,
+      );
+    } else if (own && status.state === "manual") {
+      items.push(
+        <FormMessage key="state" tone="notice">
+          {t("clientSetup.manualHint")}
         </FormMessage>,
       );
     }
@@ -2381,6 +2549,20 @@ function DesktopClientSetupDialog({
 
   const confirmItems = confirmation?.items ?? [];
   const replacing = confirmItems.some((item) => !item.remove);
+  // A token or gateway switch rewrites settings AstrLink wrote; only listed
+  // keys are someone else's.
+  const writeItems = confirmItems.filter((item) => !item.remove);
+  const replacesKeys = writeItems.some((item) => item.keys.length > 0);
+  const switches = writeItems.some(
+    (item) => item.token_id !== null || item.gateway !== null,
+  );
+  const replaceKind = !replacing
+    ? null
+    : !replacesKeys
+      ? "switch"
+      : switches
+        ? "switchAndReplace"
+        : "replace";
   const confirmWrites =
     confirmation?.plan.some((item) => item.action === "write") ?? false;
   const homeDirOf = (item: PlaceRef) =>
@@ -2576,89 +2758,66 @@ function DesktopClientSetupDialog({
       </DialogContent>
       <ConfirmDialog
         confirmLabel={t(
-          replacing
-            ? "clientSetup.replaceConfirm"
-            : confirmWrites
-              ? "clientSetup.writeAndRemoveConfirm"
-              : "clientSetup.remove",
+          replaceKind === "switch"
+            ? "clientSetup.switchConfirm"
+            : replacing
+              ? "clientSetup.replaceConfirm"
+              : confirmWrites
+                ? "clientSetup.writeAndRemoveConfirm"
+                : "clientSetup.remove",
         )}
         description={
           <>
-            <p>
-              {t(
-                replacing
-                  ? "clientSetup.replaceBody"
-                  : "clientSetup.removeBody",
-              )}
-            </p>
-            <div className="grid max-h-[min(22rem,50dvh)] gap-2 overflow-y-auto text-left">
+            {replaceKind === "switch" ? null : (
+              <p>
+                {t(
+                  replaceKind === "switchAndReplace"
+                    ? "clientSetup.switchAndReplaceBody"
+                    : replacing
+                      ? "clientSetup.replaceBody"
+                      : "clientSetup.removeBody",
+                )}
+              </p>
+            )}
+            <div className="grid max-h-[min(22rem,50dvh)] w-full gap-2 overflow-y-auto text-left">
               {confirmItems.map((item) => {
-                const client = labelOf(item);
                 const home = homeDirOf(item);
                 const previous = tokenChoices.find(
                   (choice) => choice.id === item.token_id,
                 )?.name;
+                const client = clientLabel(item.client);
+                const changes = [
+                  item.remove ? t("clientSetup.confirm.remove") : null,
+                  item.token_id
+                    ? previous
+                      ? t("clientSetup.confirm.token", {
+                          current: currentToken.name,
+                          previous,
+                          client,
+                        })
+                      : t("clientSetup.confirm.unknownToken", {
+                          current: currentToken.name,
+                          client,
+                        })
+                    : null,
+                  item.gateway
+                    ? withCode(
+                        "clientSetup.confirm.gateway",
+                        { url: item.gateway },
+                        { client },
+                      )
+                    : null,
+                ].filter((change) => change !== null);
                 return (
-                  <div
+                  <ConfirmationPlace
                     key={placeKey(item)}
-                    className="grid gap-1 rounded-md border px-2.5 py-2"
-                    data-slot="client-confirmation"
-                  >
-                    <div className="flex min-w-0 items-center gap-2 text-xs font-medium text-foreground">
-                      <ClientMark client={item.client} size={16} />
-                      <span className="truncate">{client}</span>
-                      <code className="ml-auto truncate font-mono text-micro font-normal text-muted-foreground">
-                        {homePath(item.dir, home)}
-                      </code>
-                    </div>
-                    <ul className="grid gap-0.5 pl-6 text-xs text-text-secondary">
-                      {item.remove ? (
-                        <li>{t("clientSetup.confirm.remove")}</li>
-                      ) : null}
-                      {item.token_id ? (
-                        <li>
-                          {previous
-                            ? t("clientSetup.confirm.token", {
-                                current: currentToken.name,
-                                previous,
-                                client: clientLabel(item.client),
-                              })
-                            : t("clientSetup.confirm.unknownToken", {
-                                current: currentToken.name,
-                                client: clientLabel(item.client),
-                              })}
-                        </li>
-                      ) : null}
-                      {item.gateway ? (
-                        <li>
-                          {withCode(
-                            "clientSetup.confirm.gateway",
-                            { url: item.gateway },
-                            { client: clientLabel(item.client) },
-                          )}
-                        </li>
-                      ) : null}
-                      {item.keys.map((key) => (
-                        <li
-                          key={`${key.path}\n${key.key}`}
-                          className="break-all"
-                        >
-                          {withCode(
-                            key.current === null
-                              ? "clientSetup.confirm.key"
-                              : "clientSetup.confirm.keyWithValue",
-                            {
-                              file: confirmFile(key.path, item.dir, home),
-                              key: key.key,
-                            },
-                            key.current === null
-                              ? {}
-                              : { current: key.current },
-                          )}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
+                    changes={changes}
+                    dir={homePath(item.dir, home)}
+                    fileOf={(path) => confirmFile(path, item.dir, home)}
+                    pathOf={(path) => homePath(path, home)}
+                    item={item}
+                    label={labelOf(item)}
+                  />
                 );
               })}
             </div>
@@ -2668,6 +2827,7 @@ function DesktopClientSetupDialog({
           </>
         }
         destructive={!replacing}
+        wide={confirmItems.some((item) => item.keys.length > 0)}
         onCancel={() => setConfirmation(null)}
         onConfirm={() => {
           if (!confirmation) return;
@@ -2677,9 +2837,17 @@ function DesktopClientSetupDialog({
         }}
         open={confirmation !== null}
         title={
-          replacing
-            ? t("clientSetup.replaceTitle")
-            : t("clientSetup.removeManyTitle", { count: confirmItems.length })
+          replaceKind === "switch"
+            ? t("clientSetup.switchTitle", { current: currentToken.name })
+            : replaceKind === "switchAndReplace"
+              ? t("clientSetup.switchAndReplaceTitle", {
+                  current: currentToken.name,
+                })
+              : replacing
+                ? t("clientSetup.replaceTitle")
+                : t("clientSetup.removeManyTitle", {
+                    count: confirmItems.length,
+                  })
         }
       />
       <ConfirmDialog

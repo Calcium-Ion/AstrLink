@@ -1151,7 +1151,12 @@ describe("RequestRecords", () => {
       rules: [
         { name: "AGENTS.md", path: "~/proj/AGENTS.md", scope: "project" },
       ],
-      toolbox: { skills: [], mcp: [], idle_tokens: 0 },
+      toolbox: {
+        since: firstRecord.started_at,
+        skills: [],
+        mcp: [],
+        idle_tokens: 0,
+      },
       has_memory: true,
       has_rules: true,
     });
@@ -4448,6 +4453,8 @@ describe("RequestRecords", () => {
       hint: "astr_…K8Q2",
       source: "user" as const,
       created_at: "2026-07-24T10:30:00Z",
+      service_scope: "all" as const,
+      service_ids: [],
     };
     await act(async () => {
       reactRoot.render(
@@ -4574,6 +4581,8 @@ describe("RequestRecords", () => {
               hint: "astr_…K8Q2",
               source: "user",
               created_at: "2026-07-24T10:30:00Z",
+              service_scope: "all",
+              service_ids: [],
             },
           ]}
           accessTokensReady
@@ -4638,6 +4647,8 @@ describe("RequestRecords", () => {
               hint: "astr_…K8Q2",
               source: "user",
               created_at: "2026-07-24T10:30:00Z",
+              service_scope: "all",
+              service_ids: [],
             },
           ]}
           accessTokensReady
@@ -4686,6 +4697,8 @@ describe("RequestRecords", () => {
               hint: "astr_…K8Q2",
               source: "user",
               created_at: "2026-07-24T10:30:00Z",
+              service_scope: "all",
+              service_ids: [],
             },
             {
               id: "token_02",
@@ -4693,6 +4706,8 @@ describe("RequestRecords", () => {
               hint: "astr_…H5Z8",
               source: "user",
               created_at: "2026-07-24T10:30:00Z",
+              service_scope: "all",
+              service_ids: [],
             },
           ]}
           accessTokensReady

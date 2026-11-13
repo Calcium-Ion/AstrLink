@@ -12,8 +12,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/QuantumNous/astrlink/core/internal/privacy"
-	"github.com/tidwall/gjson"
 )
 
 const claudeSafetyAttribution = "x-anthropic-billing-header: cc_version=2.1.292.abc; cc_entrypoint=cli;"
@@ -28,7 +28,7 @@ func TestClaudeSafetyAttributionSurvivesCompatibility(t *testing.T) {
 			body := strings.Replace(officialClaudeBody, `"messages":`, `"system":[{"type":"text","text":"`+claudeSafetyAttribution+`"},{"type":"text","text":"Evaluate the requested action."}],"messages":`, 1)
 			harness.serve(t, "/v1/messages", body, officialClaudeHeaders(learnedClaudeUA))
 			_, forwarded := upstream.request(t)
-			if got := gjson.GetBytes(forwarded, "system.0.text").String(); got != claudeSafetyAttribution {
+			if got := ojson.GetBytes(forwarded, "system.0.text").String(); got != claudeSafetyAttribution {
 				t.Fatalf("first system block = %q, want unchanged attribution", got)
 			}
 			if passthrough && string(forwarded) != body {
@@ -60,9 +60,9 @@ func TestClaudeSafetySeparatesMixedAttribution(t *testing.T) {
 			harness := newIdentityHarness(t, passthroughSettings(false, true), nil, claudeConversionCandidate(upstream.url))
 			harness.serve(t, test.path, test.body, officialClaudeHeaders(learnedClaudeUA))
 			_, sent := upstream.request(t)
-			blocks := gjson.GetBytes(sent, "system").Array()
+			blocks := ojson.GetBytes(sent, "system").Array()
 			if len(blocks) < 3 || blocks[0].Get("text").String() != claudeSafetyAttribution {
-				t.Fatalf("attribution is not isolated: %s", gjson.GetBytes(sent, "system").Raw)
+				t.Fatalf("attribution is not isolated: %s", ojson.GetBytes(sent, "system").Raw)
 			}
 			if test.cache && blocks[0].Get("cache_control").Exists() {
 				t.Error("cache marker moved to the discarded attribution block")
@@ -82,7 +82,7 @@ func TestClaudeSafetySeparatesMixedAttribution(t *testing.T) {
 				}
 			}
 			if !found || banners != 1 {
-				t.Fatalf("effective prompt changed: instruction present=%t, banners=%d, system=%s", found, banners, gjson.GetBytes(sent, "system").Raw)
+				t.Fatalf("effective prompt changed: instruction present=%t, banners=%d, system=%s", found, banners, ojson.GetBytes(sent, "system").Raw)
 			}
 			_, second := prepareClaudeBody(t, string(sent))
 			if !bytes.Equal(second, sent) {
@@ -117,16 +117,16 @@ func TestClaudeSafetyPreservesBannerCacheMetadata(t *testing.T) {
 				body := strings.Replace(officialClaudeBody, `"messages":`, `"system":`+system+`,"messages":`, 1)
 				harness.serve(t, "/v1/messages", body, officialClaudeHeaders(learnedClaudeUA))
 				_, sent := upstream.request(t)
-				blocks := gjson.GetBytes(sent, "system").Array()
+				blocks := ojson.GetBytes(sent, "system").Array()
 				bannerIndex := 0
 				if layout != "banner only" {
 					bannerIndex = 1
 					if len(blocks) == 0 || blocks[0].Get("text").String() != claudeSafetyAttribution || blocks[0].Get("cache_control").Exists() {
-						t.Fatalf("attribution changed or inherited the cache marker: %s", gjson.GetBytes(sent, "system").Raw)
+						t.Fatalf("attribution changed or inherited the cache marker: %s", ojson.GetBytes(sent, "system").Raw)
 					}
 				}
 				if len(blocks) != bannerIndex+2 || blocks[bannerIndex].Get("text").String() != claudeCodeBanner || blocks[bannerIndex+1].Get("text").String() != instruction {
-					t.Fatalf("banner or instructions changed: %s", gjson.GetBytes(sent, "system").Raw)
+					t.Fatalf("banner or instructions changed: %s", ojson.GetBytes(sent, "system").Raw)
 				}
 				banner := blocks[bannerIndex]
 				if banner.Get("cache_control").Raw != cache || banner.Get("future_field").Raw != extension {
@@ -157,19 +157,19 @@ func TestClaudeSafetyFieldsSurviveNativeForwarding(t *testing.T) {
 						t.Error(err)
 						return
 					}
-					if r.URL.RawQuery != "beta=true" || gjson.GetBytes(body, "safeguards").Raw != safeguards {
-						t.Errorf("safety request changed: query=%q safeguards=%s", r.URL.RawQuery, gjson.GetBytes(body, "safeguards").Raw)
+					if r.URL.RawQuery != "beta=true" || ojson.GetBytes(body, "safeguards").Raw != safeguards {
+						t.Errorf("safety request changed: query=%q safeguards=%s", r.URL.RawQuery, ojson.GetBytes(body, "safeguards").Raw)
 					}
-					if gjson.GetBytes(body, "tools").Raw != toolSchema {
+					if ojson.GetBytes(body, "tools").Raw != toolSchema {
 						t.Error("tool schema changed")
 					}
 					if r.Header.Get("Anthropic-Beta") != "claude-code-20250219,oauth-2025-04-20,dangerous-tool-use-2026-09-03,auto-mode-classifier-2026-07-16" {
 						t.Error("safety capability headers changed")
 					}
-					if gjson.GetBytes(body, "system.0.text").String() != claudeSafetyAttribution {
+					if ojson.GetBytes(body, "system.0.text").String() != claudeSafetyAttribution {
 						t.Error("client attribution changed")
 					}
-					value := gjson.GetBytes(body, "messages.0.content").String()
+					value := ojson.GetBytes(body, "messages.0.content").String()
 					if (value != email) != redact {
 						t.Error("privacy policy was not applied as configured")
 					}
@@ -229,18 +229,18 @@ func TestClaudeSafetyFieldsSurviveNativeForwarding(t *testing.T) {
 					var arguments strings.Builder
 					for _, frame := range strings.Split(response.Body.String(), "\n\n") {
 						_, data := parseSSEFrame([]byte(frame))
-						if got := gjson.GetBytes(data, "safeguard_results"); got.Exists() {
+						if got := ojson.GetBytes(data, "safeguard_results"); got.Exists() {
 							verdict = got.Raw
 						}
-						arguments.WriteString(gjson.GetBytes(data, "delta.partial_json").String())
+						arguments.WriteString(ojson.GetBytes(data, "delta.partial_json").String())
 					}
-					command = gjson.Get(arguments.String(), "command").String()
+					command = ojson.Get(arguments.String(), "command").String()
 					if !strings.HasSuffix(response.Body.String(), "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n") {
 						t.Fatal("stream ended before its terminal event")
 					}
 				} else {
-					verdict = gjson.GetBytes(response.Body.Bytes(), "safeguard_results").Raw
-					command = gjson.GetBytes(response.Body.Bytes(), "content.0.input.command").String()
+					verdict = ojson.GetBytes(response.Body.Bytes(), "safeguard_results").Raw
+					command = ojson.GetBytes(response.Body.Bytes(), "content.0.input.command").String()
 				}
 				var wantVerdict string
 				select {

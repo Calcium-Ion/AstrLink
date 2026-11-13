@@ -3,13 +3,13 @@ package sqlite
 import (
 	"context"
 	"database/sql"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
 
+	"github.com/MoeForge/moego/base64"
 	"github.com/QuantumNous/astrlink/core/contract"
 	storagecontract "github.com/QuantumNous/astrlink/core/internal/storage"
 )

@@ -5,6 +5,7 @@ import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 const bridge = vi.hoisted(() => ({
   builtinToolAction: vi.fn().mockResolvedValue({ configured: false }),
   getClientIdentities: vi.fn(),
+  getImageCompressionTotals: vi.fn(),
   getPreferences: vi.fn(),
   getRoutingSettings: vi.fn(),
   updateRoutingSettings: vi.fn(),
@@ -25,6 +26,7 @@ import {
 } from "./failure-policy-model";
 import {
   RoutingSettingsPanel,
+  imageTotalsRefreshInterval,
   routingAutosaveDelay,
 } from "./RoutingSettingsPanel";
 import { RecoveryChain, RecoveryDetails } from "./components/RecoveryDetails";
@@ -48,6 +50,9 @@ describe("shared global recovery settings", () => {
       globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }
     ).IS_REACT_ACT_ENVIRONMENT = true;
     bridge.getRoutingSettings.mockReset().mockResolvedValue(settings());
+    bridge.getImageCompressionTotals
+      .mockReset()
+      .mockRejectedValue(new Error("desktop only"));
     bridge.getClientIdentities
       .mockReset()
       .mockRejectedValue(new Error("unavailable"));
@@ -1706,6 +1711,94 @@ describe("shared global recovery settings", () => {
     });
     expect(bridge.updateRoutingSettings).toHaveBeenCalledTimes(4);
     expect(dirty).toHaveBeenLastCalledWith(false);
+  });
+
+  it("shows what image compression saved since counting began", async () => {
+    vi.setSystemTime(new Date(2026, 11, 1, 12));
+    const totals = (values: Partial<Record<string, number | string>> = {}) => ({
+      since: "2026-11-12T08:00:00Z",
+      requests: 0,
+      images: 0,
+      compressed: 0,
+      original_bytes: 0,
+      sent_bytes: 0,
+      ...values,
+    });
+    bridge.getRoutingSettings.mockResolvedValue({
+      ...settings(),
+      image_compression: { enabled: true, mode: "lossless", quality: 85 },
+    });
+    bridge.getImageCompressionTotals.mockResolvedValue(totals());
+    await act(async () =>
+      root.render(
+        <RoutingSettingsPanel
+          services={services}
+          ready
+          onDirtyChange={vi.fn()}
+        />,
+      ),
+    );
+    const band = () =>
+      container.querySelector<HTMLElement>(
+        '[data-testid="image-compression-totals"]',
+      );
+    // The line sits in the settings' label column, after the mode hint.
+    expect(band()!.previousElementSibling!.textContent).toBe("累计");
+    expect(band()!.textContent).toBe("还没有压缩过图片");
+    expect(band()!.title).toBe("11月12日起开始统计");
+
+    // 3 MB in, 1 MB out over two requests: 2 MB saved, 67% smaller.
+    bridge.getImageCompressionTotals.mockResolvedValue(
+      totals({
+        requests: 2,
+        images: 3,
+        compressed: 2,
+        original_bytes: 3 * 1024 * 1024,
+        sent_bytes: 1024 * 1024,
+      }),
+    );
+    await act(async () =>
+      vi.advanceTimersByTimeAsync(imageTotalsRefreshInterval),
+    );
+    expect([...band()!.children].map((part) => part.textContent)).toEqual([
+      "少传 2.0 MB",
+      "· 减小 67%",
+      "· 压缩 2 张",
+      "· 3.0 MB → 1.0 MB",
+    ]);
+    // When counting began stays out of the line, in the tooltip.
+    expect(band()!.title.split("\n")[0]).toBe("11月12日起开始统计 · 2 次请求");
+
+    // A failed read keeps the last figures.
+    bridge.getImageCompressionTotals.mockRejectedValue(new Error("offline"));
+    await act(async () =>
+      vi.advanceTimersByTimeAsync(imageTotalsRefreshInterval),
+    );
+    expect(band()!.textContent).toContain("2.0 MB");
+
+    // A start in an earlier year names the year.
+    bridge.getImageCompressionTotals.mockResolvedValue(
+      totals({ since: "2025-12-30T08:00:00Z", requests: 1, images: 1 }),
+    );
+    await act(async () =>
+      vi.advanceTimersByTimeAsync(imageTotalsRefreshInterval),
+    );
+    expect(band()!.title).toContain("2025年12月30日起开始统计");
+
+    // Turned off with nothing counted, the band stays hidden.
+    bridge.getImageCompressionTotals.mockResolvedValue(totals());
+    await act(async () =>
+      vi.advanceTimersByTimeAsync(imageTotalsRefreshInterval),
+    );
+    expect(band()).not.toBeNull();
+    await act(async () =>
+      container
+        .querySelector<HTMLButtonElement>(
+          '[role="switch"][aria-label="启用请求图片压缩"]',
+        )!
+        .click(),
+    );
+    expect(band()).toBeNull();
   });
 
   it("loads saved image compression and keeps it disabled while offline", async () => {

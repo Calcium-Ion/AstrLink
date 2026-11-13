@@ -27,6 +27,14 @@ type fakeAccessTokenStore struct {
 	defaultCalls int
 	findCalls    int
 	deletedID    contract.AccessTokenID
+	updatedID    contract.AccessTokenID
+	updated      storage.AccessTokenUpdate
+}
+
+func (store *fakeAccessTokenStore) UpdateAccessToken(_ context.Context, id contract.AccessTokenID, update storage.AccessTokenUpdate) (storage.AccessTokenMetadata, error) {
+	store.updatedID = id
+	store.updated = update
+	return storage.AccessTokenMetadata{ID: id, Name: update.Name, Services: update.Services}, nil
 }
 
 func (store *fakeAccessTokenStore) EnsureDefaultAccessToken(_ context.Context, candidate storage.NewAccessToken) (storage.AccessTokenMetadata, bool, error) {

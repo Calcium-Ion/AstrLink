@@ -142,6 +142,10 @@ func (resolver *StoreResolver) ResolveRankedCandidates(ctx context.Context, requ
 	if request.Protocol.IsModelDiscovery() {
 		packages = nil
 	}
+	scope := AccessTokenServicesFrom(ctx)
+	if request.Service != "" && !scope.Allows(request.Service) {
+		return nil, nil, &AccessTokenScopeError{Service: request.Service}
+	}
 	endpoints, ranking, err := resolver.readServices(ctx, model, request.Service, packages)
 	if err != nil {
 		return nil, nil, err
@@ -149,6 +153,7 @@ func (resolver *StoreResolver) ResolveRankedCandidates(ctx context.Context, requ
 	if request.Service != "" {
 		endpoints, ranking = onlyService(endpoints, ranking, request.Service)
 	}
+	endpoints, outOfScope := limitToAccessTokenScope(endpoints, ranking, scope)
 	applyDefaults := func(candidates []Resolved) []Resolved {
 		for index := range candidates {
 			if candidates[index].FailurePolicy == nil && candidates[index].CanonicalService().FailurePolicy == nil {
@@ -168,6 +173,11 @@ func (resolver *StoreResolver) ResolveRankedCandidates(ctx context.Context, requ
 	if len(candidates) == 0 {
 		if request.Service != "" {
 			return nil, ranking, resolver.pinnedServiceError(ctx, request.Service, ranking)
+		}
+		// Blame the scope only when a provider outside it could have served the
+		// request; otherwise the token gets the error any token would.
+		if len(rankCandidates(outOfScope, request, resolver.subscriptionBaseURL, resolver.runtime, nil)) > 0 {
+			return nil, ranking, &AccessTokenScopeError{Model: request.Model}
 		}
 		return nil, ranking, &CapabilityUnavailableError{
 			Protocol: request.Protocol,
@@ -194,6 +204,9 @@ func (resolver *StoreResolver) ResolveRankedCandidates(ctx context.Context, requ
 func (resolver *StoreResolver) ResolveService(ctx context.Context, id contract.ServiceID) (Resolved, error) {
 	if resolver == nil || resolver.reader == nil {
 		return Resolved{}, ErrUnavailable
+	}
+	if !AccessTokenServicesFrom(ctx).Allows(id) {
+		return Resolved{}, &AccessTokenScopeError{Service: id}
 	}
 	services, _, err := resolver.readServices(ctx, "", id, nil)
 	if err != nil {

@@ -2129,6 +2129,20 @@ impl CoreManager {
             .map_err(|error| format!("privacy summary returned invalid JSON: {error}"))
     }
 
+    /// What request image compression has saved since counting began.
+    pub async fn get_image_compression_totals(&self) -> Result<serde_json::Value, String> {
+        let (_, body) = self
+            .authenticated_control(
+                Method::GET,
+                "/control/v1/image-compression-totals",
+                None,
+                None,
+            )
+            .await?;
+        serde_json::from_slice(&body)
+            .map_err(|error| format!("image compression totals returned invalid JSON: {error}"))
+    }
+
     pub async fn list_access_token_usage(
         &self,
         today_from: &str,
@@ -2144,14 +2158,22 @@ impl CoreManager {
             .map_err(|error| format!("access token usage returned invalid JSON: {error}"))
     }
 
-    pub async fn create_access_token(&self, name: &str) -> Result<serde_json::Value, String> {
+    pub async fn create_access_token(
+        &self,
+        name: &str,
+        service_scope: Option<&str>,
+        service_ids: Option<Vec<String>>,
+    ) -> Result<serde_json::Value, String> {
+        let body = match service_scope {
+            Some(scope) => serde_json::json!({
+                "name": name,
+                "service_scope": scope,
+                "service_ids": service_ids.unwrap_or_default(),
+            }),
+            None => serde_json::json!({ "name": name }),
+        };
         let (_, body) = self
-            .authenticated_control(
-                Method::POST,
-                "/control/v1/access-tokens",
-                Some(serde_json::json!({ "name": name })),
-                None,
-            )
+            .authenticated_control(Method::POST, "/control/v1/access-tokens", Some(body), None)
             .await?;
         serde_json::from_slice(&body)
             .map_err(|error| format!("access token create returned invalid JSON: {error}"))
@@ -2169,6 +2191,33 @@ impl CoreManager {
             .await?;
         serde_json::from_slice(&body)
             .map_err(|error| format!("access token reveal returned invalid JSON: {error}"))
+    }
+
+    pub async fn update_access_token(
+        &self,
+        token_id: &str,
+        name: &str,
+        service_scope: &str,
+        service_ids: Vec<String>,
+    ) -> Result<serde_json::Value, String> {
+        validate_resource_id(token_id)?;
+        for service_id in &service_ids {
+            validate_resource_id(service_id)?;
+        }
+        let (_, body) = self
+            .authenticated_control(
+                Method::PATCH,
+                &format!("/control/v1/access-tokens/{token_id}"),
+                Some(serde_json::json!({
+                    "name": name,
+                    "service_scope": service_scope,
+                    "service_ids": service_ids,
+                })),
+                None,
+            )
+            .await?;
+        serde_json::from_slice(&body)
+            .map_err(|error| format!("access token update returned invalid JSON: {error}"))
     }
 
     pub async fn delete_access_token(&self, token_id: &str) -> Result<(), String> {

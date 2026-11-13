@@ -94,6 +94,117 @@ export function defaultTrayPreferences(): TrayPreferences {
   };
 }
 
+/** How much the desktop pet moves; mirrors `ToyLevel` in `preferences.rs`. */
+export const TOY_LEVELS = ["calm", "normal", "lively"] as const;
+export type ToyLevel = (typeof TOY_LEVELS)[number];
+
+/** How big the pet draws; mirrors `ToySize`. */
+export const TOY_SIZES = ["small", "normal", "large"] as const;
+export type ToySize = (typeof TOY_SIZES)[number];
+
+/** Who the big pet is; mirrors `PetCharacter`. */
+export const PET_CHARACTERS = [
+  "auto",
+  "claude_code",
+  "codex",
+  "deepseek_harness",
+] as const;
+export type PetCharacter = (typeof PET_CHARACTERS)[number];
+
+/** Mirrors `DesktopToysPreferences` in `preferences.rs`. */
+export interface DesktopToysPreferences {
+  level: ToyLevel;
+  /** Each conversation's model floats beside the pet as an orb. */
+  orb: boolean;
+  /** The tool, tok/s, thought cloud and snore over her head. */
+  status: boolean;
+  /** She celebrates the day's token milestones. */
+  milestone: boolean;
+  on: { pet: boolean };
+  pet: {
+    size: ToySize;
+    character: PetCharacter;
+    grab: boolean;
+    /** A bubble when a reply is written. */
+    reply: boolean;
+    /** A bubble when a call switches route. */
+    failover: boolean;
+  };
+}
+
+/** Mirrors `DesktopToysPreferences::default()`: the pet off. */
+export function defaultDesktopToys(): DesktopToysPreferences {
+  return {
+    level: "normal",
+    orb: true,
+    status: true,
+    milestone: true,
+    on: { pet: false },
+    pet: {
+      size: "normal",
+      character: "auto",
+      grab: true,
+      reply: true,
+      failover: true,
+    },
+  };
+}
+
+function toyBlock(
+  value: unknown,
+  path: string,
+  keys: readonly string[],
+): Record<string, unknown> {
+  const block = objectAt(value, path);
+  exactKeys(block, keys, path);
+  for (const key of keys) {
+    const v = block[key];
+    if (key === "size") {
+      if (
+        typeof v !== "string" ||
+        !(TOY_SIZES as readonly string[]).includes(v)
+      )
+        invalid(`${path}.size`, "unknown toy size");
+    } else if (key === "character") {
+      if (
+        typeof v !== "string" ||
+        !(PET_CHARACTERS as readonly string[]).includes(v)
+      )
+        invalid(`${path}.character`, "unknown pet character");
+    } else if (typeof v !== "boolean") {
+      invalid(`${path}.${key}`, "expected boolean");
+    }
+  }
+  return block;
+}
+
+export function parseDesktopToys(
+  value: unknown,
+  path: string,
+): DesktopToysPreferences {
+  const toys = objectAt(value, path);
+  exactKeys(toys, ["level", "orb", "status", "milestone", "on", "pet"], path);
+  if (
+    typeof toys.level !== "string" ||
+    !(TOY_LEVELS as readonly string[]).includes(toys.level)
+  ) {
+    invalid(`${path}.level`, "unknown toy level");
+  }
+  for (const key of ["orb", "status", "milestone"] as const) {
+    if (typeof toys[key] !== "boolean")
+      invalid(`${path}.${key}`, "expected boolean");
+  }
+  toyBlock(toys.on, `${path}.on`, ["pet"]);
+  toyBlock(toys.pet, `${path}.pet`, [
+    "size",
+    "character",
+    "grab",
+    "reply",
+    "failover",
+  ]);
+  return toys as unknown as DesktopToysPreferences;
+}
+
 export interface Preferences {
   close_behavior: CloseBehavior;
   autostart: boolean;
@@ -112,6 +223,7 @@ export interface Preferences {
   display_currency: DisplayCurrencyChoice;
   tray: TrayPreferences;
   updates: UpdatePreferences;
+  desktop_toys: DesktopToysPreferences;
 }
 
 /** A `*.bak*` file in the data directory; possibly a plain-text copy. */
@@ -260,6 +372,7 @@ export function parseSettingsSnapshot(value: unknown): SettingsSnapshot {
       "display_currency",
       "tray",
       "updates",
+      "desktop_toys",
     ],
     "$.values",
   );
@@ -271,6 +384,7 @@ export function parseSettingsSnapshot(value: unknown): SettingsSnapshot {
   }
   parseTrayPreferences(values.tray, "$.values.tray");
   parseUpdatePreferences(values.updates);
+  parseDesktopToys(values.desktop_toys, "$.values.desktop_toys");
   if (
     values.close_behavior !== "hide_to_tray" &&
     values.close_behavior !== "quit"

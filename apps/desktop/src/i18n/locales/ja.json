@@ -184,6 +184,7 @@
     "safety": "安全性",
     "records": "リクエスト",
     "routing": "ルーティング",
+    "desktopToys": "デスクトップペット",
     "agentTools": "Agent ツール",
     "settings": "設定",
     "gateway": "ゲートウェイ",
@@ -577,6 +578,8 @@
     "notifyInstalled": "インストールが完了しました。始めるには、新しい Agent のセッションを開いてください。",
     "notifyRemoved": "Agent の Skill とツールをアンインストールしました。適用するには、新しい Agent のセッションを開いてください。",
     "notDetected": "未検出",
+    "undetectedTools": "未検出のツール（{{count}}）",
+    "undetectedHint": "ツールをインストールして一度起動したら、「再確認」を選ぶと選択できます。",
     "detected": "検出済み",
     "installed": "インストール済み",
     "notInstalled": "未インストール",
@@ -676,10 +679,10 @@
     "deferredHint": "右下のセットアップガイドから、いつでもセットアップを続けられます。",
     "serviceTitle": "APIプロバイダーを追加",
     "serviceShort": "既存のモデルサービスを接続",
-    "tokenTitle": "アクセストークンを作成",
-    "tokenShort": "クライアントにローカルキーを渡す",
+    "tokenTitle": "アクセストークンを確認",
+    "tokenShort": "クライアントがローカルのゲートウェイに接続するためのキー",
     "clientTitle": "クライアントを接続",
-    "clientShort": "最初のリクエストを成功させる",
+    "clientShort": "クライアントを設定するか、最初のリクエストを送る",
     "serviceBody": "AstrLinkにはモデルの提供元が必要です。すでに使っているAPIサービス、またはサブスクリプションアカウントを追加してください。",
     "serviceOptions": "APIキーはありますか？APIプロバイダーを選び、URLとキーを入力してください。サブスクリプションはありますか？サブスクリプションサービスを選び、アカウントを認可してください。",
     "serviceHelp": "何を準備すればよいですか？",
@@ -687,15 +690,16 @@
     "manageServices": "APIプロバイダーの設定を確認",
     "serviceIncomplete": "APIプロバイダーはまだ準備できていません。有効であること、モデルがあること、サブスクリプションの認可が完了していることを確認してください。",
     "next": "続ける",
-    "tokenBody": "アクセストークンを使うと、クライアントはローカルのAstrLinkゲートウェイに接続できます。利用状況を追うため、クライアントごとに別のアクセストークンを作成してください。",
-    "tokenHelp": "「マイコーディングアシスタント」のように分かりやすい名前でアクセストークンを作成してください。このアクセストークンをクライアントのAPIキーとして使います。アップストリームのAPIキーは、APIプロバイダーの設定に残してください。",
-    "finishService": "クライアントのアクセストークンを作成する前に、APIプロバイダーを接続してください。",
+    "tokenBody": "クライアントはアクセストークンでローカルのAstrLinkゲートウェイに接続します。次のステップでは「{{name}}」でクライアントを設定します。",
+    "tokenMissing": "クライアントはアクセストークンでローカルのAstrLinkゲートウェイに接続します。まだトークンがないため、先に作成してください。",
+    "tokenHelp": "クライアントごとに利用状況を分けたい場合は、「マイコーディングアシスタント」のように分かりやすい名前でトークンを追加し、次のステップで選んでください。アップストリームのAPIキーは、APIプロバイダーの設定に残してください。",
+    "finishService": "アクセストークンを用意する前に、APIプロバイダーを接続してください。",
     "manageTokens": "アクセストークンを管理",
     "createToken": "アクセストークンの作成へ",
     "clientBody": "AstrLinkにクライアント設定を書き込ませるか、下の情報をクライアントのカスタムAPI / APIプロバイダー設定に入力してください。",
-    "finishSetup": "クライアントを接続する前に、APIプロバイダーの設定を終え、アクセストークンを作成してください。",
-    "selectToken": "クライアントのアクセストークンを選択",
+    "finishSetup": "クライアントを接続する前に、APIプロバイダーを接続し、アクセストークンを用意してください。",
     "importClient": "クライアントを設定",
+    "token": "クライアントが使うトークン",
     "manualSetup": "クライアントを手動で設定",
     "protocol": "クライアントのAPIプロトコル",
     "openai": "OpenAI互換",
@@ -704,9 +708,10 @@
     "copyToken": "アクセストークンをコピー",
     "tokenCopied": "アクセストークンをコピーしました",
     "modelHelp": "APIプロバイダーで有効なモデルIDを使ってください。クライアントが対応するプロトコルを選びます。Base URLは選択したプロトコルにすでに合っています。/v1 を再度追加しないでください。",
-    "sendRequest": "クライアント設定を保存してメッセージを送り、ここで接続を確認してください。成功したリクエストは、AstrLinkの利用状況とリクエストに表示されます。",
+    "sendRequest": "「クライアントを設定」でいずれかのクライアントに書き込むか、手動で設定したクライアントからのリクエストが成功すると、セットアップは完了します。",
     "failedRequest": "リクエストは届きましたが、まだ成功していません。失敗理由はリクエストで確認し、設定を調整してから再試行してください。",
-    "success": "最初のリクエストが成功しました。接続できました。利用状況は概要で、問題の確認はリクエストで行えます。",
+    "done": "初回セットアップが完了しました",
+    "success": "初回セットアップは完了しています。利用状況は概要で、問題の確認はリクエストで行えます。",
     "finish": "概要へ",
     "checkRequest": "接続結果を確認",
     "viewRecords": "リクエストを表示",
@@ -1051,6 +1056,8 @@
     "confirmReset": "このアカウントの利用枠をリセットしますか？",
     "confirmLogout": "このサブスクリプションアカウントからログアウトしますか？",
     "deleteBody": "「{{name}}」と、そのローカルの資格情報を削除します。ルートがまだ使用している場合、削除は失敗します。",
+    "deleteScopeWarning_one": "「{{name}}」を削除すると、トークン{{tokens}}は使えるプロバイダーがなくなり、リクエストが拒否されます。先にトークンを編集して別のプロバイダーを選んでください。",
+    "deleteScopeWarning_other": "「{{name}}」を削除すると、トークン{{tokens}}は使えるプロバイダーがなくなり、リクエストが拒否されます。先にトークンを編集して別のプロバイダーを選んでください。",
     "resetDetailsLoading": "利用可能なリセットと有効期限を読み込み中…",
     "resetDetailsError": "リセットの詳細を読み込めませんでした。再試行してください。",
     "resetDetailsEmpty": "現在、利用可能なリセットはありません。",
@@ -1170,7 +1177,6 @@
     "modelIdTooLong": "モデル ID は 256 文字を超えられません。",
     "saveBeforeFetch": "アップストリームからモデルを取得する前に、保存してログインを完了してください。",
     "enableDiscovery": "先に、API 機能で OpenAI Models または Gemini Models を有効にしてください。",
-    "fetchFailed": "取得失敗",
     "fetchFailedDetail": "アップストリームからモデルを取得できません。{{warnings}}",
     "mergeTooMany": "アップストリームのモデルを現在の一覧とまとめると、2,000 件を超えます。下書きは変更していません。",
     "portsBusy": "コールバックポート 1455 と 1457 は、どちらも使用できません。Device Code でのログインに切り替えました。",
@@ -1180,6 +1186,16 @@
     "addedLaterLogin": "サブスクリプションのAPIプロバイダーを追加しました。ログインは、APIプロバイダー一覧から再試行できます。",
     "addedOauthFailed": "APIプロバイダーは追加されましたが、OAuth のログインを開始できませんでした。",
     "addedKey": "APIプロバイダーを追加しました。新しいリクエストですぐ使えます。APIキーは、ローカルの資格情報ストアにのみ保存されます。",
+    "addedWithModels_one": "APIプロバイダーを追加しました。アップストリームから {{count}} 件のモデルを取得しました。",
+    "addedWithModels_other": "APIプロバイダーを追加しました。アップストリームから {{count}} 件のモデルを取得しました。",
+    "autoFetchHint": "保存時にアップストリームからモデルを取得します",
+    "autoFetching": "モデルを取得中…",
+    "autoFetchFailed": "APIプロバイダーは保存されていません。アップストリームからモデルを取得できませんでした。{{reason}}",
+    "autoFetchEmpty": "APIプロバイダーは保存されていません。アップストリームがモデルを 1 件も返しませんでした。API アドレスを確認するか、モデルを手動で入力してください。",
+    "autoFetchTooMany": "APIプロバイダーは保存されていません。アップストリームが 2,000 件を超えるモデルを返しました。使うモデルを手動で入力してください。",
+    "autoFetchUnavailable": "APIプロバイダーは保存されていません。このプロバイダーは、アップストリームからモデル一覧を取得できません。モデルを 1 件以上、手動で入力してください。",
+    "autoFetchRetry": "再取得",
+    "autoFetchManual": "モデルを手動で入力",
     "saveFailed": "APIプロバイダーの保存に失敗しました。",
     "beginLoginFailed": "ログインを開始できません。",
     "cancelledLogin": "「{{name}}」のログインをキャンセルしました。",
@@ -1521,7 +1537,7 @@
     "fetchList": "モデル一覧を取得",
     "addModel": "モデルを追加",
     "pendingIds": "追加するモデル ID",
-    "bulkPlaceholder": "1 行に 1 つのモデル ID。例:\ngpt-5\nclaude-sonnet-4-5",
+    "bulkPlaceholder": "1 行に 1 つのモデル ID。例:\ngpt-5\nclaude-sonnet-5-5",
     "singlePlaceholder": "モデル ID を入力して Return キーを押す",
     "singleMode": "1 行",
     "bulkMode": "複数を貼り付け",
@@ -1627,7 +1643,30 @@
     "detailsFor": "{{name}} の詳細と操作",
     "usedBy": "次のクライアントが「{{name}}」を使っています: {{clients}}。",
     "removeConfigs": "これらのクライアントからも設定を削除",
-    "removeConfigsFailed": "トークンは削除されましたが、{{clients}} から設定を削除できませんでした。"
+    "removeConfigsFailed": "トークンは削除されましたが、{{clients}} から設定を削除できませんでした。",
+    "edit": "編集",
+    "editToken": "「{{name}}」を編集",
+    "editTitle": "アクセストークンを編集",
+    "editHint": "名前とプロバイダーの変更はすぐに反映されます。クライアントのトークンはそのままです。",
+    "updated": "「{{name}}」を保存しました。",
+    "updateFailed": "アクセストークンを保存できません。",
+    "scopeLabel": "使えるプロバイダー",
+    "scopeAll": "すべてのプロバイダー",
+    "scopeAllHint": "ルーティング設定に従い、有効なプロバイダーをすべて使います。今後追加するものも含みます。",
+    "scopeSelected": "指定したプロバイダー",
+    "scopeSelectedHint": "リクエストはチェックしたプロバイダーにだけ送り、失敗時もその中で切り替えます。",
+    "scopeSearch": "プロバイダーを検索",
+    "scopePicked": "{{picked}} / {{total}} 件選択",
+    "scopeServiceMeta": "{{kind}} · {{count}} モデル",
+    "scopeServiceOff": "停止中",
+    "scopeNoServices": "API プロバイダーがまだありません。",
+    "scopeRequired": "プロバイダーを 1 つ以上チェックしてください。",
+    "scopeStale": "チェックしたプロバイダーの一部が削除されました。もう一度チェックしてください。",
+    "scopeModelsHint": "クライアントのモデル一覧には、チェックしたプロバイダーのモデルだけが表示されます。",
+    "scopeCount": "{{count}} 個のプロバイダー",
+    "scopeTitle": "使えるのは：{{names}}",
+    "scopeEmpty": "プロバイダー削除済み",
+    "scopeEmptyHint": "このトークンが使えるプロバイダーはすべて削除されたため、リクエストは拒否されます。トークンを編集して別のプロバイダーを選んでください。"
   },
   "kind": {
     "claude_subscription": "Claude Code サブスクリプション",
@@ -2843,7 +2882,8 @@
     "scopeProject": "プロジェクト",
     "scopeLocal": "個人",
     "toolboxTitle": "ツールボックス",
-    "toolboxDays": "直近 30 日",
+    "toolboxDays": "30 日間 · {{date}}から",
+    "toolboxDaysHint": "毎日 0 時に 1 日ずつ進み、それより前の呼び出しは数えません。",
     "skillsGroup": "Skills",
     "groupCount_one": "{{count}} 個",
     "groupCount_other": "{{count}} 個",
@@ -2857,12 +2897,12 @@
     "moreUsedOnly_one": "ほかに {{count}} 個使用",
     "moreUsedOnly_other": "ほかに {{count}} 個使用",
     "nameSeparator": "、",
-    "idleNote": "未使用のものが、毎回のリクエストに約 {{tokens}} トークン加わっています。",
+    "idleNote": "未使用のうち、今も含まれているものが毎回のリクエストに約 {{tokens}} トークン加わっています。",
     "toolboxNone": "最近のリクエストに Skills や MCP ツールはありません",
     "emptyClientTitle": "{{client}} はこのプロジェクトでまだ何も記録していません",
     "emptyClientHint": "リクエストにメモリファイルもルールファイルもありません。",
-    "toolboxSummary_one": "{{count}} 個の Skills を含み、直近 30 日で {{used}} 個を使用",
-    "toolboxSummary_other": "{{count}} 個の Skills を含み、直近 30 日で {{used}} 個を使用",
+    "toolboxSummary_one": "直近 30 日に {{count}} 個の Skills を含み、{{used}} 個を使用",
+    "toolboxSummary_other": "直近 30 日に {{count}} 個の Skills を含み、{{used}} 個を使用",
     "usedTimes_one": "{{count}} 回使用",
     "usedTimes_other": "{{count}} 回使用",
     "untouched": "未使用",
@@ -3485,7 +3525,8 @@
       "circuit_open": "連続失敗のため一時停止",
       "rate_limited": "アップストリームのレート制限後、クールダウン中",
       "websocket_disabled": "Responses WebSocket がオフ",
-      "websocket_unsupported": "このモデルを WebSocket では提供できません"
+      "websocket_unsupported": "このモデルを WebSocket では提供できません",
+      "access_token_scope": "トークンはこのプロバイダーを使えません"
     },
     "rejections": {
       "credential_unavailable": "資格情報を利用できません",
@@ -3740,19 +3781,27 @@
   "binding": {
     "tab": "APIプロバイダーの紐付け",
     "settingTitle": "会話内で APIプロバイダーを再利用",
+    "settingHint": "最後に成功した APIプロバイダーを優先します。失敗時は、既存のフェイルオーバー方針に従います。",
     "ttl": "アイドル期限（分）",
+    "ttlHint": "成功したリクエストのたびに、期限を再設定します。1〜1440 分で、60 分を推奨します。",
+    "manageHint": "「リクエスト」→「会話の詳細」→「APIプロバイダーの紐付け」で管理します。",
     "current": "現在の APIプロバイダー優先",
     "release": "APIプロバイダーを再選択",
     "releasing": "解除中…",
+    "releaseHint": "この会話の優先設定を消去します。次のリクエストは APIプロバイダーの順序に従い、同じ APIプロバイダーが選ばれることもあります。",
     "releasedNotice": "紐付けを解除しました。次のリクエストで、APIプロバイダーを選び直します。",
     "releaseFailed": "紐付けを解除できませんでした。再試行してください。",
     "loadFailed": "APIプロバイダーの紐付けを読み込めませんでした",
     "disabled": "APIプロバイダーの再利用はオフです。既存の紐付けは通常のルーティングに影響しません。履歴は引き続き参照できます。",
     "empty": "有効な紐付けなし",
+    "emptyHint": "成功したリクエストは、APIプロバイダーを自動で記憶します。",
+    "emptyDisabled": "ルーティングで「会話内で APIプロバイダーを再利用」を有効にしてください。",
     "removedService": "削除された APIプロバイダー",
     "token": "トークン …{{id}}",
     "expires": "{{time}} まで有効",
+    "strictHint": "選び直しても、進行中のリクエストは中断しません。状態を持つ Responses の継続と、確立済みの WebSocket 接続は、元の APIプロバイダーを使い続けます。",
     "history": "紐付け履歴",
+    "historyHint": "セッションの一致、APIプロバイダーの優先、切り替え、手動解除を記録します。会話の本文はここには保存しません。",
     "noEvents": "紐付け履歴はまだありません",
     "viewRequest": "このリクエストを表示",
     "actions": {
@@ -3778,14 +3827,6 @@
       "echo_id": "ツールまたはレスポンス識別子の一致",
       "fingerprint": "アシスタント本文のフィンガープリント一致"
     },
-    "settingHint": "最後に成功した APIプロバイダーを優先します。失敗時は、既存のフェイルオーバー方針に従います。",
-    "ttlHint": "成功したリクエストのたびに、期限を再設定します。1〜1440 分で、60 分を推奨します。",
-    "manageHint": "「リクエスト」→「会話の詳細」→「APIプロバイダーの紐付け」で管理します。",
-    "releaseHint": "この会話の優先設定を消去します。次のリクエストは APIプロバイダーの順序に従い、同じ APIプロバイダーが選ばれることもあります。",
-    "emptyHint": "成功したリクエストは、APIプロバイダーを自動で記憶します。",
-    "emptyDisabled": "ルーティングで「会話内で APIプロバイダーを再利用」を有効にしてください。",
-    "strictHint": "選び直しても、進行中のリクエストは中断しません。状態を持つ Responses の継続と、確立済みの WebSocket 接続は、元の APIプロバイダーを使い続けます。",
-    "historyHint": "セッションの一致、APIプロバイダーの優先、切り替え、手動解除を記録します。会話の本文はここには保存しません。",
     "retention": "紐付けの監査エントリは、ローカルに最大 50,000 件まで保持されます。"
   },
   "serviceProxy": {
@@ -3838,6 +3879,7 @@
       "modified": "外部で変更済み",
       "invalid": "設定を読み取れない",
       "other_token": "別のトークン",
+      "manual": "手動で設定",
       "model_missing_one": "{{count}} 個のモデルが無効",
       "model_missing_other": "{{count}} 個のモデルが無効",
       "needs_paste": "あと一歩"
@@ -3845,6 +3887,7 @@
     "usesToken": "{{client}} は現在「{{name}}」を使っています。切り替えると「{{current}}」を使います。",
     "usesOtherToken": "{{client}} は現在、別のアクセストークンを使っています。切り替えると「{{current}}」を使います。",
     "modifiedHint": "この設定は AstrLink が書き込んだ後に変更されたため、ポートが変わっても更新されなくなりました。もう一度書き込むと元に戻ります。",
+    "manualHint": "この設定は手動で貼り付けたもので、AstrLink が書き込んだものではないため、ここでは取り除けません。",
     "elsewhereHint": "{{client}} は、このコンピューター上の別の AstrLink に接続しています。切り替えると、代わりにこちらへ接続します。",
     "invalidHint": "設定ファイルの形式に誤りがあるため、AstrLink は変更しません。直してから、もう一度書き込んでください。",
     "placeLocal": "このコンピューター",
@@ -3857,6 +3900,10 @@
     "replaceTitle": "既存の設定を置き換えますか？",
     "replaceBody": "以下の設定は AstrLink が書き込んだものではありません。続行すると置き換えます。AstrLink の設定を取り除くと、今の値に戻ります。",
     "replaceConfirm": "置き換えて書き込む",
+    "switchTitle": "「{{current}}」に切り替えますか？",
+    "switchConfirm": "切り替えて書き込む",
+    "switchAndReplaceTitle": "「{{current}}」に切り替え、既存の設定を置き換えますか？",
+    "switchAndReplaceBody": "表の設定は AstrLink が書き込んだものではありません。続行すると置き換えます。AstrLink の設定を取り除くと、今の値に戻ります。",
     "remove": "取り除く",
     "removing": "取り除いています…",
     "removeTitle": "{{client}} の設定を取り除きますか？",
@@ -3953,8 +4000,12 @@
       "token": "「{{current}}」に切り替え、「{{previous}}」は {{client}} で使われなくなります",
       "unknownToken": "「{{current}}」に切り替え、以前のトークンは {{client}} で使われなくなります",
       "gateway": "この AstrLink に接続し、{{url}} は {{client}} のリクエストを受け取らなくなります",
-      "key": "{{file}} の {{key}}",
-      "keyWithValue": "{{file}} の {{key}}（現在は {{current}}）"
+      "setting": "設定",
+      "now": "現在",
+      "next": "書き込み後",
+      "removed": "削除",
+      "notShown": "表示なし",
+      "more": "さらに {{count}} 件表示"
     },
     "result": {
       "ok": "完了",
@@ -4323,6 +4374,19 @@
       "balanced": "バランス",
       "sharp": "鮮明",
       "fine": "最高"
+    },
+    "totals": {
+      "label": "累計",
+      "helpTotals": "上流へ送信したリクエストだけを集計し、再試行や別のプロバイダーへの再送信は 1 回として数えます。集計は別に保存されるため、リクエスト記録を削除・整理しても減りません。",
+      "saved": "{{size}} 削減",
+      "savedHint": "削減量は圧縮前後の画像サイズの差で、デコード後のバイト数で計算します。WebP にしても小さくならなかった画像はそのまま送信し、削減に含めません。",
+      "savedShare": "{{percent}}% 縮小",
+      "images_one": "{{count}} 枚を圧縮",
+      "images_other": "{{count}} 枚を圧縮",
+      "requests_one": "{{count}} 件のリクエスト",
+      "requests_other": "{{count}} 件のリクエスト",
+      "since": "{{date}} から集計",
+      "none": "まだ画像を圧縮していません"
     }
   },
   "about": {
@@ -4674,6 +4738,20 @@
     "metadata_unavailable": "メタデータを読み込めないか、保存できませんでした。",
     "credential_unavailable": "認証情報を保存できませんでした。",
     "plaintext_consent_required": "サーバーは平文 HTTP です。保存するには「平文 HTTP を許可」をオンにしてください。"
+  },
+  "modelDiscoveryErrors": {
+    "httpStatus": "（HTTP {{status}}）",
+    "timeout": "アップストリームが時間内に応答しませんでした。しばらくしてから再試行するか、ネットワークとプロキシを確認してください。",
+    "unsupported": "このアドレスまたはプロバイダーは、モデル一覧を取得できません。モデルを手動で入力してください。",
+    "credential": "APIキーを読み取れません。もう一度入力してください。",
+    "unauthorized": "アップストリームが APIキーを拒否しました{{status}}。キーが正しいか、権限があるかを確認してください。",
+    "notFound": "このアドレスには、モデル一覧のエンドポイントがありません{{status}}。API アドレスを確認してください。",
+    "rateLimited": "アップストリームへのリクエストが多すぎます{{status}}。しばらくしてから再試行してください。",
+    "unavailable": "アップストリームのサービスが一時的に利用できません{{status}}。しばらくしてから再試行してください。",
+    "unreachable": "アップストリームに接続できません。API アドレス、ネットワーク、プロキシを確認してください。",
+    "invalidResponse": "このアドレスは応答しましたが、モデル一覧ではありませんでした{{status}}。API アドレスを確認してください。",
+    "status": "アップストリームがエラーを返しました{{status}}。",
+    "generic": "API アドレス、APIキー、ネットワークを確認してから、もう一度お試しください。"
   },
   "webConsole": {
     "title": "AstrLink コンソール",
@@ -5889,5 +5967,107 @@
       }
     },
     "lookup": "システムプロンプトに付けた検索の方法（認証情報は伏せています）"
+  },
+  "desktopToys": {
+    "title": "デスクトップペット",
+    "motion": {
+      "title": "見た目と動き",
+      "hint": "すべてのペットに反映されます",
+      "label": "動き"
+    },
+    "levels": {
+      "calm": "控えめ",
+      "normal": "ふつう",
+      "lively": "にぎやか"
+    },
+    "levelText": {
+      "calm": "ペットはその場で作業し、跳ねたり紙吹雪を出したりしません。返信を書き終えると 3 秒手を振ります。",
+      "normal": "作業が変わると歩くか跳んで移動し、返信を書き終えると一度跳ねて 7 秒手を振ります。",
+      "lively": "暇なときも跳ねたり歩き回ったりし、歩くのが速く、火花と紙吹雪が 2 倍になります。"
+    },
+    "character": {
+      "label": "キャラクター",
+      "auto": "自動",
+      "claude_code": "Claude",
+      "codex": "Codex",
+      "deepseek_harness": "DeepSeek"
+    },
+    "size": {
+      "label": "大きさ",
+      "small": "小",
+      "normal": "中",
+      "large": "大"
+    },
+    "show": {
+      "label": "表示",
+      "orb": "モデルの精霊",
+      "status": "状態の吹き出し",
+      "milestone": "節目のお祝い"
+    },
+    "toys": {
+      "pet": {
+        "name": "大きなペット",
+        "hint": "置いた場所に浮かび、フルスクリーンでも表示されます。なでる、つつく、持ち上げて投げることができます"
+      }
+    },
+    "opts": {
+      "play": "操作",
+      "grab": "つまんで投げる",
+      "bubble": "吹き出し",
+      "reply": "返信の完了",
+      "failover": "経路の切り替え"
+    },
+    "acts": {
+      "bash": "コマンドを実行 · {{tool}}",
+      "read": "ファイルを読む",
+      "edit": "ファイルを編集",
+      "search": "ウェブを検索",
+      "write": "返信を書く · {{rate}} tok/s",
+      "think": "考え中",
+      "wait": "返信待ち",
+      "leave": "会話が終了",
+      "times": " ×{{count}}"
+    },
+    "waved": "書き終えました。返信を待っています",
+    "milestone": "今日 {{amount}} トークンを突破",
+    "pet": {
+      "replied": "{{name}} が書き終えました",
+      "look": "見る ›",
+      "failover": "{{name}} が経路を切り替えました",
+      "failoverModel": "いまは {{model}}",
+      "gear": {
+        "star": "星のヘアピンを付けました",
+        "flower": "花のヘアピンを付けました",
+        "bow": "リボンに替えました",
+        "crown": "王冠をかぶりました"
+      },
+      "today_one": "今日の返信 {{count}} 回",
+      "today_other": "今日の返信 {{count}} 回",
+      "pats_one": "なでた回数 {{count}} 回",
+      "pats_other": "なでた回数 {{count}} 回",
+      "poked": "つつかないで",
+      "menu": {
+        "pat": "頭をなでる",
+        "greet": "今日のまとめ",
+        "quiet": "おやすみモード：話しかけない",
+        "open": "AstrLink を開く",
+        "settings": "デスクトップペットの設定…"
+      }
+    },
+    "away": {
+      "title": "離れていた {{duration}} の間に",
+      "replies_one": "返信を {{count}} 回書きました",
+      "replies_other": "返信を {{count}} 回書きました",
+      "tokens": "{{amount}} トークンを使いました",
+      "waiting_one": "{{count}} 件の会話が待っています",
+      "waiting_other": "{{count}} 件の会話が待っています"
+    },
+    "duration": {
+      "minutes_one": "{{count}} 分",
+      "minutes_other": "{{count}} 分",
+      "hours_one": "{{count}} 時間",
+      "hours_other": "{{count}} 時間",
+      "hoursMinutes": "{{hours}} 時間 {{minutes}} 分"
+    }
   }
 }

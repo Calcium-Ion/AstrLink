@@ -196,7 +196,7 @@ export function modelProtocol(
   return best;
 }
 
-type ClaudeFamily = "haiku" | "sonnet" | "opus";
+type ClaudeFamily = "haiku" | "sonnet" | "opus" | "fable";
 
 /** The version numbers a model ID carries for a family, and its date. */
 function familyVersion(
@@ -259,6 +259,76 @@ export function autoFillClaude(
   };
 }
 
+/**
+ * A Gemini text model: a version and one line name, optionally lite or a
+ * preview (gemini-4-carbon, gemini-3.8-flash, gemini-3.1-pro-preview).
+ */
+const geminiTextModel =
+  /^gemini-(\d{1,3}(?:\.\d{1,3})?)-([a-z]+)(-lite)?(-preview(?:-[0-9-]+)?)?$/;
+/** Lines that name a speech, image or embedding model instead. */
+const geminiMediaLines = new Set([
+  "audio",
+  "embedding",
+  "image",
+  "live",
+  "transcribe",
+  "tts",
+]);
+
+/**
+ * The newest Gemini text model by version. Within a version a full stable
+ * model wins over -lite, then over -preview; remaining ties keep list order.
+ */
+export function newestGemini(
+  candidates: readonly string[],
+): string | undefined {
+  type Ranked = { model: string; version: number[]; plain: number };
+  // Positive when `a` should win over `b`.
+  const newer = (a: Ranked, b: Ranked) =>
+    compareVersions(a.version, b.version) || a.plain - b.plain;
+  let best: Ranked | undefined;
+  for (const model of candidates) {
+    const name = model.toLowerCase().split("/").pop() ?? "";
+    const match = geminiTextModel.exec(name);
+    if (!match || geminiMediaLines.has(match[2])) continue;
+    const ranked = {
+      model,
+      version: match[1].split(".").map(Number),
+      plain: (match[3] ? 0 : 2) + (match[4] ? 0 : 1),
+    };
+    if (!best || newer(ranked, best) > 0) best = ranked;
+  }
+  return best?.model;
+}
+
+/**
+ * The model a client starts on. Provider lists are sorted by name, which
+ * puts a vendor's oldest model, or an agent like Google's
+ * antigravity-preview, first. So when the first candidate is Claude's, or
+ * comes from an Anthropic or Gemini provider among `services`, it gives way
+ * to that vendor's newest: the main model `autoFillClaude` picks for
+ * Claude, `newestGemini` for Gemini. Any other first candidate stays.
+ */
+export function defaultModel(
+  candidates: readonly string[],
+  services: readonly Pick<Service, "kind" | "models">[] = [],
+): string {
+  const first = candidates[0] ?? "";
+  const name = first.toLowerCase().split("/").pop() ?? "";
+  const kind = services.find((service) => service.models.includes(first))?.kind;
+  if (/^claude\b/.test(name) || kind === "anthropic") {
+    return (
+      autoFillClaude(candidates).model ||
+      newestModel(candidates, "fable") ||
+      first
+    );
+  }
+  if (name.startsWith("gemini-") || kind === "gemini") {
+    return newestGemini(candidates) ?? first;
+  }
+  return first;
+}
+
 /** The model fields as the form holds them. */
 export interface ModelDraft {
   model: string;
@@ -284,12 +354,14 @@ export const claudeTiers = [
 ] as const;
 
 /**
- * The form a place starts from: the models its config holds now; else the
- * first candidate, and for Claude Code each family's newest model.
+ * The form a place starts from: the models its config holds now; else
+ * `defaultModel` of the candidates `services` offer, and for Claude Code
+ * each family's newest model.
  */
 export function initialDraft(
   status: Pick<ClientConfigStatus, "client" | "models">,
   candidates: readonly string[],
+  services: readonly Pick<Service, "kind" | "models">[] = [],
 ): ModelDraft {
   const current = status.models;
   const text = (value: number | undefined) => (value ? String(value) : "");
@@ -311,7 +383,7 @@ export function initialDraft(
     );
     return holds ? draft : { ...draft, ...autoFillClaude(candidates) };
   }
-  if (!draft.model) draft.model = candidates[0] ?? "";
+  if (!draft.model) draft.model = defaultModel(candidates, services);
   return draft;
 }
 

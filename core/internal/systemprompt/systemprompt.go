@@ -16,10 +16,10 @@ import (
 	"unicode/utf16"
 	"unicode/utf8"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/jsonedit"
 	"github.com/QuantumNous/astrlink/core/internal/providerapi"
-	"github.com/tidwall/gjson"
 )
 
 // ClaudeCodeBanner opens Claude Code's system prompt.
@@ -53,7 +53,7 @@ func add(protocol contract.ProtocolID, body []byte, text string, atStart bool) (
 	case contract.ProtocolOpenAIResponses, contract.ProtocolOpenAIResponsesCompact:
 		return addToString(body, "instructions", text, atStart)
 	case contract.ProtocolAnthropicMessages:
-		if system := gjson.GetBytes(body, "system"); system.IsArray() {
+		if system := ojson.GetBytes(body, "system"); system.IsArray() {
 			return addToBlocks(body, "system", system, text, atStart, typedTextBlock)
 		}
 		return addToString(body, "system", text, atStart)
@@ -69,11 +69,11 @@ func add(protocol contract.ProtocolID, body []byte, text string, atStart bool) (
 }
 
 func addToString(body []byte, path, text string, atStart bool) ([]byte, bool, error) {
-	existing := gjson.GetBytes(body, path)
+	existing := ojson.GetBytes(body, path)
 	switch existing.Type {
-	case gjson.Null:
+	case ojson.Null:
 		return inserted(jsonedit.Set(body, path, text))
-	case gjson.String:
+	case ojson.String:
 		return extendString(body, path, existing, text, atStart)
 	default:
 		return body, false, nil
@@ -83,7 +83,7 @@ func addToString(body []byte, path, text string, atStart bool) ([]byte, bool, er
 // extendString adds text to the JSON string at path. The client's own
 // characters keep their bytes, escapes included; only the added text is
 // encoded.
-func extendString(body []byte, path string, existing gjson.Result, text string, atStart bool) ([]byte, bool, error) {
+func extendString(body []byte, path string, existing ojson.Result, text string, atStart bool) ([]byte, bool, error) {
 	if raw, ok := joinedRaw(existing, text, atStart); ok {
 		return inserted(jsonedit.SetRaw(body, path, raw))
 	}
@@ -95,7 +95,7 @@ func extendString(body []byte, path string, existing gjson.Result, text string, 
 // keeps its shape. Without one, a system message is inserted ahead of the
 // conversation.
 func addToChat(body []byte, text string, atStart bool) ([]byte, bool, error) {
-	messages := gjson.GetBytes(body, "messages")
+	messages := ojson.GetBytes(body, "messages")
 	if !messages.IsArray() {
 		return body, false, nil
 	}
@@ -125,7 +125,7 @@ func addToChat(body []byte, text string, atStart bool) ([]byte, bool, error) {
 	path := "messages." + strconv.Itoa(target) + ".content"
 	content := elements[target].Get("content")
 	switch {
-	case content.Type == gjson.String:
+	case content.Type == ojson.String:
 		return extendString(body, path, content, text, atStart)
 	case content.IsArray():
 		return addToBlocks(body, path, content, text, atStart, typedTextBlock)
@@ -140,16 +140,16 @@ func addToGemini(body []byte, text string, atStart bool) ([]byte, bool, error) {
 	// Gemini rejects a system instruction beside cached content, which already
 	// carries the cached prompt.
 	for _, cached := range []string{"cachedContent", "cached_content"} {
-		if value := gjson.GetBytes(body, cached); value.Exists() && value.Type != gjson.Null {
+		if value := ojson.GetBytes(body, cached); value.Exists() && value.Type != ojson.Null {
 			return body, false, nil
 		}
 	}
 	key := "systemInstruction"
-	if !gjson.GetBytes(body, key).Exists() && gjson.GetBytes(body, "system_instruction").Exists() {
+	if !ojson.GetBytes(body, key).Exists() && ojson.GetBytes(body, "system_instruction").Exists() {
 		key = "system_instruction"
 	}
-	instruction := gjson.GetBytes(body, key)
-	if instruction.Type != gjson.Null && !instruction.IsObject() {
+	instruction := ojson.GetBytes(body, key)
+	if instruction.Type != ojson.Null && !instruction.IsObject() {
 		return body, false, nil
 	}
 	parts := instruction.Get("parts")
@@ -165,7 +165,7 @@ func addToGemini(body []byte, text string, atStart bool) ([]byte, bool, error) {
 func addToBlocks(
 	body []byte,
 	path string,
-	blocks gjson.Result,
+	blocks ojson.Result,
 	text string,
 	atStart bool,
 	block func(string) any,
@@ -209,7 +209,7 @@ func geminiTextPart(text string) any {
 
 // blockText reads a text block: a typed Anthropic or chat block, or a Gemini
 // part that carries only text.
-func blockText(block gjson.Result) (string, bool) {
+func blockText(block ojson.Result) (string, bool) {
 	if !block.IsObject() {
 		return "", false
 	}
@@ -217,7 +217,7 @@ func blockText(block gjson.Result) (string, bool) {
 		return "", false
 	}
 	text := block.Get("text")
-	return text.Str, text.Type == gjson.String
+	return text.Str, text.Type == ojson.String
 }
 
 // joined adds text to existing at the requested end. At the start, the text
@@ -249,7 +249,7 @@ func insertion(existing, text string, atStart bool) (int, string) {
 
 // joinedRaw is joined applied to a raw JSON string: the added text is encoded
 // and spliced between the client's raw bytes.
-func joinedRaw(existing gjson.Result, text string, atStart bool) ([]byte, bool) {
+func joinedRaw(existing ojson.Result, text string, atStart bool) ([]byte, bool) {
 	raw := existing.Raw
 	if len(raw) < 2 || raw[0] != '"' || raw[len(raw)-1] != '"' {
 		return nil, false
@@ -316,7 +316,7 @@ func rawOffset(content string, decoded int) (int, bool) {
 	return len(content), count == decoded
 }
 
-// escapedRune decodes a \uXXXX escape the way gjson does: a surrogate
+// escapedRune decodes a \uXXXX escape the way ojson does: a surrogate
 // followed by another escape consumes both, and an invalid pair or a lone
 // surrogate reads as U+FFFD.
 func escapedRune(escape string) (rune, int) {

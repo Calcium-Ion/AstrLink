@@ -388,13 +388,14 @@ end
   GET\ /control/v1/usage-summary
   POST\ /control/v1/access-tokens
   GET\ /control/v1/access-tokens/{token_id}/secret
+  PATCH\ /control/v1/access-tokens/{token_id}
   DELETE\ /control/v1/access-tokens/{token_id}
 ].each do |operation|
   raise "missing implemented access-token operation #{operation}" unless implemented_operations.include?(operation)
 end
 
 access_token = openapi.dig("components", "schemas", "AccessToken")
-raise "access-token metadata shape drifted" unless access_token.fetch("required") == %w[id name hint source created_at]
+raise "access-token metadata shape drifted" unless access_token.fetch("required") == %w[id name hint source created_at service_scope service_ids]
 raise "access-token source must name the bootstrap token" unless access_token.dig("properties", "source", "enum") == %w[user system_default]
 
 access_token_list = openapi.dig("components", "schemas", "AccessTokenList")
@@ -420,7 +421,7 @@ raise "request records must explain the provider choice" unless request_record.d
 raise "RoutingSelection wire values drifted" unless openapi.dig("components", "schemas", "RoutingSelection", "enum") == %w[priority session_binding response_affinity websocket_connection failover client_pin claude_cli]
 raise "RoutingSkipReason wire values drifted" unless openapi.dig("components", "schemas", "RoutingSkipReason", "enum") == %w[
   disabled not_connected risk_paused model_not_listed protocol_unsupported streaming_unsupported
-  conversion_unavailable circuit_open rate_limited websocket_disabled websocket_unsupported
+  conversion_unavailable circuit_open rate_limited websocket_disabled websocket_unsupported access_token_scope
 ]
 
 policy_match = openapi.dig("components", "schemas", "PolicyMatch")

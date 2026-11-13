@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
-	"encoding/base64"
 	"encoding/hex"
 	"io"
 	"net"
@@ -15,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/MoeForge/moego/base64"
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/networkproxy"
 )

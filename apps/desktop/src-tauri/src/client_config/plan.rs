@@ -28,6 +28,11 @@ pub enum ClientState {
     Modified,
     /// A config file cannot be parsed.
     Invalid,
+    /// Set up by hand from AstrLink's manual setup: AstrLink did not write
+    /// it, but it connects to this gateway with one of its tokens. Only the
+    /// status reports it; writes, removals and port syncs treat the place
+    /// as not configured.
+    Manual,
 }
 
 pub struct Connection<'a> {

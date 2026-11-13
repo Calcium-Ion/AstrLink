@@ -1278,9 +1278,9 @@ function snore(pen: Pen, ch: CrewMember) {
 // ---------- model orbs ----------
 
 /**
- * The model rides along as a little winged orb wearing its vendor's mark: the
- * client is the body, the model the spirit. Vendors without a color here
- * glow in their character's color.
+ * The model rides along as a little orb wearing its vendor's mark: the client
+ * is the body, the model the spirit. Vendors without a color here ring in
+ * their character's color.
  */
 const MARK_COLOR: Partial<Record<Vendor, string>> = {
   claude: "#d97757",
@@ -1303,11 +1303,6 @@ const ORB = [
   ".KWWWWWK.",
   "..KKKKK..",
 ] as const;
-/** Wings up and down; the right one mirrors the left. */
-const WING = [
-  ["..KK.", ".KWWK", "KWWK.", ".KK.."],
-  [".KK..", "KWWK.", ".KWWK", "..KK."],
-] as const;
 const orbInk = (p: CrewPalette, cell: string) =>
   cell === "K" ? p.slate : cell === "h" ? p.shine : p.cloud;
 
@@ -1324,7 +1319,7 @@ export function markOf(model: string): string {
 }
 
 const orbInks = new Map<string, Ink>();
-/** The glow and sparks of an orb, made once per color. */
+/** The ring of an orb and its burst, made once per color. */
 function orbInkOf(mark: string, client: ClientType): Ink {
   const color = MARK_COLOR[mark as Vendor];
   const key = color ?? client;
@@ -1337,14 +1332,13 @@ function orbInkOf(mark: string, client: ClientType): Ink {
 }
 
 /**
- * Moves a character's orb toward where its act wants it: following while it
- * moves, circling while it thinks, beside the face while it writes, resting
- * while tools run, dozing while it waits. A new model bursts the old orb and
- * flies the new one in from above. `snap` puts it there at once.
+ * Keeps a character's orb beside its shoulder, following as it moves: ringed
+ * while the model writes, dimmed while it waits, otherwise still. A new model
+ * bursts the old orb and flies the new one in from above. `snap` puts it
+ * there at once.
  */
 export function stepOrb(
   member: CrewMember,
-  T: number,
   dt: number,
   fx: Pixel[],
   rand: () => number,
@@ -1354,17 +1348,16 @@ export function stepOrb(
     member.orb = null;
     return;
   }
-  const top = crownOf(member, member.client);
   const side = (widthOf(member as Figure) * member.u) / 2 + 8;
+  const tx = member.x - member.face * side;
+  const ty = crownOf(member, member.client) + 6;
   let o = member.orb;
   if (!o) {
     o = member.orb = {
-      x: member.x - member.face * side,
-      y: top + 6,
+      x: tx,
+      y: ty,
       in: 1,
-      spark: 0,
       model: member.model,
-      flap: true,
       glow: false,
       dim: false,
     };
@@ -1389,59 +1382,19 @@ export function stepOrb(
     o.model = member.model;
   }
   o.in = snap ? 1 : Math.min(1, o.in + dt * 1.5);
-  const act =
-    !member.arrived || member.climb
-      ? "move"
-      : member.slip > 0
-        ? "slip"
-        : member.jump > 0
-          ? "jump"
-          : member.act;
-  let tx = member.x - member.face * side;
-  let ty = top + 8;
-  let ease = 5;
-  o.flap = true;
-  o.glow = false;
-  o.dim = false;
-  if (act === "move") ty = top + 4 + Math.sin(T * 5) * 2;
-  else if (act === "think") {
-    const a = T * 2.6 + member.order;
-    tx = member.x + Math.cos(a) * (side + 2);
-    ty = top + 4 + Math.sin(a) * 6;
-    ease = 14;
-  } else if (act === "write") {
-    tx = member.x + member.face * side;
-    ty = top + 2 + Math.sin(T * 6) * 2;
-    o.glow = true;
-    o.spark += (dt * (member.rate || 40)) / 22;
-    const ink = orbInkOf(markOf(o.model), member.client);
-    while (o.spark >= 1) {
-      o.spark -= 1;
-      spawn(fx, rand, o.x + (rand() - 0.5) * 10, o.y, 1, ink, 50, 30, 0.7, 2);
-    }
-  } else if (act === "slip") {
-    const a = T * 10;
-    tx = member.x + Math.cos(a) * 16;
-    ty = top + Math.sin(a) * 8;
-    ease = 18;
-  } else if (act === "jump") ty = top - 10 - Math.abs(Math.sin(T * 9)) * 8;
-  else if (act === "wait") {
-    ty = top + 16;
-    o.flap = false;
-    o.dim = true;
-  } else {
-    ty = top + 10;
-    o.flap = false;
-  }
+  const working =
+    member.arrived && !member.climb && member.slip <= 0 && member.jump <= 0;
+  o.glow = working && member.act === "write";
+  o.dim = working && member.act === "wait";
   if (snap) {
     o.x = tx;
     o.y = ty;
     return;
   }
-  o.x += (tx - o.x) * clamp(dt * ease);
-  o.y += (ty - o.y) * clamp(dt * ease);
+  o.x += (tx - o.x) * clamp(dt * 4);
+  o.y += (ty - o.y) * clamp(dt * 4);
   // Long walks peak at several hundred px/s; the orb never trails far behind.
-  const lag = act === "move" ? 30 : 80;
+  const lag = member.arrived && !member.climb ? 80 : 30;
   o.x = clamp(o.x, tx - lag, tx + lag);
   o.y = clamp(o.y, ty - lag, ty + lag);
 }
@@ -1459,21 +1412,9 @@ function drawOrb(pen: Pen, member: CrewMember, marks: CrewMarks) {
   const x = Math.round(o.x);
   const y = Math.round(o.y);
   pen.alpha(member.alpha * o.in * (o.dim ? 0.55 : 1));
-  if (o.glow) {
-    const color = inkColor(p, orbInkOf(markName, member.client));
-    pen.disc(x, y, 14, rgba(color, 0.16 + 0.08 * Math.sin(pen.T * 7)));
-  }
-  const f = o.flap ? Math.floor(pen.T * 9) % 2 : 1;
-  pen.stamp(`wing|${f}`, x - 19, y - (f ? 4 : 8), [0, 0, 38, 8], (at) =>
-    WING[f].forEach((row, wy) => {
-      for (let wx = 0; wx < row.length; wx += 1) {
-        if (row[wx] === ".") continue;
-        const color = orbInk(at.palette, row[wx]);
-        at.rect(wx * 2, wy * 2, 2, 2, color);
-        at.rect(36 - wx * 2, wy * 2, 2, 2, color);
-      }
-    }),
-  );
+  // Writing, a steady ring of its vendor's color shows round it.
+  if (o.glow)
+    pen.disc(x, y, 11, inkColor(p, orbInkOf(markName, member.client)));
   pen.stamp(`orb|${markName}`, x - 9, y - 9, [0, 0, 18, 18], (at) => {
     ORB.forEach((row, oy) => {
       for (let ox = 0; ox < row.length; ox += 1) {
@@ -1518,10 +1459,18 @@ export function drawCrew(
 ) {
   const p = pen.palette;
   const sorted = [...crew.members].sort((a, b) => a.fy - b.fy || a.x - b.x);
-  const tags: Array<{ s: string; x: number; y: number; a: number }> = [];
+  const tags: Array<{
+    s: string;
+    x: number;
+    y: number;
+    a: number;
+    /** Placed before those walking by, so a seated name never moves. */
+    first: boolean;
+  }> = [];
   const bubbles: Array<{ s: string; x: number; y: number; color: string }> = [];
   for (const member of sorted) {
-    if (member.x < -60 || member.x > pen.W + 60) continue;
+    // Still outside, or waiting for its turn at the door.
+    if (member.x < -60 || member.x > pen.W + 60 || member.waiting) continue;
     const ch = figureOf(member, undefined, stage.hat);
     const tint = tintOf(p, member.client);
     const above = crownOf(member, member.client) - 16;
@@ -1607,24 +1556,26 @@ export function drawCrew(
         color: p.failover,
       });
     }
-    if (!member.climb) {
+    // A name shows once its owner is in the scene.
+    if (!member.climb && member.x >= 0 && member.x <= pen.W) {
       tags.push({
         s: words.name(member.client),
         x: clamp(member.x, 44, pen.W - 54),
         y: member.fy + 15,
         a: member.alpha,
+        first: member.arrived && !member.leaving,
       });
     }
   }
   // Bubbles and names that would touch step up or down a row.
   const stack = (
-    list: Array<{ s: string; x: number; y: number }>,
+    list: Array<{ s: string; x: number; y: number; first?: boolean }>,
     size: number,
     dy: number,
   ) => {
     const placed: Array<{ x: number; y: number; w: number }> = [];
     list
-      .sort((a, b) => a.x - b.x)
+      .sort((a, b) => Number(!a.first) - Number(!b.first) || a.x - b.x)
       .forEach((item) => {
         const w = (pen.measure(item.s, size) + 16) / (pen.m / pen.dpr);
         let y = item.y;
@@ -1646,6 +1597,8 @@ export function drawCrew(
   for (const bubble of bubbles)
     pen.chip(bubble.s, bubble.x, bubble.y, bubble.color);
   for (const tag of tags) {
+    // A name that would run off the bottom stays off.
+    if (tag.y + 4 / k > pen.H) continue;
     pen.alpha(tag.a);
     pen.text(tag.s, tag.x, tag.y, 11, p.ink, 600, "center");
     pen.alpha(1);
@@ -1682,7 +1635,7 @@ export function drawCrew(
       Math.min(1, crew.banner * 3),
     );
   }
-  if (crew.overflow > 0) {
-    pen.chip(`+${crew.overflow}`, 24, pen.H - 24, p.muted);
-  }
+  // Conversations beyond the limit count in the top corner, clear of the
+  // names along the bottom.
+  if (crew.overflow > 0) pen.chip(`+${crew.overflow}`, 24, 22, p.muted);
 }

@@ -3,6 +3,7 @@ import { SegmentedControl } from "./components/SegmentedControl";
 import { ServiceTestResultView } from "./ServiceTestResultView";
 import { useId, useRef, useState } from "react";
 import { cancelServiceTest, testService } from "./bridge";
+import { defaultModel } from "./client-delivery-model";
 import {
   createServiceTestId,
   isServiceTestCancelled,
@@ -172,7 +173,7 @@ export function ServiceTestDialog({
   const [protocol, setProtocol] = useState<ServiceTestProtocol>(
     (capabilities[0]?.protocol ?? "openai.responses") as ServiceTestProtocol,
   );
-  const [model, setModel] = useState(service.models[0] ?? "");
+  const [model, setModel] = useState(defaultModel(service.models, [service]));
   const [stream, setStream] = useState(capabilities[0]?.streaming ?? false);
   const [prompt, setPrompt] = useState("");
   const [running, setRunning] = useState(false);

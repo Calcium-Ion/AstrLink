@@ -184,6 +184,7 @@
     "safety": "安全",
     "records": "请求",
     "routing": "路由",
+    "desktopToys": "桌宠",
     "agentTools": "Agent 工具",
     "settings": "设置",
     "gateway": "网关",
@@ -577,6 +578,8 @@
     "notifyInstalled": "安装完成。新开一个 Agent 会话即可使用。",
     "notifyRemoved": "已卸载 Agent Skill 与工具。新开一个 Agent 会话后生效。",
     "notDetected": "未检测到",
+    "undetectedTools": "未检测到的工具（{{count}}）",
+    "undetectedHint": "装好并启动一次后，点「重新检测」就能选择。",
     "detected": "已检测到",
     "installed": "已安装",
     "notInstalled": "未安装",
@@ -676,10 +679,10 @@
     "deferredHint": "稍后可点击右下角的「上手引导」继续设置。",
     "serviceTitle": "接入 API 提供商",
     "serviceShort": "连接你已有的模型服务",
-    "tokenTitle": "创建访问令牌",
-    "tokenShort": "给客户端一把本地钥匙",
+    "tokenTitle": "确认访问令牌",
+    "tokenShort": "客户端用它连接本地网关",
     "clientTitle": "连接客户端",
-    "clientShort": "发起第一条成功请求",
+    "clientShort": "配置客户端或发出第一条请求",
     "serviceBody": "AstrLink 需要一个模型来源。先添加你已经在使用的 API 服务或订阅账号。",
     "serviceOptions": "有 API Key？选择对应提供商并填写地址和密钥。有订阅账号？选择对应订阅服务并完成授权。",
     "serviceHelp": "配置时需要准备什么？",
@@ -687,15 +690,16 @@
     "manageServices": "检查提供商配置",
     "serviceIncomplete": "提供商还未准备好：请确认已启用、已添加模型，并完成订阅授权。",
     "next": "继续下一步",
-    "tokenBody": "访问令牌用于让你的客户端连接本地 AstrLink 网关。可以按客户端分别创建，便于管理用量。",
-    "tokenHelp": "点击创建后，填写容易识别的名称，例如「我的编程助手」。客户端的 API Key 填这里生成的访问令牌；提供商的密钥保留在提供商配置中。",
-    "finishService": "先完成提供商接入，再创建客户端访问令牌。",
+    "tokenBody": "客户端用访问令牌连接本地 AstrLink 网关。下一步会用「{{name}}」配置客户端。",
+    "tokenMissing": "客户端用访问令牌连接本地 AstrLink 网关。现在还没有令牌，先创建一个。",
+    "tokenHelp": "想分开统计各个客户端的用量，可以再创建令牌，起个好认的名字，例如「我的编程助手」，然后在下一步选用。提供商的密钥留在提供商配置里。",
+    "finishService": "先接入提供商，再准备访问令牌。",
     "manageTokens": "管理访问令牌",
     "createToken": "前往创建访问令牌",
     "clientBody": "让 AstrLink 写入客户端配置，或在客户端的自定义 API / 提供商设置中填写下面的信息。",
-    "finishSetup": "先完成提供商配置和访问令牌创建，再连接客户端。",
-    "selectToken": "选择客户端访问令牌",
+    "finishSetup": "先接入提供商并准备访问令牌，再连接客户端。",
     "importClient": "配置客户端",
+    "token": "客户端使用的令牌",
     "manualSetup": "手动配置客户端",
     "protocol": "客户端 API 协议",
     "openai": "OpenAI 兼容",
@@ -704,9 +708,10 @@
     "copyToken": "复制访问令牌",
     "tokenCopied": "访问令牌已复制",
     "modelHelp": "模型名称填写你在提供商中启用的模型 ID。选择客户端支持的协议；Base URL 已按所选协议处理，无需再追加 /v1。",
-    "sendRequest": "保存客户端配置，发送一条消息，再回来检查连接。成功后，用量和请求记录就会出现在 AstrLink 中。",
+    "sendRequest": "用「配置客户端」写入任意一个客户端，或手动配置后发出一条成功的请求，引导就完成了。",
     "failedRequest": "已收到请求，但尚未成功。可以打开请求记录查看失败原因，调整配置后再试。",
-    "success": "第一条请求已成功，接入完成！现在可以在运行概览查看用量，在请求记录排查问题。",
+    "done": "首次接入已完成",
+    "success": "首次接入已完成。可以在运行概览查看用量，在请求记录排查问题。",
     "finish": "进入运行概览",
     "checkRequest": "检查连接结果",
     "viewRecords": "查看请求记录",
@@ -1051,6 +1056,8 @@
     "confirmReset": "重置这个账户的额度？",
     "confirmLogout": "退出这个订阅账户？",
     "deleteBody": "“{{name}}”及其本机凭据会被删除；若仍被路由使用则无法删除。",
+    "deleteScopeWarning_one": "删除“{{name}}”后，令牌{{tokens}}没有可用的提供商，它的请求会被拒绝。可以先编辑这个令牌，换一个提供商。",
+    "deleteScopeWarning_other": "删除“{{name}}”后，令牌{{tokens}}没有可用的提供商，它们的请求会被拒绝。可以先编辑这些令牌，换一个提供商。",
     "resetDetailsLoading": "正在获取剩余重置次数及到期时间…",
     "resetDetailsError": "暂时无法获取重置明细，请重试。",
     "resetDetailsEmpty": "当前没有可用的重置次数。",
@@ -1170,7 +1177,6 @@
     "modelIdTooLong": "模型 ID 不能超过 256 个字符。",
     "saveBeforeFetch": "请先保存并完成登录，再从上游获取模型。",
     "enableDiscovery": "请先在 API 能力中启用 OpenAI Models 或 Gemini Models。",
-    "fetchFailed": "获取失败",
     "fetchFailedDetail": "无法从上游获取模型。{{warnings}}",
     "mergeTooMany": "上游模型与当前清单合并后超过 2,000 项，草稿未作更改。",
     "portsBusy": "回调端口 1455 和 1457 均不可用，已切换为 Device Code 登录。",
@@ -1180,6 +1186,16 @@
     "addedLaterLogin": "订阅 API 提供商已添加，可稍后从 API 提供商列表重新登录。",
     "addedOauthFailed": "API 提供商已添加，但无法开始 OAuth 登录。",
     "addedKey": "API 提供商已添加，新请求立即可用。API Key 只保存在本机凭据库中。",
+    "addedWithModels_one": "API 提供商已添加，已从上游获取 {{count}} 个模型。",
+    "addedWithModels_other": "API 提供商已添加，已从上游获取 {{count}} 个模型。",
+    "autoFetchHint": "保存时会从上游获取模型",
+    "autoFetching": "正在获取模型…",
+    "autoFetchFailed": "API 提供商未保存：没有从上游获取到模型。{{reason}}",
+    "autoFetchEmpty": "API 提供商未保存：上游没有返回任何模型。请检查 API 地址，或手动填写模型。",
+    "autoFetchTooMany": "API 提供商未保存：上游返回了超过 2,000 个模型。请手动填写要用的模型。",
+    "autoFetchUnavailable": "API 提供商未保存：这个提供商不能从上游获取模型列表。请手动填写至少一个模型。",
+    "autoFetchRetry": "重新获取",
+    "autoFetchManual": "手动填写模型",
     "saveFailed": "保存 API 提供商失败。",
     "beginLoginFailed": "无法开始登录。",
     "cancelledLogin": "已取消“{{name}}”的登录。",
@@ -1521,7 +1537,7 @@
     "fetchList": "获取模型列表",
     "addModel": "添加模型",
     "pendingIds": "待添加模型 ID",
-    "bulkPlaceholder": "每行一个模型 ID，例如：\ngpt-5\nclaude-sonnet-4-5",
+    "bulkPlaceholder": "每行一个模型 ID，例如：\ngpt-5\nclaude-sonnet-5-5",
     "singlePlaceholder": "输入模型 ID，回车添加",
     "singleMode": "单行输入",
     "bulkMode": "批量粘贴",
@@ -1627,7 +1643,30 @@
     "detailsFor": "{{name}} 的详情与操作",
     "usedBy": "以下客户端正在使用“{{name}}”：{{clients}}。",
     "removeConfigs": "同时移除这些客户端中的配置",
-    "removeConfigsFailed": "令牌已删除，但未能移除 {{clients}} 中的配置。"
+    "removeConfigsFailed": "令牌已删除，但未能移除 {{clients}} 中的配置。",
+    "edit": "编辑",
+    "editToken": "编辑“{{name}}”",
+    "editTitle": "编辑访问令牌",
+    "editHint": "改名或换提供商后立即生效，客户端里的令牌不用换。",
+    "updated": "已保存“{{name}}”。",
+    "updateFailed": "无法保存访问令牌。",
+    "scopeLabel": "可用提供商",
+    "scopeAll": "全部提供商",
+    "scopeAllHint": "按路由设置使用所有已启用的提供商，包括以后添加的。",
+    "scopeSelected": "指定提供商",
+    "scopeSelectedHint": "请求只发往勾选的提供商，失败时只在它们之间切换。",
+    "scopeSearch": "搜索提供商",
+    "scopePicked": "已选 {{picked}} / {{total}}",
+    "scopeServiceMeta": "{{kind}} · {{count}} 个模型",
+    "scopeServiceOff": "已停用",
+    "scopeNoServices": "还没有 API 提供商。",
+    "scopeRequired": "至少勾选一个提供商。",
+    "scopeStale": "勾选的提供商有的已被删除，请重新勾选。",
+    "scopeModelsHint": "客户端的模型列表只显示勾选提供商的模型。",
+    "scopeCount": "{{count}} 个提供商",
+    "scopeTitle": "只能用：{{names}}",
+    "scopeEmpty": "提供商已删除",
+    "scopeEmptyHint": "这个令牌勾选的提供商都已删除，它的请求会被拒绝。编辑令牌换一个提供商。"
   },
   "kind": {
     "claude_subscription": "Claude Code 订阅",
@@ -2843,7 +2882,8 @@
     "scopeProject": "项目",
     "scopeLocal": "个人",
     "toolboxTitle": "工具箱",
-    "toolboxDays": "近 30 天",
+    "toolboxDays": "近 30 天 · {{date}}起",
+    "toolboxDaysHint": "每天零点往后挪一天，更早的调用不再计入",
     "skillsGroup": "Skills",
     "groupCount_one": "{{count}} 个",
     "groupCount_other": "{{count}} 个",
@@ -2857,12 +2897,12 @@
     "moreUsedOnly_one": "另有 {{count}} 个用过",
     "moreUsedOnly_other": "另有 {{count}} 个用过",
     "nameSeparator": "、",
-    "idleNote": "没碰过的这些，每次调用多带约 {{tokens}} token。",
+    "idleNote": "没碰过的这些里，现在还带着的每次调用多带约 {{tokens}} token。",
     "toolboxNone": "最近的调用没带 Skills 或 MCP 工具",
     "emptyClientTitle": "{{client}} 在这个项目里还没记过东西",
     "emptyClientHint": "请求里没有记忆文件，也没有规则文件。",
-    "toolboxSummary_one": "带着 {{count}} 个 Skills，近 30 天用过 {{used}} 个",
-    "toolboxSummary_other": "带着 {{count}} 个 Skills，近 30 天用过 {{used}} 个",
+    "toolboxSummary_one": "近 30 天带过 {{count}} 个 Skills，用过 {{used}} 个",
+    "toolboxSummary_other": "近 30 天带过 {{count}} 个 Skills，用过 {{used}} 个",
     "usedTimes_one": "用过 {{count}} 次",
     "usedTimes_other": "用过 {{count}} 次",
     "untouched": "没碰过",
@@ -3485,7 +3525,8 @@
       "circuit_open": "连续失败，暂停使用中",
       "rate_limited": "上游限流，冷却中",
       "websocket_disabled": "未开启 Responses WebSocket",
-      "websocket_unsupported": "无法通过 WebSocket 服务该模型"
+      "websocket_unsupported": "无法通过 WebSocket 服务该模型",
+      "access_token_scope": "令牌不能用这个提供商"
     },
     "rejections": {
       "credential_unavailable": "凭据不可用",
@@ -3740,19 +3781,27 @@
   "binding": {
     "tab": "API 提供商绑定",
     "settingTitle": "同一会话优先复用 API 提供商",
+    "settingHint": "沿用上次成功的 API 提供商，减少会话中的 API 提供商切换；失败时遵循现有故障转移策略。",
     "ttl": "闲置过期时间（分钟）",
+    "ttlHint": "每次请求成功后重新计时，范围 1–1440 分钟，推荐 60 分钟。",
+    "manageHint": "在请求记录的会话详情 → API 提供商绑定中查看记录或重新选择 API 提供商。",
     "current": "当前复用 API 提供商",
     "release": "重新选择 API 提供商",
     "releasing": "正在解除…",
+    "releaseHint": "清除本会话的 API 提供商偏好。下次请求按 API 提供商顺序重新选择，仍可能选中同一 API 提供商。",
     "releasedNotice": "已解除绑定，下次请求将重新选择 API 提供商",
     "releaseFailed": "解除绑定失败，请重试",
     "loadFailed": "无法读取 API 提供商绑定",
     "disabled": "API 提供商复用已关闭。已有绑定暂不参与普通选路，历史记录仍可查看。",
     "empty": "暂无有效绑定",
+    "emptyHint": "请求成功后自动记住 API 提供商，无需手动绑定。",
+    "emptyDisabled": "可在路由设置中开启“同一会话优先复用 API 提供商”。",
     "removedService": "已删除的 API 提供商",
     "token": "令牌 …{{id}}",
     "expires": "有效至 {{time}}",
+    "strictHint": "重新选择不会中断正在进行的请求；依赖上游状态的 Responses 续接和已建立的 WebSocket 连接仍使用原 API 提供商。",
     "history": "绑定记录",
+    "historyHint": "记录会话识别、API 提供商复用、切换与手动解除，不保存对话正文。",
     "noEvents": "暂无绑定记录",
     "viewRequest": "查看这次请求",
     "actions": {
@@ -3778,14 +3827,6 @@
       "echo_id": "工具或响应标识匹配",
       "fingerprint": "助手文本指纹匹配"
     },
-    "settingHint": "沿用上次成功的 API 提供商，减少会话中的 API 提供商切换；失败时遵循现有故障转移策略。",
-    "ttlHint": "每次请求成功后重新计时，范围 1–1440 分钟，推荐 60 分钟。",
-    "manageHint": "在请求记录的会话详情 → API 提供商绑定中查看记录或重新选择 API 提供商。",
-    "releaseHint": "清除本会话的 API 提供商偏好。下次请求按 API 提供商顺序重新选择，仍可能选中同一 API 提供商。",
-    "emptyHint": "请求成功后自动记住 API 提供商，无需手动绑定。",
-    "emptyDisabled": "可在路由设置中开启“同一会话优先复用 API 提供商”。",
-    "strictHint": "重新选择不会中断正在进行的请求；依赖上游状态的 Responses 续接和已建立的 WebSocket 连接仍使用原 API 提供商。",
-    "historyHint": "记录会话识别、API 提供商复用、切换与手动解除，不保存对话正文。",
     "retention": "本地最多保留 50,000 条绑定审计记录。"
   },
   "serviceProxy": {
@@ -3838,6 +3879,7 @@
       "modified": "配置已被改动",
       "invalid": "无法读取配置",
       "other_token": "其他令牌",
+      "manual": "手动配置",
       "model_missing_one": "{{count}} 个模型已停用",
       "model_missing_other": "{{count}} 个模型已停用",
       "needs_paste": "差一步"
@@ -3845,6 +3887,7 @@
     "usesToken": "{{client}} 当前使用“{{name}}”，改用后换成“{{current}}”。",
     "usesOtherToken": "{{client}} 当前使用其他令牌，改用后换成“{{current}}”。",
     "modifiedHint": "这份配置在 AstrLink 写入后被改动过，端口变化时不会再自动更新。重新写入即可恢复。",
+    "manualHint": "这份配置是手动粘贴的，不是 AstrLink 写入的，所以这里不能移除。",
     "elsewhereHint": "{{client}} 现在连接的是这台电脑上的另一个 AstrLink。改用此令牌后连接这里。",
     "invalidHint": "配置文件格式有误，AstrLink 不会改动它。修正后再写入。",
     "placeLocal": "本机",
@@ -3857,6 +3900,10 @@
     "replaceTitle": "替换现有设置？",
     "replaceBody": "以下设置不是 AstrLink 写入的。继续会替换它们；移除 AstrLink 的配置时，会恢复成现在的值。",
     "replaceConfirm": "替换并写入",
+    "switchTitle": "改用「{{current}}」？",
+    "switchConfirm": "改用并写入",
+    "switchAndReplaceTitle": "改用「{{current}}」并替换现有设置？",
+    "switchAndReplaceBody": "表中的设置不是 AstrLink 写入的。继续会替换它们；移除 AstrLink 的配置时，会恢复成现在的值。",
     "remove": "移除",
     "removing": "正在移除…",
     "removeTitle": "移除 {{client}} 中的配置？",
@@ -3953,8 +4000,12 @@
       "token": "改用「{{current}}」，「{{previous}}」不再用于 {{client}}",
       "unknownToken": "改用「{{current}}」，之前的令牌不再用于 {{client}}",
       "gateway": "改连这个 AstrLink，{{url}} 不再收到 {{client}} 的请求",
-      "key": "{{file}} 里的 {{key}}",
-      "keyWithValue": "{{file}} 里的 {{key}}（现在是 {{current}}）"
+      "setting": "设置",
+      "now": "现在",
+      "next": "写入后",
+      "removed": "删除",
+      "notShown": "不显示",
+      "more": "再显示 {{count}} 项"
     },
     "result": {
       "ok": "已完成",
@@ -4323,6 +4374,19 @@
       "balanced": "均衡",
       "sharp": "清晰",
       "fine": "高清"
+    },
+    "totals": {
+      "label": "累计",
+      "helpTotals": "累计只算发往上游的请求，一次请求重试或换提供商重发只计一次。累计单独保存，删除或清理请求记录不会减少。",
+      "saved": "少传 {{size}}",
+      "savedHint": "少传的是压缩前后相差的图片大小，按解码后的字节计算。转成 WebP 没变小的图原样发送，不算节省。",
+      "savedShare": "减小 {{percent}}%",
+      "images_one": "压缩 {{count}} 张",
+      "images_other": "压缩 {{count}} 张",
+      "requests_one": "{{count}} 次请求",
+      "requests_other": "{{count}} 次请求",
+      "since": "{{date}}起开始统计",
+      "none": "还没有压缩过图片"
     }
   },
   "about": {
@@ -4674,6 +4738,20 @@
     "metadata_unavailable": "无法读取或保存元信息。",
     "credential_unavailable": "无法保存凭据。",
     "plaintext_consent_required": "服务器是明文 HTTP 地址，勾选「允许明文 HTTP」才能保存。"
+  },
+  "modelDiscoveryErrors": {
+    "httpStatus": "（HTTP {{status}}）",
+    "timeout": "上游没有及时响应。请稍后重试，或检查网络和代理。",
+    "unsupported": "这个地址或提供商不支持获取模型列表，请手动填写模型。",
+    "credential": "读不到 API Key，请重新填写。",
+    "unauthorized": "上游拒绝了 API Key{{status}}。请检查 Key 是否正确、有没有权限。",
+    "notFound": "这个地址没有模型列表接口{{status}}。请检查 API 地址。",
+    "rateLimited": "上游提示请求过多{{status}}，请稍后重试。",
+    "unavailable": "上游服务暂时不可用{{status}}，请稍后重试。",
+    "unreachable": "连不上上游。请检查 API 地址、网络和代理。",
+    "invalidResponse": "这个地址有响应，但返回的不是模型列表{{status}}。请检查 API 地址。",
+    "status": "上游返回了错误{{status}}。",
+    "generic": "请检查 API 地址、API Key 和网络后重试。"
   },
   "webConsole": {
     "title": "AstrLink 控制台",
@@ -5889,5 +5967,107 @@
       }
     },
     "lookup": "附在系统提示词里的查询方法（凭证已隐去）"
+  },
+  "desktopToys": {
+    "title": "桌宠",
+    "motion": {
+      "title": "样子和动作",
+      "hint": "所有桌宠一起变",
+      "label": "动作"
+    },
+    "levels": {
+      "calm": "安静",
+      "normal": "适中",
+      "lively": "活泼"
+    },
+    "levelText": {
+      "calm": "桌宠在原地干活，不跳、不撒花，写完挥手 3 秒。",
+      "normal": "换活儿时走过去或跳过去，写完跳一下、挥手 7 秒。",
+      "lively": "闲着也会蹦两下、到处溜达，走得更快，火花和彩带加倍。"
+    },
+    "character": {
+      "label": "角色",
+      "auto": "自动",
+      "claude_code": "Claude",
+      "codex": "Codex",
+      "deepseek_harness": "DeepSeek"
+    },
+    "size": {
+      "label": "大小",
+      "small": "小",
+      "normal": "中",
+      "large": "大"
+    },
+    "show": {
+      "label": "显示",
+      "orb": "模型精灵",
+      "status": "状态气泡",
+      "milestone": "用量破档庆祝"
+    },
+    "toys": {
+      "pet": {
+        "name": "大桌宠",
+        "hint": "浮在你拖到的地方，全屏时也在。可以摸头、戳她，或者拎起来扔"
+      }
+    },
+    "opts": {
+      "play": "互动",
+      "grab": "可以拎起来扔",
+      "bubble": "说话",
+      "reply": "写完回复",
+      "failover": "切换线路"
+    },
+    "acts": {
+      "bash": "运行命令 · {{tool}}",
+      "read": "读文件",
+      "edit": "改文件",
+      "search": "搜索网页",
+      "write": "写回复 · {{rate}} tok/s",
+      "think": "思考中",
+      "wait": "等你回复",
+      "leave": "对话结束",
+      "times": " ×{{count}}"
+    },
+    "waved": "写完了，等你回复",
+    "milestone": "今日破 {{amount}} Token",
+    "pet": {
+      "replied": "{{name}} 写完了",
+      "look": "看看 ›",
+      "failover": "{{name}} 切换了线路",
+      "failoverModel": "现在用 {{model}}",
+      "gear": {
+        "star": "戴上了星星发卡",
+        "flower": "戴上了小花发卡",
+        "bow": "换上了蝴蝶结",
+        "crown": "戴上了皇冠"
+      },
+      "today_one": "今天写完 {{count}} 次回复",
+      "today_other": "今天写完 {{count}} 次回复",
+      "pats_one": "摸了 {{count}} 次头",
+      "pats_other": "摸了 {{count}} 次头",
+      "poked": "别戳啦",
+      "menu": {
+        "pat": "摸摸头",
+        "greet": "今天的总结",
+        "quiet": "勿扰：不说话",
+        "open": "打开 AstrLink",
+        "settings": "桌宠设置…"
+      }
+    },
+    "away": {
+      "title": "你离开的 {{duration}}里",
+      "replies_one": "写完回复 {{count}} 次",
+      "replies_other": "写完回复 {{count}} 次",
+      "tokens": "用掉 {{amount}} Token",
+      "waiting_one": "{{count}} 个对话在等你",
+      "waiting_other": "{{count}} 个对话在等你"
+    },
+    "duration": {
+      "minutes_one": "{{count}} 分钟",
+      "minutes_other": "{{count}} 分钟",
+      "hours_one": "{{count}} 小时",
+      "hours_other": "{{count}} 小时",
+      "hoursMinutes": "{{hours}} 小时 {{minutes}} 分"
+    }
   }
 }

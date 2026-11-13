@@ -136,7 +136,7 @@ func (store *Store) syncSecrets(ctx context.Context, kind string, times map[stri
 // make the three-way merge interpret the read failure as a local deletion.
 func (store *Store) syncAccessTokens(ctx context.Context, times map[string]string) ([]storage.SyncLocalEntity, error) {
 	rows, err := store.db.QueryContext(ctx, `SELECT token.id, token.name, token.source, token.created_at,
-    secret.token_value, COALESCE(secret.sealed, 1)
+    token.service_scope, token.service_ids_json, secret.token_value, COALESCE(secret.sealed, 1)
 FROM local_access_tokens token
 LEFT JOIN local_access_token_secrets secret ON secret.token_id = token.id`)
 	if err != nil {
@@ -145,21 +145,32 @@ LEFT JOIN local_access_token_secrets secret ON secret.token_id = token.id`)
 	defer rows.Close()
 	var entities []storage.SyncLocalEntity
 	for rows.Next() {
-		var id, name, source, createdAt string
+		var id, name, source, createdAt, scope, serviceIDs string
 		var stored []byte
 		var sealed bool
-		if err := rows.Scan(&id, &name, &source, &createdAt, &stored, &sealed); err != nil {
+		if err := rows.Scan(&id, &name, &source, &createdAt, &scope, &serviceIDs, &stored, &sealed); err != nil {
 			return nil, fmt.Errorf("read %s: %w", syncKindAccessToken, err)
 		}
 		plaintext, err := store.openSecret(accessTokenSecretsTable, id, stored, sealed)
 		if err != nil {
 			return nil, fmt.Errorf("open synced access token %s: %w", id, err)
 		}
-		document, err := json.Marshal(contract.AccessTokenDocument{
+		services, err := decodeAccessTokenServices(scope, serviceIDs)
+		if err != nil {
+			clear(plaintext)
+			return nil, fmt.Errorf("read %s %s: %w", syncKindAccessToken, id, err)
+		}
+		record := contract.AccessTokenDocument{
 			Name:      name,
 			Source:    source,
 			CreatedAt: parseEntityTime(createdAt),
-		})
+		}
+		// An unrestricted token keeps the document older builds read.
+		if services.Restricted() {
+			record.ServiceScope = string(services.Scope)
+			record.ServiceIDs = services.ServiceIDs
+		}
+		document, err := json.Marshal(record)
 		if err != nil {
 			clear(plaintext)
 			return nil, fmt.Errorf("encode %s: %w", syncKindAccessToken, err)

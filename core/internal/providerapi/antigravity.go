@@ -15,8 +15,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/tidwall/gjson"
-	"github.com/tidwall/sjson"
+	"github.com/MoeForge/moego/ojson"
 )
 
 // This authorizer overlay is consumed locally and stripped before forwarding.
@@ -79,22 +78,22 @@ func AntigravityRequest(req *http.Request, project string) (string, error) {
 		if len(body) > antigravityMaxBody {
 			return "", fmt.Errorf("Antigravity request exceeds size limit")
 		}
-		if !gjson.ValidBytes(body) || !gjson.ParseBytes(body).IsObject() || !gjson.GetBytes(body, "contents").IsArray() {
+		if !ojson.ValidBytes(body) || !ojson.ParseBytes(body).IsObject() || !ojson.GetBytes(body, "contents").IsArray() {
 			return "", fmt.Errorf("invalid Gemini request body")
 		}
 		// The endpoint's model is authoritative. Keep prompts, schemas and media
 		// byte-preserving; remove only fields rejected by this upstream.
-		body, err = sjson.DeleteBytes(body, "model")
+		body, err = ojson.DeleteBytes(body, "model")
 		if err != nil {
 			return "", err
 		}
 		if !strings.Contains(model, "claude") {
-			body, err = sjson.DeleteBytes(body, "generationConfig.maxOutputTokens")
+			body, err = ojson.DeleteBytes(body, "generationConfig.maxOutputTokens")
 			if err != nil {
 				return "", err
 			}
-		} else if gjson.GetBytes(body, "tools").Exists() {
-			body, err = sjson.SetBytes(body, "toolConfig.functionCallingConfig.mode", "VALIDATED")
+		} else if ojson.GetBytes(body, "tools").Exists() {
+			body, err = ojson.SetBytes(body, "toolConfig.functionCallingConfig.mode", "VALIDATED")
 			if err != nil {
 				return "", err
 			}
@@ -104,9 +103,9 @@ func AntigravityRequest(req *http.Request, project string) (string, error) {
 			return "", err
 		}
 		// A conversation keeps its session id as later turns are appended.
-		if gjson.GetBytes(body, "sessionId").String() == "" {
+		if ojson.GetBytes(body, "sessionId").String() == "" {
 			seed := random
-			gjson.GetBytes(body, "contents").ForEach(func(_, content gjson.Result) bool {
+			ojson.GetBytes(body, "contents").ForEach(func(_, content ojson.Result) bool {
 				if content.Get("role").String() == "user" && content.Get("parts.0.text").String() != "" {
 					seed = []byte(content.Get("parts.0.text").String())
 					return false
@@ -114,7 +113,7 @@ func AntigravityRequest(req *http.Request, project string) (string, error) {
 				return true
 			})
 			hash := sha256.Sum256(seed)
-			body, err = sjson.SetBytes(body, "sessionId", "-"+strconv.FormatUint(binary.BigEndian.Uint64(hash[:8])&0x7fffffffffffffff, 10))
+			body, err = ojson.SetBytes(body, "sessionId", "-"+strconv.FormatUint(binary.BigEndian.Uint64(hash[:8])&0x7fffffffffffffff, 10))
 			if err != nil {
 				return "", err
 			}
@@ -204,10 +203,10 @@ func AntigravityResponse(res *http.Response, mode string) error {
 }
 
 func unwrapAntigravity(raw []byte) ([]byte, error) {
-	if !gjson.ValidBytes(raw) {
+	if !ojson.ValidBytes(raw) {
 		return nil, fmt.Errorf("invalid Antigravity response")
 	}
-	response := gjson.GetBytes(raw, "response")
+	response := ojson.GetBytes(raw, "response")
 	if !response.IsObject() || !(response.Get("candidates").Exists() || response.Get("promptFeedback").Exists() || response.Get("usageMetadata").Exists()) {
 		return nil, fmt.Errorf("Antigravity response omitted Gemini payload")
 	}

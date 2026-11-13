@@ -48,6 +48,8 @@ export const CREW_LIMIT = 6;
 export const CLONE_LIMIT = 2;
 /** Steps waiting behind the current one; a burst keeps only the newest. */
 export const QUEUE_LIMIT = 2;
+/** Seconds between characters coming in through the door, one at a time. */
+export const ENTRY_GAP = 1;
 /**
  * Today's tokens set how far each scene has come: round numbers on a log
  * scale, from nothing to a billion.
@@ -379,18 +381,17 @@ export interface CrewClone extends CrewWalker {
   slot: number;
 }
 
-/** The winged orb that shows a character's model. */
+/** The orb that shows a character's model. */
 export interface CrewOrb {
   x: number;
   y: number;
   /** Fade-in after a model change, 0 → 1. */
   in: number;
-  /** Sparks owed while the model writes. */
-  spark: number;
   /** The model it shows. */
   model: string;
-  flap: boolean;
+  /** Ringed: the model is writing. */
   glow: boolean;
+  /** Dimmed: the conversation waits. */
   dim: boolean;
 }
 
@@ -409,6 +410,11 @@ export interface CrewMember extends CrewWalker {
   rate: number;
   /** Seconds shown since arriving. */
   shown: number;
+  /**
+   * Waiting its turn behind the door, so newcomers come in one at a time;
+   * until then it is neither drawn nor moves.
+   */
+  waiting: boolean;
   queue: CrewStep[];
   /** The step on screen ended; celebrate once it has been shown. */
   done: boolean;
@@ -467,6 +473,8 @@ export interface Crew {
   height: number;
   /** Characters that joined so far. */
   joined: number;
+  /** Crew time the last newcomer came in through the door. */
+  entered: number;
 }
 
 /** A small seeded generator, so a test or a frame sequence repeats. */
@@ -495,6 +503,7 @@ export function createCrew(rand: () => number = seededRandom(5)): Crew {
     width: 1006,
     height: 280,
     joined: 0,
+    entered: -Infinity,
   };
 }
 
@@ -587,11 +596,16 @@ const INSIDE = 20;
 
 /**
  * Where a character rests: where it stands, or just inside the door when it
- * has not come in yet, beside anyone already resting there.
+ * has not come in yet, beside anyone already resting there. One still behind
+ * the door has not come in, even where the door is inside the scene.
  */
 function rest(crew: Crew, member: CrewMember, layout: CrewLayout) {
   member.move = null;
-  if (member.x >= INSIDE && member.x <= crew.width - INSIDE) {
+  if (
+    !member.waiting &&
+    member.x >= INSIDE &&
+    member.x <= crew.width - INSIDE
+  ) {
     member.spot = { x: member.x, level: member.level };
     member.arrived = true;
     return;
@@ -686,7 +700,9 @@ function joinMember(
     tool: "",
     count: 1,
     rate: 0,
-    shown: 0,
+    // Its turn at the door comes: it heads for its first step at once.
+    shown: MIN_REST,
+    waiting: true,
     queue: [],
     done: false,
     jump: 0,
@@ -898,7 +914,15 @@ function stepClones(
 /** Advances the crew by `dt` seconds. */
 export function stepCrew(crew: Crew, layout: CrewLayout, dt: number) {
   crew.time += dt;
+  // The door lets the next one waiting in once the last is clear of it; one
+  // that ends before its turn never comes in.
+  const turn = crew.members.find((member) => member.waiting && !member.leaving);
+  if (turn && crew.time - crew.entered >= ENTRY_GAP) {
+    turn.waiting = false;
+    crew.entered = crew.time;
+  }
   for (const member of crew.members) {
+    if (member.waiting) continue;
     member.jump = Math.max(0, member.jump - dt * 1.6);
     member.slip = Math.max(0, member.slip - dt);
     member.t += dt;
@@ -934,8 +958,9 @@ export function stepCrew(crew: Crew, layout: CrewLayout, dt: number) {
     }
     stepClones(crew, member, layout, dt);
   }
+  // Done leaving, or ended before it came in.
   crew.members = crew.members.filter(
-    (member) => !(member.leaving && member.arrived),
+    (member) => !(member.leaving && (member.arrived || member.waiting)),
   );
   for (const item of crew.pops) item.t += dt;
   crew.pops = crew.pops.filter((item) => item.t < 1.4);
@@ -964,43 +989,100 @@ export function celebrate(crew: Crew, text: string) {
 }
 
 /**
+ * Drops a character's clones that head home and places the others at work,
+ * except those in `keep`, which stay as they are.
+ */
+function settleClones(
+  member: CrewMember,
+  layout: CrewLayout,
+  keep?: ReadonlySet<string>,
+) {
+  member.clones = member.clones.filter((clone) => clone.phase !== "gone");
+  for (const clone of member.clones) {
+    if (clone.act === "wait" || keep?.has(clone.id)) continue;
+    clone.goal = layout.spot(clone.act, 2 + (clone.slot % 2));
+    clone.x = clone.goal.x;
+    clone.level = clone.goal.level;
+    clone.fy = layout.floors[clone.goal.level];
+    clone.face = clone.goal.face ?? clone.face;
+    clone.phase = "work";
+    clone.move = null;
+    clone.climb = false;
+  }
+}
+
+/** A character takes its latest step at once and stands where it happens. */
+function settleMember(crew: Crew, member: CrewMember, layout: CrewLayout) {
+  const latest = member.queue.at(-1);
+  member.queue = [];
+  member.done = false;
+  if (latest) show(crew, member, layout, latest);
+  if (member.spot) {
+    member.x = member.spot.x;
+    member.level = member.spot.level;
+    member.fy = layout.floors[member.spot.level];
+    if (member.spot.face) member.face = member.spot.face;
+  }
+  member.arrived = true;
+  member.move = null;
+  member.climb = false;
+  member.jump = 0;
+  member.slip = 0;
+  member.waiting = false;
+  member.alpha = 1;
+  settleClones(member, layout);
+}
+
+/**
  * Without motion: everyone takes their latest step at once and stands where
  * it happens; leavers are gone and nothing jumps.
  */
 export function settleCrew(crew: Crew, layout: CrewLayout) {
   crew.members = crew.members.filter((member) => !member.leaving);
-  for (const member of crew.members) {
-    const latest = member.queue.at(-1);
-    member.queue = [];
-    member.done = false;
-    if (latest) show(crew, member, layout, latest);
-    if (member.spot) {
-      member.x = member.spot.x;
-      member.level = member.spot.level;
-      member.fy = layout.floors[member.spot.level];
-      if (member.spot.face) member.face = member.spot.face;
-    }
-    member.arrived = true;
-    member.move = null;
-    member.climb = false;
-    member.jump = 0;
-    member.slip = 0;
-    member.alpha = 1;
-    member.clones = member.clones.filter((clone) => clone.phase !== "gone");
-    for (const clone of member.clones) {
-      if (clone.act === "wait") continue;
-      clone.goal = layout.spot(clone.act, 2 + (clone.slot % 2));
-      clone.x = clone.goal.x;
-      clone.level = clone.goal.level;
-      clone.fy = layout.floors[clone.goal.level];
-      clone.face = clone.goal.face ?? clone.face;
-      clone.phase = "work";
-      clone.move = null;
-      clone.climb = false;
-    }
-  }
+  for (const member of crew.members) settleMember(crew, member, layout);
   crew.pops = [];
   crew.confetti = [];
+}
+
+/**
+ * Brings in line a crew nobody watched for a while, such as when the
+ * overview comes back. Conversations that ended meanwhile are gone at once,
+ * those that moved on stand at their latest step, those that did not stay
+ * as they were, and only those that started meanwhile come in through the
+ * door. The very first reading finds everyone already at work.
+ */
+export function catchUpCrew(
+  crew: Crew,
+  reading: CrewReading,
+  layout: CrewLayout,
+) {
+  const first = !crew.primed;
+  // Who was in: what its conversation did, and the clones it had out.
+  const known = new Map(
+    crew.members
+      .filter((member) => !member.leaving && !member.waiting)
+      .map((member) => [
+        member.id,
+        {
+          key: member.lastKey,
+          clones: new Set(
+            member.clones
+              .filter((clone) => clone.phase !== "gone")
+              .map((clone) => clone.id),
+          ),
+        },
+      ]),
+  );
+  // Failovers from while nobody watched only count as seen.
+  crew.primed = false;
+  syncCrew(crew, reading, layout);
+  crew.members = crew.members.filter((member) => !member.leaving);
+  for (const member of crew.members) {
+    const was = known.get(member.id);
+    if (first || (was && was.key !== member.lastKey))
+      settleMember(crew, member, layout);
+    else if (was) settleClones(member, layout, was.clones);
+  }
 }
 
 /** Moves everyone along when the scene's width changes. */

@@ -58,7 +58,11 @@ jobs:
           restore-keys: bun-packages-v1-${{ runner.os }}-${{ runner.arch }}-
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
-          toolchain: stable
+          # Cargo 1.100 moved test executables and build-script output under
+          # target/<profile>/build/<package>/<hash>/. The worker tests look for
+          # ONNX Runtime beside their executable and ort-sys copies its Windows
+          # runtime by the old layout, so stay on 1.99.1 until both follow.
+          toolchain: 1.99.1
       - name: Compute worker executable cache key
         id: keys
         shell: pwsh
@@ -73,7 +77,7 @@ jobs:
           # symlink into the ort download cache; build-sidecar.mjs now stores
           # a real copy, so older entries must never be reused.
           "workers=windows-workers-v3-$hash-$env:WORKER_HASH" >> $env:GITHUB_OUTPUT
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           shared-key: astrlink-native
           env-vars: ImageOS ImageVersion MACOSX_DEPLOYMENT_TARGET

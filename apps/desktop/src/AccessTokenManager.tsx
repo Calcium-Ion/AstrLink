@@ -19,6 +19,7 @@ import {
   RefreshCw,
   ScanText,
   Shredder as Trash2,
+  SquarePen,
 } from "@/components/icons";
 
 import { CompactCount } from "@/components/CompactCount";
@@ -54,11 +55,21 @@ import { useExitSnapshot } from "@/lib/exit-snapshot";
 import {
   copyAccessToken,
   createAccessToken,
+  updateAccessToken,
   deleteAccessToken,
   listAccessTokenUsage,
   removeClientConfig,
 } from "./bridge";
-import type { AccessTokenSummary } from "./access-token-model";
+import type {
+  AccessTokenServices,
+  AccessTokenSummary,
+} from "./access-token-model";
+import {
+  AccessTokenScopeBadge,
+  AccessTokenServicesField,
+  type AccessTokenServicesDraft,
+} from "./AccessTokenServicesField";
+import type { Service } from "./service-model";
 import type { ClientConfigClient } from "./client-config-model";
 import { controlErrorCode } from "./control-error";
 import { currentLocale, i18n } from "./i18n";
@@ -70,6 +81,7 @@ import { ClientSetupDialog } from "./ClientSetupDialog";
 import { TokenClientMarks, clientNames } from "@/components/TokenClientMarks";
 import {
   clientsUsing as clientsUsingToken,
+  clientConfigsChanged,
   configsUsing as configsUsingToken,
   useClientConfigs,
 } from "./use-client-configs";
@@ -114,22 +126,43 @@ function messageOf(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
 }
 
-/** Why the create dialog refused, and whether the name field is to blame. */
-type CreateError = { message: string; nameInvalid: boolean };
+/** Why the token dialog refused, and which field is to blame. */
+type CreateError = {
+  message: string;
+  nameInvalid: boolean;
+  servicesInvalid?: boolean;
+};
 
-function createErrorOf(error: unknown): CreateError {
+function createErrorOf(error: unknown, editing: boolean): CreateError {
   switch (controlErrorCode(error)) {
     // Core compares names ignoring case; nothing else collides on create.
     case "conflict":
       return { message: i18n.t("tokens.nameTaken"), nameInvalid: true };
     case "access_token_limit":
       return { message: i18n.t("tokens.limitReached"), nameInvalid: false };
+    case "invalid_access_token_services":
+      return {
+        message: i18n.t("tokens.scopeStale"),
+        nameInvalid: false,
+        servicesInvalid: true,
+      };
     default:
       return {
-        message: messageOf(error, i18n.t("tokens.createFailed")),
+        message: messageOf(
+          error,
+          i18n.t(editing ? "tokens.updateFailed" : "tokens.createFailed"),
+        ),
         nameInvalid: false,
       };
   }
+}
+
+const allServices: AccessTokenServicesDraft = { scope: "all", ids: [] };
+
+function servicesPayload(draft: AccessTokenServicesDraft): AccessTokenServices {
+  return draft.scope === "selected"
+    ? { service_scope: "selected", service_ids: draft.ids }
+    : { service_scope: "all", service_ids: [] };
 }
 
 function createdAtLabel(value: string): string {
@@ -160,6 +193,9 @@ export function AccessTokenManager({
   onRefresh,
   onTokenCreated,
   onTokenDeleted,
+  onTokenUpdated,
+  services,
+  servicesReady,
 }: {
   conversionEngine?: ConversionEngineCapability | null;
   catalog: AccessTokenCatalog;
@@ -169,6 +205,9 @@ export function AccessTokenManager({
   onRefresh: () => void;
   onTokenCreated: (token: AccessTokenSummary) => void;
   onTokenDeleted: (tokenId: string) => void;
+  onTokenUpdated: (token: AccessTokenSummary) => void;
+  services: Service[];
+  servicesReady: boolean;
 }) {
   const t = i18n.t.bind(i18n);
   const currency = useDisplayCurrency();
@@ -176,6 +215,10 @@ export function AccessTokenManager({
   const [period, setPeriod] = useState<"today" | "lifetime">("today");
   const [createOpen, setCreateOpen] = useState(false);
   const [name, setName] = useState("");
+  // The token being edited; null while the dialog creates a new one.
+  const [editing, setEditing] = useState<AccessTokenSummary | null>(null);
+  const [servicesDraft, setServicesDraft] =
+    useState<AccessTokenServicesDraft>(allServices);
   const [creating, setCreating] = useState(false);
   // The dialog covers the page message, so it shows its own failures.
   const [createError, setCreateError] = useState<CreateError | null>(null);
@@ -183,6 +226,8 @@ export function AccessTokenManager({
   const shownName = useExitSnapshot(name, createOpen);
   const shownCreating = useExitSnapshot(creating, createOpen);
   const shownCreateError = useExitSnapshot(createError, createOpen);
+  const shownEditing = useExitSnapshot(editing, createOpen);
+  const shownServices = useExitSnapshot(servicesDraft, createOpen);
   const [deletingID, setDeletingID] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<AccessTokenSummary | null>(
     null,
@@ -193,11 +238,8 @@ export function AccessTokenManager({
   const [metadataToken, setMetadataToken] = useState<AccessTokenSummary | null>(
     null,
   );
-  const {
-    configs: clientConfigs,
-    available: clientModels,
-    refresh: refreshClientConfigs,
-  } = useClientConfigs(inferenceURL);
+  const { configs: clientConfigs, available: clientModels } =
+    useClientConfigs(inferenceURL);
   const [removeConfigs, setRemoveConfigs] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [usageByToken, setUsageByToken] = useWorkspaceSnapshot<
@@ -215,6 +257,8 @@ export function AccessTokenManager({
     setCreateOpen(false);
     setQuery("");
     setName("");
+    setEditing(null);
+    setServicesDraft(allServices);
     setCreating(false);
     setCreateError(null);
     setDeletingID(null);
@@ -311,7 +355,34 @@ export function AccessTokenManager({
   const closeCreate = () => {
     setCreateOpen(false);
     setName("");
+    setEditing(null);
+    setServicesDraft(allServices);
     setCreateError(null);
+  };
+
+  const openCreate = () => {
+    setEditing(null);
+    setName("");
+    setServicesDraft(allServices);
+    setCreateError(null);
+    setCreateOpen(true);
+    setError(null);
+  };
+
+  const openEdit = (token: AccessTokenSummary) => {
+    // A deleted provider cannot be saved again; drop it from the draft.
+    const known = new Set(services.map((service) => service.id));
+    setEditing(token);
+    setName(token.name);
+    setServicesDraft({
+      scope: token.service_scope,
+      ids: servicesReady
+        ? token.service_ids.filter((id) => known.has(id))
+        : token.service_ids,
+    });
+    setCreateError(null);
+    setCreateOpen(true);
+    setError(null);
   };
 
   const submitCreate = async (event: FormEvent<HTMLFormElement>) => {
@@ -335,21 +406,48 @@ export function AccessTokenManager({
       nameInput.current?.focus();
       return;
     }
+    if (servicesDraft.scope === "selected" && servicesDraft.ids.length === 0) {
+      setCreateError({
+        message: i18n.t("tokens.scopeRequired"),
+        nameInvalid: false,
+        servicesInvalid: true,
+      });
+      return;
+    }
     if (!isReady || creating) return;
 
     const generation = sessionGeneration.current;
+    const target = editing;
     setCreating(true);
     setCreateError(null);
     try {
-      const result = await createAccessToken(trimmedName);
-      if (sessionGeneration.current !== generation) return;
-      onTokenCreated(result.token);
-      setCopiedID(null);
-      closeCreate();
-      notify.success(i18n.t("tokens.created", { name: result.token.name }));
+      if (target) {
+        const token = await updateAccessToken(
+          target.id,
+          trimmedName,
+          servicesPayload(servicesDraft),
+        );
+        if (sessionGeneration.current !== generation) return;
+        onTokenUpdated(token);
+        closeCreate();
+        notify.success(i18n.t("tokens.updated", { name: token.name }));
+      } else {
+        const result =
+          servicesDraft.scope === "selected"
+            ? await createAccessToken(
+                trimmedName,
+                servicesPayload(servicesDraft),
+              )
+            : await createAccessToken(trimmedName);
+        if (sessionGeneration.current !== generation) return;
+        onTokenCreated(result.token);
+        setCopiedID(null);
+        closeCreate();
+        notify.success(i18n.t("tokens.created", { name: result.token.name }));
+      }
     } catch (requestError) {
       if (sessionGeneration.current === generation) {
-        const failure = createErrorOf(requestError);
+        const failure = createErrorOf(requestError, target !== null);
         setCreateError(failure);
         if (failure.nameInvalid) nameInput.current?.focus();
       }
@@ -436,7 +534,7 @@ export function AccessTokenManager({
           }),
         );
       }
-      if (configured.length > 0) refreshClientConfigs();
+      if (configured.length > 0) clientConfigsChanged();
     } catch (requestError) {
       if (sessionGeneration.current === generation) {
         setError(messageOf(requestError, i18n.t("tokens.deleteFailed")));
@@ -467,10 +565,7 @@ export function AccessTokenManager({
           <>
             <Button
               disabled={!isReady || catalogBusy}
-              onClick={() => {
-                setCreateOpen(true);
-                setError(null);
-              }}
+              onClick={openCreate}
               size="sm"
               type="button"
             >
@@ -598,11 +693,7 @@ export function AccessTokenManager({
         ) : catalog.items.length === 0 ? (
           <EmptyState
             action={
-              <Button
-                disabled={!isReady}
-                onClick={() => setCreateOpen(true)}
-                type="button"
-              >
+              <Button disabled={!isReady} onClick={openCreate} type="button">
                 <Plus />
                 {t("tokens.createToken")}
               </Button>
@@ -661,6 +752,11 @@ export function AccessTokenManager({
                             configs={clientConfigs}
                             tokenId={token.id}
                             tokenName={token.name}
+                          />
+                          <AccessTokenScopeBadge
+                            services={services}
+                            servicesReady={servicesReady}
+                            token={token}
                           />
                         </span>
                         <code
@@ -766,7 +862,7 @@ export function AccessTokenManager({
                         })}
                       >
                         <Cable aria-hidden="true" />
-                        <span className="@[720px]/token-list:sr-only @[800px]/token-list:not-sr-only">
+                        <span className="@[480px]/token-list:sr-only @[800px]/token-list:not-sr-only">
                           {t("clientSetup.title")}
                         </span>
                       </Button>
@@ -780,6 +876,25 @@ export function AccessTokenManager({
                       >
                         <ScanText aria-hidden="true" />
                       </IconButton>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        disabled={
+                          !isReady ||
+                          catalog.stale ||
+                          deletingID !== null ||
+                          creating
+                        }
+                        onClick={() => openEdit(token)}
+                        type="button"
+                        aria-label={t("tokens.editToken", { name: token.name })}
+                        title={t("tokens.editToken", { name: token.name })}
+                      >
+                        <SquarePen aria-hidden="true" />
+                        <span className="@[480px]/token-list:sr-only @[960px]/token-list:not-sr-only">
+                          {t("tokens.edit")}
+                        </span>
+                      </Button>
                       <Button
                         size="sm"
                         variant="ghost"
@@ -806,7 +921,7 @@ export function AccessTokenManager({
                         ) : (
                           <Copy />
                         )}
-                        <span className="@[720px]/token-list:sr-only @[960px]/token-list:not-sr-only">
+                        <span className="@[480px]/token-list:sr-only @[960px]/token-list:not-sr-only">
                           {isCopying
                             ? t("common.copying")
                             : isCopied
@@ -835,7 +950,7 @@ export function AccessTokenManager({
                         variant="ghost"
                       >
                         <Trash2 />
-                        <span className="@[720px]/token-list:sr-only @[960px]/token-list:not-sr-only">
+                        <span className="@[480px]/token-list:sr-only @[960px]/token-list:not-sr-only">
                           {deletingID === token.id
                             ? t("tokens.deleting")
                             : t("common.delete")}
@@ -863,8 +978,12 @@ export function AccessTokenManager({
               className="mb-1 size-5 text-muted-foreground"
               strokeWidth={1.5}
             />
-            <DialogTitle>{t("tokens.createTitle")}</DialogTitle>
-            <DialogDescription>{t("tokens.createHint")}</DialogDescription>
+            <DialogTitle>
+              {shownEditing ? t("tokens.editTitle") : t("tokens.createTitle")}
+            </DialogTitle>
+            <DialogDescription>
+              {shownEditing ? t("tokens.editHint") : t("tokens.createHint")}
+            </DialogDescription>
           </DialogHeader>
           <form onSubmit={(event) => void submitCreate(event)}>
             <div className="grid gap-1">
@@ -888,11 +1007,27 @@ export function AccessTokenManager({
                   value={shownName}
                 />
               </Field>
-              {shownCreateError ? (
+              {shownCreateError && !shownCreateError.servicesInvalid ? (
                 <FormMessage id="access-token-name-error" tone="error">
                   {shownCreateError.message}
                 </FormMessage>
               ) : null}
+            </div>
+            <div className="mt-4">
+              <AccessTokenServicesField
+                disabled={shownCreating}
+                error={
+                  shownCreateError?.servicesInvalid
+                    ? shownCreateError.message
+                    : null
+                }
+                onChange={(next) => {
+                  setServicesDraft(next);
+                  if (createError?.servicesInvalid) setCreateError(null);
+                }}
+                services={services}
+                value={shownServices}
+              />
             </div>
             <DialogFooter className="mt-5">
               <Button
@@ -904,7 +1039,13 @@ export function AccessTokenManager({
                 {t("common.cancel")}
               </Button>
               <Button disabled={shownCreating} type="submit">
-                {shownCreating ? t("tokens.creating") : t("tokens.create")}
+                {shownEditing
+                  ? shownCreating
+                    ? t("common.saving")
+                    : t("common.save")
+                  : shownCreating
+                    ? t("tokens.creating")
+                    : t("tokens.create")}
               </Button>
             </DialogFooter>
           </form>
@@ -923,7 +1064,6 @@ export function AccessTokenManager({
             inferenceURL={inferenceURL}
             attentionFirst
             onClose={() => setSetupToken(null)}
-            onChanged={refreshClientConfigs}
           />
         )}
       <TokenMetadataDialog
