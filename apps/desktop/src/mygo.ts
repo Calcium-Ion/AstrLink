@@ -100,15 +100,7 @@ export type LocalKeyStorage = "keychain" | "file" | "keychain_unavailable";
 export type Locale = "en" | "zh-CN" | "ja";
 
 /** Phase is where Core is in its lifecycle. */
-export type Phase =
-  | "stopped"
-  | "spawning"
-  | "waiting_for_ready"
-  | "handshaking"
-  | "ready"
-  | "stopping"
-  | "exited"
-  | "error";
+export type Phase = "stopped" | "spawning" | "waiting_for_ready" | "handshaking" | "ready" | "stopping" | "exited" | "error";
 
 export type PlanType = "native" | "delegated" | "relaykit";
 
@@ -192,23 +184,7 @@ export interface ProtocolDescriptor {
  * ProtocolID is the stable identifier persisted by AstrLink and exposed by the
  * control API. It deliberately does not reuse new-api or RelayKit identifiers.
  */
-export type ProtocolID =
-  | "openai.responses"
-  | "openai.responses.compact"
-  | "anthropic.messages"
-  | "google.generate_content"
-  | "openai.chat"
-  | "openai.completions"
-  | "openai.models"
-  | "google.models"
-  | "openai.embeddings"
-  | "google.embeddings"
-  | "rerank"
-  | "openai.realtime"
-  | "openai.images"
-  | "openai.audio"
-  | "openai.videos"
-  | "openai.search";
+export type ProtocolID = "openai.responses" | "openai.responses.compact" | "anthropic.messages" | "google.generate_content" | "openai.chat" | "openai.completions" | "openai.models" | "google.models" | "openai.embeddings" | "google.embeddings" | "rerank" | "openai.realtime" | "openai.images" | "openai.audio" | "openai.videos" | "openai.search";
 
 export type ProtocolPhase = "alpha" | "post_alpha";
 
@@ -276,26 +252,14 @@ export type ThemePreference = "system" | "light" | "dark";
  * icon. Other platforms have no title slot, so the same text goes into the
  * tooltip instead.
  */
-export type TrayMenubarText =
-  | "none"
-  | "requests"
-  | "tokens"
-  | "cost"
-  | "subscription"
-  | "alert_only";
+export type TrayMenubarText = "none" | "requests" | "tokens" | "cost" | "subscription" | "alert_only";
 
 /**
  * TrayPage is a page the tray popover can jump to. Overview and settings are
  * always reachable through the fixed "open" and "settings" actions, so they
  * are not listed. The popover renders the enabled subset in this order.
  */
-export type TrayPage =
-  | "records"
-  | "services"
-  | "tokens"
-  | "safety"
-  | "routing"
-  | "agent_tools";
+export type TrayPage = "records" | "services" | "tokens" | "safety" | "routing" | "agent_tools";
 
 /** TrayPreferences configure the tray and its popover. */
 export interface TrayPreferences {
@@ -431,10 +395,7 @@ export const Services = {
    * the browser cannot open: the page can be opened again from the app.
    * `claude auth login` opens its page itself.
    */
-  beginServiceAuthorization(
-    serviceID: string,
-    flow: string,
-  ): Promise<AuthorizationStart> {
+  beginServiceAuthorization(serviceID: string, flow: string): Promise<AuthorizationStart> {
     return call("Services.BeginServiceAuthorization", serviceID, flow);
   },
   /** CancelServiceAuthorization ends a provider's authorization session. */
@@ -457,17 +418,8 @@ export const Services = {
     return call("Services.ClearServiceRisk", serviceID);
   },
   /** CompleteServiceAuthorization hands Core the code the operator pasted. */
-  completeServiceAuthorization(
-    serviceID: string,
-    sessionID: string,
-    code: string,
-  ): Promise<unknown> {
-    return call(
-      "Services.CompleteServiceAuthorization",
-      serviceID,
-      sessionID,
-      code,
-    );
+  completeServiceAuthorization(serviceID: string, sessionID: string, code: string): Promise<unknown> {
+    return call("Services.CompleteServiceAuthorization", serviceID, sessionID, code);
   },
   /** CreateService adds a provider. */
   createService(input: unknown): Promise<ServiceRecord> {
@@ -520,10 +472,7 @@ export const Services = {
    * ListServiceRiskEvents lists a subscription's recent upstream risk
    * events, newest first.
    */
-  listServiceRiskEvents(
-    serviceID: string,
-    limit: number | null,
-  ): Promise<unknown> {
+  listServiceRiskEvents(serviceID: string, limit: number | null): Promise<unknown> {
     return call("Services.ListServiceRiskEvents", serviceID, limit);
   },
   /**
@@ -558,26 +507,15 @@ export const Services = {
    * cancel it (CancelServiceTest); a test that finished wins over a
    * cancellation that came at the same time.
    */
-  testService(
-    serviceID: string,
-    input: unknown,
-    testID: string | null,
-  ): Promise<unknown> {
+  testService(serviceID: string, input: unknown, testID: string | null): Promise<unknown> {
     return call("Services.TestService", serviceID, input, testID);
   },
   /** UpdateService patches a provider the page read at etag. */
-  updateService(
-    serviceID: string,
-    etag: string,
-    patch: unknown,
-  ): Promise<ServiceRecord> {
+  updateService(serviceID: string, etag: string, patch: unknown): Promise<ServiceRecord> {
     return call("Services.UpdateService", serviceID, etag, patch);
   },
   /** UpdateServiceOrder replaces the order of the providers. */
-  updateServiceOrder(
-    serviceIDs: string[],
-    etag: string,
-  ): Promise<ServiceOrder> {
+  updateServiceOrder(serviceIDs: string[], etag: string): Promise<ServiceOrder> {
     return call("Services.UpdateServiceOrder", serviceIDs, etag);
   },
   /** UpdateServicePackage sets how a package picks among its providers. */
@@ -595,11 +533,7 @@ export const Pricing = {
    * Pricing runs one pricing operation: status, catalog, estimates, model,
    * sync, summary, report, configure or backfill.
    */
-  pricing(
-    operation: string,
-    serviceID: string | null,
-    input: unknown,
-  ): Promise<unknown> {
+  pricing(operation: string, serviceID: string | null, input: unknown): Promise<unknown> {
     return call("Pricing.Pricing", operation, serviceID, input);
   },
 } as const;
@@ -660,10 +594,7 @@ export const Records = {
    * GetSessionChannelBindings reads the providers a session is bound to,
    * with the binding events before the cursor.
    */
-  getSessionChannelBindings(
-    sessionID: string,
-    before: number | null,
-  ): Promise<unknown> {
+  getSessionChannelBindings(sessionID: string, before: number | null): Promise<unknown> {
     return call("Records.GetSessionChannelBindings", sessionID, before);
   },
   /** ListRequestRecordChildren lists the calls a request made. */
@@ -697,11 +628,7 @@ export const Routing = {
    * BuiltinToolAction reads, saves, deletes or tests a built-in tool's
    * credential.
    */
-  builtinToolAction(
-    kind: string,
-    action: string,
-    input: unknown,
-  ): Promise<unknown> {
+  builtinToolAction(kind: string, action: string, input: unknown): Promise<unknown> {
     return call("Routing.BuiltinToolAction", kind, action, input);
   },
   /**
@@ -754,11 +681,7 @@ export const Tokens = {
    * CreateAccessToken creates a token, limited to some providers when
    * serviceScope is set.
    */
-  createAccessToken(
-    name: string,
-    serviceScope: string | null,
-    serviceIDs: string[],
-  ): Promise<unknown> {
+  createAccessToken(name: string, serviceScope: string | null, serviceIDs: string[]): Promise<unknown> {
     return call("Tokens.CreateAccessToken", name, serviceScope, serviceIDs);
   },
   /** DeleteAccessToken deletes a token. */
@@ -778,19 +701,8 @@ export const Tokens = {
     return call("Tokens.ListNetworkAddresses");
   },
   /** UpdateAccessToken renames a token and replaces the providers it may use. */
-  updateAccessToken(
-    tokenID: string,
-    name: string,
-    serviceScope: string,
-    serviceIDs: string[],
-  ): Promise<unknown> {
-    return call(
-      "Tokens.UpdateAccessToken",
-      tokenID,
-      name,
-      serviceScope,
-      serviceIDs,
-    );
+  updateAccessToken(tokenID: string, name: string, serviceScope: string, serviceIDs: string[]): Promise<unknown> {
+    return call("Tokens.UpdateAccessToken", tokenID, name, serviceScope, serviceIDs);
   },
 } as const;
 
@@ -800,21 +712,11 @@ export const Usage = {
    * GetPrivacySummary reads what the privacy policy did over a window, with
    * the usage summary's window, time zone and bucket rules.
    */
-  getPrivacySummary(
-    from: string,
-    to: string,
-    timeZone: string,
-    bucket: string,
-  ): Promise<unknown> {
+  getPrivacySummary(from: string, to: string, timeZone: string, bucket: string): Promise<unknown> {
     return call("Usage.GetPrivacySummary", from, to, timeZone, bucket);
   },
   /** GetUsageSummary reads the usage over a window in buckets. */
-  getUsageSummary(
-    from: string,
-    to: string,
-    timeZone: string,
-    bucket: string,
-  ): Promise<unknown> {
+  getUsageSummary(from: string, to: string, timeZone: string, bucket: string): Promise<unknown> {
     return call("Usage.GetUsageSummary", from, to, timeZone, bucket);
   },
   /** ListAccessTokenUsage reads each token's usage today. */
@@ -911,11 +813,7 @@ export const Raw = {
    * the dialog collected, sent once; refusals the dialog recovers from come
    * back as outcomes.
    */
-  decideRawAccess(
-    grantID: string,
-    decision: string,
-    arg: ProofArg | null,
-  ): Promise<ProofOutcome> {
+  decideRawAccess(grantID: string, decision: string, arg: ProofArg | null): Promise<ProofOutcome> {
     return call("Raw.DecideRawAccess", grantID, decision, arg);
   },
   /**
@@ -963,11 +861,7 @@ export const Raw = {
    * new one; proof opens the existing key where Core needs it. Core takes
    * any Touch ID envelope out with the old password.
    */
-  setRawPassword(
-    action: string,
-    password: string | null,
-    arg: ProofArg | null,
-  ): Promise<ProofOutcome> {
+  setRawPassword(action: string, password: string | null, arg: ProofArg | null): Promise<ProofOutcome> {
     return call("Raw.SetRawPassword", action, password, arg);
   },
   /** UnlockRaw unlocks raw parts for the operator's own reading. */
