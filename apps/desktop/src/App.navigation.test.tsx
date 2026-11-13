@@ -442,14 +442,18 @@ describe("tray navigation targets", () => {
     expect(trayNavigationTarget("settings")).toEqual({ kind: "settings" });
     // The pets page exists only where the pets do.
     expect(trayNavigationTarget("desktopToys")).toBeNull();
-    window.__ASTRLINK_DESKTOP_PLATFORM__ = "macos";
+    window.__ASTRLINK_DESKTOP_PLATFORM__ = "windows";
     Object.assign(window, { __TAURI_INTERNALS__: {} });
+    // A Wayland session has no pets either.
+    expect(trayNavigationTarget("desktopToys")).toBeNull();
+    window.__ASTRLINK_DESKTOP_TOYS__ = true;
     try {
       expect(trayNavigationTarget("desktopToys")).toEqual({
         kind: "desktopToys",
       });
     } finally {
       delete window.__ASTRLINK_DESKTOP_PLATFORM__;
+      delete window.__ASTRLINK_DESKTOP_TOYS__;
       delete (window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
     }
     expect(trayNavigationTarget("privacyOverview")).toEqual({
@@ -789,13 +793,14 @@ describe("App workspace navigation", () => {
     });
   }
 
-  it("gives the desktop pets their own page on macOS, not a settings tab", async () => {
+  it("gives the desktop pets their own page, not a settings tab", async () => {
     await renderApp();
     expect(() => button("桌宠")).toThrow();
     await act(async () => root.unmount());
     root = createRoot(container);
 
-    window.__ASTRLINK_DESKTOP_PLATFORM__ = "macos";
+    window.__ASTRLINK_DESKTOP_PLATFORM__ = "linux";
+    window.__ASTRLINK_DESKTOP_TOYS__ = true;
     Object.assign(window, { __TAURI_INTERNALS__: {} });
     try {
       bridgeMocks.getPreferences.mockReturnValue(new Promise(() => {}));
@@ -811,6 +816,7 @@ describe("App workspace navigation", () => {
       ).not.toContain("桌宠");
     } finally {
       delete window.__ASTRLINK_DESKTOP_PLATFORM__;
+      delete window.__ASTRLINK_DESKTOP_TOYS__;
       delete (window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
     }
   });
