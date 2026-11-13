@@ -26,5 +26,6 @@ func init() {
 		GrokBuild,
 		Droid,
 		CopilotCLI,
+		VSCodeCopilot,
 	)
 }
