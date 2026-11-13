@@ -1518,10 +1518,18 @@ export function drawCrew(
 ) {
   const p = pen.palette;
   const sorted = [...crew.members].sort((a, b) => a.fy - b.fy || a.x - b.x);
-  const tags: Array<{ s: string; x: number; y: number; a: number }> = [];
+  const tags: Array<{
+    s: string;
+    x: number;
+    y: number;
+    a: number;
+    /** Placed before those walking by, so a seated name never moves. */
+    first: boolean;
+  }> = [];
   const bubbles: Array<{ s: string; x: number; y: number; color: string }> = [];
   for (const member of sorted) {
-    if (member.x < -60 || member.x > pen.W + 60) continue;
+    // Still outside, or waiting for its turn at the door.
+    if (member.x < -60 || member.x > pen.W + 60 || member.waiting) continue;
     const ch = figureOf(member, undefined, stage.hat);
     const tint = tintOf(p, member.client);
     const above = crownOf(member, member.client) - 16;
@@ -1607,24 +1615,26 @@ export function drawCrew(
         color: p.failover,
       });
     }
-    if (!member.climb) {
+    // A name shows once its owner is in the scene.
+    if (!member.climb && member.x >= 0 && member.x <= pen.W) {
       tags.push({
         s: words.name(member.client),
         x: clamp(member.x, 44, pen.W - 54),
         y: member.fy + 15,
         a: member.alpha,
+        first: member.arrived && !member.leaving,
       });
     }
   }
   // Bubbles and names that would touch step up or down a row.
   const stack = (
-    list: Array<{ s: string; x: number; y: number }>,
+    list: Array<{ s: string; x: number; y: number; first?: boolean }>,
     size: number,
     dy: number,
   ) => {
     const placed: Array<{ x: number; y: number; w: number }> = [];
     list
-      .sort((a, b) => a.x - b.x)
+      .sort((a, b) => Number(!a.first) - Number(!b.first) || a.x - b.x)
       .forEach((item) => {
         const w = (pen.measure(item.s, size) + 16) / (pen.m / pen.dpr);
         let y = item.y;
@@ -1646,6 +1656,8 @@ export function drawCrew(
   for (const bubble of bubbles)
     pen.chip(bubble.s, bubble.x, bubble.y, bubble.color);
   for (const tag of tags) {
+    // A name that would run off the bottom stays off.
+    if (tag.y + 4 / k > pen.H) continue;
     pen.alpha(tag.a);
     pen.text(tag.s, tag.x, tag.y, 11, p.ink, 600, "center");
     pen.alpha(1);
@@ -1682,7 +1694,7 @@ export function drawCrew(
       Math.min(1, crew.banner * 3),
     );
   }
-  if (crew.overflow > 0) {
-    pen.chip(`+${crew.overflow}`, 24, pen.H - 24, p.muted);
-  }
+  // Conversations beyond the limit count in the top corner, clear of the
+  // names along the bottom.
+  if (crew.overflow > 0) pen.chip(`+${crew.overflow}`, 24, 22, p.muted);
 }
