@@ -36,5 +36,6 @@ func init() {
 		CodeWhale,
 		Reasonix,
 		ZCode,
+		MiniMaxCode,
 	)
 }
