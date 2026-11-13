@@ -1,7 +1,6 @@
 package clients
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -91,15 +90,7 @@ func (grokConfig) Get(document format.Document, key string) (string, bool, bool)
 		return document.Get(key)
 	}
 	if id, entry := strings.CutPrefix(key, grokEntryPrefix); entry {
-		models := format.TableLike(toml.Root().Get("model"))
-		if models == nil || models.Get(id) == nil {
-			return "", false, false
-		}
-		value, ok := format.TOMLJSON(models.Get(id))
-		if !ok {
-			return "", false, true
-		}
-		return format.Encode(value), true, true
+		return getTable(toml, "model", id)
 	}
 	name, inModels := strings.CutPrefix(key, "models.")
 	if !inModels {
@@ -119,26 +110,7 @@ func (grokConfig) Set(document format.Document, key, value string) error {
 		return document.Set(key, value)
 	}
 	if id, entry := strings.CutPrefix(key, grokEntryPrefix); entry {
-		decoded, err := format.DecodeJSON(value)
-		if err != nil {
-			return err
-		}
-		table, ok := format.TOMLTableOf(decoded, grokRank)
-		if !ok {
-			return fmt.Errorf("%s cannot be written as TOML", key)
-		}
-		models, err := toml.ParentTable("model")
-		if err != nil {
-			return err
-		}
-		// Values change in place, keeping the table where it is.
-		if current, ok := models.Get(id).(*format.TOMLTable); ok {
-			table.TakeLayout(current)
-			models.Replace(id, table)
-			return nil
-		}
-		models.Insert(id, table)
-		return nil
+		return setTable(toml, "model", id, key, value, grokRank)
 	}
 	name, inModels := strings.CutPrefix(key, "models.")
 	if !inModels {

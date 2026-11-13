@@ -1,7 +1,6 @@
 package clients
 
 import (
-	"fmt"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -110,19 +109,7 @@ func (kimiConfig) Get(document format.Document, key string) (string, bool, bool)
 	if !provider {
 		return document.Get(key)
 	}
-	providers := format.TableLike(toml.Root().Get("providers"))
-	if providers == nil {
-		return "", false, false
-	}
-	item := providers.Get(id)
-	if item == nil {
-		return "", false, false
-	}
-	value, ok := format.TOMLJSON(item)
-	if !ok {
-		return "", false, true
-	}
-	return format.Encode(value), true, true
+	return getTable(toml, "providers", id)
 }
 
 func (kimiConfig) Set(document format.Document, key, value string) error {
@@ -131,29 +118,14 @@ func (kimiConfig) Set(document format.Document, key, value string) error {
 	if !ok || key != kimiModelsKey && !provider {
 		return document.Set(key, value)
 	}
-	decoded, err := format.DecodeJSON(value)
-	if err != nil {
-		return err
-	}
 	if key == kimiModelsKey {
+		decoded, err := format.DecodeJSON(value)
+		if err != nil {
+			return err
+		}
 		return toml.SetPrefixed("models", kimiAliasPrefix, decoded, kimiRank)
 	}
-	table, ok := format.TOMLTableOf(decoded, kimiRank)
-	if !ok {
-		return fmt.Errorf("%s cannot be written as TOML", key)
-	}
-	providers, err := toml.ParentTable("providers")
-	if err != nil {
-		return err
-	}
-	// Values change in place, keeping the table where it is.
-	if current, ok := providers.Get(id).(*format.TOMLTable); ok {
-		table.TakeLayout(current)
-		providers.Replace(id, table)
-		return nil
-	}
-	providers.Insert(id, table)
-	return nil
+	return setTable(toml, "providers", id, key, value, kimiRank)
 }
 
 func (kimiConfig) Remove(document format.Document, key string) {
@@ -164,10 +136,7 @@ func (kimiConfig) Remove(document format.Document, key string) {
 	if key == kimiModelsKey {
 		toml.RemovePrefixed("models", kimiAliasPrefix)
 	} else if id, provider := strings.CutPrefix(key, kimiProviderPrefix); provider {
-		if providers := format.TableLike(toml.Root().Get("providers")); providers != nil {
-			providers.Remove(id)
-		}
-		toml.DropEmptyParent("providers")
+		removeTable(toml, "providers", id)
 	} else {
 		document.Remove(key)
 	}
