@@ -2,7 +2,7 @@ import { isWebEdition } from "./edition";
 import { ConsoleLogout } from "./ConsoleEntry";
 import { WebSettings } from "./WebSettings";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { isTauri } from "./native-host/core";
+import { isDesktopHost } from "./native-host/core";
 import { listen, type UnlistenFn } from "./native-host/event";
 import {
   Activity,
@@ -713,7 +713,7 @@ export default function App() {
   const navigateRef = useRef(navigate);
   navigateRef.current = navigate;
   useEffect(() => {
-    if (!isTauri()) return;
+    if (!isDesktopHost()) return;
     return followTrayNavigation((target) => navigateRef.current(target));
   }, []);
 

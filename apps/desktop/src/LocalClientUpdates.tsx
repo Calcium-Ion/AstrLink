@@ -1,5 +1,5 @@
 import { useEffect, useId, useState } from "react";
-import { isTauri } from "./native-host/core";
+import { isDesktopHost } from "./native-host/core";
 import { Panel, PanelHeader } from "@/components/Panel";
 import { DataField } from "@/components/DataRow";
 import { AgentToolIcon } from "@/components/AgentToolIcon";
@@ -45,7 +45,7 @@ const ERROR_KEYS = new Set([
 export function LocalClientUpdates({ compact = false }: { compact?: boolean }) {
   const t = useT();
   const id = useId();
-  const native = isTauri();
+  const native = isDesktopHost();
   const [snapshot, setSnapshot] = useState(emptyLocalClients);
   const [open, setOpen] = useState<boolean | null>(null);
   const expanded = open ?? !compact;

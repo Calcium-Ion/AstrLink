@@ -228,7 +228,7 @@ describe("TrajectoryInspectorWindow", () => {
     });
     bridgeMocks.listenRawSealingChanged.mockResolvedValue(() => undefined);
     Object.assign(window, {
-      __TAURI_INTERNALS__: {},
+      mygo: {},
       __ASTRLINK_DESKTOP_PLATFORM__: "macos",
     });
     container = document.createElement("div");
@@ -241,7 +241,7 @@ describe("TrajectoryInspectorWindow", () => {
     container.remove();
     localStorage.removeItem(TRAJECTORY_INSPECTOR_TOUR_KEY);
     vi.useRealTimers();
-    delete (window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+    delete (window as { mygo?: unknown }).mygo;
     delete (window as { __ASTRLINK_DESKTOP_PLATFORM__?: string })
       .__ASTRLINK_DESKTOP_PLATFORM__;
   });

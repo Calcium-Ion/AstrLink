@@ -1,4 +1,4 @@
-// The window hosting the page, in the shape the frontend used under Tauri.
+// The window hosting the page.
 // The label is what the host's preload script set for the window; the
 // controls are MyGo's, and the state the Window service reads.
 import {

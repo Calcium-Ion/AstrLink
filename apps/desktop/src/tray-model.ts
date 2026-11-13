@@ -108,7 +108,7 @@ export interface TraySubscription {
   windows: TrayWindow[];
 }
 
-/** Plan-backed kinds the host lists; mirrors `SUBSCRIPTION_KINDS` in `tray.rs`. */
+/** Plan-backed kinds the host lists; mirrors `subscriptionKinds` in `internal/ui/tray_model.go`. */
 const subscriptionKinds = new Set<ServiceKind>([
   ...subscriptionServiceKinds,
   "kimi_coding",
@@ -117,7 +117,7 @@ const subscriptionKinds = new Set<ServiceKind>([
   "opencode_go",
 ]);
 
-/** Today's privacy counts; mirrors `PrivacyDigest` in `tray.rs`. */
+/** Today's privacy counts; mirrors `PrivacyDigest` in `internal/ui/tray_model.go`. */
 export interface TrayPrivacy {
   /** The policy switch right now; null when the host could not read it. */
   enabled: boolean | null;

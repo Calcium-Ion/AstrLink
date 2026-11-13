@@ -119,7 +119,7 @@ describe("RequestTrajectory in a window host", () => {
     hostMocks.invoke.mockResolvedValue("trajectory-inspector-1");
     hostMocks.listen.mockResolvedValue(hostMocks.unlisten);
     Object.assign(window, {
-      __TAURI_INTERNALS__: {},
+      mygo: {},
       __ASTRLINK_DESKTOP_PLATFORM__: "macos",
     });
     container = document.createElement("div");
@@ -133,7 +133,7 @@ describe("RequestTrajectory in a window host", () => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
     vi.useRealTimers();
-    delete (window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+    delete (window as { mygo?: unknown }).mygo;
     delete (window as { __ASTRLINK_DESKTOP_PLATFORM__?: string })
       .__ASTRLINK_DESKTOP_PLATFORM__;
   });
@@ -1116,7 +1116,7 @@ describe("RequestTrajectory in a window host", () => {
   });
 
   it("docks the pane over the list when there is no window host", async () => {
-    delete (window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+    delete (window as { mygo?: unknown }).mygo;
 
     await renderTrajectory();
 

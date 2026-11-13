@@ -8,7 +8,7 @@ import {
 } from "./window-chrome";
 
 afterEach(() => {
-  Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
+  Reflect.deleteProperty(window, "mygo");
   Reflect.deleteProperty(window, "__ASTRLINK_DESKTOP_PLATFORM__");
 });
 
@@ -19,9 +19,9 @@ describe("desktop platform detection", () => {
   });
 
   it.each(["linux", "macos", "windows"] as const)(
-    "accepts the injected %s Tauri platform",
+    "accepts the injected %s desktop platform",
     (platform) => {
-      Object.defineProperty(window, "__TAURI_INTERNALS__", {
+      Object.defineProperty(window, "mygo", {
         configurable: true,
         value: {},
       });
@@ -32,7 +32,7 @@ describe("desktop platform detection", () => {
   );
 
   it("fails closed when an unknown platform is injected", () => {
-    Object.defineProperty(window, "__TAURI_INTERNALS__", {
+    Object.defineProperty(window, "mygo", {
       configurable: true,
       value: {},
     });

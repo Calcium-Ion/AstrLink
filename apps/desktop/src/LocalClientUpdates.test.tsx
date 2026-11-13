@@ -15,7 +15,7 @@ const mocks = vi.hoisted(() => ({
   open: vi.fn(),
   native: true,
 }));
-vi.mock("./native-host/core", () => ({ isTauri: () => mocks.native }));
+vi.mock("./native-host/core", () => ({ isDesktopHost: () => mocks.native }));
 vi.mock("./bridge", () => ({ openExternalURL: mocks.open }));
 vi.mock("./local-client-bridge", () => ({
   getLocalClients: mocks.get,

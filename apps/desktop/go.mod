@@ -2,12 +2,11 @@ module github.com/QuantumNous/astrlink/desktop
 
 go 1.27.3
 
-// The frontend's dependencies and the Tauri shell being replaced are not Go
-// packages of this module; keep ./... (and mygo vet) out of them.
+// The frontend's build and dependencies are not Go packages of this module;
+// keep ./... (and mygo vet) out of them.
 ignore (
 	./dist
 	./node_modules
-	./src-tauri
 )
 
 require (

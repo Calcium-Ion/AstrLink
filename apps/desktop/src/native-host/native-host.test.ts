@@ -38,7 +38,7 @@ vi.mock("../mygo", async (importOriginal) => {
   };
 });
 
-import { invoke, isTauri } from "./core";
+import { invoke, isDesktopHost } from "./core";
 import { listen } from "./event";
 import { hasNativeHost } from "./presence";
 import { getCurrentWindow } from "./window";
@@ -86,13 +86,13 @@ describe("listen", () => {
 });
 
 describe("the host", () => {
-  it("is present in a MyGo window or where tests stub Tauri", () => {
+  it("is present in a MyGo window only", () => {
+    expect(hasNativeHost()).toBe(false);
+    vi.stubGlobal("window", {});
     expect(hasNativeHost()).toBe(false);
     vi.stubGlobal("window", { mygo: {} });
     expect(hasNativeHost()).toBe(true);
-    vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
-    expect(hasNativeHost()).toBe(true);
-    expect(isTauri()).toBe(true);
+    expect(isDesktopHost()).toBe(true);
   });
 });
 

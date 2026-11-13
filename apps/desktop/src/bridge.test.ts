@@ -549,7 +549,7 @@ describe("desktop bridge contract", () => {
   beforeEach(() => {
     invokeMock.mockReset();
     downloadMocks.downloadTextFile.mockReset();
-    vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+    vi.stubGlobal("window", { mygo: {} });
   });
 
   afterEach(() => {
@@ -1919,7 +1919,7 @@ describe("desktop bridge contract", () => {
 
 describe("provider test bridge", () => {
   it("uses the same cancellation ID for the test and cancel commands", async () => {
-    vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+    vi.stubGlobal("window", { mygo: {} });
     const input = {
       protocol: "openai.chat" as const,
       model: "test",
@@ -1952,7 +1952,7 @@ describe("provider test bridge", () => {
   });
 
   it("passes the selected provider and validates its result", async () => {
-    vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+    vi.stubGlobal("window", { mygo: {} });
     const input = {
       protocol: "openai.chat" as const,
       model: "test-model",

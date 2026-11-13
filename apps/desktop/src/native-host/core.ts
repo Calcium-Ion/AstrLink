@@ -1,7 +1,7 @@
-// The desktop host's commands in the shape the frontend used under Tauri:
-// invoke(command, args) with the command's snake_case name and camelCase
-// arguments. Each command maps onto the client `mygo generate` writes for
-// the Go services (../mygo.ts); see the commands-*.ts tables.
+// The desktop host's commands: invoke(command, args) with the command's
+// snake_case name and camelCase arguments. Each command maps onto the
+// client `mygo generate` writes for the Go services (../mygo.ts); see the
+// commands-*.ts tables.
 import { isMyGo } from "mygo-runtime";
 import { agentsCommands } from "./commands-agents";
 import { clientsCommands } from "./commands-clients";
@@ -19,13 +19,13 @@ export const commandTable: CommandTable = {
 };
 
 /** Reports whether the page runs in the desktop app. */
-export function isTauri(): boolean {
+export function isDesktopHost(): boolean {
   return isMyGo();
 }
 
 /**
  * Calls a host command. A failed call rejects with the error's message, a
- * string, as Tauri commands did, so callers keep their error handling.
+ * string, so callers keep their error handling.
  */
 export async function invoke<T>(
   command: string,

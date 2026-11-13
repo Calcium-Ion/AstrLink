@@ -322,7 +322,7 @@ export async function getPreferences(): Promise<SettingsSnapshot> {
   return parseSettingsSnapshot(await invokeDesktopRead("get_preferences"));
 }
 
-/** The currency amounts show in, with today's rate; see `currency.rs`. */
+/** The currency amounts show in, with today's rate; see `internal/currency` of the desktop host. */
 export async function getDisplayCurrency(): Promise<DisplayCurrency> {
   requireNativeBridge();
   return parseDisplayCurrency(await invoke<unknown>("display_currency"));
@@ -667,7 +667,7 @@ export async function fetchCustomModelList(
   input: CustomModelListInput,
 ): Promise<CustomModelListResult> {
   // Route through the existing probe_draft_service_models command rather than
-  // a separate Tauri command. The prober already handles custom kind with any
+  // a separate host command. The prober already handles custom kind with any
   // OpenAI-compatible /v1/models endpoint via ProtocolOpenAIModels.
   const probe = await probeDraftServiceModels({
     ...(input.proxy !== undefined ? { proxy: input.proxy } : {}),

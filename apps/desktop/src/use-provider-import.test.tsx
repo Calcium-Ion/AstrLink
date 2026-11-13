@@ -16,7 +16,7 @@ const mocks = vi.hoisted(() => ({
   listenProviderImport: vi.fn(),
   error: vi.fn(),
 }));
-vi.mock("./native-host/core", () => ({ isTauri: () => true }));
+vi.mock("./native-host/core", () => ({ isDesktopHost: () => true }));
 vi.mock("./bridge", () => ({
   getPendingProviderImport: mocks.getPendingProviderImport,
   dismissProviderImport: mocks.dismissProviderImport,

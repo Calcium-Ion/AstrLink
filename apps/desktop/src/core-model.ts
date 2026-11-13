@@ -702,7 +702,8 @@ export const browserSnapshot = (): AppSnapshot => ({
   health: null,
   version: null,
   capabilities: null,
-  last_error: "The native bridge is unavailable. Open this UI with Tauri.",
+  last_error:
+    "The native bridge is unavailable. Open this UI in the AstrLink desktop app.",
   inference_port_fallback: null,
   inference_listen_active: null,
   restart_pending: false,

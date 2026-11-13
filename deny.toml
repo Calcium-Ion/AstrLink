@@ -7,7 +7,7 @@
 # Fail rather than silently scan against an outdated RustSec database.
 maximum-db-staleness = "P30D"
 # Unmaintained notices fail only for direct dependencies; transitive ones come
-# from upstream stacks such as Tauri and are tracked there.
+# from upstream stacks and are tracked there.
 unmaintained = "workspace"
 # Every ignore must name the affected crate and a reason.
 ignore = []

@@ -20,9 +20,9 @@ user changes, applying fixes manually if crate-wide tools would change them.
 | JSON / JSONC / CSS / HTML / YAML      | `bunx prettier@3.6.2 --write <files>`                                                                                          |
 | Markdown                              | `bunx prettier@3.6.2 --write --prose-wrap always <files>`; `bunx --package markdownlint-cli@0.45.0 markdownlint --fix <files>` |
 
-Go modules: `core`, `convo`, `contracts`. Rust crates: `apps/desktop/src-tauri`,
-`apps/privacy-worker`, `apps/classifier-worker`. If Tauri needs staged sidecars,
-run `make desktop-sidecar`. For desktop TS, also run
+Go modules: `core`, `convo`, `contracts`, `apps/desktop`. Rust crates:
+`apps/privacy-worker`, `apps/classifier-worker`. If `mygo build` needs staged
+sidecars, run `make desktop-sidecar`. For desktop TS, also run
 `(cd apps/desktop && bun run typecheck)`; it does not replace linting.
 
 Recheck after fixing: `gofmt -l <files>` must print nothing; rerun `go vet`; use
@@ -200,16 +200,17 @@ separate toolbar.
 
 ### Use in-app dialogs
 
-On macOS, AstrLink's Tauri WebView (WKWebView via wry) does not show JavaScript
-dialogs. `window.confirm`, `window.alert`, and `window.prompt` are silent
-no-ops; **`confirm()` always returns `false`**. Save or Delete may appear to do
-nothing, or follow a false cancellation path.
+On macOS, WKWebView shows JavaScript dialogs only when its host implements them.
+The earlier Tauri shell (wry) did not: `window.confirm`, `window.alert`, and
+`window.prompt` were silent no-ops and **`confirm()` always returned `false`**,
+so Save or Delete could appear to do nothing, or follow a false cancellation
+path. MyGo shows native panels for them; do not depend on that.
 
 - Use the shared `ConfirmDialog` for confirmations. Existing in-app patterns
   include `token-dialog` / `token-dialog-backdrop` in request records, access
   tokens, and safety policy.
-- Do not add `@tauri-apps/plugin-dialog` unless the project explicitly adopts
-  that dependency.
+- Do not route confirmations through native message boxes (MyGo's or a plugin's)
+  unless the project explicitly adopts them.
 - Browser and unit tests may mock `window.confirm`; production desktop UI must
   not rely on it for real user confirmation.
 
@@ -223,6 +224,7 @@ Do not put a `/__astrlink_build` poller, `location.reload()` loop, or Cmd+R
 handler inside the frontend bundle. A top-level module error kills that script
 and hot-reload goes silent until `make dev` is restarted.
 
-The debug Rust host in `apps/desktop/src-tauri/src/dev_reload.rs` polls the
-generation endpoint and calls `webview.reload()`. Failures must log to stderr.
-The Rsbuild plugin only publishes the generation; it must not drive the reload.
+In development builds the Go host's `apps/desktop/internal/devreload`, started
+from `internal/ui/app.go`, polls the generation endpoint and reloads every page.
+Failures must log to stderr. The Rsbuild plugin only publishes the generation;
+it must not drive the reload.

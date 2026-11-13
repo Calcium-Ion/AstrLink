@@ -10,7 +10,7 @@ const tauri = vi.hoisted(() => ({
   unlisten: vi.fn(),
 }));
 vi.mock("./native-host/core", () => ({
-  isTauri: () => true,
+  isDesktopHost: () => true,
   invoke: tauri.invoke,
 }));
 vi.mock("./native-host/event", () => ({ listen: tauri.listen }));

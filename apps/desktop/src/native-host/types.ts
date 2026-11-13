@@ -1,4 +1,4 @@
-// A command the frontend invokes by its Tauri name, with the camelCase
+// A command the frontend invokes by its snake_case name, with the camelCase
 // argument object it always passed. Each entry calls the generated client
 // (../mygo.ts), so tsc checks the arguments against the Go method.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

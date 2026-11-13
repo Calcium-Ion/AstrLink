@@ -1,4 +1,4 @@
-import { invoke, isTauri } from "./native-host/core";
+import { invoke, isDesktopHost } from "./native-host/core";
 import { listen } from "./native-host/event";
 import {
   emptyLocalClients,
@@ -15,7 +15,7 @@ async function call(command: string, args?: Record<string, unknown>) {
   }
 }
 export const getLocalClients = () =>
-  isTauri()
+  isDesktopHost()
     ? call("local_client_status")
     : Promise.resolve(emptyLocalClients());
 export const refreshLocalClients = () => call("refresh_local_clients");
@@ -26,7 +26,7 @@ export const updateLocalClients = (targets: LocalClientTarget[]) =>
 export const listenLocalClients = (
   listener: (snapshot: LocalClientSnapshot) => void,
 ) =>
-  isTauri()
+  isDesktopHost()
     ? listen<unknown>("local-client-status", ({ payload }) => {
         try {
           listener(parseLocalClients(payload));

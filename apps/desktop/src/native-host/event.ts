@@ -1,6 +1,5 @@
-// Host events in the shape the frontend used under Tauri: listen(name,
-// handler) resolves to the function that unsubscribes, and the handler
-// gets `{ payload }`.
+// Host events: listen(name, handler) resolves to the function that
+// unsubscribes, and the handler gets `{ payload }`.
 import { eventTable } from "./events";
 
 export type UnlistenFn = () => void;
