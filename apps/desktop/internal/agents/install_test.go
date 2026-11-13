@@ -160,32 +160,35 @@ func TestBundlesMatchTheRepository(t *testing.T) {
 }
 
 func TestBundlesMatchTheirManifestsAndThePlaceholderSkillStaysNeutral(t *testing.T) {
-	for _, bundle := range []*skillBundle{debugBundle, placeholderBundle} {
+	for _, skill := range allSkills {
+		bundle := skill.bundle()
 		var manifest struct {
-			Name    string `json:"name"`
-			Version string `json:"version"`
+			Name     string        `json:"name"`
+			Version  string        `json:"version"`
+			Adapters []AgentToolID `json:"adapters"`
 		}
 		if err := json.Unmarshal([]byte(bundleFile(bundle, "manifest.json")), &manifest); err != nil {
 			t.Fatal(err)
 		}
-		if manifest.Name != bundle.name || manifest.Version != bundle.version {
+		if manifest.Name != bundle.name || manifest.Version != bundle.version || string(skill) != bundle.name {
 			t.Errorf("%s manifest says %s %s, the bundle %s", bundle.name, manifest.Name, manifest.Version, bundle.version)
 		}
-		if !strings.Contains(bundleFile(bundle, "SKILL.md"), "name: "+bundle.name) {
-			t.Errorf("%s SKILL.md does not name the bundle", bundle.name)
+		if !slices.Equal(manifest.Adapters, allTools) {
+			t.Errorf("%s adapters = %v", bundle.name, manifest.Adapters)
+		}
+		if !strings.HasPrefix(bundleFile(bundle, "SKILL.md"), "---\nname: "+bundle.name+"\n") {
+			t.Errorf("%s SKILL.md does not start with its name", bundle.name)
+		}
+		drives := slices.ContainsFunc(bundle.files, func(f skillFile) bool { return strings.Contains(f.contents, cliPlaceholder) })
+		if bundle.needsCLI != drives {
+			t.Errorf("%s needsCLI = %v", bundle.name, bundle.needsCLI)
 		}
 	}
+	// Hosts may send the skill upstream, so it must not name the gateway.
 	for _, file := range placeholderBundle.files {
-		if file.relative == "manifest.json" {
-			continue
+		if strings.Contains(strings.ToLower(file.contents), "astrlink") {
+			t.Errorf("%s names the gateway", file.relative)
 		}
-		lower := strings.ToLower(file.contents)
-		if strings.Contains(lower, "astrlink") || strings.Contains(file.contents, cliPlaceholder) {
-			t.Errorf("%s brands or drives the CLI", file.relative)
-		}
-	}
-	if placeholderBundle.needsCLI || !debugBundle.needsCLI {
-		t.Fatal("only the debugging skill drives the CLI")
 	}
 }
 
@@ -566,3 +569,5 @@ func TestInstallAndUninstallDetectedTools(t *testing.T) {
 		t.Fatal("the Cursor MCP config changed")
 	}
 }
+
+func jsonUnmarshal(text string, v any) error { return json.Unmarshal([]byte(text), v) }
