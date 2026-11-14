@@ -314,51 +314,6 @@ fn sidecar_args(
     Ok(arguments)
 }
 
-/// How much of Core's last stderr line an exit message keeps.
-const MAX_EXIT_REASON_CHARS: usize = 300;
-
-/// The message for a Core that exited on its own, with the reason it gave
-/// last when there is one.
-fn termination_message(code: Option<i32>, signal: Option<i32>, reason: Option<&str>) -> String {
-    let termination = match (code, signal) {
-        (Some(code), _) => format!("astrlink-core exited with code {code}"),
-        (_, Some(signal)) => format!("astrlink-core exited after signal {signal}"),
-        _ => "astrlink-core exited unexpectedly".to_string(),
-    };
-    match reason {
-        Some(reason) => format!("{termination}: {reason}"),
-        None => termination,
-    }
-}
-
-/// A Core log line without its program name and timestamp.
-fn core_log_message(line: &str) -> &str {
-    let line = line.trim();
-    let line = line.strip_prefix("astrlink-core: ").unwrap_or(line);
-    // Go's log prefix: "2006/01/02 15:04:05 ".
-    let bytes = line.as_bytes();
-    let stamped = bytes.len() > 20
-        && bytes[..19]
-            .iter()
-            .enumerate()
-            .all(|(index, byte)| match index {
-                4 | 7 => *byte == b'/',
-                10 => *byte == b' ',
-                13 | 16 => *byte == b':',
-                _ => byte.is_ascii_digit(),
-            })
-        && bytes[19] == b' ';
-    if stamped {
-        line.get(20..).unwrap_or(line)
-    } else {
-        line
-    }
-}
-
-fn clip_chars(text: &str, max: usize) -> String {
-    text.chars().take(max).collect()
-}
-
 fn recovery_delay(attempt: u8) -> Duration {
     Duration::from_secs(1_u64 << attempt.saturating_sub(1).min(4))
 }
@@ -603,10 +558,6 @@ struct CoreInner {
     data_directory: Option<PathBuf>,
     /// Where the running Core's local key lives, for the Settings status line.
     local_key_storage: Option<LocalKeyStorage>,
-    /// What this run of Core last wrote to stderr, and its panic line if it
-    /// panicked: why it stopped, when it exits on its own.
-    stderr_last: Option<String>,
-    stderr_panic: Option<String>,
     #[cfg(windows)]
     job: Option<windows_job::JobObject>,
 }
@@ -648,8 +599,6 @@ impl Default for CoreInner {
             raw_key_replaced: false,
             data_directory: None,
             local_key_storage: None,
-            stderr_last: None,
-            stderr_panic: None,
             #[cfg(windows)]
             job: None,
         }
@@ -1142,8 +1091,6 @@ impl CoreManager {
             inner.generation = inner.generation.wrapping_add(1);
             inner.app_handle = Some(app.clone());
             inner.recovery_scheduled_at = None;
-            inner.stderr_last = None;
-            inner.stderr_panic = None;
             inner.phase = CorePhase::Spawning;
             inner.pid = None;
             inner.clear_handshake();
@@ -1658,9 +1605,7 @@ impl CoreManager {
                 }
                 CommandEvent::Stderr(bytes) => {
                     let line = String::from_utf8_lossy(&bytes);
-                    let line = line.trim();
-                    eprintln!("{line}");
-                    self.note_stderr(generation, line);
+                    eprintln!("{}", line.trim());
                 }
                 CommandEvent::Error(error) => {
                     self.handle_process_error(generation, format!("sidecar event error: {error}"));
@@ -3531,36 +3476,17 @@ impl CoreManager {
         Ok((status, etag, body.to_vec()))
     }
 
-    /// Keeps what a run of Core last wrote to stderr, and the line its panic
-    /// began with, for the message shown when it exits on its own.
-    fn note_stderr(&self, generation: u64, line: &str) {
-        let message = core_log_message(line);
-        if message.is_empty() {
-            return;
-        }
-        let mut inner = self.lock_inner();
-        if inner.generation != generation {
-            return;
-        }
-        if inner.stderr_panic.is_none()
-            && (message.starts_with("panic: ") || message.starts_with("fatal error: "))
-        {
-            inner.stderr_panic = Some(clip_chars(message, MAX_EXIT_REASON_CHARS));
-        }
-        inner.stderr_last = Some(clip_chars(message, MAX_EXIT_REASON_CHARS));
-    }
-
     fn handle_terminated(self: &Arc<Self>, generation: u64, payload: TerminatedPayload) {
         let mut inner = self.lock_inner();
         if inner.generation != generation {
             return;
         }
 
-        let reason = inner
-            .stderr_panic
-            .as_deref()
-            .or(inner.stderr_last.as_deref());
-        let termination = termination_message(payload.code, payload.signal, reason);
+        let termination = match (payload.code, payload.signal) {
+            (Some(code), _) => format!("astrlink-core exited with code {code}"),
+            (_, Some(signal)) => format!("astrlink-core exited after signal {signal}"),
+            _ => "astrlink-core exited unexpectedly".to_string(),
+        };
         let next = transition_lifecycle(
             &inner.lifecycle(),
             generation,
@@ -7930,25 +7856,6 @@ mod tests {
                 "{action} {key:?}"
             );
         }
-    }
-
-    #[test]
-    fn an_exit_message_says_why_core_stopped() {
-        assert_eq!(
-            core_log_message("astrlink-core: 2026/10/19 03:21:28 open persistent store: locked"),
-            "open persistent store: locked"
-        );
-        assert_eq!(core_log_message("panic: boom"), "panic: boom");
-        assert_eq!(core_log_message("  "), "");
-        assert_eq!(
-            termination_message(Some(1), None, Some("open persistent store: locked")),
-            "astrlink-core exited with code 1: open persistent store: locked"
-        );
-        assert_eq!(
-            termination_message(None, Some(9), None),
-            "astrlink-core exited after signal 9"
-        );
-        assert_eq!(clip_chars("字字字", 2), "字字");
     }
 
     #[test]
