@@ -247,7 +247,16 @@ func canonicalURI(parsed *url.URL) string {
 		}
 		segments[index] = strings.ReplaceAll(url.PathEscape(decoded), "+", "%20")
 	}
-	return path.Join(segments...)
+	joined := path.Join(segments...)
+	if joined == "" {
+		return "/"
+	}
+	// The path the server signs starts with a slash, so the canonical URI has
+	// to carry it as well: joining the segments drops the empty first one.
+	if !strings.HasPrefix(joined, "/") {
+		joined = "/" + joined
+	}
+	return joined
 }
 
 // headerName restores the conventional casing of a lowercased header.
