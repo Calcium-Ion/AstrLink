@@ -17,6 +17,7 @@ import (
 	"github.com/QuantumNous/astrlink/desktop/internal/control"
 	"github.com/QuantumNous/astrlink/desktop/internal/core"
 	"github.com/QuantumNous/astrlink/desktop/internal/host"
+	"github.com/QuantumNous/astrlink/desktop/internal/instance"
 	"github.com/QuantumNous/astrlink/desktop/internal/prefs"
 	"github.com/QuantumNous/astrlink/desktop/internal/proxycheck"
 	"github.com/QuantumNous/astrlink/desktop/internal/wsl"
@@ -29,8 +30,20 @@ func registerClientCommands(h *host.Host) {
 	api := &control.API{Caller: h}
 	gateway := clientGateway{host: h, tokens: control.Tokens{API: api}, pricing: control.Pricing{API: api}}
 	mygo.Bind(Clients{host: h, gateway: gateway, writeClipboard: h.WriteClipboard})
-	h.OnStarted(func() { go syncClientConfigs(h, gateway) })
+	h.OnStarted(func() {
+		if syncsClientConfigsAtStartup(h.Instance()) {
+			go syncClientConfigs(h, gateway)
+		}
+	})
 }
+
+// syncsClientConfigsAtStartup says whether the instance keeps its client
+// configs on its current address on its own. The development instance
+// shares the user's client configs with the other AstrLink but never
+// repoints them: any rebuild restarts it, and the token check alone has let
+// it take the other AstrLink's config. It changes a client only when one is
+// set up from its own window.
+func syncsClientConfigsAtStartup(i instance.Instance) bool { return !i.Isolated }
 
 // clientGateway is the running gateway client configs are written for:
 // Core's session and its control API.

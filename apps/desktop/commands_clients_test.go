@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	cc "github.com/QuantumNous/astrlink/desktop/internal/clientconfig"
+	"github.com/QuantumNous/astrlink/desktop/internal/instance"
 )
 
 // snippetGateway is a ready gateway with one access token.
@@ -55,5 +56,17 @@ func TestCopyClientConfigSnippetIsFalseWhenTheClipboardRefuses(t *testing.T) {
 	copied, err = clients.CopyClientConfigSnippet(t.Context(), "tok_a", client, cc.Models{}, inferenceURL, 0)
 	if err != nil || !copied {
 		t.Fatalf("accepted clipboard = %v, %v; want true, nil", copied, err)
+	}
+}
+
+// Only the installed instance repoints client configs at startup; the
+// development instance shares them and changes one only when it is set up
+// from its window.
+func TestOnlyTheInstalledInstanceSyncsClientConfigsAtStartup(t *testing.T) {
+	if !syncsClientConfigsAtStartup(instance.Current(false)) {
+		t.Fatal("the installed instance must keep its client configs on its address")
+	}
+	if syncsClientConfigsAtStartup(instance.Current(true)) {
+		t.Fatal("the development instance must not repoint client configs at startup")
 	}
 }
