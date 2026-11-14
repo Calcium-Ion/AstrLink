@@ -79,7 +79,13 @@ func ClaudeMetadataUserIDRecognized(body []byte) bool {
 	if json.Unmarshal(body, &payload) != nil {
 		return false
 	}
-	id := strings.TrimSpace(payload.Metadata.UserID)
+	return ClaudeUserIDRecognized(payload.Metadata.UserID)
+}
+
+// ClaudeUserIDRecognized reports whether a metadata.user_id value is a Claude
+// Code identifier, in the JSON or legacy form.
+func ClaudeUserIDRecognized(userID string) bool {
+	id := strings.TrimSpace(userID)
 	if id == "" {
 		return false
 	}

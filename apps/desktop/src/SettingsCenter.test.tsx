@@ -32,7 +32,10 @@ vi.mock("./notify", () => ({ notify: notifyMocks }));
 import { applyLocale } from "./i18n";
 import type { AppSnapshot } from "./core-model";
 import { settleClosedLayer } from "./lib/test-layer-settle";
-import { defaultTrayPreferences } from "./preferences-model";
+import {
+  defaultDesktopToys,
+  defaultTrayPreferences,
+} from "./preferences-model";
 import { SettingsCenter } from "./SettingsCenter";
 import { applyQuotaDisplayMode } from "./quota-display";
 import { applyDisplayCurrency, USD_DISPLAY } from "./currency-display";
@@ -72,6 +75,7 @@ const settings = {
     locale: "zh-CN" as const,
     tray: defaultTrayPreferences(),
     updates: defaultUpdatePreferences(),
+    desktop_toys: defaultDesktopToys(),
   },
   load_warning: null,
   autostart_actual: false,

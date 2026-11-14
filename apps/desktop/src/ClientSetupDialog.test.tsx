@@ -42,6 +42,7 @@ import {
 import { ClientSetupDialog } from "./ClientSetupDialog";
 import type { ConversionEngineCapability } from "./core-model";
 import { settleClosedLayer } from "./lib/test-layer-settle";
+import { onClientConfigsChanged } from "./use-client-configs";
 import type { Service } from "./service-model";
 
 const token: AccessTokenSummary = {
@@ -258,6 +259,25 @@ function dialog(): HTMLElement {
   return match;
 }
 
+/**
+ * A confirmed place's settings, one [name, now, after the write] row each;
+ * a file heading shows as [file].
+ */
+function keyRows(place: Element): string[][] {
+  const files = place.querySelectorAll(
+    '[data-slot="client-confirmation-file"]',
+  );
+  return [...files].flatMap((group) =>
+    [...group.children].flatMap((child) =>
+      child.tagName === "DL"
+        ? [...child.children].map((row) =>
+            [...row.children].map((cell) => cell.textContent ?? ""),
+          )
+        : [[child.textContent ?? ""]],
+    ),
+  );
+}
+
 function confirmation(): HTMLElement | null {
   return document.querySelector<HTMLElement>('[role="alertdialog"]');
 }
@@ -379,7 +399,9 @@ describe("ClientSetupDialog", () => {
   let container: HTMLDivElement;
   let reactRoot: Root;
   const onClose = vi.fn();
+  // Every list of configured clients reads again on this signal.
   const onChanged = vi.fn();
+  let stopListening = () => {};
 
   beforeEach(() => {
     (
@@ -411,6 +433,7 @@ describe("ClientSetupDialog", () => {
       numeric: null,
     });
     pricingMocks.getOfficialModelLimits.mockResolvedValue(null);
+    stopListening = onClientConfigsChanged(onChanged);
     container = document.createElement("div");
     document.body.append(container);
     reactRoot = createRoot(container);
@@ -418,6 +441,7 @@ describe("ClientSetupDialog", () => {
 
   afterEach(async () => {
     await act(async () => reactRoot.unmount());
+    stopListening();
     vi.restoreAllMocks();
     container.remove();
   });
@@ -437,7 +461,6 @@ describe("ClientSetupDialog", () => {
           attentionFirst={attentionFirst}
           conversionEngine={conversionEngine}
           inferenceURL={inferenceURL}
-          onChanged={onChanged}
           onClose={onClose}
           token={token}
           tokens={[token, otherToken]}
@@ -448,7 +471,7 @@ describe("ClientSetupDialog", () => {
     await settle();
   };
 
-  it("lists every client and checks what this token configures or nobody set up", async () => {
+  it("lists every client and checks only what this token configures", async () => {
     bridgeMocks.getClientConfigStatus.mockResolvedValue(
       overview({
         claude: ours("configured", { model: "claude-sonnet-5" }),
@@ -475,14 +498,17 @@ describe("ClientSetupDialog", () => {
     ).toEqual(["claude", "codex", "gemini", "opencode", "pi"]);
     expect(checked("Claude Code")).toBe("true");
     expect(checked("Codex")).toBe("true");
-    expect(checked("Gemini CLI")).toBe("true");
-    // An edited config and another token keep what they have until the user
-    // checks.
+    // A client nobody set up, an edited config and another token keep what
+    // they have until the user checks.
+    expect(checked("Gemini CLI")).toBe("false");
     expect(checked("OpenCode")).toBe("false");
     expect(checked("Pi")).toBe("false");
     expect(row("pi").textContent).toContain("正在使用「家里」");
     expect(row("pi").textContent).toContain("其他令牌");
     expect(row("codex").textContent).toContain("端口待更新");
+    expect(row("gemini").textContent).toContain("未配置");
+    expect(row("gemini").textContent).not.toContain("将写入");
+    await click(box("Gemini CLI"));
     expect(row("gemini").textContent).toContain(
       "未配置 · 将写入 claude-sonnet-5",
     );
@@ -514,6 +540,7 @@ describe("ClientSetupDialog", () => {
     );
     await renderDialog();
 
+    await click(button("全选"));
     await click(button("写入 4 个客户端"));
     expect(bridgeMocks.applyClientConfigs).toHaveBeenCalledOnce();
     const call = bridgeMocks.applyClientConfigs.mock.calls[0][0];
@@ -610,12 +637,16 @@ describe("ClientSetupDialog", () => {
             {
               path: "/Users/me/.gemini/.env",
               key: "GEMINI_API_KEY",
-              current: null,
+              current: "…12",
+              next: null,
+              removed: true,
             },
             {
               path: "/Users/me/.gemini/settings.json",
               key: "security.auth.selectedType",
               current: "oauth-personal",
+              next: "gemini-api-key",
+              removed: false,
             },
           ],
           gateway: null,
@@ -633,23 +664,33 @@ describe("ClientSetupDialog", () => {
       ],
     });
     await renderDialog();
-    await click(box("Pi"));
+    await click(button("全选"));
     await click(button("写入 3 个客户端"));
 
+    // Gemini's keys are someone else's; Pi only moves from another token
+    // and gateway, which AstrLink wrote.
     const prompt = confirmation();
-    expect(prompt?.textContent).toContain("替换现有设置？");
+    expect(prompt?.textContent).toContain("改用「工作机」并替换现有设置？");
     expect(prompt?.textContent).toContain(
-      "以下设置不是 AstrLink 写入的。继续会替换它们；移除 AstrLink 的配置时，会恢复成现在的值。",
+      "表中的设置不是 AstrLink 写入的。继续会替换它们；移除 AstrLink 的配置时，会恢复成现在的值。",
     );
+    expect(prompt?.textContent).not.toContain("以下设置不是 AstrLink 写入的");
     const groups = prompt?.querySelectorAll(
       '[data-slot="client-confirmation"]',
     );
     expect(groups).toHaveLength(2);
-    expect(groups?.[0].textContent).toContain("~/.gemini");
-    expect(groups?.[0].textContent).toContain(".env 里的 GEMINI_API_KEY");
-    expect(groups?.[0].textContent).toContain(
-      "settings.json 里的 security.auth.selectedType（现在是 oauth-personal）",
+    // Gemini's settings sit in two files: each file heads its own rows.
+    const gemini = keyRows(groups![0]);
+    expect(groups?.[0].querySelector("header")?.textContent).toContain(
+      "~/.gemini",
     );
+    // What the write sets comes first, then what it takes out.
+    expect(gemini).toEqual([
+      ["settings.json"],
+      ["security.auth.selectedType", "oauth-personal", "gemini-api-key"],
+      [".env"],
+      ["GEMINI_API_KEY", "…12", "删除"],
+    ]);
     expect(groups?.[1].textContent).toContain(
       "改用「工作机」，「家里」不再用于 Pi",
     );
@@ -668,6 +709,154 @@ describe("ClientSetupDialog", () => {
     expect(dialog().textContent).toContain("已写入 3 个客户端");
   });
 
+  it("lists many replaced settings one per line under the file, folding the rest", async () => {
+    const models = [
+      "FABLE_MODEL",
+      "FABLE_MODEL_NAME",
+      "HAIKU_MODEL",
+      "HAIKU_MODEL_NAME",
+      "OPUS_MODEL",
+      "OPUS_MODEL_NAME",
+      "SONNET_MODEL_NAME",
+    ].map((name) => ({
+      path: "/Users/me/.claude/settings.json",
+      key: `env.ANTHROPIC_DEFAULT_${name}`,
+      current: "claude-opus-5-5",
+      // Tiers left empty in the dialog go; the rest take the new model.
+      next: name.endsWith("_NAME") ? null : "claude-sonnet-4-5",
+      removed: name.endsWith("_NAME"),
+    }));
+    bridgeMocks.applyClientConfigs.mockResolvedValueOnce({
+      status: "needs_confirmation",
+      items: [
+        {
+          client: "claude",
+          wsl: null,
+          dir: "/Users/me/.claude",
+          remove: false,
+          keys: [
+            {
+              path: "/Users/me/.claude/settings.json",
+              key: "env.ANTHROPIC_AUTH_TOKEN",
+              current: "sk-o…789",
+              next: "astr…AA0",
+              removed: false,
+            },
+            {
+              path: "/Users/me/.claude/settings.json",
+              key: "env.ANTHROPIC_BASE_URL",
+              current: "https://relay.example/v1",
+              next: "http://localhost:18317",
+              removed: false,
+            },
+            ...models,
+          ],
+          gateway: null,
+          token_id: null,
+        },
+      ],
+    });
+    bridgeMocks.getClientConfigStatus.mockResolvedValue(
+      overview({
+        codex: { detected: false },
+        gemini: { detected: false },
+        opencode: { detected: false },
+        openclaw: { detected: false },
+        pi: { detected: false },
+      }),
+    );
+    await renderDialog();
+    await click(box("Claude Code"));
+    await click(button("写入 1 个客户端"));
+
+    const prompt = confirmation()!;
+    expect(prompt.textContent).toContain("替换现有设置？");
+    const [place] = prompt.querySelectorAll(
+      '[data-slot="client-confirmation"]',
+    );
+    // The file is named once, in the place's heading, not on every line.
+    expect(place.querySelector("header")?.textContent).toContain(
+      "~/.claude/settings.json",
+    );
+    expect(prompt.textContent).not.toContain("里的");
+    // Every row says what the setting holds now and after the write.
+    const columns = place.querySelector(
+      '[data-slot="client-confirmation-keys"]',
+    )?.firstElementChild;
+    expect(
+      [...(columns?.children ?? [])].map((cell) => cell.textContent),
+    ).toEqual(["设置", "现在", "写入后"]);
+    expect(keyRows(place)).toEqual([
+      ["env.ANTHROPIC_AUTH_TOKEN", "sk-o…789", "astr…AA0"],
+      [
+        "env.ANTHROPIC_BASE_URL",
+        "https://relay.example/v1",
+        "http://localhost:18317",
+      ],
+      [
+        "env.ANTHROPIC_DEFAULT_FABLE_MODEL",
+        "claude-opus-5-5",
+        "claude-sonnet-4-5",
+      ],
+      [
+        "env.ANTHROPIC_DEFAULT_HAIKU_MODEL",
+        "claude-opus-5-5",
+        "claude-sonnet-4-5",
+      ],
+    ]);
+    await click(button("再显示 5 项", prompt));
+    expect(keyRows(place)).toHaveLength(9);
+    expect(keyRows(place)[8]).toEqual([
+      "env.ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",
+      "claude-opus-5-5",
+      "删除",
+    ]);
+    expect(() => button("再显示 5 项", prompt)).toThrow("Missing button");
+  });
+
+  it("names a move to this token without calling AstrLink's settings someone else's", async () => {
+    bridgeMocks.getClientConfigStatus.mockResolvedValue(
+      overview({
+        codex: { detected: false },
+        gemini: { detected: false },
+        opencode: { detected: false },
+        openclaw: { detected: false },
+        pi: { detected: false },
+        claude: { state: "configured", token_id: otherToken.id },
+      }),
+    );
+    bridgeMocks.applyClientConfigs.mockResolvedValueOnce({
+      status: "needs_confirmation",
+      items: [
+        {
+          client: "claude",
+          wsl: null,
+          dir: "/Users/me/.claude",
+          remove: false,
+          keys: [],
+          gateway: null,
+          token_id: otherToken.id,
+        },
+      ],
+    });
+    await renderDialog();
+    await click(box("Claude Code"));
+    await click(button("写入 1 个客户端"));
+
+    const prompt = confirmation();
+    expect(prompt?.textContent).toContain("改用「工作机」？");
+    expect(prompt?.textContent).toContain(
+      "改用「工作机」，「家里」不再用于 Claude Code",
+    );
+    expect(prompt?.textContent).not.toContain("不是 AstrLink 写入的");
+    expect(prompt?.textContent).not.toContain("替换现有设置");
+    await click(button("改用并写入", prompt!));
+    await settleClosedLayer();
+    expect(bridgeMocks.applyClientConfigs.mock.lastCall?.[0]).toMatchObject({
+      confirmed: true,
+    });
+  });
+
   it("writes nothing when the confirmation is cancelled", async () => {
     bridgeMocks.applyClientConfigs.mockResolvedValue({
       status: "needs_confirmation",
@@ -681,7 +870,9 @@ describe("ClientSetupDialog", () => {
             {
               path: "/Users/me/.claude/settings.json",
               key: "env.ANTHROPIC_API_KEY",
-              current: null,
+              current: "…12",
+              next: null,
+              removed: true,
             },
           ],
           gateway: null,
@@ -690,6 +881,7 @@ describe("ClientSetupDialog", () => {
       ],
     });
     await renderDialog();
+    await click(button("全选"));
     await click(button("写入 6 个客户端"));
     await click(button("取消", confirmation()!));
     await settleClosedLayer();
@@ -767,7 +959,7 @@ describe("ClientSetupDialog", () => {
     // Pi already uses the picked token, so it is checked and kept.
     expect(checked("Pi")).toBe("true");
     expect(row("pi").textContent).toContain("已配置");
-    await click(button("写入 6 个客户端"));
+    await click(button("写入 1 个客户端"));
     expect(bridgeMocks.applyClientConfigs.mock.lastCall?.[0].tokenId).toBe(
       otherToken.id,
     );
@@ -830,6 +1022,7 @@ describe("ClientSetupDialog", () => {
     );
     expect(bridgeMocks.updateService).not.toHaveBeenCalled();
 
+    await click(button("全选"));
     await click(button("写入 2 个客户端"));
     // One patch adds both clients' entries and keeps the concurrent edit.
     expect(bridgeMocks.updateService).toHaveBeenCalledOnce();
@@ -867,6 +1060,7 @@ describe("ClientSetupDialog", () => {
     });
     bridgeMocks.updateService.mockRejectedValue(new Error("ETag conflict"));
     await renderDialog({ conversionEngine: engine });
+    await click(button("全选"));
     await click(button("写入 6 个客户端"));
     expect(dialog().textContent).toContain("无法为 Chat provider 开启");
     expect(dialog().textContent).toContain("ETag conflict");
@@ -875,6 +1069,7 @@ describe("ClientSetupDialog", () => {
 
   it("writes the models a list client switches between", async () => {
     await renderDialog({ conversionEngine: engine });
+    await click(button("全选"));
     await open("opencode");
     const list = pane().querySelector<HTMLElement>(
       '[data-slot="model-checklist"]',
@@ -931,7 +1126,6 @@ describe("ClientSetupDialog", () => {
       reactRoot.render(
         <ClientSetupDialog
           inferenceURL="http://127.0.0.1:8317"
-          onChanged={onChanged}
           onClose={onClose}
           token={limited}
           tokens={[limited, otherToken]}
@@ -972,6 +1166,7 @@ describe("ClientSetupDialog", () => {
     });
     await renderDialog();
     await open("gemini");
+    await click(box("Gemini CLI"));
     await click(button("改动"));
     expect(bridgeMocks.previewClientConfigChanges).toHaveBeenCalledWith({
       tokenId: token.id,
@@ -1015,7 +1210,7 @@ describe("ClientSetupDialog", () => {
       document.querySelector<HTMLElement>("#client-setup-reasoningEffort")!,
       "high",
     );
-    await click(button("写入 6 个客户端"));
+    await click(button("写入 1 个客户端"));
     expect(lastItems().find((item) => item.client === "codex")?.models).toEqual(
       {
         model: "gpt-5.6",
@@ -1032,6 +1227,7 @@ describe("ClientSetupDialog", () => {
     );
     await renderDialog();
     await open("pi");
+    await click(box("Pi"));
     const field = (key: string) =>
       document.querySelector<HTMLInputElement>(`#client-setup-${key}`)!;
     expect(field("contextWindow").placeholder).toContain("128000");
@@ -1042,7 +1238,7 @@ describe("ClientSetupDialog", () => {
 
     await setInput("#client-setup-contextWindow", "400000");
     await setInput("#client-setup-maxTokens", "");
-    await click(button("写入 6 个客户端"));
+    await click(button("写入 1 个客户端"));
     expect(
       lastItems().find((item) => item.client === "pi")?.models,
     ).toMatchObject({ model: "gpt-5.6", contextWindow: 400000 });
@@ -1053,8 +1249,31 @@ describe("ClientSetupDialog", () => {
     // A number Pi cannot take blocks the write.
     await setInput("#client-setup-maxTokens", "12k");
     expect(pane().textContent).toContain("1 到 100000000");
-    expect(button("写入 6 个客户端").disabled).toBe(true);
+    expect(button("写入 1 个客户端").disabled).toBe(true);
     expect(dialog().textContent).toContain("先填好 Pi 的设置");
+  });
+
+  it("names a config set up by hand without offering to remove it", async () => {
+    bridgeMocks.getClientConfigStatus.mockResolvedValue(
+      overview({
+        claude: { state: "manual", token_id: token.id },
+        pi: { state: "manual", token_id: otherToken.id },
+      }),
+    );
+    await renderDialog();
+    expect(row("claude").textContent).toContain("手动配置");
+    expect(row("pi").textContent).toContain("正在使用「家里」");
+    expect(row("pi").textContent).toContain("其他令牌");
+    // What the user pasted stays theirs until they choose to write it.
+    expect(checked("Claude Code")).toBe("false");
+    await open("claude");
+    expect(pane().textContent).toContain("手动配置");
+    expect(pane().textContent).toContain(
+      "这份配置是手动粘贴的，不是 AstrLink 写入的，所以这里不能移除。",
+    );
+    expect(() => button("移除", pane())).toThrow("Missing button");
+    await open("pi");
+    expect(() => button("移除", pane())).toThrow("Missing button");
   });
 
   it("removes one place's config from the pane after confirmation", async () => {
@@ -1099,6 +1318,9 @@ describe("ClientSetupDialog", () => {
       item.getAttribute("data-place"),
     );
     expect(places).toEqual(["codex:", `codex:${wsl}`]);
+    expect(checked(`Codex（WSL · ${wsl}）`)).toBe("false");
+    expect(checked("Codex")).toBe("false");
+    await click(box(`Codex（WSL · ${wsl}）`));
     expect(checked(`Codex（WSL · ${wsl}）`)).toBe("true");
     expect(checked("Codex")).toBe("true");
     expect(dialog().textContent).toContain("Debian 未运行");
@@ -1139,6 +1361,8 @@ describe("ClientSetupDialog", () => {
               path: "/Users/me/.claude/settings.json",
               key: "env.ANTHROPIC_BASE_URL",
               current: "https://api.example.com",
+              next: "http://localhost:18317",
+              removed: false,
             },
           ],
           gateway: null,
@@ -1149,6 +1373,7 @@ describe("ClientSetupDialog", () => {
     await renderDialog();
     // The client CC Switch wrote reads like any other config.
     expect(pane().textContent).not.toContain("CC Switch");
+    await click(box("Claude Code"));
     await click(button("写入 1 个客户端"));
     expect(confirmation()?.textContent).toContain(
       "在 CC Switch 中切换供应商会覆盖这里写入的配置。",
@@ -1258,8 +1483,8 @@ describe("ClientSetupDialog", () => {
       }
       expect(railRows()).toEqual(["claude", "codex", "gemini"]);
 
-      // 全不选 and 全选 reach only the installed clients.
-      await click(button("全不选"));
+      // Nothing starts checked; 全选 and 全不选 reach only the installed
+      // clients.
       expect(checked("Claude Code")).toBe("false");
       expect(checked("Gemini CLI")).toBe("false");
       expect(dialog().textContent).toContain("勾选要写入的客户端");
@@ -1271,6 +1496,8 @@ describe("ClientSetupDialog", () => {
       expect(box("Pi").disabled).toBe(true);
       // Only clients AstrLink writes count toward the write.
       expect(button("写入 3 个客户端").disabled).toBe(false);
+      await click(button("全不选"));
+      expect(checked("Codex")).toBe("false");
     });
 
     it("searches every group and opens the groups with matches", async () => {
@@ -1296,10 +1523,10 @@ describe("ClientSetupDialog", () => {
 
       // 全选 reaches only the installed clients the search shows.
       await search("codex");
-      await click(button("全不选"));
+      await click(button("全选"));
       await search("");
-      expect(checked("Codex")).toBe("false");
-      expect(checked("Claude Code")).toBe("true");
+      expect(checked("Codex")).toBe("true");
+      expect(checked("Claude Code")).toBe("false");
 
       await search("zzz");
       expect(railRows()).toEqual([]);
@@ -1335,6 +1562,7 @@ describe("ClientSetupDialog", () => {
       await renderDialog();
 
       expect(railRows()).toEqual(["workbuddy"]);
+      await click(box("WorkBuddy"));
       expect(row("workbuddy").textContent).toContain("未配置 · 国内版");
       const text = pane().textContent;
       expect(text).toContain("写入位置");
@@ -1389,6 +1617,7 @@ describe("ClientSetupDialog", () => {
         ],
       });
       await renderDialog();
+      await click(box("WorkBuddy"));
       expect(row("workbuddy").textContent).toContain("未配置 · 国内版、国际版");
 
       await click(button("改动"));
@@ -1418,6 +1647,7 @@ describe("ClientSetupDialog", () => {
         .spyOn(navigator.clipboard, "writeText")
         .mockResolvedValue(undefined);
       await renderDialog();
+      await click(button("全选"));
 
       await click(groupHeader("在客户端里填写"));
       expect(row("trae").querySelector('[role="checkbox"]')).toBeNull();
@@ -1456,6 +1686,84 @@ describe("ClientSetupDialog", () => {
       );
     });
 
+    it("previews and writes both DimAgent editions with selected models", async () => {
+      const targets = [
+        "standard",
+        "rust",
+        "alpha",
+        "global_standard",
+        "global_rust",
+      ];
+      bridgeMocks.getClientCatalog.mockResolvedValue({
+        clients: [
+          ...builtinEntries,
+          {
+            id: "dimagent",
+            name: "DimAgent",
+            kind: "file",
+            targets,
+            protocols: [
+              "openai.chat",
+              "openai.responses",
+              "anthropic.messages",
+              "google.generate_content",
+            ],
+            list: true,
+          },
+        ],
+      });
+      bridgeMocks.getClientConfigStatus.mockResolvedValue({
+        ...overview(missingSix),
+        clients: targets.map((target, index) => ({
+          ...targetPlace(target),
+          client: "dimagent",
+          detected: index < 2,
+          dir: `/Users/me/.dimcode/${target === "standard" ? "v2" : target}`,
+          paths: [
+            `/Users/me/.dimcode/${target === "standard" ? "v2" : target}/dimcode.sqlite`,
+          ],
+          exists: [index < 2],
+          notes: ["restart"],
+        })),
+      });
+      await renderDialog();
+      expect(railRows()).toEqual(["dimagent"]);
+      expect(pane().textContent).toContain("先退出 DimAgent 再写入");
+      await click(box("DimAgent"));
+      const targetsToggle = pane().querySelector<HTMLButtonElement>(
+        '[data-testid="client-setup-targets-toggle"]',
+      )!;
+      expect(targetsToggle.textContent).toContain("常规版、Rust 版");
+      expect(targetsToggle.getAttribute("aria-expanded")).toBe("false");
+      await click(targetsToggle);
+      expect(checked("DimAgent（常规版）")).toBe("true");
+      expect(checked("DimAgent（Rust 版）")).toBe("true");
+      expect(box("DimAgent（Rust Alpha）").disabled).toBe(true);
+      expect(pane().textContent).toContain("dimcode.sqlite");
+      await click(targetsToggle);
+      await click(button("改动"));
+      expect(
+        bridgeMocks.previewClientConfigChanges.mock.calls.map(
+          ([request]) => request.target,
+        ),
+      ).toEqual(["standard", "rust"]);
+      expect(pane().textContent).toContain("DimAgent（常规版）");
+      expect(pane().textContent).toContain("DimAgent（Rust 版）");
+      await click(button("写入 1 个客户端"));
+      expect(
+        lastItems().map((item) => [item.client, item.target, item.action]),
+      ).toEqual([
+        ["dimagent", "standard", "write"],
+        ["dimagent", "rust", "write"],
+      ]);
+      for (const item of lastItems()) {
+        expect(item.models?.model).toBeTruthy();
+        expect(item.models?.models).toHaveLength(4);
+        expect(item.models?.modelProtocols).toBeDefined();
+      }
+      expect(dialog().textContent).toContain("已写入 1 个客户端");
+    });
+
     it("opens an import link through the host with the chosen protocol", async () => {
       bridgeMocks.getClientCatalog.mockResolvedValue({
         clients: [...builtinEntries, ...listedEntries],
@@ -1465,6 +1773,7 @@ describe("ClientSetupDialog", () => {
       );
       bridgeMocks.openClientImportLink.mockResolvedValue(undefined);
       await renderDialog();
+      await click(button("全选"));
 
       expect(
         row("cherry_studio").querySelector('[role="checkbox"]'),

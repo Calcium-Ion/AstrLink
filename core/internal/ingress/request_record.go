@@ -316,6 +316,11 @@ type recordSession struct {
 	// Keep serialized metadata so pointer-backed fields cannot mutate the last
 	// successful snapshot. Unchanged capture/progress callbacks need no write.
 	persistedMetadata []byte
+	// attemptImages is what image compression did to the current attempt.
+	// forwardedImages is the first attempt with inline images an upstream
+	// answered; the totals count it once.
+	attemptImages   imageCompressionResult
+	forwardedImages *imageCompressionResult
 }
 
 func newRecordSession(
@@ -872,6 +877,33 @@ func (session *recordSession) addImageCompressionEvent(result imageCompressionRe
 	})
 }
 
+// ImageCompressionCounter keeps the image compression totals. The request
+// record store implements it; a store without it keeps no totals.
+type ImageCompressionCounter interface {
+	AddImageCompression(context.Context, storage.ImageCompressionCount) error
+}
+
+// countForwardedImages adds the request to the image compression totals once,
+// however many attempts it took. Every attempt compresses the same client
+// images from scratch, so the first one an upstream answered stands for the
+// request. A request that never reached an upstream, rejected before it
+// left or failed to connect, is not counted.
+func (session *recordSession) countForwardedImages(ctx context.Context, store RequestRecordStore, logf func(string, ...any)) {
+	result := session.forwardedImages
+	counter, ok := store.(ImageCompressionCounter)
+	if result == nil || !ok {
+		return
+	}
+	session.forwardedImages = nil
+	count := storage.ImageCompressionCount{
+		Images: result.images, Compressed: result.compressed,
+		OriginalBytes: int64(result.before), SentBytes: int64(result.after),
+	}
+	if err := counter.AddImageCompression(ctx, count); err != nil {
+		logRequestRecordFailure(logf, "image_compression_totals", err)
+	}
+}
+
 // reasoningEffort is the level the record shows: the one the attempt sent.
 func (session *recordSession) reasoningEffort() *string {
 	if session.sentReasoningEffort != nil {
@@ -948,6 +980,7 @@ func (session *recordSession) beginNetworkAttempt(
 	session.upstreamScanner = newUsageScanner(plan.UpstreamProtocol, session.classified.Streaming)
 	session.noteSelected(candidate, plan)
 	session.addImageCompressionEvent(images)
+	session.attemptImages = images
 	serviceName := string(candidate.Service.ID)
 	session.addEvent(contract.RequestEventRouted, contract.RequestStatusSucceeded, string(plan.Type)+" · "+serviceName)
 	session.addEvent(contract.RequestEventUpstream, contract.RequestStatusPending, string(plan.UpstreamProtocol))
@@ -1053,6 +1086,11 @@ func (session *recordSession) wrapUpstreamResponseBody(
 	session.upstreamHTTPStatus = status
 	session.hasUpstreamHTTPStatus = true
 	session.upstreamError = nil
+	// An upstream answered, so the attempt's images reached it.
+	if session.forwardedImages == nil && session.attemptImages.images > 0 {
+		forwarded := session.attemptImages
+		session.forwardedImages = &forwarded
+	}
 	if status >= http.StatusBadRequest {
 		session.upstreamError = newUpstreamErrorCapture(status, headers.Get("Content-Type"), headers.Get("Content-Encoding"))
 	}
@@ -1469,6 +1507,7 @@ func (session *recordSession) finish(
 		return
 	}
 	defer logIngressAccess(logf, session)
+	session.countForwardedImages(ctx, store, logf)
 	if session.status == contract.RequestStatusPending {
 		session.status = contract.RequestStatusFailed
 		session.errorSummary = &contract.ErrorSummary{
@@ -1983,6 +2022,12 @@ func (session *recordSession) resolveSession(ctx context.Context, store RequestR
 	if session.sessionID == "" {
 		session.sessionID = newSessionID()
 		session.noteOpener()
+		// A Paseo agent opens with the create_agent task its creator gave
+		// it, which a response of the creator's conversation recorded. A
+		// later message never moves an existing conversation under a parent.
+		if thread.paseoTask != "" && spawn == "" && thread.parent == "" {
+			spawn = spawnFingerprint(session.linkFingerprinter, thread.paseoTask)
+		}
 	}
 	if session.parentSessionID == nil {
 		session.findParent(lookupCtx, store, logf, thread.parent, spawn)
@@ -2055,7 +2100,8 @@ func (session *recordSession) noteOpener() {
 }
 
 // findParent links a subagent's conversation to the one that started it: by
-// the parent thread the client named, or, for a DeepSeek Harness subagent, by
+// the parent thread the client named, or, for a DeepSeek Harness or Paseo
+// subagent, by
 // the call of the same access token that gave it its prompt shortly before.
 func (session *recordSession) findParent(ctx context.Context, store RequestRecordStore, logf func(string, ...any), parent, spawn string) {
 	if store == nil {

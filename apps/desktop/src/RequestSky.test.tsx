@@ -34,6 +34,7 @@ import type {
   RequestActivityCall,
 } from "./request-record-model";
 import { RequestSky } from "./RequestSky";
+import { WorkspaceSnapshotProvider } from "./workspace-snapshots";
 import type { Service, ServiceKind } from "./service-model";
 import {
   emptyUsageSummary,
@@ -253,6 +254,41 @@ describe("RequestSky", () => {
     expect(discs("request-sky-planet")).toEqual(today.planets);
     expect(container.querySelector("[data-idle]")).toBeNull();
     expect(all("request-sky-flare")).toHaveLength(1);
+  });
+
+  it("keeps the range and the nodes when the overview comes back", async () => {
+    serve([route("codex", "service_1", 2)], [route("cursor", "service_2", 9)]);
+    const services = [service(1), service(2)];
+    const overview = (shown: boolean) => (
+      <WorkspaceSnapshotProvider sessionKey="session">
+        {shown ? (
+          <RequestSky
+            coreSessionKey="session"
+            isReady
+            revision={null}
+            services={services}
+          />
+        ) : null}
+      </WorkspaceSnapshotProvider>
+    );
+    await act(async () => root.render(overview(true)));
+    await act(async () => {});
+    const month = [...container.querySelectorAll("button")].find(
+      (button) => button.textContent === "近 30 天",
+    )!;
+    await act(async () => month.click());
+    const nodes = {
+      clients: discs("request-sky-client"),
+      planets: discs("request-sky-planet"),
+    };
+
+    // Another page replaces the overview, then it comes back.
+    await act(async () => root.render(overview(false)));
+    expect(all("request-sky")).toHaveLength(0);
+    await act(async () => root.render(overview(true)));
+    expect(container.querySelector("h2")?.textContent).toBe("近 30 天的请求");
+    expect(discs("request-sky-client")).toEqual(nodes.clients);
+    expect(discs("request-sky-planet")).toEqual(nodes.planets);
   });
 
   it("shows the overview's 30 days instead of reading them again", async () => {

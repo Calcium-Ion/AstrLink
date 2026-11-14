@@ -112,6 +112,9 @@ func (handler *Handler) serveClaudeLoopback(writer http.ResponseWriter, request 
 	session.persistPending(request.Context(), handler.requestRecords, handler.recordLogger)
 	outWriter := session.wrap(writer)
 	request = request.WithContext(withRecordSession(request.Context(), session))
+	// The serving CLI is the user's own Claude Code; its calls teach the
+	// identity like any other Claude Code request.
+	handler.learnClientIdentities(request.Context(), classified, request.Header, handler.requestRoutingSettings(request.Context()))
 	defer func() {
 		if request.Context().Err() != nil {
 			session.noteCancelled()

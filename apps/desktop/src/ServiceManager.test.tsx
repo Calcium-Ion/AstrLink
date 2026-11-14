@@ -869,6 +869,41 @@ describe("ServiceManager", () => {
     }
   });
 
+  it("opens the provider order guide only once there are two providers", async () => {
+    localStorage.removeItem(SERVICE_ORDER_GUIDE_KEY);
+    const orderGuide = () =>
+      [...document.querySelectorAll('[data-slot="dialog-content"]')].find(
+        (dialog) => dialog.textContent?.includes("拖动卡片调整提供商先后"),
+      );
+    const render = (services: Service[]) =>
+      act(async () =>
+        root.render(
+          <ServiceManager
+            catalogError={null}
+            catalogStatus="ready"
+            isReady
+            services={services}
+            protocols={[]}
+            view={{ kind: "list" }}
+            onDirtyChange={() => {}}
+            onRefresh={() => {}}
+            onServiceRemoved={() => {}}
+            onServiceSaved={() => {}}
+            onViewChange={() => {}}
+          />,
+        ),
+      );
+
+    await render([gatewayService]);
+    await vi.waitFor(() => expect(cardNames()).toEqual([gatewayService.name]));
+    expect(orderGuide()).toBeUndefined();
+    expect(localStorage.getItem(SERVICE_ORDER_GUIDE_KEY)).toBeNull();
+
+    await render([gatewayService, backupGatewayService]);
+    await vi.waitFor(() => expect(orderGuide()).toBeDefined());
+    expect(localStorage.getItem(SERVICE_ORDER_GUIDE_KEY)).toBe("seen");
+  });
+
   it("drags a card from its body and cancels with Escape without saving", async () => {
     bridgeMocks.getServiceOrder.mockResolvedValueOnce({
       service_ids: [gatewayService.id, backupGatewayService.id],

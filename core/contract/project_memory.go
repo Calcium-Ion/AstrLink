@@ -120,37 +120,45 @@ type MemoryRules struct {
 	Captured bool `json:"captured,omitempty"`
 }
 
-// MemoryToolbox is the skills and MCP tools the client's newest main call
-// carried, and those its calls used in the last MemoryToolboxDays days.
+// MemoryToolbox is the skills and MCP tools the client's calls carried or
+// used in the last MemoryToolboxDays days. Every call of those days counts:
+// within the same days the lists only grow and no count drops. A call
+// leaves them when its day does, each midnight of DayStart.
 type MemoryToolbox struct {
-	// Skills lists the skills used, the most used first, then those not
-	// used, in catalog order.
+	// Since is when those days began: MemoryToolboxDays-1 days before
+	// DayStart.
+	Since time.Time `json:"since"`
+	// Skills lists the skills, the most used first, then by name.
 	Skills []ToolboxSkill `json:"skills"`
-	// MCP lists the servers in the order the calls carried them.
+	// MCP lists the servers the calls carried, by name, then those only
+	// used.
 	MCP []ToolboxServer `json:"mcp"`
 	// IdleTokens estimates what the skills and MCP tools not used add to
-	// each call.
+	// each call: each the newest main call still carries adds its share of
+	// what that call's catalog and MCP tools carry.
 	IdleTokens int `json:"idle_tokens"`
 }
 
 // ToolboxSkill is one skill and how many turns used it.
 type ToolboxSkill struct {
 	Name string `json:"name"`
-	// Description is the catalog's, cleaned like an input preview; absent
-	// when no record may show the client's text.
+	// Description is the newest catalog's, cleaned like an input preview;
+	// absent when no record may show the client's text.
 	Description string `json:"description,omitempty"`
 	Uses        int    `json:"uses"`
-	// Carried is set when the newest main call's catalog lists it.
+	// Carried is set when a call of those days listed it.
 	Carried bool `json:"carried"`
 }
 
-// ToolboxServer is one MCP server and its tools.
+// ToolboxServer is one MCP server and its tools, the most used first, then
+// by name.
 type ToolboxServer struct {
 	Server string        `json:"server"`
 	Tools  []ToolboxTool `json:"tools"`
 }
 
-// ToolboxTool is one MCP tool and how many calls made it.
+// ToolboxTool is one MCP tool and how many calls made it. Carried is set
+// when a call of those days carried it.
 type ToolboxTool struct {
 	Name    string `json:"name"`
 	Uses    int    `json:"uses"`

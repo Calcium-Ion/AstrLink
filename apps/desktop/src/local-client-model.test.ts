@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   acceptLocalClients,
   emptyLocalClients,
+  localClientNpmInstall,
   parseLocalClients,
 } from "./local-client-model";
 
@@ -31,6 +32,40 @@ describe("local client IPC", () => {
     const snapshot = withWSL();
     expect(parseLocalClients(snapshot)).toEqual(snapshot);
   });
+  it("accepts damaged clients with their repair and kept versions", () => {
+    const snapshot = emptyLocalClients();
+    Object.assign(snapshot.clients[0], {
+      phase: "damaged",
+      install_method: "npm",
+      repair: "restore",
+      previous_version: "0.40.0",
+    });
+    Object.assign(snapshot.clients[1], {
+      phase: "damaged",
+      repair: "reinstall",
+    });
+    Object.assign(snapshot.clients[2], { phase: "repairing" });
+    Object.assign(snapshot.clients[3], {
+      phase: "error",
+      error_code: "incomplete",
+      current_version: "1.0.0",
+      kept_previous: true,
+    });
+    expect(parseLocalClients(snapshot)).toEqual(snapshot);
+    const repaired = emptyLocalClients();
+    repaired.clients[0].phase = "repaired";
+    expect(parseLocalClients(repaired)).toEqual(repaired);
+  });
+  it("reinstalls npm clients with their published package", () => {
+    expect(localClientNpmInstall("claude")).toBe(
+      "npm install -g @anthropic-ai/claude-code",
+    );
+    expect(localClientNpmInstall("codex")).toBe("npm install -g @openai/codex");
+    expect(localClientNpmInstall("pi")).toBe(
+      "npm install -g @earendil-works/pi-coding-agent",
+    );
+    expect(localClientNpmInstall("cursor")).toBeNull();
+  });
   it("rejects unknown clients, duplicate clients, invalid phases and malformed values", () => {
     for (const field of [
       { id: "other" },
@@ -41,6 +76,15 @@ describe("local client IPC", () => {
       { install_method: "arbitrary" },
       { wsl: "" },
       { wsl: 1 },
+      { repair: "rollback" },
+      { repair: 1 },
+      { repair: undefined },
+      { previous_version: 40 },
+      { previous_version: "1".repeat(8193) },
+      { previous_version: undefined },
+      { kept_previous: "true" },
+      { kept_previous: null },
+      { kept_previous: undefined },
     ]) {
       const snapshot = emptyLocalClients();
       Object.assign(snapshot.clients[0], field);

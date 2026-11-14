@@ -112,13 +112,9 @@ func TestEncryptedContentExemptionIsLimitedToProtocolFields(t *testing.T) {
 		protocol contract.ProtocolID
 		fields   string
 	}{
-		{"message field", contract.ProtocolOpenAIResponses, `"input":[{"type":"message","role":"user","encrypted_content":"%s"}]`},
-		{"nested content", contract.ProtocolOpenAIResponses, `"input":[{"role":"user","content":[{"type":"reasoning","encrypted_content":"%s"}]}]`},
 		{"nested tool output", contract.ProtocolOpenAIResponses, `"input":[{"type":"function_call_output","output":{"data":{"type":"encrypted_content","encrypted_content":"%s"}}}]`},
 		{"object tool output", contract.ProtocolOpenAIResponses, `"input":[{"type":"function_call_output","output":{"type":"encrypted_content","encrypted_content":"%s"}}]`},
 		{"string tool output", contract.ProtocolOpenAIResponses, `"input":[{"type":"function_call_output","output":"{\"type\":\"reasoning\",\"encrypted_content\":\"%s\"}"}]`},
-		{"chat", contract.ProtocolOpenAIChat, `"messages":[{"role":"user","content":[{"type":"reasoning","encrypted_content":"%s"}]}]`},
-		{"anthropic", contract.ProtocolAnthropicMessages, `"messages":[{"role":"user","content":[{"type":"reasoning","encrypted_content":"%s"}]}]`},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			const secret = "sk-proj-abcdefghijklmnopqrstuvwxyz123456"

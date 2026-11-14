@@ -1104,6 +1104,7 @@ describe("client attribution", () => {
     "deepseek_harness",
     "codewhale",
     "reasonix",
+    "dimagent",
     "qwen_code",
     "kimi_code",
     "codebuddy",
@@ -1433,6 +1434,7 @@ describe("project memory", () => {
       },
     ],
     toolbox: {
+      since: "2026-10-02T16:00:00Z",
       skills: [
         {
           name: "humanizer",
@@ -1471,7 +1473,12 @@ describe("project memory", () => {
       entries: [],
       stories: [],
       rules: [],
-      toolbox: { skills: [], mcp: [], idle_tokens: 0 },
+      toolbox: {
+        since: "2026-10-02T16:00:00Z",
+        skills: [],
+        mcp: [],
+        idle_tokens: 0,
+      },
       has_memory: false,
       has_rules: false,
     };
@@ -1499,6 +1506,10 @@ describe("project memory", () => {
         toolbox: { ...memory.toolbox, idle_tokens: "many" },
       }),
     ).toThrow(/toolbox\.idle_tokens/);
+    const { since: _since, ...withoutSince } = memory.toolbox;
+    expect(() =>
+      parseProjectMemory({ ...memory, toolbox: withoutSince }),
+    ).toThrow(/toolbox\.since/);
     expect(() =>
       parseProjectMemory({
         ...memory,

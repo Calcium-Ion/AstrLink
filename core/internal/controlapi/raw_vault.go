@@ -60,7 +60,12 @@ const (
 type RawPasswordOutcome struct {
 	Status RawVaultStatus
 	Reset  *storage.RawResetResult
+	// Committed stays true if the password was stored but a later cleanup or
+	// reload failed. Callers must still revoke old sessions and grants.
+	Committed bool
 }
+
+const rawPasswordFinalizeTimeout = 5 * time.Second
 
 // RawVaultController is the operator side of the vault. A RawVault that does
 // not implement it cannot be unlocked or given a password.
@@ -786,10 +791,6 @@ func (vault *Vault) ChangePassword(
 			return RawPasswordOutcome{}, ErrRawProofRequired
 		}
 		err = vault.rewrap(ctx, state, password, proof)
-		if err == nil && state.Biometric != nil {
-			// A Touch ID set up beside the old password goes with it.
-			err = vault.store.DeleteRawKeyEnvelope(ctx, state.KeyID, rawseal.KindBiometric)
-		}
 	case RawPasswordReset:
 		if !configured {
 			return RawPasswordOutcome{}, ErrRawNotConfigured
@@ -805,10 +806,25 @@ func (vault *Vault) ChangePassword(
 	if err != nil {
 		return RawPasswordOutcome{}, err
 	}
-	if err := vault.reload(ctx); err != nil {
-		return RawPasswordOutcome{}, err
+	outcome.Committed = true
+	// The write is durable. A disconnected caller must not leave the old
+	// password cached or prevent cleanup of its biometric envelope. Bound the
+	// remaining work independently of the request's cancellation/deadline.
+	finishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), rawPasswordFinalizeTimeout)
+	defer cancel()
+	if action == RawPasswordChange && state.Biometric != nil {
+		err = vault.store.DeleteRawKeyEnvelope(finishCtx, state.KeyID, rawseal.KindBiometric)
 	}
-	outcome.Status, err = vault.Status(ctx)
+	vault.mu.Lock()
+	// A failed reload must make the next proof read storage again, never use
+	// the pre-commit password envelope. The proof slot is still held here.
+	vault.stateLoaded = false
+	loadErr := vault.reloadLocked(finishCtx)
+	vault.mu.Unlock()
+	if err = errors.Join(err, loadErr); err != nil {
+		return outcome, err
+	}
+	outcome.Status, err = vault.Status(finishCtx)
 	return outcome, err
 }
 

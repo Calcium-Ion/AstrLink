@@ -139,6 +139,7 @@ type RequestRecordStore interface {
 	ListAccessTokenUsage(context.Context, time.Time) ([]AccessTokenUsage, error)
 	GetUsageSummary(context.Context, UsageSummaryOptions) (UsageSummary, error)
 	GetPrivacySummary(context.Context, PrivacySummaryOptions) (PrivacySummary, error)
+	GetImageCompressionTotals(context.Context) (ImageCompressionTotals, error)
 	ListRequestRecordChildren(context.Context, contract.RequestID) ([]contract.RequestRecord, error)
 	GetRequestRecord(context.Context, contract.RequestID) (contract.RequestRecord, error)
 	DeleteRequestRecord(context.Context, contract.RequestID) error

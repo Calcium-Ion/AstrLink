@@ -26,6 +26,8 @@ const NOW = new Date(2026, 9, 30, 15, 20);
 const local = (day: number, hour = 9, minute = 0) =>
   new Date(2026, 9, day, hour, minute).toISOString();
 const DAY_START = new Date(2026, 9, 30).toISOString();
+// The toolbox counts the calls of the 30 days that end today.
+const SINCE = new Date(2026, 9, 1).toISOString();
 const memoryPath = "~/.claude/projects/~-GolandProjects-astrlink/memory";
 const quiet = Array<number>(14).fill(0);
 
@@ -119,6 +121,7 @@ const memory: ProjectMemory = {
     },
   ],
   toolbox: {
+    since: SINCE,
     skills: [
       { name: "frontend-design", uses: 4, carried: true },
       { name: "dataviz", uses: 2, carried: true },
@@ -400,7 +403,13 @@ describe("project memory tab", () => {
     ).toStrictEqual(["100%", "50%", "25%", "100%", "75%"]);
     expect(
       container.querySelector('[data-testid="memory-toolbox"]')?.textContent,
-    ).toContain("没碰过的这些，每次调用多带约 1.3万 token。");
+    ).toContain("没碰过的这些里，现在还带着的每次调用多带约 1.3万 token。");
+    // The days it counts say where they begin and how they move on.
+    const days = container.querySelector<HTMLElement>(
+      '[data-testid="memory-toolbox-days"]',
+    );
+    expect(days?.textContent).toBe("近 30 天 · 10月1日起");
+    expect(days?.title).toBe("每天零点往后挪一天，更早的调用不再计入");
   });
 
   it("opens a memory with its text and what happened to it", async () => {
@@ -658,6 +667,7 @@ describe("project memory tab", () => {
       stories: [],
       rules: [],
       toolbox: {
+        since: SINCE,
         skills: [
           {
             name: "brand-guidelines",
@@ -686,7 +696,10 @@ describe("project memory tab", () => {
     expect(view.querySelector('[data-slot="empty-state"]')?.textContent).toBe(
       "DeepSeek Harness 在这个项目里还没记过东西请求里没有记忆文件，也没有规则文件。",
     );
-    expect(view.textContent).toContain("带着 3 个 Skills，近 30 天用过 2 个");
+    expect(view.textContent).toContain("近 30 天带过 3 个 Skills，用过 2 个");
+    expect(
+      view.querySelector('[data-testid="memory-toolbox-days"]')?.textContent,
+    ).toBe("近 30 天 · 10月1日起");
     expect(texts_('[data-slot="tool-tile"]', view)).toStrictEqual([
       "humanizer用过 5 次Rewrite UI copy in plain words",
       "paseo用过 2 次",
@@ -705,7 +718,7 @@ describe("project memory tab", () => {
       entries: [],
       stories: [],
       rules: [],
-      toolbox: { skills: [], mcp: [], idle_tokens: 0 },
+      toolbox: { since: SINCE, skills: [], mcp: [], idle_tokens: 0 },
       has_memory: false,
       has_rules: false,
     });

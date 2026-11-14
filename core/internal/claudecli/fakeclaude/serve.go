@@ -263,8 +263,10 @@ func (current *server) call() ([]map[string]any, string, []toolRequest, *apiFail
 	for _, text := range current.system {
 		system = append(system, map[string]any{"type": "text", "text": text})
 	}
+	userID, _ := json.Marshal(map[string]string{"device_id": "fake-device", "account_uuid": "", "session_id": current.session})
 	body := map[string]any{
 		"model": current.model, "system": system, "messages": current.messages, "max_tokens": 32000, "stream": true,
+		"metadata": map[string]any{"user_id": string(userID)},
 	}
 	if len(current.tools) > 0 {
 		body["tools"] = current.tools
@@ -281,7 +283,14 @@ func (current *server) call() ([]map[string]any, string, []toolRequest, *apiFail
 	request.Header.Set("Authorization", "Bearer "+token)
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Anthropic-Version", "2023-06-01")
+	// The fingerprint the real CLI sends with every model call.
 	request.Header.Set("User-Agent", "claude-cli/"+current.settings.Version+" (external, sdk-cli)")
+	request.Header.Set("X-App", "cli")
+	request.Header.Set("X-Claude-Code-Session-Id", current.session)
+	request.Header.Set("Anthropic-Beta", "claude-code-20250219,oauth-2025-04-20")
+	request.Header.Set("X-Stainless-Lang", "js")
+	request.Header.Set("X-Stainless-Package-Version", "0.95.1")
+	request.Header.Set("X-Stainless-Runtime", "node")
 	for _, line := range strings.Split(os.Getenv("ANTHROPIC_CUSTOM_HEADERS"), "\n") {
 		if name, value, ok := strings.Cut(line, ":"); ok {
 			request.Header.Set(strings.TrimSpace(name), strings.TrimSpace(value))

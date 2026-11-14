@@ -20,9 +20,6 @@ type subscriptionProtection struct {
 	codexIdentity       bool
 	grokIdentity        bool
 	officialPassthrough bool
-	claudeAutoLearn     bool
-	codexAutoLearn      bool
-	grokAutoLearn       bool
 }
 
 func subscriptionProtectionFrom(settings contract.RoutingSettings) subscriptionProtection {
@@ -35,9 +32,6 @@ func subscriptionProtectionFrom(settings contract.RoutingSettings) subscriptionP
 		codexIdentity:       settings.CodexIdentityEnforcement,
 		grokIdentity:        settings.GrokIdentityEnforcement,
 		officialPassthrough: settings.OfficialClientPassthrough,
-		claudeAutoLearn:     settings.ClaudeIdentityAutoLearn,
-		codexAutoLearn:      settings.CodexIdentityAutoLearn,
-		grokAutoLearn:       settings.GrokIdentityAutoLearn,
 	}
 }
 
@@ -62,16 +56,38 @@ func (protection subscriptionProtection) sendsClientIdentity(kind contract.Servi
 	}
 }
 
-// learnClientIdentity records the identity of a recognized official client.
-// A failed write keeps the identity in memory until restart and is only
-// logged: learning never fails the request.
-func (handler *Handler) learnClientIdentity(ctx context.Context, provider contract.SubscriptionProvider, header http.Header) {
-	learn := handler.identities.LearnClaude
-	if provider == contract.SubscriptionProviderOpenAICodex {
-		learn = handler.identities.LearnCodex
-	} else if provider == contract.SubscriptionProviderXAIGrok {
-		learn = handler.identities.LearnGrok
+// learnClientIdentities records the identity of a recognized official client
+// from its own request, whichever provider serves it: the headers describe
+// the client, not the route, so a Claude Code request routed to an API key,
+// a relay or an official account teaches the same identity. A client is
+// recognized only in a protocol it sends itself. A failed write keeps the
+// identity in memory until restart and is only logged: learning never fails
+// the request.
+func (handler *Handler) learnClientIdentities(ctx context.Context, classified Request, header http.Header, settings contract.RoutingSettings) {
+	if handler.identities == nil {
+		return
 	}
+	protocol := classified.Protocol
+	if protocol == contract.ProtocolAnthropicMessages && settings.ClaudeIdentityAutoLearn &&
+		classified.claudeCodeUserID && accountauth.RecognizedClaudeOfficialHeaders(header) {
+		handler.learnClientIdentity(ctx, contract.SubscriptionProviderClaudeCode, handler.identities.LearnClaude, header)
+	}
+	if (protocol == contract.ProtocolOpenAIResponses || protocol == contract.ProtocolOpenAIResponsesCompact) &&
+		settings.CodexIdentityAutoLearn && accountauth.RecognizedCodexOfficialClient(header) {
+		handler.learnClientIdentity(ctx, contract.SubscriptionProviderOpenAICodex, handler.identities.LearnCodex, header)
+	}
+	// LearnGrok recognizes the Grok client from its User-Agent itself.
+	if (protocol == contract.ProtocolOpenAIResponses || protocol == contract.ProtocolOpenAIChat) && settings.GrokIdentityAutoLearn {
+		handler.learnClientIdentity(ctx, contract.SubscriptionProviderXAIGrok, handler.identities.LearnGrok, header)
+	}
+}
+
+func (handler *Handler) learnClientIdentity(
+	ctx context.Context,
+	provider contract.SubscriptionProvider,
+	learn func(context.Context, http.Header) (bool, error),
+	header http.Header,
+) {
 	if _, err := learn(ctx, header); err != nil {
 		logf := handler.recordLogger
 		if logf == nil {

@@ -1,0 +1,75 @@
+/* The big pet's speech bubble, its tail pointing down at her. */
+.toy-pet-bubble {
+  position: absolute;
+  display: flex;
+  max-width: 290px;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  padding: 8px 14px;
+  border-radius: 12px;
+  background: var(--card);
+  box-shadow:
+    0 0 0 0.5px rgb(0 0 0 / 8%),
+    0 10px 26px -10px rgb(26 42 61 / 45%);
+  color: var(--foreground);
+  font-size: 12.5px;
+  text-align: center;
+  transform: translate(-50%, -100%);
+}
+
+.toy-pet-bubble[data-action="true"] {
+  cursor: pointer;
+}
+
+/* Floating near the top of the screen, the bubble hangs under her feet. */
+.toy-pet-bubble[data-below="true"] {
+  transform: translate(-50%, 0);
+}
+
+.toy-pet-bubble[data-below="true"]::after {
+  top: -6px;
+  bottom: auto;
+  box-shadow: -2px -2px 3px -2px rgb(26 42 61 / 25%);
+}
+
+.toy-pet-bubble::after {
+  position: absolute;
+  bottom: -6px;
+  left: 50%;
+  width: 12px;
+  height: 12px;
+  margin-left: -6px;
+  background: var(--card);
+  box-shadow: 2px 2px 3px -2px rgb(26 42 61 / 25%);
+  content: "";
+  transform: rotate(45deg);
+}
+
+/* In the settings picture it sits left of her, its tail pointing at her. */
+.toy-pet-bubble[data-side="left"] {
+  transform: translate(-100%, -50%);
+}
+
+.toy-pet-bubble[data-side="left"]::after {
+  top: 50%;
+  right: -6px;
+  bottom: auto;
+  left: auto;
+  margin: -6px 0 0;
+  box-shadow: 2px -2px 3px -2px rgb(26 42 61 / 25%);
+}
+
+.toy-pet-bubble b {
+  font-weight: 600;
+}
+
+.toy-pet-bubble span {
+  color: var(--text-secondary);
+}
+
+.toy-pet-bubble a {
+  margin-top: 2px;
+  color: var(--primary);
+  font-weight: 500;
+}

@@ -349,7 +349,7 @@ describe("drafts and default checks", () => {
   });
 
   it.each([
-    ["an installed client nobody set up", {}, true],
+    ["an installed client nobody set up", {}, false],
     ["a missing client", { detected: false }, false],
     [
       "this token's config",

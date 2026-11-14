@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"slices"
 	"testing"
@@ -175,7 +176,7 @@ func TestProjectMemoryTellsWhatTheAgentNotedAndReadAgain(t *testing.T) {
 	}
 	skills := memory.Toolbox.Skills
 	if len(skills) != 3 || skills[0] != (contract.ToolboxSkill{Name: "humanizer", Description: "Rewrite text in plain words", Uses: 1, Carried: true}) ||
-		skills[1].Name != "deploy" || skills[1].Uses != 0 || !skills[1].Carried {
+		skills[1].Name != "dataviz" || skills[1].Uses != 0 || !skills[1].Carried || skills[2].Name != "deploy" {
 		t.Fatalf("skills = %+v", skills)
 	}
 	if len(memory.Toolbox.MCP) != 1 || memory.Toolbox.MCP[0].Server != "paseo" ||
@@ -286,5 +287,157 @@ func TestMemoryEntriesFollowTheIndexAndGoWithTheRecords(t *testing.T) {
 	}
 	if err := store.db.QueryRowContext(ctx, `SELECT (SELECT COUNT(*) FROM memory_entries) + (SELECT COUNT(*) FROM context_catalogs)`).Scan(&catalogs); err != nil || catalogs != 0 {
 		t.Fatalf("%d derived rows outlived the records, %v", catalogs, err)
+	}
+}
+
+// toolboxTestStore holds Claude Code calls in ~/proj: a session that
+// carried every skill and three paseo tools, loaded humanizer in two turns
+// and made one paseo call, then a newer session whose newest call listed
+// only the skills Claude Code listed again and the paseo tool it loaded.
+func toolboxTestStore(t *testing.T) (*Store, func(id string, session string, minutes float64, turn int, requestContext *contract.RequestContext, edit func(*contract.RequestRecord))) {
+	t.Helper()
+	store := openTestStore(t, filepath.Join(t.TempDir(), "toolbox.db"))
+	t.Cleanup(func() { store.Close() })
+	project := "~/proj"
+	insert := func(id string, session string, minutes float64, turn int, requestContext *contract.RequestContext, edit func(*contract.RequestRecord)) {
+		t.Helper()
+		record := contextTestRecord(id, contract.SessionID(session), minutes, requestContext)
+		record.Project = &project
+		record.TurnIndex = &turn
+		if edit != nil {
+			edit(&record)
+		}
+		if err := store.InsertRequestRecord(context.Background(), record); err != nil {
+			t.Fatalf("%s: %v", id, err)
+		}
+	}
+	const day = 24 * 60
+	full := memoryTestContext("fp1_rules_a", "fp1_index_a", "old.md")
+	used := func(skill string) *contract.RequestContext {
+		return continuing(full, func(requestContext *contract.RequestContext) { requestContext.SkillsUsed = []string{skill} })
+	}
+	insert("request_tb_full", "session_tb_1", -3*day, 1, full, nil)
+	insert("request_tb_use_a", "session_tb_1", -3*day+1, 1, used("humanizer"), nil)
+	insert("request_tb_use_a_again", "session_tb_1", -3*day+2, 1, used("humanizer"), nil)
+	insert("request_tb_use_b", "session_tb_1", -3*day+5, 2, used("humanizer"), func(record *contract.RequestRecord) {
+		record.Output = &contract.OutputActivity{Kind: contract.OutputKindTool, Tools: []string{"mcp__paseo__list_agents"}}
+	})
+	relisted := continuing(full, func(requestContext *contract.RequestContext) {
+		requestContext.Items = []contract.ContextItem{
+			{Kind: contract.ContextItemSkills, Count: ptrInt(2), Names: []string{"redaction-placeholders", "astrlink-debug"}, Tokens: 100, Hash: "fp1_skills_b"},
+			{Kind: contract.ContextItemMCP, Count: ptrInt(1), Servers: []string{"paseo"}, Tokens: 1_000, Hash: "fp1_mcp_b"},
+		}
+		requestContext.Catalog = &contract.ContextCatalog{
+			Skills: []contract.CatalogSkill{{Name: "redaction-placeholders", Description: "Copy placeholders"}, {Name: "astrlink-debug"}},
+			MCP:    []contract.CatalogServer{{Server: "paseo", Tools: []string{"get_agent_status"}}},
+		}
+	})
+	insert("request_tb_relisted", "session_tb_2", -10, 1, relisted, nil)
+	return store, insert
+}
+
+func toolboxNames(toolbox contract.MemoryToolbox) (skills []string, tools []string) {
+	for _, skill := range toolbox.Skills {
+		skills = append(skills, skill.Name)
+	}
+	for _, server := range toolbox.MCP {
+		for _, tool := range server.Tools {
+			tools = append(tools, server.Server+"/"+tool.Name)
+		}
+	}
+	return skills, tools
+}
+
+// The toolbox lists every skill and MCP tool a call of its days carried,
+// whatever the newest call listed, and keeps listing them as calls that
+// list fewer arrive.
+func TestToolboxListsWhatItsDaysCarried(t *testing.T) {
+	ctx := context.Background()
+	store, insert := toolboxTestStore(t)
+	project := "~/proj"
+	options := storagecontract.ProjectMemoryOptions{Project: &project, DayStart: contextTestStart.Add(-time.Hour), Now: contextTestStart}
+	memory, err := store.GetProjectMemory(ctx, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	toolbox := memory.Toolbox
+	wantSkills := []string{"humanizer", "astrlink-debug", "dataviz", "deploy", "redaction-placeholders"}
+	wantTools := []string{"paseo/list_agents", "paseo/create_agent", "paseo/get_agent_status", "paseo/send_agent_prompt"}
+	skills, tools := toolboxNames(toolbox)
+	if !slices.Equal(skills, wantSkills) || !slices.Equal(tools, wantTools) {
+		t.Fatalf("toolbox lists skills %q and tools %q, want %q and %q", skills, tools, wantSkills, wantTools)
+	}
+	if toolbox.Skills[0] != (contract.ToolboxSkill{Name: "humanizer", Description: "Rewrite text in plain words", Uses: 2, Carried: true}) ||
+		toolbox.Skills[4] != (contract.ToolboxSkill{Name: "redaction-placeholders", Description: "Copy placeholders", Carried: true}) ||
+		toolbox.MCP[0].Tools[0] != (contract.ToolboxTool{Name: "list_agents", Uses: 1, Carried: true}) {
+		t.Fatalf("toolbox = %+v", toolbox)
+	}
+	if want := options.DayStart.Add(-29 * 24 * time.Hour); !toolbox.Since.Equal(want) {
+		t.Fatalf("since = %v, want %v", toolbox.Since, want)
+	}
+	// The newest call carries two skills and one tool, none used; the
+	// other idle ones it no longer carries add nothing.
+	if want := 100*2/2 + 1_000*1/1; toolbox.IdleTokens != want {
+		t.Fatalf("idle tokens = %d, want %d", toolbox.IdleTokens, want)
+	}
+
+	// A newer call that lists one skill and no MCP tool changes neither
+	// list nor any count.
+	insert("request_tb_fewer", "session_tb_3", -5, 1, carriedContext("fp1_rules_c", "fp1_skills_c"), nil)
+	again, err := store.GetProjectMemory(ctx, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	skills, tools = toolboxNames(again.Toolbox)
+	if !slices.Equal(skills, wantSkills) || !slices.Equal(tools, wantTools) ||
+		again.Toolbox.Skills[0].Uses != 2 || again.Toolbox.MCP[0].Tools[0].Uses != 1 {
+		t.Fatalf("after a call that lists fewer, toolbox = %+v", again.Toolbox)
+	}
+}
+
+// Every call of the toolbox's days counts, however many newer calls read
+// memory; a use leaves the counts only when its day leaves those days.
+func TestToolboxCountsEveryCallOfItsDays(t *testing.T) {
+	ctx := context.Background()
+	store, insert := toolboxTestStore(t)
+	project := "~/proj"
+	options := storagecontract.ProjectMemoryOptions{Project: &project, DayStart: contextTestStart.Add(-time.Hour), Now: contextTestStart}
+	counts := func(options storagecontract.ProjectMemoryOptions) (skill, tool int) {
+		t.Helper()
+		memory, err := store.GetProjectMemory(ctx, options)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, entry := range memory.Toolbox.Skills {
+			if entry.Name == "humanizer" {
+				skill = entry.Uses
+			}
+		}
+		for _, server := range memory.Toolbox.MCP {
+			for _, entry := range server.Tools {
+				if entry.Name == "list_agents" {
+					tool = entry.Uses
+				}
+			}
+		}
+		return skill, tool
+	}
+	if skill, tool := counts(options); skill != 2 || tool != 1 {
+		t.Fatalf("humanizer used %d times, list_agents %d, want 2 and 1", skill, tool)
+	}
+	reads := continuing(memoryTestContext("fp1_rules_a", "fp1_index_a", "old.md"), func(requestContext *contract.RequestContext) {
+		requestContext.MemoryReads = []contract.MemoryRead{{Name: "old.md", Path: "~/.claude/projects/~-proj/memory/old.md"}}
+	})
+	for index := range memoryActivityScan {
+		insert(fmt.Sprintf("request_tb_read_%05d", index), fmt.Sprintf("session_tb_read_%05d", index), -2*24*60+float64(index)/10, 1, reads, nil)
+	}
+	if skill, tool := counts(options); skill != 2 || tool != 1 {
+		t.Fatalf("after %d newer memory reads, humanizer used %d times, list_agents %d, want 2 and 1", memoryActivityScan, skill, tool)
+	}
+	// 27 days on, the day of those uses has left the toolbox's days.
+	later := options
+	later.DayStart, later.Now = options.DayStart.Add(27*24*time.Hour), options.Now.Add(27*24*time.Hour)
+	if skill, tool := counts(later); skill != 0 || tool != 0 {
+		t.Fatalf("once their day left, humanizer used %d times, list_agents %d, want 0 and 0", skill, tool)
 	}
 }

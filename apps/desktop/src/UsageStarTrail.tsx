@@ -211,13 +211,6 @@ export const UsageStarTrail = memo(function UsageStarTrail({
           summary={summaryText}
           today={today}
         />
-        {status === "ready" && trail.arcs.length === 0 ? (
-          <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-            <span className="rounded-md bg-card px-3 py-2 text-xs text-muted-foreground">
-              {t("overview.noUsage")}
-            </span>
-          </div>
-        ) : null}
       </div>
       {empty && !metrics ? null : (
         <div className={COLUMN}>

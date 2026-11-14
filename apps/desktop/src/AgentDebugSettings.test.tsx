@@ -138,6 +138,20 @@ function withSkills(tool: ToolFixture, flags: SkillFlags): ToolFixture {
   };
 }
 
+/** All six tools on this computer, only these detected, nothing installed. */
+function detectedOnly(...ids: string[]) {
+  return {
+    ...status,
+    cli_binary: false,
+    tools: status.tools.map((tool) => ({
+      ...withSkills(tool, {}),
+      detected: ids.includes(tool.id),
+      cli_access_installed: false,
+      guard_installed: false,
+    })),
+  };
+}
+
 describe("AgentDebugSettings", () => {
   let container: HTMLDivElement;
   let root: Root;
@@ -208,7 +222,7 @@ describe("AgentDebugSettings", () => {
     const dialog = document.querySelector("[role='alertdialog']");
     const confirm = dialog
       ? [...dialog.querySelectorAll("button")].find(
-          (button) => button.textContent === "安装所选工具（1）",
+          (button) => button.textContent === "安装所选工具（3）",
         )
       : undefined;
     if (!confirm) throw new Error("missing confirm");
@@ -219,7 +233,7 @@ describe("AgentDebugSettings", () => {
     });
     expect(bridge.installAgentDebug).toHaveBeenCalledWith(
       ["astrlink-debug", "redaction-placeholders"],
-      local("codex"),
+      local("cursor", "codex", "grok"),
     );
     expect(notifyMocks.success).toHaveBeenCalled();
   });
@@ -290,6 +304,9 @@ describe("AgentDebugSettings", () => {
     expect(statusCell("Cursor")).toBe("缺少隐私脱敏部分安装");
     expect(statusCell("Claude")).toBe("缺少文件访问限制部分安装");
     expect(statusCell("Codex")).toBe("已安装");
+    // Neither detected nor set up, so it waits behind the toggle.
+    expect(statusCell("Grok")).toBeUndefined();
+    await act(async () => foldToggle().click());
     expect(statusCell("Grok")).toBe("—");
     expect(statusCell("Pi")).toBe("已安装");
     expect(container.textContent).toContain("2 / 4");
@@ -306,16 +323,20 @@ describe("AgentDebugSettings", () => {
     await act(async () => root.render(<AgentDebugSettings />));
     await act(async () => button("安装 / 更新").click());
     const dialog = document.querySelector("[role='alertdialog']")!;
-    expect(checkbox("codex").getAttribute("aria-checked")).toBe("true");
+    for (const id of ["cursor", "codex", "grok"]) {
+      expect(checkbox(id).getAttribute("aria-checked")).toBe("true");
+    }
     expect(checkbox("claude").disabled).toBe(true);
     // Pi is not detected, so Codex installs alone.
     expect(dialog.textContent).not.toContain("共享 Skill");
     expect(checkbox("pi").disabled).toBe(true);
     await act(async () => skillCheckbox("redaction-placeholders").click());
-    await act(async () => checkbox("codex").click());
+    for (const id of ["cursor", "codex", "grok"]) {
+      await act(async () => checkbox(id).click());
+    }
     expect(button("安装所选工具（0）", dialog).disabled).toBe(true);
     expect(button("取消", dialog).disabled).toBe(false);
-    expect(dialog.querySelector("details")).toBeNull();
+    expect(pathsPreview(dialog)).toBeUndefined();
     await act(async () => checkbox("grok").click());
     expect(button("安装所选工具（1）", dialog).disabled).toBe(false);
     expect(dialog.textContent).toContain("/tmp/.grok/skills/astrlink-debug");
@@ -332,7 +353,7 @@ describe("AgentDebugSettings", () => {
     );
   });
 
-  it("requires an explicit first selection and supports multiple tools", async () => {
+  it("starts with every detected tool and supports multiple tools", async () => {
     bridge.getAgentDebugStatus.mockResolvedValue({
       ...status,
       tools: status.tools.map((tool) => ({
@@ -349,9 +370,8 @@ describe("AgentDebugSettings", () => {
     expect(
       skillCheckbox("redaction-placeholders").getAttribute("aria-checked"),
     ).toBe("true");
-    expect(button("安装所选工具（0）", dialog).disabled).toBe(true);
-    await act(async () => checkbox("cursor").click());
-    await act(async () => checkbox("grok").click());
+    expect(button("安装所选工具（3）", dialog).disabled).toBe(false);
+    await act(async () => checkbox("codex").click());
     await act(async () => button("安装所选工具（2）", dialog).click());
     expect(bridge.installAgentDebug).toHaveBeenCalledExactlyOnceWith(
       ["astrlink-debug", "redaction-placeholders"],
@@ -397,10 +417,10 @@ describe("AgentDebugSettings", () => {
     expect(dialog.textContent).toContain("仅 Skill，不含命令行工具和命令权限");
     await act(async () => skillCheckbox("redaction-placeholders").click());
     await act(async () => skillCheckbox("astrlink-debug").click());
-    expect(button("安装所选工具（1）", dialog).disabled).toBe(true);
-    expect(dialog.querySelector("details")).toBeNull();
+    expect(button("安装所选工具（3）", dialog).disabled).toBe(true);
+    expect(pathsPreview(dialog)).toBeUndefined();
     await act(async () => skillCheckbox("redaction-placeholders").click());
-    expect(button("安装所选工具（1）", dialog).disabled).toBe(false);
+    expect(button("安装所选工具（3）", dialog).disabled).toBe(false);
     expect(dialog.textContent).toContain(
       "/tmp/.agents/skills/redaction-placeholders",
     );
@@ -409,10 +429,10 @@ describe("AgentDebugSettings", () => {
     );
     expect(dialog.textContent).not.toContain("/tmp/.astrlink/bin/astrlink");
     expect(dialog.textContent).not.toContain("/tmp/.codex");
-    await act(async () => button("安装所选工具（1）", dialog).click());
+    await act(async () => button("安装所选工具（3）", dialog).click());
     expect(bridge.installAgentDebug).toHaveBeenCalledExactlyOnceWith(
       ["redaction-placeholders"],
-      local("codex"),
+      local("cursor", "codex", "grok"),
     );
   });
 
@@ -450,10 +470,13 @@ describe("AgentDebugSettings", () => {
         (item) => item.textContent === "/tmp/.agents/skills/astrlink-debug",
       ),
     ).toHaveLength(1);
+    // Narrow the selection to the shared option.
+    await act(async () => checkbox("cursor").click());
+    await act(async () => checkbox("grok").click());
     await act(async () => shared.click());
     expect(shared.getAttribute("aria-checked")).toBe("false");
     expect(button("安装所选工具（0）", dialog).disabled).toBe(true);
-    expect(dialog.querySelector("details")).toBeNull();
+    expect(pathsPreview(dialog)).toBeUndefined();
     await act(async () => shared.click());
     expect(shared.getAttribute("aria-checked")).toBe("true");
     await act(async () => skillCheckbox("astrlink-debug").click());
@@ -480,7 +503,7 @@ describe("AgentDebugSettings", () => {
     expect(dialog.querySelector("#agent-install-codex-pi")).toBeNull();
     expect(checkbox("codex").disabled).toBe(true);
     expect(checkbox("pi").disabled).toBe(false);
-    await act(async () => checkbox("pi").click());
+    expect(checkbox("pi").getAttribute("aria-checked")).toBe("true");
     expect(dialog.textContent).not.toContain("/tmp/.codex");
     await act(async () => button("安装所选工具（1）", dialog).click());
     expect(bridge.installAgentDebug).toHaveBeenCalledExactlyOnceWith(
@@ -511,10 +534,11 @@ describe("AgentDebugSettings", () => {
     expect(shared.closest("label")?.textContent).toBe(
       "Codex / Pi / DeepSeek Harness（共享 Skill）Codex · 已安装Pi · 已安装DeepSeek Harness · 已安装",
     );
-    await act(async () => button("安装所选工具（3）", dialog).click());
+    // The other detected tools, Cursor and Grok Build, start selected too.
+    await act(async () => button("安装所选工具（5）", dialog).click());
     expect(bridge.installAgentDebug).toHaveBeenCalledExactlyOnceWith(
       ["astrlink-debug", "redaction-placeholders"],
-      local("codex", "pi", "dsh"),
+      local("cursor", "codex", "grok", "pi", "dsh"),
     );
   });
 
@@ -537,7 +561,7 @@ describe("AgentDebugSettings", () => {
     expect(shared.closest("label")?.textContent).toBe(
       "Pi / DeepSeek Harness（共享 Skill）Pi · 已检测到DeepSeek Harness · 已检测到",
     );
-    await act(async () => shared.click());
+    expect(shared.getAttribute("aria-checked")).toBe("true");
     await act(async () => button("安装所选工具（2）", dialog).click());
     expect(bridge.installAgentDebug).toHaveBeenCalledExactlyOnceWith(
       ["astrlink-debug", "redaction-placeholders"],
@@ -569,12 +593,15 @@ describe("AgentDebugSettings", () => {
     const rows = [...container.querySelectorAll("tbody tr")].map(
       (row) => row.querySelector("td")?.textContent ?? "",
     );
-    expect(rows).toHaveLength(9);
+    expect(rows).toHaveLength(8);
     ["Claude Code", "Codex", "Pi"].forEach((name, index) => {
-      expect(rows[6 + index]).toContain(name);
-      expect(rows[6 + index]?.endsWith("WSL · Ubuntu")).toBe(true);
+      expect(rows[4 + index]).toContain(name);
+      expect(rows[4 + index]?.endsWith("WSL · Ubuntu")).toBe(true);
     });
-    expect(rows.slice(0, 6).some((row) => row.includes("WSL"))).toBe(false);
+    expect(rows.slice(0, 4).some((row) => row.includes("WSL"))).toBe(false);
+    // This computer's Claude Code and DeepSeek Harness are neither detected
+    // nor set up.
+    expect(rows[7]).toBe("未检测到的工具（2）");
     expect(container.textContent).toContain("0 / 6");
     expect(container.textContent).toContain(
       "Debian 未运行，没有检测其中的工具。启动后点「重新检测」。",
@@ -582,18 +609,31 @@ describe("AgentDebugSettings", () => {
 
     await act(async () => button("安装 / 更新").click());
     const dialog = document.querySelector("[role='alertdialog']")!;
-    // The Codex install on this computer says nothing about Ubuntu's.
+    // Detected tools start selected in every home.
     expect(checkbox("codex").getAttribute("aria-checked")).toBe("true");
+    expect(checkbox("wsl-Ubuntu-claude").getAttribute("aria-checked")).toBe(
+      "true",
+    );
     expect(checkbox("wsl-Ubuntu-codex-pi").getAttribute("aria-checked")).toBe(
-      "false",
+      "true",
     );
     // Codex and Pi share a skill directory only within one home.
     expect(dialog.querySelector("#agent-install-wsl-Ubuntu-pi")).toBeNull();
     expect(dialog.querySelector("#agent-install-wsl-Ubuntu-codex")).toBeNull();
+    expect(checkbox("pi").getAttribute("aria-checked")).toBe("false");
+    // Unchecking Ubuntu's option leaves this computer's Codex selected.
+    await act(async () => checkbox("wsl-Ubuntu-codex-pi").click());
+    expect(checkbox("wsl-Ubuntu-codex-pi").getAttribute("aria-checked")).toBe(
+      "false",
+    );
+    expect(checkbox("codex").getAttribute("aria-checked")).toBe("true");
     await act(async () => checkbox("wsl-Ubuntu-codex-pi").click());
     expect(checkbox("codex").getAttribute("aria-checked")).toBe("true");
     expect(checkbox("pi").getAttribute("aria-checked")).toBe("false");
     expect(dialog.textContent).toContain(`${wslRoot}\\.agents\\skills`);
+    for (const id of ["cursor", "grok", "wsl-Ubuntu-claude"]) {
+      await act(async () => checkbox(id).click());
+    }
     await act(async () => button("安装所选工具（3）", dialog).click());
     expect(bridge.installAgentDebug).toHaveBeenCalledExactlyOnceWith(
       ["astrlink-debug", "redaction-placeholders"],
@@ -619,11 +659,11 @@ describe("AgentDebugSettings", () => {
     expect(
       skillCheckbox("redaction-placeholders").getAttribute("aria-checked"),
     ).toBe("true");
-    // The tools that already have a skill stay selected.
-    await act(async () => button("安装所选工具（1）", dialog).click());
+    // Every detected tool starts selected, the set-up Codex included.
+    await act(async () => button("安装所选工具（3）", dialog).click());
     expect(bridge.installAgentDebug).toHaveBeenCalledExactlyOnceWith(
       ["redaction-placeholders"],
-      local("codex"),
+      local("cursor", "codex", "grok"),
     );
     // Only the first status opens the dialog.
     await act(async () => button("重新检测").click());
@@ -651,13 +691,96 @@ describe("AgentDebugSettings", () => {
     );
   });
 
+  it("selects every detected tool when the install dialog opens", async () => {
+    bridge.getAgentDebugStatus.mockResolvedValue(
+      detectedOnly("claude", "codex"),
+    );
+    await act(async () => root.render(<AgentDebugSettings />));
+    await act(async () => button("安装工具").click());
+    const dialog = document.querySelector("[role='alertdialog']")!;
+    expect(checkbox("claude").getAttribute("aria-checked")).toBe("true");
+    expect(checkbox("codex").getAttribute("aria-checked")).toBe("true");
+    const confirm = button("安装所选工具（2）", dialog);
+    expect(confirm.disabled).toBe(false);
+    await act(async () => confirm.click());
+    expect(bridge.installAgentDebug).toHaveBeenCalledExactlyOnceWith(
+      ["astrlink-debug", "redaction-placeholders"],
+      local("claude", "codex"),
+    );
+  });
+
+  it("keeps undetected tools collapsed in the tool list and the dialog", async () => {
+    bridge.getAgentDebugStatus.mockResolvedValue(
+      detectedOnly("claude", "codex"),
+    );
+    await act(async () => root.render(<AgentDebugSettings />));
+    expect(toolRowNames()).toEqual([
+      "Claude Code",
+      "Codex",
+      "未检测到的工具（4）",
+    ]);
+    const toggle = foldToggle();
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    const folded = document.getElementById(
+      toggle.getAttribute("aria-controls")!,
+    );
+    expect(folded?.tagName).toBe("TBODY");
+    expect(folded?.children).toHaveLength(0);
+    await act(async () => toggle.click());
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    // The toggle stays put; the folded tools open below it.
+    expect(toolRowNames()).toEqual([
+      "Claude Code",
+      "Codex",
+      "未检测到的工具（4）",
+      "Cursor",
+      "Grok Build",
+      "Pi",
+      "DeepSeek Harness",
+    ]);
+    expect(folded?.children).toHaveLength(4);
+
+    await act(async () => button("安装工具").click());
+    const dialog = document.querySelector("[role='alertdialog']")!;
+    const undetected = checkbox("cursor").closest("details");
+    if (!undetected) throw new Error("undetected tools are not folded");
+    expect(dialog.contains(undetected)).toBe(true);
+    expect(undetected.hasAttribute("open")).toBe(false);
+    expect(undetected.querySelector("summary")?.textContent).toBe(
+      "未检测到的工具（4）",
+    );
+    expect(undetected.textContent).toContain(
+      "装好并启动一次后，点「重新检测」就能选择。",
+    );
+    for (const id of ["cursor", "grok", "pi", "dsh"]) {
+      expect(undetected.contains(checkbox(id))).toBe(true);
+      expect(checkbox(id).disabled).toBe(true);
+    }
+    for (const id of ["claude", "codex"]) {
+      expect(checkbox(id).closest("details")).toBeNull();
+    }
+  });
+
+  it("folds every tool and says so when none is detected", async () => {
+    bridge.getAgentDebugStatus.mockResolvedValue(detectedOnly());
+    await act(async () => root.render(<AgentDebugSettings />));
+    expect(toolRowNames()).toEqual(["未检测到的工具（6）"]);
+    expect(foldToggle().getAttribute("aria-expanded")).toBe("false");
+    expect(container.textContent).toContain(
+      "暂未检测到支持的工具。请先安装并启动一次 Cursor、Claude Code、Codex、Grok Build、Pi 或 DeepSeek Harness，再重新检测。",
+    );
+    expect(button("安装工具").disabled).toBe(true);
+  });
+
   it("cancels an empty selection without installing", async () => {
     await act(async () => root.render(<AgentDebugSettings />));
     await act(async () => button("安装 / 更新").click());
-    await act(async () => checkbox("codex").click());
-    await act(async () =>
-      button("取消", document.querySelector("[role='alertdialog']")!).click(),
-    );
+    const dialog = document.querySelector("[role='alertdialog']")!;
+    for (const id of ["cursor", "codex", "grok"]) {
+      await act(async () => checkbox(id).click());
+    }
+    expect(button("安装所选工具（0）", dialog).disabled).toBe(true);
+    await act(async () => button("取消", dialog).click());
     expect(bridge.installAgentDebug).not.toHaveBeenCalled();
     expect(document.querySelector("[role='alertdialog']")).toBeNull();
   });
@@ -672,6 +795,9 @@ describe("AgentDebugSettings", () => {
     );
     expect(button("安装工具").disabled).toBe(true);
     expect(container.textContent).not.toContain("检查中");
+    // Without a status nothing is known to be missing, so nothing folds.
+    expect(toolRowNames()).toHaveLength(6);
+    expect(container.querySelector("tbody button")).toBeNull();
     bridge.getAgentDebugStatus.mockResolvedValue({
       ...status,
       cli_binary: false,
@@ -728,6 +854,34 @@ describe("AgentDebugSettings", () => {
     );
     if (!found) throw new Error(`Missing checkbox: ${id}`);
     return found;
+  }
+
+  /** The "将写入的位置" preview, which shows only for a complete selection. */
+  function pathsPreview(dialog: ParentNode): HTMLDetailsElement | undefined {
+    return [...dialog.querySelectorAll("details")].find(
+      (details) =>
+        details.querySelector("summary")?.textContent === "查看将写入的位置",
+    );
+  }
+
+  function foldToggle(): HTMLButtonElement {
+    const found = container.querySelector<HTMLButtonElement>(
+      "tbody button[aria-controls]",
+    );
+    if (!found) throw new Error("Missing undetected tools toggle");
+    return found;
+  }
+
+  /** The first cell of each tool table row, the toggle row included. */
+  function toolRowNames(): string[] {
+    return [...container.querySelectorAll("tbody tr")].map((row) => {
+      // Brand marks carry an SVG title; read only the visible name.
+      const cell = row.querySelector("td")?.cloneNode(true) as Element;
+      cell
+        .querySelectorAll("[aria-hidden='true']")
+        .forEach((node) => node.remove());
+      return cell.textContent ?? "";
+    });
   }
 
   function button(

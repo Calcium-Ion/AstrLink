@@ -24,6 +24,7 @@ import {
 import {
   NO_PROJECT,
   dayStart,
+  memoryDay,
   memoryWhen,
   notedRecently,
   projectKey,
@@ -825,6 +826,21 @@ function ToolGroup({
   );
 }
 
+/** The days the toolbox counts, from the day they begin. */
+function ToolboxDays({ since }: { since: string }) {
+  const t = useT();
+  return (
+    <span
+      data-testid="memory-toolbox-days"
+      title={t("memoryView.toolboxDaysHint")}
+    >
+      {t("memoryView.toolboxDays", {
+        date: memoryDay(since, new Date(), true),
+      })}
+    </span>
+  );
+}
+
 function Toolbox({ toolbox }: { toolbox: MemoryToolbox }) {
   const t = useT();
   const carriedSkills = toolbox.skills.filter((skill) => skill.carried).length;
@@ -832,7 +848,7 @@ function Toolbox({ toolbox }: { toolbox: MemoryToolbox }) {
   return (
     <section data-testid="memory-toolbox">
       <Header
-        aside={<span>{t("memoryView.toolboxDays")}</span>}
+        aside={<ToolboxDays since={toolbox.since} />}
         title={t("memoryView.toolboxTitle")}
       />
       {empty ? (
@@ -903,7 +919,10 @@ function EmptyClient({ memory }: { memory: ProjectMemory }) {
         title={t("memoryView.emptyClientTitle", { client: name })}
         variant="inline"
       />
-      <Header title={t("memoryView.toolboxTitle")}>
+      <Header
+        aside={<ToolboxDays since={memory.toolbox.since} />}
+        title={t("memoryView.toolboxTitle")}
+      >
         {skills.length > 0
           ? t("memoryView.toolboxSummary", { count: carried, used })
           : null}

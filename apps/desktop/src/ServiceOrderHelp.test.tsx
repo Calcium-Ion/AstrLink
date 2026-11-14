@@ -29,11 +29,11 @@ const order = () =>
   [...document.querySelectorAll<HTMLElement>("[data-preview-item]")].map(
     (item) => item.dataset.previewItem,
   );
-const render = (ready = true) =>
+const render = (ready = true, providerCount = 2) =>
   act(async () =>
     root.render(
       <StrictMode>
-        <ServiceOrderHelp ready={ready} />
+        <ServiceOrderHelp providerCount={providerCount} ready={ready} />
       </StrictMode>,
     ),
   );
@@ -68,6 +68,31 @@ it("waits for the catalog, remembers the first visit and survives StrictMode", a
   expect(dialog()).toBeNull();
   await act(async () => root.render(null));
   await render();
+  expect(dialog()).toBeNull();
+});
+
+it("waits for two providers before the first visit opens or remembers it", async () => {
+  for (const providerCount of [0, 1]) {
+    await render(true, providerCount);
+    expect(dialog()).toBeNull();
+    expect(localStorage.getItem(SERVICE_ORDER_GUIDE_KEY)).toBeNull();
+  }
+  // The help button still opens the demo with one provider.
+  await act(async () => help().click());
+  expect(dialog()?.textContent).toContain("拖动卡片调整提供商先后");
+  await act(async () => button("知道了").click());
+  expect(dialog()).toBeNull();
+  await settleClosedLayer();
+  expect(localStorage.getItem(SERVICE_ORDER_GUIDE_KEY)).toBeNull();
+
+  await render(true, 2);
+  expect(dialog()?.textContent).toContain("拖动卡片调整提供商先后");
+  expect(localStorage.getItem(SERVICE_ORDER_GUIDE_KEY)).toBe("seen");
+  await act(async () => button("知道了").click());
+  expect(dialog()).toBeNull();
+  await settleClosedLayer();
+  await act(async () => root.render(null));
+  await render(true, 3);
   expect(dialog()).toBeNull();
 });
 

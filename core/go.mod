@@ -5,7 +5,7 @@ go 1.26.11
 require (
 	github.com/MoeForge/moego v0.1.0-alpha.1
 	github.com/QuantumNous/astrlink/convo v0.0.0
-	github.com/QuantumNous/new-api/relaykit v0.3.6-0.20261103113342-ba5f73677975
+	github.com/QuantumNous/new-api/relaykit v0.3.7
 	github.com/andybalholm/brotli v1.2.8
 	github.com/deepteams/webp v1.2.8
 	github.com/expr-lang/expr v1.17.8

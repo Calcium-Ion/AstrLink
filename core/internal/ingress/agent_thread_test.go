@@ -399,3 +399,122 @@ func TestDeepSeekHarnessSubagentOverResponsesLinksByParentID(t *testing.T) {
 		t.Fatalf("main conversation got a parent %v", *mainNext.ParentSessionID)
 	}
 }
+
+func paseoTestMessage(task string) string {
+	return `<paseo-system version="1" kind="agent-message" source-agent-id="7c1e9f42-3b5d-4a86-9e0f-2d4c6b8a1e35" message-id="b2f4d6e8-1a3c-4e5f-8a7b-9c0d1e2f3a4b" source-agent-title="Fix the router">` +
+		"\n" + task + "\n</paseo-system>"
+}
+
+func messagesBody(t *testing.T, stream bool, sessionID string, messages ...any) string {
+	t.Helper()
+	userID, _ := json.Marshal(map[string]string{"device_id": "d", "account_uuid": "", "session_id": sessionID})
+	raw, err := json.Marshal(map[string]any{
+		"model": "public-alias", "max_tokens": 1024, "stream": stream, "messages": messages,
+		"metadata": map[string]any{"user_id": string(userID)},
+		"tools":    []any{map[string]any{"name": "mcp__paseo__create_agent", "input_schema": map[string]any{"type": "object"}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(raw)
+}
+
+func TestPaseoSubagentLinksByItsTask(t *testing.T) {
+	const task = "Find where the router picks a model & report <file> paths."
+	escaped := "Find where the router picks a model &amp; report &lt;file&gt; paths."
+	harness := newSessionHarness(t, contract.ProtocolAnthropicMessages, "/v1/messages", sessionHarnessOptions{auditBlobs: &memoryAuditBlobs{}, streaming: true})
+	harness.headers = http.Header{}
+	harness.headers.Set("User-Agent", "claude-cli/2.1.300 (external, cli)")
+	opening := textMessage("user", "Start a Paseo agent to map the router")
+	arguments, _ := json.Marshal(map[string]string{"title": "Map router", "initialPrompt": task})
+	half := len(arguments) / 2
+	delta := func(part []byte) string {
+		encoded, _ := json.Marshal(string(part))
+		return "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":" + string(encoded) + "}}\n\n"
+	}
+	spawnStream := "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_01Paseo\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"usage\":{\"input_tokens\":10,\"output_tokens\":0}}}\n\n" +
+		"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_01Paseo\",\"name\":\"mcp__paseo__create_agent\",\"input\":{}}}\n\n" +
+		delta(arguments[:half]) + delta(arguments[half:]) +
+		"event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n" +
+		"event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usage\":{\"output_tokens\":20}}\n\n" +
+		"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+	parent := harness.serve(messagesBody(t, true, claudeCodeTestSession, opening), spawnStream)
+	for _, cursor := range parent.Cursors {
+		if strings.Contains(cursor.Value, "router picks") {
+			t.Fatalf("a cursor stored the task: %#v", cursor)
+		}
+	}
+
+	const childSession = "8e2a4c6d-1f3b-4d5e-9a7c-0b1d2e3f4a5c"
+	childOpener := map[string]any{"role": "user", "content": []any{
+		map[string]any{"type": "text", "text": "<system-reminder>\nAs you answer the user's questions, you can use the following context.\n</system-reminder>"},
+		map[string]any{"type": "text", "text": paseoTestMessage(escaped)},
+	}}
+	child := harness.serve(messagesBody(t, false, childSession, childOpener), anthropicTestReply)
+	assertNewSession(t, parent, child)
+	assertParent(t, child, parent)
+	for _, cursor := range child.Cursors {
+		if strings.Contains(cursor.Value, "router picks") || strings.Contains(cursor.Value, "7c1e9f42") {
+			t.Fatalf("a cursor stored client text: %#v", cursor)
+		}
+	}
+	childNext := harness.serve(messagesBody(t, false, childSession, childOpener, textMessage("assistant", "Done."), textMessage("user", "Also list the tests")), anthropicTestReply)
+	assertSameSession(t, child, childNext)
+	assertParent(t, childNext, parent)
+
+	// An envelope arriving later in a conversation is a message to that
+	// agent, not its task, and never moves it under a parent.
+	const otherSession = "<PRIVATE_ACCOUNT_NUMBER_e7d0cde5770e36f9>"
+	other := harness.serve(messagesBody(t, false, otherSession, textMessage("user", "Review the docs")), anthropicTestReply)
+	otherNext := harness.serve(messagesBody(t, false, otherSession, textMessage("user", "Review the docs"), textMessage("assistant", "Done."),
+		textMessage("user", paseoTestMessage(escaped))), anthropicTestReply)
+	assertSameSession(t, other, otherNext)
+	if otherNext.ParentSessionID != nil {
+		t.Fatalf("existing conversation got a parent %v", *otherNext.ParentSessionID)
+	}
+
+	// Text around the envelope may quote one; nothing is inferred.
+	quoted := harness.serve(messagesBody(t, false, "<PRIVATE_ACCOUNT_NUMBER_32f7fc4a6e76ba07>", map[string]any{"role": "user", "content": []any{
+		map[string]any{"type": "text", "text": "Explain this message:"},
+		map[string]any{"type": "text", "text": paseoTestMessage(escaped)},
+	}}), anthropicTestReply)
+	if quoted.ParentSessionID != nil {
+		t.Fatalf("quoted envelope linked a parent %v", *quoted.ParentSessionID)
+	}
+}
+
+func TestPaseoSubagentOverResponsesLinksByItsTask(t *testing.T) {
+	const task = "Summarize the failing tests"
+	harness := newSessionHarness(t, contract.ProtocolOpenAIResponses, "/v1/responses", sessionHarnessOptions{auditBlobs: &memoryAuditBlobs{}, streaming: true})
+	harness.headers = http.Header{}
+	arguments, _ := json.Marshal(map[string]string{"title": "Tests", "initialPrompt": task})
+	event := func(value map[string]any) string {
+		raw, _ := json.Marshal(value)
+		return "event: " + value["type"].(string) + "\ndata: " + string(raw) + "\n\n"
+	}
+	call := map[string]any{"type": "function_call", "id": "fc_01", "call_id": "call_01", "namespace": "mcp__paseo__", "name": "create_agent", "arguments": string(arguments)}
+	response := map[string]any{"id": "resp_9f8e7d6c", "status": "completed", "output": []any{}, "usage": map[string]any{"input_tokens": 10, "output_tokens": 20, "total_tokens": 30}}
+	// The Codex backend completes with an empty output after sending its
+	// items one by one.
+	spawnStream := event(map[string]any{"type": "response.created", "response": map[string]any{"id": "resp_9f8e7d6c", "status": "in_progress", "output": []any{}}}) +
+		event(map[string]any{"type": "response.output_item.done", "output_index": 0, "item": call}) +
+		event(map[string]any{"type": "response.completed", "response": response})
+	parent := harness.serve(codexRequest(t, true, "019a2b3c-4d5e-7f60-8a9b-0c1d2e3f4a7d", textMessage("user", "Start an agent for the tests")), spawnStream)
+	child := harness.serve(codexRequest(t, false, "019a2b3c-4d5e-7f60-8a9b-0c1d2e3f4a8e", map[string]any{"role": "user", "content": []any{
+		map[string]any{"type": "input_text", "text": paseoTestMessage(task)},
+	}}), codexTestReply)
+	assertNewSession(t, parent, child)
+	assertParent(t, child, parent)
+}
+
+func codexRequest(t *testing.T, stream bool, cacheKey string, input ...any) string {
+	t.Helper()
+	raw, err := json.Marshal(map[string]any{
+		"model": "public-alias", "prompt_cache_key": cacheKey, "input": input, "stream": stream,
+		"tools": []any{map[string]any{"type": "function", "name": "shell"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(raw)
+}

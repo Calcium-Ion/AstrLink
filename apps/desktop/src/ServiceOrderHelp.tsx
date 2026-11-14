@@ -212,11 +212,21 @@ function OrderAnimation() {
   );
 }
 
-export function ServiceOrderHelp({ ready }: { ready: boolean }) {
+export function ServiceOrderHelp({
+  ready,
+  providerCount,
+}: {
+  ready: boolean;
+  providerCount: number;
+}) {
   const t = useT();
+  // The demo explains the order between providers and which account in a card
+  // goes first, so it first opens once there are two providers. A provider is
+  // each configured service, not a package card: cards group asynchronously,
+  // which would make the first open racy.
   const [guideOpen, setGuideOpen] = useFirstVisitGuide(
     SERVICE_ORDER_GUIDE_KEY,
-    ready,
+    ready && providerCount > 1,
   );
 
   return (

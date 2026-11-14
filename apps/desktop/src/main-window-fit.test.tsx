@@ -110,11 +110,8 @@ function layOut(container: HTMLElement, canvasHeight = 224, scrollTop = 0) {
   setRect(items[0] ?? null, 100 - scrollTop, 300);
   setRect(items[1] ?? null, 412 - scrollTop, 290);
   if (items[2]) setRect(items[2], 714 - scrollTop, 260);
-  setRect(
-    container.querySelector('[data-slot="live-crew-canvas"]'),
-    450 - scrollTop,
-    canvasHeight,
-  );
+  const canvas = container.querySelector('[data-slot="live-crew-canvas"]');
+  if (canvas) setRect(canvas, 450 - scrollTop, canvasHeight);
   setRect(
     container.querySelector('[data-slot="modules"]'),
     100 - scrollTop,
@@ -350,9 +347,33 @@ describe("initial main window fit", () => {
     expect(measureInitialWindowHeight(scroller, 720)).toBe(834);
   });
 
-  it("does not wait for a crew placed below the first two modules", async () => {
-    await render(["usage", "services", "live-crew"], "loading");
-    const scroller = layOut(container, 0);
-    expect(measureInitialWindowHeight(scroller, 720)).toBe(834);
+  it.each([
+    [["usage", "services", "live-crew"]],
+    [["services", "usage", "live-crew"]],
+    [["services", "tokens", "usage"]],
+    [["live-crew", "services", "usage"]],
+  ])(
+    "leaves the opening height alone when %j lead the overview",
+    async (modules) => {
+      await render(modules, "ready");
+      const scroller = layOut(container);
+      flushFrames();
+      expect(measureInitialWindowHeight(scroller, 720)).toBe("other-modules");
+      expect(mocks.fit).not.toHaveBeenCalled();
+      expect(observers.every((observer) => observer.disconnected)).toBe(true);
+
+      // The attempt is spent; a later layout does not resize the window.
+      await render(["usage", "live-crew", "services"], "ready");
+      layOut(container);
+      flushFrames();
+      expect(mocks.fit).not.toHaveBeenCalled();
+    },
+  );
+
+  it("fits the crew above the usage summary as well", async () => {
+    await render(["live-crew", "usage", "services"], "ready");
+    layOut(container);
+    flushFrames();
+    expect(mocks.fit).toHaveBeenCalledWith(834, 1.25);
   });
 });

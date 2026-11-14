@@ -1198,7 +1198,12 @@ export function RequestSky({
   const gid = useId();
   const theme = useResolvedTheme();
   const look = skyLook(theme);
-  const [range, setRange] = useState<SkyRange>("today");
+  // The range picked by hand stays when the overview comes back.
+  const [range, setRange] = useWorkspaceSnapshot<SkyRange>(
+    "request-sky-range",
+    "today",
+    "desktop",
+  );
   const day = useLocalDay();
   const reducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
   const [data, setData] = useWorkspaceSnapshot<SkyData>(

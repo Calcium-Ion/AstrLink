@@ -30,6 +30,8 @@ interface ConfirmDialogProps {
   open: boolean;
   title: string;
   tone?: ConfirmDialogTone;
+  /** Room for a table, such as values before and after a change. */
+  wide?: boolean;
 }
 
 export function ConfirmDialog(props: ConfirmDialogProps) {
@@ -45,6 +47,7 @@ export function ConfirmDialog(props: ConfirmDialogProps) {
     disabled = false,
     title,
     tone = "default",
+    wide = false,
   } = useExitSnapshot(props, open);
   const actionPendingRef = useRef(false);
   return (
@@ -59,7 +62,9 @@ export function ConfirmDialog(props: ConfirmDialogProps) {
         onCancel();
       }}
     >
-      <AlertDialogContent>
+      <AlertDialogContent
+        className={wide ? "data-[size=default]:sm:max-w-3xl" : undefined}
+      >
         <AlertDialogHeader>
           <AlertDialogTitle
             className={
@@ -72,7 +77,9 @@ export function ConfirmDialog(props: ConfirmDialogProps) {
             {title}
           </AlertDialogTitle>
           <AlertDialogDescription asChild>
-            <div className="space-y-2">{description}</div>
+            <div className={wide ? "w-full space-y-2" : "space-y-2"}>
+              {description}
+            </div>
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>

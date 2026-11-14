@@ -2579,7 +2579,10 @@ export function ServiceManager({
                 onChange={setPerformancePreset}
                 size="default"
               />
-              <ServiceOrderHelp ready={isReady && catalogStatus === "ready"} />
+              <ServiceOrderHelp
+                providerCount={services.length}
+                ready={isReady && catalogStatus === "ready"}
+              />
               <IconButton
                 label={
                   busy ? t("common.refreshing") : t("services.refreshList")

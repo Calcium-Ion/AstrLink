@@ -158,8 +158,6 @@ func (handler *Handler) executeCandidatesWithTest(
 	rewrite := gatewayRewriteFrom(routingSettings)
 	compression := imageCompressionFrom(routingSettings)
 	haiku := claudeCodeHaikuRequest(detectClientType(request.Header), classified.Model)
-	// Each official client identity is learned at most once per request.
-	learnedClaude, learnedCodex, learnedGrok := false, false, false
 	repairedTargets := map[string][]byte{}
 	var last executionFailure
 	var lastNetworkFailure executionFailure
@@ -392,14 +390,8 @@ func (handler *Handler) executeCandidatesWithTest(
 		if candidate.Service.Kind == contract.ServiceKindCodexSubscription &&
 			(plan.UpstreamProtocol == contract.ProtocolOpenAIResponses || plan.UpstreamProtocol == contract.ProtocolOpenAIResponsesCompact) {
 			converted := plan.Type == contract.PlanTypeRelayKit
-			// A converted request never teaches or keeps a client identity.
-			recognized := !converted && (protection.officialPassthrough || protection.codexAutoLearn) &&
-				accountauth.RecognizedCodexOfficialClient(attemptRequest.Header)
-			if recognized && protection.codexAutoLearn && !learnedCodex {
-				learnedCodex = true
-				handler.learnClientIdentity(request.Context(), contract.SubscriptionProviderOpenAICodex, attemptRequest.Header)
-			}
-			if recognized && protection.officialPassthrough {
+			// A converted request never keeps the client's identity.
+			if !converted && protection.officialPassthrough && accountauth.RecognizedCodexOfficialClient(attemptRequest.Header) {
 				// A genuine Codex CLI request is forwarded untouched, apart
 				// from the web_search declaration below.
 				clientClass = accountauth.ClientClassOfficial
@@ -445,16 +437,11 @@ func (handler *Handler) executeCandidatesWithTest(
 			!official {
 			converted := plan.Type == contract.PlanTypeRelayKit
 			official := false
-			if !converted && (protection.officialPassthrough || protection.claudeAutoLearn) &&
-				accountauth.RecognizedClaudeOfficialHeaders(attemptRequest.Header) {
+			if !converted && protection.officialPassthrough && accountauth.RecognizedClaudeOfficialHeaders(attemptRequest.Header) {
 				// The body signal (metadata.user_id) is peeked only after the
-				// cheap header signals match and passthrough or learning is on.
+				// cheap header signals match.
 				if raw, ok := peekClaudeRequestBody(attemptRequest); ok && accountauth.ClaudeMetadataUserIDRecognized(raw) {
-					if protection.claudeAutoLearn && !learnedClaude {
-						learnedClaude = true
-						handler.learnClientIdentity(request.Context(), contract.SubscriptionProviderClaudeCode, attemptRequest.Header)
-					}
-					official = protection.officialPassthrough
+					official = true
 				}
 			}
 			if official {
@@ -483,13 +470,8 @@ func (handler *Handler) executeCandidatesWithTest(
 				}
 			}
 		}
-		if candidate.Service.Kind == contract.ServiceKindGrokSubscription {
-			if plan.Type == contract.PlanTypeRelayKit {
-				clientClass = accountauth.ClientClassConverted
-			} else if protection.grokAutoLearn && !learnedGrok {
-				learnedGrok = true
-				handler.learnClientIdentity(request.Context(), contract.SubscriptionProviderXAIGrok, attemptRequest.Header)
-			}
+		if candidate.Service.Kind == contract.ServiceKindGrokSubscription && plan.Type == contract.PlanTypeRelayKit {
+			clientClass = accountauth.ClientClassConverted
 		}
 		records.noteCodexOfficial(clientClass == accountauth.ClientClassOfficial)
 		identity := protection.sendsClientIdentity(candidate.Service.Kind, clientClass)

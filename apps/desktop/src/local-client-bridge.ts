@@ -23,6 +23,10 @@ export const updateLocalClients = (targets: LocalClientTarget[]) =>
   call("update_local_clients", {
     targets: targets.map(({ id, wsl }) => ({ id, wsl })),
   });
+export const repairLocalClients = (targets: LocalClientTarget[]) =>
+  call("repair_local_clients", {
+    targets: targets.map(({ id, wsl }) => ({ id, wsl })),
+  });
 export const listenLocalClients = (
   listener: (snapshot: LocalClientSnapshot) => void,
 ) =>

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -238,4 +239,46 @@ func writeJSON(writer http.ResponseWriter, value any) {
 func escapeJSON(value string) string {
 	raw, _ := json.Marshal(value)
 	return strings.Trim(string(raw), `"`)
+}
+
+func TestAuditReadsReturnBodiesLargerThanOtherResponses(t *testing.T) {
+	body := strings.Repeat("x", maxControlResponseBytes+1)
+	auditPath := controlapi.RequestsPath + "/req_1/audit"
+	mux := http.NewServeMux()
+	mux.HandleFunc(auditPath, func(writer http.ResponseWriter, request *http.Request) {
+		view := request.URL.Query().Get("view")
+		exposure := map[string]string{"shareable": "shareable", "full": "raw"}[view]
+		if exposure == "" || (view == "full") != (request.Header.Get(controlapi.RawGrantHeader) == "grant-1") {
+			http.Error(writer, "unexpected audit read", http.StatusBadRequest)
+			return
+		}
+		writeJSON(writer, map[string]any{
+			"request_id":   "req_1",
+			"request_body": map[string]any{"content": body, "exposure": exposure},
+		})
+	})
+	mux.HandleFunc(controlapi.AuditSettingsPath, func(writer http.ResponseWriter, _ *http.Request) {
+		writeJSON(writer, map[string]any{"padding": body})
+	})
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+
+	for _, args := range [][]string{{"audit", "req_1"}, {"raw-audit", "req_1", "--grant", "grant-1"}} {
+		code, stdout, stderr := runCLI(t, server.URL, args...)
+		if code != 0 {
+			t.Fatalf("%v: code=%d stderr=%s", args, code, stderr)
+		}
+		var wrapped map[string]any
+		if err := json.Unmarshal([]byte(stdout), &wrapped); err != nil {
+			t.Fatalf("%v: %v", args, err)
+		}
+		if got := auditPart(t, wrapped, "request_body")["content"]; got != body {
+			t.Fatalf("%v: request_body content has %d bytes, want %d", args, len(fmt.Sprint(got)), len(body))
+		}
+	}
+
+	code, stdout, stderr := runCLI(t, server.URL, "audit-settings")
+	if code != 1 || stdout != "" || !strings.Contains(stderr, "larger than 8 MiB") {
+		t.Fatalf("oversized response: code=%d stdout=%d bytes stderr=%q", code, len(stdout), stderr)
+	}
 }

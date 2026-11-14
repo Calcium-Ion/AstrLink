@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  catchUpCrew,
   celebrate,
   CLONE_LIMIT,
   createCrew,
@@ -8,6 +9,7 @@ import {
   CREW_STAGES,
   CREW_TOP,
   crewGrowth,
+  ENTRY_GAP,
   MIN_HOLD,
   MIN_REST,
   QUEUE_LIMIT,
@@ -347,6 +349,238 @@ describe("the crew", () => {
     expect(owner.clones).toEqual([]);
   });
 
+  it("brings newcomers in through the door one at a time", () => {
+    const crew = createCrew();
+    syncCrew(crew, reading(), layout);
+    syncCrew(
+      crew,
+      reading(member("a", "edit", "Edit"), member("b", "read", "Read")),
+      layout,
+    );
+    syncCrew(
+      crew,
+      reading(
+        member("a", "edit", "Edit"),
+        member("b", "read", "Read"),
+        member("c", "think"),
+      ),
+      layout,
+    );
+    expect(crew.members.every((character) => character.waiting)).toBe(true);
+    // They come in a gap apart, in the order their conversations started.
+    const entered: Array<[string, number]> = [];
+    // Nobody walks on top of anyone on the way in, nor waits at the door.
+    let closest = Infinity;
+    let atDoor = 0;
+    run(crew, 8, () => {
+      for (const character of crew.members)
+        if (!character.waiting && !entered.some(([id]) => id === character.id))
+          entered.push([character.id, crew.time]);
+      const inside = crew.members.filter(
+        (character) =>
+          !character.waiting &&
+          (!character.arrived || character.x === layout.door),
+      );
+      atDoor = Math.max(
+        atDoor,
+        inside.filter((character) => character.x === layout.door).length,
+      );
+      for (const one of inside)
+        for (const other of inside)
+          if (one !== other)
+            closest = Math.min(closest, Math.abs(one.x - other.x));
+    });
+    expect(entered.map(([id]) => id)).toEqual(["a", "b", "c"]);
+    expect(entered[1][1] - entered[0][1]).toBeCloseTo(ENTRY_GAP, 1);
+    expect(entered[2][1] - entered[1][1]).toBeCloseTo(ENTRY_GAP, 1);
+    expect(closest).toBeGreaterThan(40);
+    expect(atDoor).toBeLessThanOrEqual(1);
+    expect(crew.members.every((character) => character.arrived)).toBe(true);
+    // A turn waits only for those before it, not for long-gone arrivals.
+    syncCrew(
+      crew,
+      reading(
+        member("a", "edit", "Edit"),
+        member("b", "read", "Read"),
+        member("c", "think"),
+        member("d", "think"),
+      ),
+      layout,
+    );
+    run(crew, 1 / 30);
+    expect(crew.members.at(-1)?.waiting).toBe(false);
+  });
+
+  it("keeps no turn for newcomers that came and went unwatched", () => {
+    const crew = createCrew();
+    syncCrew(crew, reading(member("a", "think")), layout);
+    run(crew, 2);
+    // Scrolled out of view: reads keep coming but the crew's clock stands.
+    for (let n = 0; n < 20; n += 1) {
+      catchUpCrew(
+        crew,
+        reading(member("a", "think"), member(`brief-${n}`, "think")),
+        layout,
+      );
+      catchUpCrew(crew, reading(member("a", "think")), layout);
+    }
+    catchUpCrew(
+      crew,
+      reading(member("a", "think"), member("late", "edit", "Edit")),
+      layout,
+    );
+    expect(crew.members.map((character) => character.id)).toEqual([
+      "a",
+      "late",
+    ]);
+    // Back in view, it comes in straight away.
+    run(crew, 1 / 30);
+    expect(crew.members[1].waiting).toBe(false);
+  });
+
+  it.each(CREW_SCENES)(
+    "gives resting newcomers their own places by the %s door",
+    (id) => {
+      const { layout: scene } = createScene(id, 1006);
+      const apart = (crew: Crew) => {
+        for (const one of crew.members)
+          for (const other of crew.members)
+            if (one !== other && one.level === other.level)
+              expect(Math.abs(one.x - other.x)).toBeGreaterThan(40);
+      };
+      // The first reading finds three conversations between replies.
+      const first = createCrew();
+      catchUpCrew(
+        first,
+        reading(
+          member("i1", "wait"),
+          member("i2", "wait"),
+          member("i3", "wait"),
+        ),
+        scene,
+      );
+      apart(first);
+      // Back on the overview, two that replied meanwhile come in to rest.
+      const crew = createCrew();
+      const working = [
+        member("a", "edit", "Edit"),
+        member("b", "read", "Read"),
+      ];
+      catchUpCrew(crew, reading(...working), scene);
+      catchUpCrew(
+        crew,
+        reading(...working, member("d", "wait"), member("e", "wait")),
+        scene,
+      );
+      for (let left = 8; left > 1e-9; left -= 1 / 30)
+        stepCrew(crew, scene, Math.min(1 / 30, left));
+      expect(
+        crew.members.every(
+          (character) => character.arrived && !character.waiting,
+        ),
+      ).toBe(true);
+      apart(crew);
+    },
+  );
+
+  it("drops a newcomer whose conversation ends before its turn", () => {
+    const crew = createCrew();
+    syncCrew(crew, reading(), layout);
+    syncCrew(crew, reading(member("a", "think"), member("b", "think")), layout);
+    syncCrew(crew, reading(member("a", "think")), layout);
+    run(crew, 1 / 30);
+    expect(crew.members.map((character) => character.id)).toEqual(["a"]);
+  });
+
+  it("finds everyone at work on the first reading", () => {
+    const crew = createCrew();
+    catchUpCrew(
+      crew,
+      reading(member("a", "edit", "Edit"), member("b", "read", "Read")),
+      layout,
+    );
+    expect(crew.members).toMatchObject([
+      { id: "a", act: "edit", arrived: true, x: X.edit - 50, waiting: false },
+      { id: "b", act: "read", arrived: true, x: X.read - 50, waiting: false },
+    ]);
+  });
+
+  it("catches up at once after nobody watched for a while", () => {
+    const crew = createCrew();
+    catchUpCrew(
+      crew,
+      reading(
+        member("stays", "edit", "Edit"),
+        member("moves", "read", "Read"),
+        member("ends", "search", "Grep"),
+      ),
+      layout,
+    );
+    run(crew, 2);
+    // Mid-walk when the overview went away.
+    syncCrew(
+      crew,
+      reading(
+        member("stays", "bash", "Bash"),
+        member("moves", "read", "Read"),
+        member("ends", "search", "Grep"),
+      ),
+      layout,
+    );
+    run(crew, MIN_HOLD + 0.4);
+    const stays = crew.members.find((character) => character.id === "stays")!;
+    expect(stays).toMatchObject({ act: "bash", arrived: false });
+    const before = { ...stays };
+
+    catchUpCrew(
+      crew,
+      reading(
+        member("stays", "bash", "Bash"),
+        member("moves", "write"),
+        member("new-1", "think"),
+        member("new-2", "think"),
+      ),
+      layout,
+    );
+    // The one whose conversation went on as it was keeps its place and walk.
+    expect(stays).toMatchObject({
+      x: before.x,
+      act: "bash",
+      arrived: false,
+      move: before.move,
+    });
+    // The one that moved on stands at its latest step already.
+    expect(crew.members.find((c) => c.id === "moves")).toMatchObject({
+      act: "write",
+      arrived: true,
+      x: X.write - 50,
+    });
+    // The one that ended is gone without walking out.
+    expect(crew.members.some((c) => c.id === "ends")).toBe(false);
+    // Only the conversations that started meanwhile come in, one by one.
+    const fresh = crew.members.filter((c) => c.id.startsWith("new-"));
+    expect(fresh.map((c) => [c.x, c.waiting])).toEqual([
+      [layout.door, true],
+      [layout.door, true],
+    ]);
+    run(crew, 1 / 30);
+    expect(fresh.map((c) => c.waiting)).toEqual([false, true]);
+    run(crew, 6);
+    expect(crew.members.every((character) => character.arrived)).toBe(true);
+    // A failover from while away does not trip anyone on the way back.
+    catchUpCrew(
+      crew,
+      reading(
+        member("stays", "bash", "Bash", { failovers: ["stays@1"] }),
+        member("moves", "write"),
+        member("new-1", "think"),
+        member("new-2", "think"),
+      ),
+      layout,
+    );
+    expect(crew.members.every((character) => character.slip === 0)).toBe(true);
+  });
+
   it("caps the characters on screen and counts the rest", () => {
     const crew = createCrew();
     const many = Array.from({ length: CREW_LIMIT + 3 }, (_, n) =>
@@ -411,7 +645,6 @@ describe("the crew", () => {
 });
 
 describe("the model orb", () => {
-  const T = 3;
   function joined(model: string) {
     const crew = createCrew();
     syncCrew(crew, reading(member("a", "think", "", { model })), layout);
@@ -422,14 +655,14 @@ describe("the model orb", () => {
   it("rides along only when a model is known", () => {
     const fx: Pixel[] = [];
     const crew = joined("");
-    stepOrb(crew.members[0], T, 1 / 30, fx, crew.rand);
+    stepOrb(crew.members[0], 1 / 30, fx, crew.rand);
     expect(crew.members[0].orb).toBeNull();
     syncCrew(
       crew,
       reading(member("a", "think", "", { model: "kimi-k3" })),
       layout,
     );
-    stepOrb(crew.members[0], T, 1 / 30, fx, crew.rand);
+    stepOrb(crew.members[0], 1 / 30, fx, crew.rand);
     // Appearing for the first time bursts nothing.
     expect(crew.members[0].orb).toMatchObject({ model: "kimi-k3", in: 1 });
     expect(fx).toHaveLength(0);
@@ -439,14 +672,14 @@ describe("the model orb", () => {
     const fx: Pixel[] = [];
     const crew = joined("kimi-k3");
     const [owner] = crew.members;
-    stepOrb(owner, T, 1 / 30, fx, crew.rand);
+    stepOrb(owner, 1 / 30, fx, crew.rand);
     const before = owner.orb!.y;
     syncCrew(
       crew,
       reading(member("a", "think", "", { model: "deepseek-v4" })),
       layout,
     );
-    stepOrb(owner, T, 1 / 30, fx, crew.rand);
+    stepOrb(owner, 1 / 30, fx, crew.rand);
     expect(fx).toHaveLength(14);
     expect(owner.orb).toMatchObject({ model: "deepseek-v4" });
     expect(owner.orb!.in).toBeLessThan(0.1);
@@ -462,7 +695,7 @@ describe("the model orb", () => {
     const side = (30 * 1.5) / 2 + 8;
     let walked = 0;
     const follow = () => {
-      stepOrb(owner, crew.time, 1 / 30, fx, crew.rand);
+      stepOrb(owner, 1 / 30, fx, crew.rand);
       const gap = Math.abs(owner.orb!.x - owner.x);
       if (!owner.arrived) {
         walked += 1;
@@ -476,7 +709,29 @@ describe("the model orb", () => {
     expect(owner).toMatchObject({ act: "edit", arrived: true });
     syncCrew(crew, reading(member("a", "wait", "", { model })), layout);
     run(crew, MIN_HOLD + 2, follow);
-    expect(owner.orb).toMatchObject({ dim: true, flap: false });
+    expect(owner.orb).toMatchObject({ dim: true, glow: false });
+  });
+
+  it("keeps still beside the shoulder, ringed only while writing", () => {
+    const fx: Pixel[] = [];
+    const model = "claude-opus-5-5";
+    const crew = joined(model);
+    const [owner] = crew.members;
+    const step = () => stepOrb(owner, 1 / 30, fx, crew.rand);
+    for (const act of ["think", "write", "bash"] as const) {
+      syncCrew(crew, reading(member("a", act, "", { model })), layout);
+      run(crew, MIN_HOLD + 3, step);
+      expect(owner.arrived).toBe(true);
+      const at = { x: owner.orb!.x, y: owner.orb!.y };
+      // No circling, bobbing or sparks: it does not move while she works.
+      run(crew, 2, () => {
+        step();
+        expect(Math.abs(owner.orb!.x - at.x)).toBeLessThan(0.5);
+        expect(Math.abs(owner.orb!.y - at.y)).toBeLessThan(0.5);
+      });
+      expect(owner.orb!.glow).toBe(act === "write");
+    }
+    expect(fx).toHaveLength(0);
   });
 
   it("wears its vendor's mark, or the Brain's", () => {

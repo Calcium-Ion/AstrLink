@@ -446,6 +446,13 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 	if routingSettingsLoaded && err == nil {
 		session.routingSettings = &routingSettings
 	}
+	if builtinInternalFrom(request.Context()) == nil {
+		learnSettings := routingSettings
+		if !routingSettingsLoaded || err != nil {
+			learnSettings = contract.DefaultRoutingSettings()
+		}
+		handler.learnClientIdentities(request.Context(), classified, request.Header, learnSettings)
+	}
 	// Codex's own image and search requests skip routing: the built-in tools
 	// answer them, or the provider that served the turn.
 	switch classified.Protocol {
@@ -999,10 +1006,10 @@ func (handler *Handler) startRecordSession(request *http.Request, classified Req
 		fingerprinter, linkFingerprinter, contextFingerprinter := handler.sessionFingerprints.get(request.Context(), handler.auditBlobs, handler.recordLogger)
 		session.fingerprinter, session.linkFingerprinter = fingerprinter, linkFingerprinter
 		session.observeContext(classified.context, contextFingerprinter)
-		if session.clientType == contract.ClientDeepSeekHarness && session.linkFingerprinter != nil {
-			// Its subagents carry no thread ids; the prompts this
-			// conversation gives them are how they find it.
-			session.scanner.watchSpawns()
+		if session.linkFingerprinter != nil {
+			// Paseo and DeepSeek Harness subagents carry no thread ids;
+			// the prompts this conversation gives them are how they find it.
+			session.scanner.watchSpawns(session.clientType == contract.ClientDeepSeekHarness)
 		}
 	}
 	session.resolveSession(request.Context(), handler.requestRecords, handler.recordLogger)

@@ -1004,6 +1004,20 @@
   background: transparent;
 }
 
+/* Desktop toys draw on transparent, click-through windows. */
+:root[data-surface="toy"] {
+  --window-chrome-height: 0px;
+  background: transparent;
+  overflow: hidden;
+}
+
+:root[data-surface="toy"] body,
+:root[data-surface="toy"] #root {
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+}
+
 /* Success and info toasts without actions only acknowledge an action, so they
    must not cover the rows beneath them. Clicks pass through, and the Toaster
    marks toasts under the pointer so they fade and reveal what will be clicked. */

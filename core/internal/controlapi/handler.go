@@ -352,7 +352,9 @@ func (handler *Handler) getOnly(next http.HandlerFunc) http.HandlerFunc {
 }
 
 func setHeaders(header http.Header) {
-	header.Set("Cache-Control", "no-store")
+	// no-transform keeps a CDN or proxy from compressing or rewriting the
+	// response, which weakens or drops the ETag that optimistic writes need.
+	header.Set("Cache-Control", "no-store, no-transform")
 	header.Set("Content-Type", "application/json")
 	header.Set("X-Content-Type-Options", "nosniff")
 }

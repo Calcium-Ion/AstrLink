@@ -26,7 +26,7 @@ pub fn lower_process() {
 /// creator's priority, so each pool thread lowers itself before taking work.
 #[cfg(target_os = "macos")]
 pub fn lower_pool_threads(builder: SessionBuilder) -> ort::Result<SessionBuilder> {
-    builder.with_thread_manager(LoweredThreads)
+    Ok(builder.with_thread_manager(LoweredThreads)?)
 }
 
 // Pool threads copy the main thread's nice on Linux, and the Windows class

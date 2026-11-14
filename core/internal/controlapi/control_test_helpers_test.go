@@ -42,7 +42,7 @@ func controlRequest(
 	}
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
-	if response.Header().Get("Cache-Control") != "no-store" {
+	if response.Header().Get("Cache-Control") != "no-store, no-transform" {
 		t.Fatalf("Cache-Control = %q", response.Header().Get("Cache-Control"))
 	}
 	return response

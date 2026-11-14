@@ -62,6 +62,13 @@ describe("web command transport", () => {
     ).toEqual({ [wrapper as string]: { id: "one" }, etag: '"v2"' });
     expect(fetchMock.mock.calls[0][0]).toBe(`/control/v1${path}`);
   });
+  it("reads a weak ETag from a compressing proxy as the strong one core sent", async () => {
+    respond({ id: "svc_one" }, 200, { ETag: 'W/"sha256:abc"' });
+    expect(await webInvoke("get_service", { serviceId: "svc_one" })).toEqual({
+      service: { id: "svc_one" },
+      etag: '"sha256:abc"',
+    });
+  });
   it("sends same-origin cookies and the console header with optimistic writes", async () => {
     respond({ id: "svc_one" }, 200, { ETag: '"v3"' });
     await webInvoke("update_service", {

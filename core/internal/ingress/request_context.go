@@ -731,13 +731,13 @@ func contextSpans(text string, channel textChannel) []itemSpan {
 	}
 	if reminder {
 		if strings.Contains(text, "<skills_instructions>") {
-			spans = append(spans, skillCatalogSpans(text, "<skills_instructions>", "</skills_instructions>")...)
+			spans = append(spans, skillCatalogSpans(text, codexSkillsOpen, "</skills_instructions>")...)
 		}
-		if strings.Contains(text, claudeCodeSkillsIntro) {
-			spans = append(spans, skillCatalogSpans(text, claudeCodeSkillsIntro, "\n\n")...)
+		if strings.Contains(text, "The following skills are ") {
+			spans = append(spans, skillCatalogSpans(text, claudeCodeSkillsOpen, "\n\n")...)
 		}
 		if strings.Contains(text, "<available_skills>") {
-			spans = append(spans, skillCatalogSpans(text, "<available_skills>", "</available_skills>")...)
+			spans = append(spans, skillCatalogSpans(text, piSkillsOpen, "</available_skills>")...)
 		}
 		if strings.Contains(text, "nstructions from: ") {
 			spans = append(spans, harnessInstructionSpans(text)...)
@@ -892,7 +892,17 @@ func codexInstructionSpans(text string) []itemSpan {
 	}
 }
 
-const claudeCodeSkillsIntro = "The following skills are available for use with the Skill tool:\n\n"
+var (
+	codexSkillsOpen = regexp.MustCompile(regexp.QuoteMeta("<skills_instructions>"))
+	piSkillsOpen    = regexp.MustCompile(regexp.QuoteMeta("<available_skills>"))
+	// claudeCodeSkillsOpen heads each skills listing Claude Code sends. The
+	// first lists every skill; later ones list only the skills added or
+	// changed since, some saying so. In code mode a script loads skills
+	// instead of the Skill tool.
+	claudeCodeSkillsOpen = regexp.MustCompile(`The following skills are (?:also )?available` +
+		`(?: for use with the Skill tool|; a script loads one with [^\n]*?)` +
+		`(?:\. This list adds to the skills listed earlier in this conversation and is not the full list)?:\n\n`)
+)
 
 // skillNameLine is a catalog entry, "- name: description", the name in
 // backticks for DeepSeek Harness. Plugin skills have colons in their names.
@@ -935,18 +945,18 @@ func skillEntries(content string) (names, descriptions []string) {
 	return names, descriptions
 }
 
-// skillCatalogSpans reads the catalog between open and close, the names
-// from its entries.
-func skillCatalogSpans(text, open, close string) []itemSpan {
+// skillCatalogSpans reads each catalog from where open matches to close,
+// the names from its entries.
+func skillCatalogSpans(text string, open *regexp.Regexp, close string) []itemSpan {
 	var spans []itemSpan
 	offset := 0
 	for {
-		at := strings.Index(text[offset:], open)
-		if at < 0 {
+		at := open.FindStringIndex(text[offset:])
+		if at == nil {
 			return spans
 		}
-		start := offset + at
-		contentStart := start + len(open)
+		start := offset + at[0]
+		contentStart := offset + at[1]
 		end := len(text)
 		if close != "" {
 			if found := strings.Index(text[contentStart:], close); found >= 0 {
@@ -1034,6 +1044,10 @@ func (w *contextWalk) addItem(span itemSpan) int {
 	if index, ok := w.itemIndex[key]; ok {
 		existing := &w.observation.items[index]
 		existing.tokens += item.tokens
+		if item.kind == contract.ContextItemSkills {
+			existing.addSkills(item)
+			return item.tokens
+		}
 		existing.digest, existing.count, existing.names, existing.text = item.digest, item.count, item.names, item.text
 		existing.descriptions, existing.entries = item.descriptions, item.entries
 		return item.tokens
@@ -1041,6 +1055,36 @@ func (w *contextWalk) addItem(span itemSpan) int {
 	w.itemIndex[key] = len(w.observation.items)
 	w.observation.items = append(w.observation.items, item)
 	return item.tokens
+}
+
+// addSkills adds a later skills listing to a catalog. Claude Code lists only
+// the skills added or changed since its earlier listings, so the catalog is
+// every skill they name, each where it was first listed with its newest
+// description.
+func (item *observedItem) addSkills(later observedItem) {
+	for index, name := range later.names {
+		description := ""
+		if index < len(later.descriptions) {
+			description = later.descriptions[index]
+		}
+		if at := slices.Index(item.names, name); at >= 0 {
+			if description != "" && at < len(item.descriptions) {
+				item.descriptions[at] = description
+			}
+			continue
+		}
+		item.names = append(item.names, name)
+		item.descriptions = append(item.descriptions, description)
+	}
+	item.count = len(item.names)
+	digest := sha256.Sum256(append(slices.Clone(item.digest), later.digest...))
+	item.digest = digest[:]
+	if later.text != "" {
+		if item.text != "" {
+			item.text += "\n\n"
+		}
+		item.text += later.text
+	}
 }
 
 // finish settles what needs the whole body: item paths against the project,

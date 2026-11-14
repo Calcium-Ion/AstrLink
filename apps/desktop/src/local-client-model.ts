@@ -10,6 +10,9 @@ export const LOCAL_CLIENT_PHASES = [
   "updating",
   "updated",
   "error",
+  "damaged",
+  "repairing",
+  "repaired",
 ] as const;
 export type LocalClientPhase = (typeof LOCAL_CLIENT_PHASES)[number];
 const LOCAL_CLIENT_INSTALL_METHODS = [
@@ -23,6 +26,12 @@ const LOCAL_CLIENT_INSTALL_METHODS = [
 ] as const;
 export type LocalClientInstallMethod =
   (typeof LOCAL_CLIENT_INSTALL_METHODS)[number];
+const LOCAL_CLIENT_REPAIRS = ["restore", "reinstall"] as const;
+/**
+ * What repairing a damaged client does: `restore` puts back the copy left from
+ * before a failed update, `reinstall` installs the latest version again.
+ */
+export type LocalClientRepair = (typeof LOCAL_CLIENT_REPAIRS)[number];
 export interface LocalClientStatus {
   id: LocalClientId;
   /** The WSL distribution the client runs in; `null` for this computer. */
@@ -37,6 +46,12 @@ export interface LocalClientStatus {
   checked_at: string | null;
   error_code: string | null;
   error_detail: string | null;
+  /** The repair a `damaged` client offers; `null` when none is automatic. */
+  repair: LocalClientRepair | null;
+  /** The version a `restore` repair brings back. */
+  previous_version: string | null;
+  /** A failed update or repair left the earlier version working. */
+  kept_previous: boolean;
 }
 export interface LocalClientSnapshot {
   revision: number;
@@ -54,19 +69,34 @@ const LOCAL_CLIENTS = {
   codex: {
     label: "Codex CLI",
     guide: "https://developers.openai.com/codex/cli/",
+    npm: "@openai/codex",
   },
   claude: {
     label: "Claude Code",
     guide: "https://code.claude.com/docs/en/setup",
+    npm: "@anthropic-ai/claude-code",
   },
   cursor: {
     label: "Cursor CLI",
     guide: "https://cursor.com/docs/cli/installation",
+    npm: null,
   },
-  pi: { label: "Pi", guide: "https://pi.dev/docs/latest/quickstart" },
-} satisfies Record<LocalClientId, { label: string; guide: string }>;
+  pi: {
+    label: "Pi",
+    guide: "https://pi.dev/docs/latest/quickstart",
+    npm: "@earendil-works/pi-coding-agent",
+  },
+} satisfies Record<
+  LocalClientId,
+  { label: string; guide: string; npm: string | null }
+>;
 export const localClientLabel = (id: LocalClientId) => LOCAL_CLIENTS[id].label;
 export const localClientGuide = (id: LocalClientId) => LOCAL_CLIENTS[id].guide;
+/** The command that reinstalls an npm-installed client; `null` without a package. */
+export const localClientNpmInstall = (id: LocalClientId) => {
+  const pkg = LOCAL_CLIENTS[id].npm;
+  return pkg ? `npm install -g ${pkg}` : null;
+};
 
 export function emptyLocalClients(): LocalClientSnapshot {
   return {
@@ -85,6 +115,9 @@ export function emptyLocalClients(): LocalClientSnapshot {
       checked_at: null,
       error_code: null,
       error_detail: null,
+      repair: null,
+      previous_version: null,
+      kept_previous: false,
     })),
     wsl_unchecked: [],
   };
@@ -124,7 +157,10 @@ export function parseLocalClients(value: unknown): LocalClientSnapshot {
       !LOCAL_CLIENT_INSTALL_METHODS.includes(
         client.install_method as LocalClientInstallMethod,
       ) ||
-      typeof client.can_update !== "boolean"
+      typeof client.can_update !== "boolean" ||
+      typeof client.kept_previous !== "boolean" ||
+      (client.repair !== null &&
+        !LOCAL_CLIENT_REPAIRS.includes(client.repair as LocalClientRepair))
     )
       throw new Error("Invalid local client status");
     keys.add(key);
@@ -135,6 +171,7 @@ export function parseLocalClients(value: unknown): LocalClientSnapshot {
       "checked_at",
       "error_code",
       "error_detail",
+      "previous_version",
     ]) {
       if (
         client[key] !== null &&

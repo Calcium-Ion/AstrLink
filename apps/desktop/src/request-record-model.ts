@@ -15,6 +15,7 @@ export const CLIENT_TYPES = [
   "deepseek_harness",
   "codewhale",
   "reasonix",
+  "dimagent",
   "qwen_code",
   "kimi_code",
   "codebuddy",
@@ -487,7 +488,7 @@ export interface ToolboxSkill {
   description?: string;
   /** Turns that loaded it in the last 30 days. */
   uses: number;
-  /** The newest main call's catalog lists it. */
+  /** A call of the last 30 days listed it. */
   carried: boolean;
 }
 
@@ -495,6 +496,7 @@ export interface ToolboxTool {
   name: string;
   /** Calls that made it in the last 30 days. */
   uses: number;
+  /** A call of the last 30 days carried it. */
   carried: boolean;
 }
 
@@ -503,11 +505,17 @@ export interface ToolboxServer {
   tools: ToolboxTool[];
 }
 
-/** The skills and MCP tools carried, and those used in the last 30 days. */
+/**
+ * The skills and MCP tools the calls of the last 30 days carried or used.
+ * Within the same days the lists only grow and no count drops; a call leaves
+ * them when its day does, each midnight.
+ */
 export interface MemoryToolbox {
+  /** When those days began. */
+  since: string;
   skills: ToolboxSkill[];
   mcp: ToolboxServer[];
-  /** Tokens the unused skills and tools add to each call. */
+  /** Tokens the skills and tools carried but not used add to each call. */
   idle_tokens: number;
 }
 
@@ -2299,6 +2307,7 @@ function parseMemoryEntry(value: unknown, path: string): MemoryEntry {
 function parseMemoryToolbox(value: unknown, path: string): MemoryToolbox {
   const toolbox = objectAt(value, path);
   return {
+    since: stringAt(toolbox.since, `${path}.since`),
     skills: arrayAt(toolbox.skills, `${path}.skills`).map((entry, index) => {
       const skillPath = `${path}.skills[${index}]`;
       const skill = objectAt(entry, skillPath);

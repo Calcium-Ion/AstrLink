@@ -493,10 +493,11 @@ export function ownedConfig(
 }
 
 /**
- * Whether a place starts checked: what this token configures, and installed
- * clients nobody set up. Other tokens, other gateways, other tools and edited
- * configs stay as they are unless the dialog opens on what needs attention.
- * A client that is open refuses writes until it quits.
+ * Whether a place starts checked: only what this token already configures.
+ * Clients nobody set up wait for the user to pick them. Other tokens, other
+ * gateways, other tools and edited configs stay as they are unless the dialog
+ * opens on what needs attention. A client that is open refuses writes until
+ * it quits.
  */
 export function checkedByDefault(
   status: ClientConfigStatus,
@@ -505,10 +506,10 @@ export function checkedByDefault(
 ): boolean {
   if (!placeWritable(status) || status.notes.includes("running")) return false;
   if (needsAttention) return true;
-  if (status.token_id === tokenId) {
-    return status.state === "configured" || status.state === "outdated";
-  }
-  return status.state === "not_configured" && status.detected;
+  return (
+    status.token_id === tokenId &&
+    (status.state === "configured" || status.state === "outdated")
+  );
 }
 
 /** A place: a client in a home and, for a client with several, a target. */

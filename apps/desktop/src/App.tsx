@@ -15,6 +15,7 @@ import {
   Server,
   Settings,
   ShieldCheck,
+  Smile,
   type AnimatedIcon,
 } from "@/components/icons";
 
@@ -66,6 +67,7 @@ import { RawKeyReplacedGate } from "./RawSealingControls";
 import { useRawSealingStatus } from "./use-raw-sealing-status";
 import { LocalDataNotice } from "./LocalDataNotice";
 import { SettingsCenter } from "./SettingsCenter";
+import { DesktopToysPage, hasDesktopToys } from "./toys/DesktopToysPage";
 import { About } from "./About";
 import { useAppUpdates } from "./use-app-updates";
 import { usePrivacyModelUpdate } from "./use-privacy-model-update";
@@ -103,6 +105,7 @@ type WorkspacePage =
   | { kind: "routing" }
   | { kind: "agentTools"; preselectSkill?: AgentSkillId }
   | { kind: "settings" }
+  | { kind: "desktopToys" }
   | { kind: "about" }
   | ServiceManagerView;
 
@@ -115,7 +118,8 @@ type IconName =
   | "route"
   | "server"
   | "settings"
-  | "shield";
+  | "shield"
+  | "smile";
 
 const emptyCatalog: ServiceCatalog = {
   status: "blocked",
@@ -224,6 +228,8 @@ export function trayNavigationTarget(
     case "about":
     case "list":
       return { kind };
+    case "desktopToys":
+      return hasDesktopToys() ? { kind } : null;
     default:
       return null;
   }
@@ -239,6 +245,7 @@ const icons: Record<IconName, AnimatedIcon> = {
   server: Server,
   settings: Settings,
   shield: ShieldCheck,
+  smile: Smile,
 };
 
 function Icon({ className, name }: { className?: string; name: IconName }) {
@@ -418,7 +425,14 @@ export default function App() {
       ? `${snapshot.pid ?? "none"}|${snapshot.ready.control_url}|${snapshot.ready.inference_url}`
       : null;
   const rawSealing = useRawSealingStatus(coreSessionKey, isReady);
-  const onboarding = useOnboarding({ isReady, catalog, tokenCatalog, usage });
+  const onboarding = useOnboarding({
+    isReady,
+    catalog,
+    tokenCatalog,
+    usage,
+    inferenceURL: snapshot?.ready?.client_inference_url ?? "",
+    enabled: !isWebEdition,
+  });
 
   // Silent refreshes read the rendered state to stay out of a visible load.
   const catalogRef = useRef(catalog);
@@ -929,6 +943,14 @@ export default function App() {
                 label={t("nav.routing")}
                 onClick={() => navigate({ kind: "routing" })}
               />
+              {!isWebEdition && hasDesktopToys() ? (
+                <NavButton
+                  active={page.kind === "desktopToys"}
+                  icon="smile"
+                  label={t("nav.desktopToys")}
+                  onClick={() => navigate({ kind: "desktopToys" })}
+                />
+              ) : null}
             </div>
 
             <Separator className="mx-2 my-2 bg-sidebar-border data-[orientation=horizontal]:w-auto" />
@@ -1178,6 +1200,8 @@ export default function App() {
               />
             ) : page.kind === "agentTools" ? (
               <AgentDebugSettings preselectSkill={page.preselectSkill} />
+            ) : page.kind === "desktopToys" ? (
+              <DesktopToysPage />
             ) : page.kind === "about" ? (
               <About
                 snapshot={updates.snapshot}

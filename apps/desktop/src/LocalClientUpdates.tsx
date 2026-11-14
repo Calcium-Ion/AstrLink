@@ -15,6 +15,7 @@ import {
   getLocalClients,
   listenLocalClients,
   refreshLocalClients,
+  repairLocalClients,
   updateLocalClients,
 } from "./local-client-bridge";
 import {
@@ -23,7 +24,9 @@ import {
   localClientGuide,
   localClientKey,
   localClientLabel,
+  localClientNpmInstall,
   type LocalClientId,
+  type LocalClientStatus,
   type LocalClientSnapshot,
   type LocalClientTarget,
 } from "./local-client-model";
@@ -40,7 +43,28 @@ const ERROR_KEYS = new Set([
   "changed",
   "unchanged",
   "damaged",
+  "running",
+  "busy",
+  "incomplete",
 ]);
+
+/** Why a damaged client cannot start and how to bring it back. */
+function damagedKey({ repair, previous_version }: LocalClientStatus) {
+  if (repair === "restore")
+    return previous_version === null
+      ? "localClients.damaged.restoreUnversioned"
+      : "localClients.damaged.restore";
+  return repair === "reinstall"
+    ? "localClients.damaged.reinstall"
+    : "localClients.damaged.manual";
+}
+
+/** The npm command that reinstalls a damaged npm installation by hand. */
+function reinstallCommand(client: LocalClientStatus) {
+  return client.phase === "damaged" && client.install_method === "npm"
+    ? localClientNpmInstall(client.id)
+    : null;
+}
 
 export function LocalClientUpdates({ compact = false }: { compact?: boolean }) {
   const t = useT();
@@ -138,7 +162,9 @@ export function LocalClientUpdates({ compact = false }: { compact?: boolean }) {
                   aria-hidden="true"
                   className={cn(
                     snapshot.busy &&
-                      !snapshot.clients.some((c) => c.phase === "updating") &&
+                      !snapshot.clients.some((c) =>
+                        ["updating", "repairing"].includes(c.phase),
+                      ) &&
                       "motion-safe:animate-spin",
                   )}
                 />
@@ -210,9 +236,11 @@ export function LocalClientUpdates({ compact = false }: { compact?: boolean }) {
                     tone={
                       client.phase === "available"
                         ? "pending"
-                        : client.phase === "error"
+                        : ["error", "damaged"].includes(client.phase)
                           ? "negative"
-                          : ["updated", "up_to_date"].includes(client.phase)
+                          : ["updated", "up_to_date", "repaired"].includes(
+                                client.phase,
+                              )
                             ? "positive"
                             : "neutral"
                     }
@@ -254,13 +282,38 @@ export function LocalClientUpdates({ compact = false }: { compact?: boolean }) {
                     )}
                   </p>
                 ) : null}
-                {client.phase === "updated" ? (
+                {client.phase === "error" &&
+                client.kept_previous &&
+                client.current_version !== null ? (
                   <p className="text-xs text-muted-foreground">
-                    {t("localClients.reopen")}
+                    {t("localClients.kept", {
+                      version: client.current_version,
+                    })}
+                  </p>
+                ) : null}
+                {client.phase === "damaged" ? (
+                  <p
+                    role="alert"
+                    className="text-xs leading-relaxed text-danger-foreground"
+                  >
+                    {t(damagedKey(client), {
+                      version: client.previous_version,
+                    })}
+                  </p>
+                ) : null}
+                {client.phase === "updated" || client.phase === "repaired" ? (
+                  <p className="text-xs text-muted-foreground">
+                    {t(
+                      client.phase === "updated"
+                        ? "localClients.reopen"
+                        : "localClients.repaired",
+                    )}
                   </p>
                 ) : null}
                 <div className="mt-auto flex items-start justify-between gap-2">
-                  {client.executable || client.error_detail ? (
+                  {client.executable ||
+                  client.error_detail ||
+                  reinstallCommand(client) ? (
                     <details className="min-w-0 flex-1 pt-1.5 text-xs text-muted-foreground">
                       <summary
                         className="w-fit cursor-pointer"
@@ -299,6 +352,16 @@ export function LocalClientUpdates({ compact = false }: { compact?: boolean }) {
                             ))}
                           </>
                         ) : null}
+                        {reinstallCommand(client) ? (
+                          <DataField
+                            label={t("localClients.manualReinstall")}
+                            value={
+                              <span className="break-all font-mono text-xs">
+                                {reinstallCommand(client)}
+                              </span>
+                            }
+                          />
+                        ) : null}
                         {client.error_detail ? (
                           <DataField
                             label={t("localClients.errorDetails")}
@@ -332,14 +395,45 @@ export function LocalClientUpdates({ compact = false }: { compact?: boolean }) {
                     >
                       {t("localClients.update")}
                     </Button>
-                  ) : client.phase === "updating" ? (
+                  ) : client.phase === "updating" ||
+                    client.phase === "repairing" ? (
                     <Button variant="outline" size="sm" disabled>
                       <RefreshCw
                         aria-hidden="true"
                         className="motion-safe:animate-spin"
                       />
-                      {t("localClients.phase.updating")}
+                      {t(`localClients.phase.${client.phase}`)}
                     </Button>
+                  ) : client.phase === "damaged" ? (
+                    <div className="flex shrink-0 flex-wrap justify-end gap-1">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => void guide(client.id)}
+                      >
+                        {t("localClients.installGuide")}
+                        <ArrowUpRight aria-hidden="true" />
+                      </Button>
+                      {client.repair ? (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={busy}
+                          aria-label={t("localClients.repairNamed", {
+                            name: placeLabel(client),
+                          })}
+                          onClick={() =>
+                            void run(() =>
+                              repairLocalClients([
+                                { id: client.id, wsl: client.wsl },
+                              ]),
+                            )
+                          }
+                        >
+                          {t("localClients.repair")}
+                        </Button>
+                      ) : null}
+                    </div>
                   ) : client.phase === "error" ? (
                     <Button
                       variant="outline"

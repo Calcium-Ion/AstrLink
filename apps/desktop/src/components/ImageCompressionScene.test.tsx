@@ -84,9 +84,10 @@ it("keeps the facts the picture cannot show behind the help button", async () =>
   const popover = document.querySelector<HTMLElement>(
     '[data-slot="popover-content"]',
   )!;
-  expect(popover.textContent).toBe(
+  expect([...popover.querySelectorAll("p")].map((p) => p.textContent)).toEqual([
     "无损模式下 JPEG 原样发送，转换只会变大。同一张图每次压缩结果相同，提示缓存照常命中。大截图第一次压缩要零点几秒。模型按像素尺寸计算 Token，用量不变。",
-  );
+    "累计只算发往上游的请求，一次请求重试或换提供商重发只计一次。累计单独保存，删除或清理请求记录不会减少。",
+  ]);
   expect(popover.querySelector("[data-visual]")).toBeNull();
   await act(async () =>
     document.dispatchEvent(

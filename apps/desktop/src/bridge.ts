@@ -44,6 +44,10 @@ import {
   type PrivacySummary,
 } from "./privacy-summary-model";
 import {
+  parseImageCompressionTotals,
+  type ImageCompressionTotals,
+} from "./image-compression-totals-model";
+import {
   hourlyUsageWindow,
   type UsageSummary,
   type UsageWindow,
@@ -180,6 +184,7 @@ import {
 import {
   parseSettingsSnapshot,
   type Preferences,
+  type DesktopToysPreferences,
   type SettingsSnapshot,
   type TrayPreferences,
 } from "./preferences-model";
@@ -334,6 +339,16 @@ export async function updatePreferences(
   requireNativeBridge();
   return parseSettingsSnapshot(
     await invoke<unknown>("update_preferences", { input }),
+  );
+}
+
+/** Saves the desktop toy preferences; the host builds or closes the toys. */
+export async function updateDesktopToys(
+  input: DesktopToysPreferences,
+): Promise<SettingsSnapshot> {
+  requireNativeBridge();
+  return parseSettingsSnapshot(
+    await invoke<unknown>("update_desktop_toys", { input }),
   );
 }
 
@@ -1157,6 +1172,14 @@ export async function getPrivacySummary(
       bucket: hourlyUsageWindow(window) ? "hour" : "day",
     }),
     window,
+  );
+}
+
+/** What request image compression has saved since counting began. */
+export async function getImageCompressionTotals(): Promise<ImageCompressionTotals> {
+  requireNativeBridge();
+  return parseImageCompressionTotals(
+    await invoke<unknown>("get_image_compression_totals"),
   );
 }
 
