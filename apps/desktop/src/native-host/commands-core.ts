@@ -176,6 +176,7 @@ export const coreCommands = {
     Usage.getUsageSummary(a.from, a.to, a.timeZone, a.bucket),
   get_privacy_summary: (a: SummaryArgs) =>
     Usage.getPrivacySummary(a.from, a.to, a.timeZone, a.bucket),
+  get_image_compression_totals: () => Usage.getImageCompressionTotals(),
   list_access_token_usage: (a: { todayFrom: string }) =>
     Usage.listAccessTokenUsage(a.todayFrom),
 

@@ -1160,6 +1160,12 @@ func (u Usage) GetPrivacySummary(ctx context.Context, from, to, timeZone, bucket
 	return u.value(ctx, http.MethodGet, summaryPath("/control/v1/privacy-summary", from, to, timeZone, bucket), nil, "privacy summary")
 }
 
+// GetImageCompressionTotals reads what request image compression has saved
+// since counting began.
+func (u Usage) GetImageCompressionTotals(ctx context.Context) (json.RawMessage, error) {
+	return u.value(ctx, http.MethodGet, "/control/v1/image-compression-totals", nil, "image compression totals")
+}
+
 // ListAccessTokenUsage reads each token's usage today.
 func (u Usage) ListAccessTokenUsage(ctx context.Context, todayFrom string) (json.RawMessage, error) {
 	return u.value(ctx, http.MethodGet, "/control/v1/access-token-usage?today_from="+PercentEncodeQuery(todayFrom), nil, "access token usage")

@@ -10,9 +10,9 @@ import { eventTable } from "./events";
 // table fails, so a list never outlives its commands.
 const pendingCommands: Record<string, string[]> = {
   // Windows, the tray, inspectors, files and the currency.
-  windows: [],
+  windows: ["update_desktop_toys"],
   // Agent tools, imports, terminals and local client updates.
-  agents: [],
+  agents: ["repair_local_clients"],
   // Only the server edition installs the claude CLI; the desktop never
   // offered it.
   webOnly: ["install_claude_cli"],

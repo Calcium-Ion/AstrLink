@@ -1435,6 +1435,13 @@ export const Tokens = {
 /** Usage is the usage and privacy summaries. */
 export const Usage = {
   /**
+   * GetImageCompressionTotals reads what request image compression has saved
+   * since counting began.
+   */
+  getImageCompressionTotals(): Promise<unknown> {
+    return call("Usage.GetImageCompressionTotals");
+  },
+  /**
    * GetPrivacySummary reads what the privacy policy did over a window, with
    * the usage summary's window, time zone and bucket rules.
    */

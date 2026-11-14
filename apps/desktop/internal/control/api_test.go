@@ -397,6 +397,9 @@ func (b *bridge) cases() []bridgeCase {
 		{name: "get_privacy_summary", call: func(ctx context.Context) (any, error) {
 			return u.GetPrivacySummary(ctx, "a", "b", "UTC", "day")
 		}, method: get, path: "/control/v1/privacy-summary?from=a&to=b&time_zone=UTC&bucket=day", timeout: short, limit: normal, reply: `{"buckets":[]}`},
+		{name: "get_image_compression_totals", call: func(ctx context.Context) (any, error) {
+			return u.GetImageCompressionTotals(ctx)
+		}, method: get, path: "/control/v1/image-compression-totals", timeout: short, limit: normal, reply: `{"saved_bytes":0}`},
 		{name: "list_access_token_usage", call: func(ctx context.Context) (any, error) {
 			return u.ListAccessTokenUsage(ctx, "2026-11-13T00:00:00Z")
 		}, method: get, path: "/control/v1/access-token-usage?today_from=2026-11-13T00%3A00%3A00Z", timeout: short, limit: normal, reply: `{"items":[]}`},
