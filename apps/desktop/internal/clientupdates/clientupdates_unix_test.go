@@ -274,7 +274,13 @@ func TestNpmUpdatesUseASeparateCacheLocallyAndInWSL(t *testing.T) {
 			env.wsl = w
 		}
 		install := detect(env, ClientCodex)
-		if install == nil || install.method != npmAt(prefix) {
+		// detect resolves symlinks, and macOS keeps temporary directories
+		// behind one (/var is /private/var).
+		resolvedPrefix, err := filepath.EvalSymlinks(prefix)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if install == nil || install.method != npmAt(resolvedPrefix) {
 			t.Fatalf("WSL %v: %+v", inWSL, install)
 		}
 		result, failure := performUpdate(env, ClientCodex, install, version(t, ClientCodex, "1.1.0"))
