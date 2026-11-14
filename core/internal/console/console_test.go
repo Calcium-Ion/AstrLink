@@ -727,7 +727,7 @@ func TestConsoleSetsSecurityHeadersAndNoStore(t *testing.T) {
 			t.Fatalf("%s headers = %v", request.path, header)
 		}
 		if strings.HasPrefix(request.path, "/console/") || strings.HasPrefix(request.path, "/control/") {
-			if header.Get("Cache-Control") != "no-store" {
+			if !strings.HasPrefix(header.Get("Cache-Control"), "no-store") {
 				t.Fatalf("%s Cache-Control = %q", request.path, header.Get("Cache-Control"))
 			}
 		}

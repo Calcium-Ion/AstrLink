@@ -156,7 +156,7 @@ func TestAccessTokenControlAPIRequiresAuthenticationAndStrictContracts(t *testin
 	if response.Code != http.StatusUnauthorized || response.Header().Get("WWW-Authenticate") == "" {
 		t.Fatalf("unauthorized status=%d headers=%#v", response.Code, response.Header())
 	}
-	if response.Header().Get("Cache-Control") != "no-store" {
+	if response.Header().Get("Cache-Control") != "no-store, no-transform" {
 		t.Fatalf("unauthorized Cache-Control=%q", response.Header().Get("Cache-Control"))
 	}
 
@@ -257,7 +257,7 @@ func accessTokenRequest(
 	}
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
-	if response.Header().Get("Cache-Control") != "no-store" {
+	if response.Header().Get("Cache-Control") != "no-store, no-transform" {
 		t.Fatalf("Cache-Control=%q", response.Header().Get("Cache-Control"))
 	}
 	return response

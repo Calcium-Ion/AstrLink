@@ -241,7 +241,7 @@ func TestPolicyAndPrivacyModelRoutesRequireAuthenticationAndNoStore(t *testing.T
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, request)
 		if response.Code != http.StatusUnauthorized ||
-			response.Header().Get("Cache-Control") != "no-store" ||
+			response.Header().Get("Cache-Control") != "no-store, no-transform" ||
 			response.Header().Get("WWW-Authenticate") == "" {
 			t.Fatalf("%s %s status=%d headers=%#v", operation.method, operation.path, response.Code, response.Header())
 		}
@@ -677,7 +677,7 @@ func policyRequest(
 	}
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
-	if response.Header().Get("Cache-Control") != "no-store" {
+	if response.Header().Get("Cache-Control") != "no-store, no-transform" {
 		t.Fatalf("Cache-Control=%q", response.Header().Get("Cache-Control"))
 	}
 	return response
