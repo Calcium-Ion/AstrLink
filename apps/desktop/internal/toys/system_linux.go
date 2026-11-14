@@ -32,6 +32,36 @@ func dockRect() *rect { return nil }
 
 func styleWindow(*mygo.Window) {}
 
+var gtkFocus struct {
+	once        sync.Once
+	acceptFocus func(window uintptr, accept bool)
+	focusOnMap  func(window uintptr, focus bool)
+	ok          bool
+}
+
+// preventActivation keeps a click on the pet from giving AstrLink the
+// keyboard: her window takes no focus, as it maps or as it is clicked,
+// which the window manager learns from its input hint.
+func preventActivation(w *mygo.Window) {
+	gtkFocus.once.Do(func() {
+		lib, err := purego.Dlopen("libgtk-3.so.0", purego.RTLD_NOW|purego.RTLD_GLOBAL)
+		gtkFocus.ok = err == nil && register(lib, map[string]any{
+			"gtk_window_set_accept_focus": &gtkFocus.acceptFocus,
+			"gtk_window_set_focus_on_map": &gtkFocus.focusOnMap,
+		})
+	})
+	if !gtkFocus.ok {
+		log.Printf("astrlink: desktop toys: no GTK focus hints; a click on the pet may take the keyboard")
+		return
+	}
+	mygo.RunOnMain(func() {
+		if window := w.NativeHandle(); window != 0 {
+			gtkFocus.acceptFocus(window, false)
+			gtkFocus.focusOnMap(window, false)
+		}
+	})
+}
+
 func frontRegardless(*mygo.Window) {}
 
 // composited reports whether a compositor runs, which a see-through window

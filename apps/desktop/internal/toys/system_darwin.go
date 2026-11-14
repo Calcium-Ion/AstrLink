@@ -152,6 +152,25 @@ func styleWindow(w *mygo.Window) {
 	})
 }
 
+// preventActivation keeps the keyboard where it is, too: the panel becomes
+// the key window only for a control that needs typing. That the panel
+// never activates AstrLink comes from its creation (WindowOptions.Panel).
+func preventActivation(w *mygo.Window) {
+	mygo.RunOnMain(func() {
+		ns := objc.ID(w.NativeHandle())
+		selector := objc.RegisterName("setBecomesKeyOnlyIfNeeded:")
+		if ns == 0 || !respondsTo(ns, selector) {
+			log.Printf("astrlink: desktop toys: the pet's window is no panel; a click on her may activate AstrLink")
+			return
+		}
+		ns.Send(selector, true)
+	})
+}
+
+func respondsTo(object objc.ID, selector objc.SEL) bool {
+	return object.Send(objc.RegisterName("respondsToSelector:"), selector) != 0
+}
+
 // frontRegardless orders the pet's window in front though AstrLink is not
 // the active app.
 func frontRegardless(w *mygo.Window) {

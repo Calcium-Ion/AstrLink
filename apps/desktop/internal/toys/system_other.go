@@ -17,6 +17,8 @@ func dockRect() *rect { return nil }
 
 func styleWindow(*mygo.Window) {}
 
+func preventActivation(*mygo.Window) {}
+
 func frontRegardless(*mygo.Window) {}
 
 type osProbe struct{}

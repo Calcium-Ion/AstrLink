@@ -3,6 +3,7 @@ package toys
 import (
 	"log"
 	"math"
+	"runtime"
 
 	"github.com/egoist/mygo"
 
@@ -85,7 +86,37 @@ func (s mygoSystem) build(label string, _ geometry, frame rect) (window, bool) {
 		preload = s.preload(label)
 	}
 	b := rectangle(frame)
-	w := mygo.NewWindow(mygo.WindowOptions{
+	w := mygo.NewWindow(petWindowOptions(runtime.GOOS, b, preload))
+	host.Register(w, label)
+	w.OnClosed(func() {
+		if s.closed != nil {
+			s.closed(label)
+		}
+	})
+	w.SetIgnoreMouseEvents(true)
+	w.SetVisibleOnAllWorkspaces(true)
+	w.SetBounds(b)
+	// A click on her never activates AstrLink: activation would bring the
+	// main window forward with it.
+	preventActivation(w)
+	styleWindow(w)
+	w.OnReadyToShow(func() {
+		// Placed again: a window built at the origin is centered.
+		w.SetBounds(b)
+		w.ShowInactive()
+		styleWindow(w)
+		frontRegardless(w)
+	})
+	return mygoWindow{w, label}, true
+}
+
+// petWindowOptions are the pet window's: frameless, see-through, without a
+// shadow, on top and out of the taskbar, hidden until her page is ready.
+// On macOS she is a panel, which the window server knows from its
+// creation never activates AstrLink, so a click on her leaves the app in
+// front where it is and the main window where it was.
+func petWindowOptions(goos string, b mygo.Rectangle, preload string) mygo.WindowOptions {
+	return mygo.WindowOptions{
 		Title:  "AstrLink",
 		URL:    "/",
 		X:      b.X,
@@ -105,28 +136,12 @@ func (s mygoSystem) build(label string, _ geometry, frame rect) (window, bool) {
 		DisableMaximize:   true,
 		DisableClose:      true,
 		DisableFullScreen: true,
+		Panel:             goos == "darwin",
 		Page: mygo.PageOptions{
 			PreloadScript:        preload,
 			BackgroundThrottling: mygo.ThrottlingOff,
 		},
-	})
-	host.Register(w, label)
-	w.OnClosed(func() {
-		if s.closed != nil {
-			s.closed(label)
-		}
-	})
-	w.SetIgnoreMouseEvents(true)
-	w.SetVisibleOnAllWorkspaces(true)
-	w.SetBounds(b)
-	styleWindow(w)
-	w.OnReadyToShow(func() {
-		// Placed again: a window built at the origin is centered.
-		w.SetBounds(b)
-		w.ShowInactive()
-		frontRegardless(w)
-	})
-	return mygoWindow{w, label}, true
+	}
 }
 
 func (mygoSystem) setFrame(w window, frame rect) {
