@@ -82,6 +82,37 @@ func TestRunsCmdShimTargetsWithoutCmdExe(t *testing.T) {
 	}
 }
 
+func TestRunsTheNodeAShimNames(t *testing.T) {
+	f := newFixture(t)
+	env := f.environment()
+	shim := f.write(".pi/agent/bin/pi.cmd", piInstallerCmd)
+	local := f.path("local")
+	variable := func(name string) (string, bool) { return local, name == "LOCALAPPDATA" }
+	// Without its standalone Node.js, Pi's launcher runs `node` from PATH.
+	if found, ok := shimNode(env, shim, variable); ok {
+		t.Fatal(found)
+	}
+	node := f.script("local/pi-node/current/node.exe", "")
+	if found, ok := shimNode(env, shim, variable); !ok || found.path != node {
+		t.Fatal(found, ok)
+	}
+
+	// npm's shims name the node.exe beside them.
+	npm := f.write("npm/codex.cmd", "IF EXIST \"%dp0%\\node.exe\" (\n  SET \"_prog=%dp0%\\node.exe\"\n)\n")
+	none := func(string) (string, bool) { return "", false }
+	if found, ok := shimNode(env, npm, none); ok {
+		t.Fatal(found)
+	}
+	sibling := f.script("npm/node.exe", "")
+	if found, ok := shimNode(env, npm, none); !ok || found.path != sibling {
+		t.Fatal(found, ok)
+	}
+	script := f.path("npm/node_modules/@openai/codex/bin/codex.js")
+	if spec, failure := shimCommand(env, npm, script); failure != nil || spec.program != sibling {
+		t.Fatal(spec, failure)
+	}
+}
+
 func TestRespectsPathOrderAndDeduplicatesSymlinks(t *testing.T) {
 	f := newFixture(t)
 	first := f.script("first/codex", "#!/bin/sh\necho 'codex-cli 1.0.0'\n")

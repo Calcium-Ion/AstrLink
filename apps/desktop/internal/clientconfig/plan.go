@@ -27,6 +27,11 @@ const (
 	Modified State = "modified"
 	// Invalid has a config file that cannot be parsed.
 	Invalid State = "invalid"
+	// Manual was set up by hand from AstrLink's manual setup: AstrLink did
+	// not write it, but it connects to this gateway with one of its
+	// tokens. Only the status reports it; writes, removals and port syncs
+	// treat the place as not configured.
+	Manual State = "manual"
 )
 
 // Connection is what a write connects a client with.

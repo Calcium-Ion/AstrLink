@@ -116,12 +116,12 @@ func TokenSummary(ctx context.Context, gateway Gateway, tokenID string) (name, h
 	return "", "", errors.New("access token not found")
 }
 
-// Tokens are the ids of the gateway's access tokens. Every AstrLink on
-// this computer writes the same client configs, and one written with a
-// token the gateway lacks belongs to another AstrLink, such as the
-// instance `make dev` runs beside an installed one. Token ids are random,
-// so no two gateways share one.
-type Tokens map[string]bool
+// Tokens are the gateway's access tokens: each id with its non-secret
+// hint. Every AstrLink on this computer writes the same client configs,
+// and one written with a token the gateway lacks belongs to another
+// AstrLink, such as the instance `make dev` runs beside an installed one.
+// Token ids are random, so no two gateways share one.
+type Tokens map[string]string
 
 // TokensOf lists the gateway's tokens.
 func TokensOf(ctx context.Context, gateway Gateway) (Tokens, error) {
@@ -135,11 +135,43 @@ func TokensOf(ctx context.Context, gateway Gateway) (Tokens, error) {
 	tokens := Tokens{}
 	for _, item := range items {
 		if id, ok := item["id"].(string); ok {
-			tokens[id] = true
+			hint, _ := item["hint"].(string)
+			tokens[id] = hint
 		}
 	}
 	return tokens, nil
 }
 
 // Own reports whether this gateway wrote record.
-func (t Tokens) Own(record *Record) bool { return t[record.TokenID] }
+func (t Tokens) Own(record *Record) bool {
+	_, ok := t[record.TokenID]
+	return ok
+}
+
+// TokenHint is the hint the gateway lists for token.
+func TokenHint(token string) string {
+	if len(token) < 6 {
+		return ""
+	}
+	return "astr_…" + token[len(token)-6:]
+}
+
+// Matching is the id of the token whose hint ends in the last characters
+// of token, when exactly one does.
+func (t Tokens) Matching(token string) (string, bool) {
+	hint := TokenHint(token)
+	if hint == "" {
+		return "", false
+	}
+	found := ""
+	for id, known := range t {
+		if known != hint {
+			continue
+		}
+		if found != "" {
+			return "", false
+		}
+		found = id
+	}
+	return found, found != ""
+}

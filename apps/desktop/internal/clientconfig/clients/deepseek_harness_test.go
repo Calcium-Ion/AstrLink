@@ -232,7 +232,7 @@ func TestDSHKeepsWhatTheUserAddedToAnAstrLinkRoute(t *testing.T) {
 	path := dshPatchPath(home, "web")
 	writeFile(t, path, dshUserPatch)
 	writeFile(t, dshCredentialsPath(home), dshUserCredentials)
-	both := cc.Tokens{"token_01": true, "token_02": true}
+	both := cc.Tokens{"token_01": cc.TokenHint(token), "token_02": cc.TokenHint(otherToken)}
 	first := listed(models("model", "deepseek-v4-pro"), "deepseek-v4-pro", "claude-sonnet-5")
 	first.Target, first.Protocols = "web", dshProtocols()
 	writePlace(t, home, web, first, cc.Catalog{}, true)

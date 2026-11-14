@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/QuantumNous/astrlink/desktop/internal/agents"
@@ -14,14 +15,19 @@ import (
 // the ones the gateway wrote pointed at its current port.
 
 // ReplacedKey is a value AstrLink did not write that a write replaces or
-// removes.
+// removes. Both values show as the change preview does: a credential by
+// its ends only.
 type ReplacedKey struct {
 	// Path is the file holding it.
 	Path string `json:"path"`
 	Key  string `json:"key"`
-	// Current is the value now, for a model name or similar; never a
-	// credential.
+	// Current is the value now; nil when it is not one line of text.
 	Current *string `json:"current"`
+	// Next is the value the write puts there; nil when the write removes
+	// the key or the value is not one line of text.
+	Next *string `json:"next"`
+	// Removed reports whether the write removes the key.
+	Removed bool `json:"removed"`
 }
 
 // Confirmation is what a client's write or removal asks the user to
@@ -392,13 +398,17 @@ func confirm(home agents.Home, place Place, records *Records, paths []string, ex
 	if record != nil && record.TokenID != connection.TokenID && (state == Configured || state == Outdated) && tokens != nil && tokens.Own(record) {
 		out.TokenID = Some(record.TokenID)
 	}
+	desired := client.DesiredKeys(connection, details)
 	for _, key := range plan.Conflicts {
-		value, ok, _ := config.Get(key)
-		var current *string
-		if ok {
-			current = ShownValue(key, value)
+		replaced := ReplacedKey{Path: paths[config.Index(key)], Key: key, Removed: true}
+		if value, ok, _ := config.Get(key); ok {
+			replaced.Current = DisplayedValue(key, value)
 		}
-		out.Keys = append(out.Keys, ReplacedKey{Path: paths[config.Index(key)], Key: key, Current: current})
+		if at := slices.IndexFunc(desired, func(setting Setting) bool { return setting.Key == key }); at >= 0 {
+			replaced.Next = DisplayedValue(key, desired[at].Value)
+			replaced.Removed = false
+		}
+		out.Keys = append(out.Keys, replaced)
 	}
 	return out, nil
 }

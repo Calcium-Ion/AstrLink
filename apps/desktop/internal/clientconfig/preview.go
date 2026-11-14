@@ -3,6 +3,7 @@ package clientconfig
 import (
 	"context"
 	"errors"
+	"net/url"
 	"slices"
 	"strings"
 	"unicode"
@@ -27,16 +28,38 @@ func SecretName(name string) bool {
 	return false
 }
 
-// ShownValue is a replaced value worth showing: a model or similar choice,
-// never a credential or an address that may carry one.
-func ShownValue(path, value string) *string {
-	name := path[strings.LastIndexByte(path, '.')+1:]
-	plain := strings.Contains(strings.ToLower(name), "model") || slices.Contains(
-		[]string{"selectedType", "model_provider", "primary", "wire_api", "api", "defaultProvider", "model_reasoning_effort"}, name)
-	if plain && !SecretName(name) && ValidModel(value) {
-		return &value
+// DisplayedValue is a value as a confirmation shows it: a credential by its
+// ends only, as the diff does; an address without the user, password and
+// query that may carry one; anything else as it is. nil for a value that
+// is not one line of text, like an object, or is empty.
+func DisplayedValue(path, value string) *string {
+	const longest = 200
+	value = strings.TrimSpace(value)
+	if value == "" || strings.ContainsAny(value, "\n\r") || strings.HasPrefix(value, "{") || strings.HasPrefix(value, "[") {
+		return nil
 	}
-	return nil
+	name := path[strings.LastIndexByte(path, '.')+1:]
+	if SecretName(name) {
+		return Some(mask(value))
+	}
+	shown := value
+	if address, err := url.Parse(value); err == nil &&
+		slices.Contains([]string{"http", "https", "ws", "wss"}, address.Scheme) && address.Host != "" &&
+		(address.User != nil || address.RawQuery != "" || address.ForceQuery || address.Fragment != "") {
+		address.User = nil
+		address.RawQuery = ""
+		address.ForceQuery = false
+		address.Fragment = ""
+		address.RawFragment = ""
+		if address.Path == "" {
+			address.Path = "/"
+		}
+		shown = address.String()
+	}
+	if chars := []rune(shown); len(chars) > longest {
+		shown = string(chars[:longest]) + "…"
+	}
+	return &shown
 }
 
 // mask shows a secret by its ends only.

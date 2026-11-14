@@ -57,7 +57,7 @@ func piRoute() []cc.Field      { return models("model", "pi-route") }
 func geminiModels() []cc.Field { return models("model", "gemini-route") }
 
 // tokens are the tokens of the gateway connection writes for.
-func tokens() cc.Tokens { return cc.Tokens{"token_01": true} }
+func tokens() cc.Tokens { return cc.Tokens{"token_01": cc.TokenHint(token)} }
 
 func some(text string) *string { return &text }
 

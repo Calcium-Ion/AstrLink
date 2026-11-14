@@ -54,21 +54,28 @@ func TestMaskKeepsItsEnds(t *testing.T) {
 	}
 }
 
-func TestShownValuesAreModelChoicesOnly(t *testing.T) {
+func TestDisplayedValuesMaskCredentialsAndTrimAddresses(t *testing.T) {
+	long := strings.Repeat("m", 210)
 	for _, tc := range []struct {
 		path, value string
-		shown       bool
+		want        *string
 	}{
-		{"model", "gpt-5", true},
-		{"env.ANTHROPIC_MODEL", "claude", true},
-		{"security.auth.selectedType", "gemini-api-key", true},
-		{"model_provider", "astrlink", true},
-		{"env.ANTHROPIC_AUTH_TOKEN", "astr_x", false},
-		{"env.ANTHROPIC_BASE_URL", "http://127.0.0.1:1", false},
-		{"model_auth_key", "x", false},
+		{"model", "gpt-5", Some("gpt-5")},
+		{"security.auth.selectedType", "gemini-api-key", Some("gemini-api-key")},
+		{"env.ANTHROPIC_AUTH_TOKEN", "sk-relay-0123456789", Some("sk-r…789")},
+		{"apiKey", "secret", Some("…et")},
+		{"env.ANTHROPIC_BASE_URL", "https://me:pw@relay.example/v1?key=abc#x", Some("https://relay.example/v1")},
+		{"env.ANTHROPIC_BASE_URL", "https://me@relay.example", Some("https://relay.example/")},
+		{"env.ANTHROPIC_BASE_URL", "http://127.0.0.1:1", Some("http://127.0.0.1:1")},
+		{"env.ANTHROPIC_CUSTOM_HEADERS", `{"x": 1}`, nil},
+		{"list", "[1]", nil},
+		{"multi", "a\nb", nil},
+		{"empty", "  ", nil},
+		{"model", long, Some(strings.Repeat("m", 200) + "…")},
 	} {
-		if got := ShownValue(tc.path, tc.value); (got != nil) != tc.shown {
-			t.Errorf("%s: %v", tc.path, got)
+		got := DisplayedValue(tc.path, tc.value)
+		if (got == nil) != (tc.want == nil) || got != nil && *got != *tc.want {
+			t.Errorf("%s %q: %v", tc.path, tc.value, got)
 		}
 	}
 }

@@ -223,7 +223,9 @@ func (env *Environment) read(path string) (string, bool) {
 	if err != nil || !utf8.Valid(data) {
 		return "", false
 	}
-	return string(data), true
+	// Without the BOM Windows PowerShell 5.1 writes, which JSON parsers
+	// reject.
+	return strings.TrimPrefix(string(data), "\uFEFF"), true
 }
 
 func (env *Environment) executable(path string) bool {
@@ -351,9 +353,10 @@ func stem(path string) string {
 }
 
 // cmdShimTarget reads what an npm Windows shim runs: `"%dp0%\<path>"`
-// (`"%~dp0\<path>"` before npm 7), after the script's interpreter. Reading
-// it beats guessing each package's entry point; package ownership is
-// checked later.
+// (`"%~dp0\<path>"` before npm 7), after the script's interpreter. `%~dp0`
+// already ends in a backslash, so Pi's installer writes
+// `"%~dp0pi-launcher.js"`. Reading it beats guessing each package's entry
+// point; package ownership is checked later.
 func cmdShimTarget(shim string) (string, bool) {
 	data, err := os.ReadFile(shim)
 	if err != nil || !utf8.Valid(data) {
@@ -361,10 +364,10 @@ func cmdShimTarget(shim string) (string, bool) {
 	}
 	raw := string(data)
 	var rest string
-	if i := strings.LastIndex(raw, `"%dp0%\`); i >= 0 {
-		rest = raw[i+len(`"%dp0%\`):]
-	} else if i := strings.LastIndex(raw, `"%~dp0\`); i >= 0 {
-		rest = raw[i+len(`"%~dp0\`):]
+	if i := strings.LastIndex(raw, `"%dp0%`); i >= 0 {
+		rest = raw[i+len(`"%dp0%`):]
+	} else if i := strings.LastIndex(raw, `"%~dp0`); i >= 0 {
+		rest = raw[i+len(`"%~dp0`):]
 	} else {
 		return "", false
 	}
@@ -372,20 +375,83 @@ func cmdShimTarget(shim string) (string, bool) {
 	if !ok {
 		return "", false
 	}
-	path, ok := parent(shim)
+	directory, ok := parent(shim)
 	if !ok {
 		return "", false
 	}
-	for _, part := range strings.FieldsFunc(target, func(r rune) bool { return r == '\\' || r == '/' }) {
-		// Global shims point into their own directory. A project's
-		// node_modules\.bin shim climbs out of it and is not a global
-		// install.
+	// Global shims point into their own directory. A project's
+	// node_modules\.bin shim climbs out of it and is not a global install.
+	return shimJoin(directory, target)
+}
+
+// shimJoin is base joined with a path a shim wrote after it, if that names
+// something inside base.
+func shimJoin(base, relative string) (string, bool) {
+	parts := strings.FieldsFunc(relative, func(r rune) bool { return r == '\\' || r == '/' })
+	if len(parts) == 0 {
+		return "", false
+	}
+	path := base
+	for _, part := range parts {
 		if part == ".." || strings.Contains(part, ":") {
 			return "", false
 		}
 		path = filepath.Join(path, part)
 	}
 	return path, true
+}
+
+// shimNode is the node.exe a shim runs if it exists: npm's
+// `"%dp0%\node.exe"` beside it, or the standalone Node.js that Pi's
+// installer names under `%LOCALAPPDATA%`. A new terminal's PATH lists the
+// system's Node.js before that one.
+func shimNode(env *Environment, shim string, variable func(string) (string, bool)) (program, bool) {
+	data, err := os.ReadFile(shim)
+	if err != nil || !utf8.Valid(data) {
+		return program{}, false
+	}
+	directory, ok := parent(shim)
+	if !ok {
+		return program{}, false
+	}
+	for _, rest := range strings.Split(string(data), `EXIST "`)[1:] {
+		written, _, ok := strings.Cut(rest, `"`)
+		if !ok {
+			continue
+		}
+		base, relative := directory, ""
+		if after, found := strings.CutPrefix(written, "%~dp0"); found {
+			relative = after
+		} else {
+			after, found := strings.CutPrefix(written, "%")
+			if !found {
+				continue
+			}
+			name, tail, found := strings.Cut(after, "%")
+			if !found {
+				continue
+			}
+			relative = tail
+			if name != "dp0" {
+				value, ok := variable(name)
+				if !ok {
+					continue
+				}
+				base = value
+			}
+		}
+		if !filepath.IsAbs(base) {
+			continue
+		}
+		node, ok := shimJoin(base, relative)
+		if !ok || !strings.EqualFold(filepath.Base(node), "node.exe") {
+			continue
+		}
+		if found, ok := env.program(node); ok {
+			return found, true
+		}
+	}
+	return program{}, false
 }
 
 // readJSON reads a JSON file as serde_json does, nil when it is missing
@@ -643,11 +709,13 @@ func shimCommand(env *Environment, shim, target string) (commandSpec, *clientErr
 	case "exe":
 		return command(target), nil
 	case "js", "cjs", "mjs":
-		// Like the shim, prefer a node.exe beside it, then PATH.
-		prefix, ok := parent(shim)
-		var node program
-		if ok {
-			node, ok = nodeProgram(env, prefix)
+		// Like the shim, prefer the node.exe it names, then PATH.
+		node, ok := shimNode(env, shim, os.LookupEnv)
+		if !ok {
+			var prefix string
+			if prefix, ok = parent(shim); ok {
+				node, ok = nodeProgram(env, prefix)
+			}
 		}
 		if !ok {
 			return commandSpec{}, newError("unsupported", "Node.js is unavailable")

@@ -3,6 +3,8 @@ package clientconfig
 import (
 	"iter"
 	"maps"
+	"slices"
+	"strings"
 
 	"github.com/QuantumNous/astrlink/desktop/internal/agents"
 )
@@ -85,6 +87,18 @@ func StatusOf(home agents.Home, clients []Client, inferenceURL string, tokens To
 				return nil, err
 			}
 			state := PlaceState(records, place, existing, origin, tokens)
+			config, fileErr := ParseConfig(client, existing)
+			if fileErr != nil {
+				config = nil
+			}
+			manual := ""
+			if config != nil && origin != "" && tokens != nil && record == nil &&
+				state == NotConfigured && slices.ContainsFunc(existing, func(file *string) bool { return file != nil }) {
+				manual, _ = manualToken(place, config, origin, tokens)
+			}
+			if manual != "" {
+				state = Manual
+			}
 			status := ClientStatus{
 				Client:    client,
 				WSL:       optional(home.Distribution()),
@@ -99,15 +113,16 @@ func StatusOf(home agents.Home, clients []Client, inferenceURL string, tokens To
 			for _, file := range existing {
 				status.Exists = append(status.Exists, file != nil)
 			}
-			// Only a config AstrLink wrote names its token and models.
-			if record != nil && state != NotConfigured {
+			// Only a config AstrLink wrote or the user set up from its manual
+			// setup names its token and models.
+			switch {
+			case record != nil && state != NotConfigured:
 				status.TokenID = Some(record.TokenID)
 				status.PasteSinceUnix = record.PasteSinceUnix
 				status.Models = CurrentModelsOf(client, existing)
-			}
-			config, fileErr := ParseConfig(client, existing)
-			if fileErr != nil {
-				config = nil
+			case manual != "":
+				status.TokenID = Some(manual)
+				status.Models = CurrentModelsOf(client, existing)
 			}
 			if config != nil && status.PasteSinceUnix != nil {
 				status.PasteInto = client.PasteInto(config)
@@ -123,6 +138,89 @@ func StatusOf(home agents.Home, clients []Client, inferenceURL string, tokens To
 		}
 	}
 	return statuses, nil
+}
+
+// manualSentinel is a stand-in token that marks where a client's keys hold
+// the token. Letters, digits and underscores only, so no format escapes
+// it.
+const manualSentinel = "ASTRLINK_MANUAL_SETUP_TOKEN_0"
+
+// manualToken is the id of the gateway token a config AstrLink did not
+// record holds, when the config is what AstrLink's manual setup shows for
+// this gateway: every key holding the token, the connection keys and the
+// address key hold what a write with that token would. The token never
+// leaves this function; only its hint is compared. A client whose keys
+// this cannot tell apart, like one that lists its token per model, is
+// never manual.
+func manualToken(place Place, config *Config, origin string, tokens Tokens) (string, bool) {
+	client := place.Client
+	render := func(token string) []Setting {
+		return client.DesiredKeys(&Connection{
+			Target:    place.Target,
+			Token:     token,
+			Origin:    origin,
+			Protocols: map[string]string{},
+		}, Catalog{})
+	}
+	held := func(key string) (string, bool) {
+		value, ok, present := config.Get(key)
+		return value, ok && present
+	}
+	var tokenKeys []string
+	candidate := ""
+	for _, setting := range render(manualSentinel) {
+		if strings.Count(setting.Value, manualSentinel) != 1 {
+			continue
+		}
+		before, after, _ := strings.Cut(setting.Value, manualSentinel)
+		value, ok := held(setting.Key)
+		if !ok || !strings.HasPrefix(value, before) || !strings.HasSuffix(value[len(before):], after) {
+			return "", false
+		}
+		token := value[len(before) : len(value)-len(after)]
+		if candidate != "" && candidate != token {
+			return "", false
+		}
+		candidate = token
+		tokenKeys = append(tokenKeys, setting.Key)
+	}
+	if !strings.HasPrefix(candidate, "astr_") || !isASCII(candidate) {
+		return "", false
+	}
+	tokenID, ok := tokens.Matching(candidate)
+	if !ok {
+		return "", false
+	}
+	desired := render(candidate)
+	keys := append(tokenKeys, client.ConnectionKeys()...)
+	if key := client.BaseURLKey(); key != "" {
+		keys = append(keys, key)
+	}
+	addressed := false
+	for _, key := range keys {
+		at := slices.IndexFunc(desired, func(setting Setting) bool { return setting.Key == key })
+		if at < 0 {
+			return "", false
+		}
+		want := desired[at].Value
+		if value, ok := held(key); !ok || value != want {
+			return "", false
+		}
+		addressed = addressed || strings.Contains(want, origin)
+	}
+	if !addressed {
+		return "", false
+	}
+	return tokenID, true
+}
+
+func isASCII(text string) bool {
+	for i := 0; i < len(text); i++ {
+		if text[i] >= 0x80 {
+			return false
+		}
+	}
+	return true
 }
 
 // ConfiguredToken is the token AstrLink last set up place with in home,

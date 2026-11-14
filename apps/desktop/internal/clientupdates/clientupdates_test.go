@@ -237,7 +237,31 @@ func TestIdentifiesCursorAndPiInstallations(t *testing.T) {
 			t.Errorf("%s %s: %+v, want %+v", tc.id, tc.resolved, got, tc.want)
 		}
 	}
+	// Windows PowerShell 5.1 writes the marker with a BOM.
+	f.write(".pi/agent/install/managed-install.json", "\uFEFF"+`{"kind":"pi-managed-install","schemaVersion":1,"layout":"releases-v1"}`)
+	if got := installationMethod(env, ClientPi, f.path(".pi/agent/bin/pi-launcher.js")); got != native {
+		t.Fatalf("with a BOM: %+v", got)
+	}
 }
+
+// piInstallerCmd is the pi.cmd that Pi's install.ps1 writes when it
+// installed a standalone Node.js.
+const piInstallerCmd = "@ECHO off\r\n" +
+	"SETLOCAL\r\n" +
+	"SET \"node=node\"\r\n" +
+	"IF EXIST \"%LOCALAPPDATA%\\pi-node\\current\\node.exe\" SET \"node=%LOCALAPPDATA%\\pi-node\\current\\node.exe\"\r\n" +
+	"\"%node%\" \"%~dp0pi-launcher.js\" %*\r\n" +
+	"SET \"pi_exit_code=%ERRORLEVEL%\"\r\n" +
+	"IF \"%pi_exit_code%\"==\"9009\" (\r\n" +
+	"  IF \"%node%\"==\"node\" (\r\n" +
+	"    \"%SystemRoot%\\System32\\where.exe\" /Q node\r\n" +
+	"    IF ERRORLEVEL 1 GOTO node_missing\r\n" +
+	"  ) ELSE IF NOT EXIST \"%node%\" GOTO node_missing\r\n" +
+	")\r\n" +
+	"EXIT /B %pi_exit_code%\r\n" +
+	":node_missing\r\n" +
+	"ECHO Pi could not find Node.js. Install Node.js 22.19.0 or newer, or rerun the installer at https://pi.dev. 1>&2\r\n" +
+	"EXIT /B %pi_exit_code%\r\n"
 
 func TestReadsNpmCmdShimTargetsInsideTheShimDirectory(t *testing.T) {
 	f := newFixture(t)
@@ -261,10 +285,17 @@ func TestReadsNpmCmdShimTargetsInsideTheShimDirectory(t *testing.T) {
 	if got, ok := cmdShimTarget(claude); !ok || got != f.path("npm/node_modules/@anthropic-ai/claude-code/bin/claude.exe") {
 		t.Fatalf("target = %q, %v", got, ok)
 	}
+	// Pi's installer writes `%~dp0` without a backslash, which it ends in.
+	if got, ok := cmdShimTarget(f.write(".pi/agent/bin/pi.cmd", piInstallerCmd)); !ok || got != f.path(".pi/agent/bin/pi-launcher.js") {
+		t.Fatalf("pi target = %q, %v", got, ok)
+	}
 	for _, invalid := range []string{
 		`"%dp0%\..\@openai\codex\bin\codex.js" %*`,
 		`"%dp0%\C:\other\codex.js" %*`,
+		`"%~dp0..\codex.js" %*`,
 		"@echo off\ncodex.exe %*\n",
+		// The shim's own directory is not a target.
+		`cd /d "%~dp0" %*`,
 	} {
 		if got, ok := cmdShimTarget(f.write("npm/codex.cmd", invalid)); ok {
 			t.Errorf("%q: %q", invalid, got)

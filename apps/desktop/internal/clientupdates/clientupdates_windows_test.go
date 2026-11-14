@@ -3,6 +3,7 @@ package clientupdates
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -67,6 +68,44 @@ func TestFollowsNpmShimsOnWindowsWithoutVerbatimPaths(t *testing.T) {
 	spec, failure = updateCommand(env, ClientClaude, claude, version(t, ClientClaude, "2.1.286"))
 	if failure != nil || spec.args[0] != filepath.Join(nodejs, `node_modules\npm\bin\npm-cli.js`) || spec.args[4] != npm {
 		t.Fatal(spec, failure)
+	}
+}
+
+func TestFollowsThePiInstallerLauncherOnWindows(t *testing.T) {
+	f := newFixture(t)
+	root, ok := canonical(f.root)
+	if !ok {
+		t.Fatal(root)
+	}
+	bin := filepath.Join(root, `.pi\agent\bin`)
+	nodejs := filepath.Join(root, "nodejs")
+	for _, file := range []struct{ name, contents string }{
+		{"pi.cmd", piInstallerCmd},
+		{"pi.ps1", ""},
+		{"pi", "#!/bin/sh\n"},
+		{"pi-launcher.js", ""},
+	} {
+		f.write(".pi/agent/bin/"+file.name, file.contents)
+	}
+	f.write(".pi/agent/install/managed-install.json", "\uFEFF"+`{"kind":"pi-managed-install","schemaVersion":1,"layout":"releases-v1"}`)
+	f.write("nodejs/node.exe", "")
+	env := &Environment{home: root, path: bin + ";" + nodejs}
+
+	pi := detect(env, ClientPi)
+	if pi == nil || pi.method != native || pi.executable != filepath.Join(bin, "pi.cmd") ||
+		pi.resolved != filepath.Join(bin, "pi-launcher.js") || len(pi.others) != 0 {
+		t.Fatalf("pi = %+v", pi)
+	}
+	spec, failure := updateCommand(env, ClientPi, pi, version(t, ClientPi, "99.0.0"))
+	if failure != nil {
+		t.Fatal(failure)
+	}
+	node := filepath.Join(nodejs, "node.exe")
+	if found, ok := shimNode(env, pi.executable, os.LookupEnv); ok {
+		node = found.path
+	}
+	if spec.program != node || !slices.Equal(spec.args, []string{filepath.Join(bin, "pi-launcher.js"), "update", "--self"}) {
+		t.Fatal(spec)
 	}
 }
 

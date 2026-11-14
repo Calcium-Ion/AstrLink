@@ -796,7 +796,7 @@ export interface SourceView {
 }
 
 /** State is a place's config as the dialog shows it. */
-export type State = "not_configured" | "configured" | "outdated" | "elsewhere" | "modified" | "invalid";
+export type State = "not_configured" | "configured" | "outdated" | "elsewhere" | "modified" | "invalid" | "manual";
 
 export interface SubscriptionDigest {
   name: string;
