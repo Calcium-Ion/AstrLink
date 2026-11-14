@@ -48,6 +48,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	flags.StringVar(&options.ControlURL, "control-url", "", "loopback control URL (tests and Windows fallback)")
 	flags.StringVar(&options.ControlToken, "control-token", "", "control token used only with --control-url")
 	flags.StringVar(&options.SessionPath, "session", "", "path to control-session.json")
+	flags.StringVar(&options.Instance, "instance", "", "AstrLink instance to use: default or dev")
 	pretty := flags.Bool("pretty", false, "indent the JSON output")
 	values := map[string]func() any{}
 	for _, spec := range found.Flags {
@@ -100,6 +101,19 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		}
 	})
 
+	if found.Local != nil {
+		payload, err := found.Local(options)
+		if err != nil {
+			_, _ = fmt.Fprintf(stderr, "astrlink: %v\n", err)
+			return 1
+		}
+		if err := printJSON(stdout, payload, *pretty || isTerminal(stdout)); err != nil {
+			_, _ = fmt.Fprintf(stderr, "astrlink: %v\n", err)
+			return 1
+		}
+		return 0
+	}
+	options.Notice = stderr
 	client, err := Dial(options)
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "astrlink: %v\n", err)
@@ -226,6 +240,7 @@ func printCommandHelp(output io.Writer, found command) {
 			fmt.Fprintf(&builder, "  %-26s %s\n", label, spec.Usage)
 		}
 	}
-	builder.WriteString("\nCommon flags:\n  --pretty                   indent the JSON output\n")
+	builder.WriteString("\nCommon flags:\n  --pretty                   indent the JSON output\n" +
+		"  --instance <name>          AstrLink instance to use: default or dev (see \"astrlink instances\")\n")
 	_, _ = io.WriteString(output, builder.String())
 }

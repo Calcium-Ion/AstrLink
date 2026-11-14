@@ -25,7 +25,7 @@ func TestDialPrefersSocketOverSessionToken(t *testing.T) {
 	if err := os.WriteFile(sessionPath, []byte(`{"schema_version":1,"control_socket":"`+escapeJSON(socket)+`","control_url":"http://127.0.0.1:1","control_token":"should-not-use"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	resolved, err := resolveDial(DialOptions{SessionPath: sessionPath})
+	resolved, err := resolveDial(DialOptions{SessionPath: sessionPath, Instance: instanceDefault})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,14 +150,14 @@ func TestRunValidatesUsage(t *testing.T) {
 		t.Fatalf("help code=%d", code)
 	}
 	for _, name := range []string{
-		"sessions", "session", "requests", "search", "request", "children", "explain", "audit",
+		"instances", "sessions", "session", "requests", "search", "request", "children", "explain", "audit",
 		"raw-audit", "raw-revoke", "audit-settings", "routing", "services", "service", "privacy",
 	} {
 		if !strings.Contains(stdout.String(), "\n  "+name+" ") {
 			t.Fatalf("help misses %s:\n%s", name, stdout.String())
 		}
 	}
-	if len(commandCatalog()) != 15 {
+	if len(commandCatalog()) != 16 {
 		t.Fatalf("command count = %d", len(commandCatalog()))
 	}
 

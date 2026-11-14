@@ -28,26 +28,29 @@ sandbox that blocks AstrLink. Results are JSON on stdout; errors go to stderr
 with a non-zero exit code. `{{ASTRLINK_CLI}} help <command>` lists a command's
 flags.
 
-1. `{{ASTRLINK_CLI}} audit-settings` — see whether bodies are being captured.
-2. `{{ASTRLINK_CLI}} sessions` or `{{ASTRLINK_CLI}} requests` — filter with
+1. `{{ASTRLINK_CLI}} instances` — which AstrLink instances run and which one the
+   commands use. If the user means the development build, add `--instance dev`
+   to each command below.
+2. `{{ASTRLINK_CLI}} audit-settings` — see whether bodies are being captured.
+3. `{{ASTRLINK_CLI}} sessions` or `{{ASTRLINK_CLI}} requests` — filter with
    `--status`, `--protocol`, `--service-id`, `--from`, `--to`, and page with
    `--limit` and `--cursor`. `{{ASTRLINK_CLI}} search <text>` takes the same
    filters and matches the record's short input preview.
-3. `{{ASTRLINK_CLI}} explain <id>` — one call for a record, its retry attempts,
+4. `{{ASTRLINK_CLI}} explain <id>` — one call for a record, its retry attempts,
    and whether bodies were captured. `{{ASTRLINK_CLI}} request <id>` and
    `{{ASTRLINK_CLI}} session <id>` return the raw metadata and `events[]`.
-4. `{{ASTRLINK_CLI}} children <id>` — inspect failed retries under a root
+5. `{{ASTRLINK_CLI}} children <id>` — inspect failed retries under a root
    record.
-5. `{{ASTRLINK_CLI}} audit <id>` — the shareable bodies, only if the user
+6. `{{ASTRLINK_CLI}} audit <id>` — the shareable bodies, only if the user
    already enabled capture for that request. See [Bodies](#bodies) for withheld
    parts.
-6. `{{ASTRLINK_CLI}} routing` — model redirects, failover and retry settings,
+7. `{{ASTRLINK_CLI}} routing` — model redirects, failover and retry settings,
    channel stickiness, and identity enforcement.
-7. `{{ASTRLINK_CLI}} services` / `{{ASTRLINK_CLI}} service <id>` — configured
+8. `{{ASTRLINK_CLI}} services` / `{{ASTRLINK_CLI}} service <id>` — configured
    providers, their models and capabilities, subscription state, and a summary
    of recent requests and risk events. Credentials, proxy addresses, and URL
    paths are never returned; `base_origin` is only scheme, host, and port.
-8. `{{ASTRLINK_CLI}} privacy` — privacy policy settings. Allowlist entries and
+9. `{{ASTRLINK_CLI}} privacy` — privacy policy settings. Allowlist entries and
    custom regex rules are reported as counts and types, never their values.
 
 If a command fails before it reaches AstrLink:
