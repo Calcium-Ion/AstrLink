@@ -357,7 +357,7 @@ func check(home agents.Home, place Place, connection *Connection, details Catalo
 		return nil, err
 	}
 	paths := place.Client.ConfigPaths(home, place.Target, records.Get(place))
-	existing, err := ReadFiles(paths)
+	existing, err := ReadFiles(place.Client, paths)
 	if err != nil {
 		return nil, err
 	}
@@ -413,17 +413,18 @@ func confirm(home agents.Home, place Place, records *Records, paths []string, ex
 	return out, nil
 }
 
-// ReadFiles reads each file, nil for a missing one.
-func ReadFiles(paths []string) ([]*string, error) {
+// ReadFiles reads each of client's files, nil for a missing one.
+func ReadFiles(client Client, paths []string) ([]*string, error) {
 	files := make([]*string, len(paths))
-	for i, path := range paths {
-		text, exists, err := agents.ReadOptional(path)
+	for i, file := range client.Files() {
+		if i >= len(paths) {
+			break
+		}
+		text, err := FileRead(file, paths[i])
 		if err != nil {
 			return nil, err
 		}
-		if exists {
-			files[i] = &text
-		}
+		files[i] = text
 	}
 	return files, nil
 }
@@ -437,39 +438,22 @@ func expected(text *string) *agents.Expected {
 
 // writeFiles writes each file whose contents changed. When one fails, the
 // files already written get their old contents back.
-func writeFiles(paths []string, existing []*string, contents []string) error {
-	type written struct {
-		path   string
-		before *string
-		after  string
-	}
-	var done []written
+func writeFiles(client Client, paths []string, existing []*string, contents []string) error {
+	files := client.Files()
+	var done []int
 	for i, path := range paths {
-		before, after := existing[i], contents[i]
-		if before == nil && after == "" || before != nil && *before == after {
+		before, after := existing[i], optional(contents[i])
+		if before == nil && after == nil || before != nil && *before == contents[i] {
 			continue
 		}
-		var err error
-		if after == "" {
-			err = agents.RemovePath(path)
-		} else {
-			err = agents.WriteText(path, after, agents.WriteOptions{Secret: true, Expected: expected(before)})
-		}
-		if err != nil {
-			for i := len(done) - 1; i >= 0; i-- {
-				w := done[i]
-				switch {
-				case w.before != nil:
-					_ = agents.WriteText(w.path, *w.before, agents.WriteOptions{Secret: true, Expected: expected(optional(w.after))})
-				default:
-					if text, exists, err := agents.ReadOptional(w.path); err == nil && exists && text == w.after {
-						_ = agents.RemovePath(w.path)
-					}
-				}
+		if err := FileWrite(files[i], path, before, after, true); err != nil {
+			for j := len(done) - 1; j >= 0; j-- {
+				k := done[j]
+				_ = FileWrite(files[k], paths[k], optional(contents[k]), existing[k], true)
 			}
 			return err
 		}
-		done = append(done, written{path, before, after})
+		done = append(done, i)
 	}
 	return nil
 }
@@ -493,7 +477,7 @@ func WriteWith(home agents.Home, place Place, connection *Connection, details Ca
 		return false, nil, itemError(err)
 	}
 	paths := client.ConfigPaths(home, place.Target, records.Get(place))
-	existing, err := ReadFiles(paths)
+	existing, err := ReadFiles(client, paths)
 	if err != nil {
 		return false, nil, itemError(err)
 	}
@@ -515,7 +499,7 @@ func WriteWith(home agents.Home, place Place, connection *Connection, details Ca
 	if err := WriteRecords(home, records); err != nil {
 		return false, nil, itemError(err)
 	}
-	if err := writeFiles(paths, existing, plan.Contents); err != nil {
+	if err := writeFiles(client, paths, existing, plan.Contents); err != nil {
 		records.Set(place, previous)
 		_ = WriteRecords(home, records)
 		return false, nil, itemError(err)
@@ -543,7 +527,7 @@ func Remove(home agents.Home, place Place) *ItemError {
 		return openError(place.Client)
 	}
 	paths := place.Client.ConfigPaths(home, place.Target, record)
-	existing, err := ReadFiles(paths)
+	existing, err := ReadFiles(place.Client, paths)
 	if err != nil {
 		return itemError(err)
 	}
@@ -553,22 +537,15 @@ func Remove(home agents.Home, place Place) *ItemError {
 	}
 	files := place.Client.Files()
 	for i, removal := range removals {
+		var err error
 		switch removal.Kind {
 		case RemovalWrite:
-			if err := agents.WriteText(paths[i], removal.Contents, agents.WriteOptions{Secret: FileSecret(files[i]), Expected: expected(existing[i])}); err != nil {
-				return itemError(err)
-			}
+			err = FileWrite(files[i], paths[i], existing[i], &removal.Contents, FileSecret(files[i]))
 		case RemovalDelete:
-			text, exists, err := agents.ReadOptional(paths[i])
-			if err != nil {
-				return itemError(err)
-			}
-			if exists != (existing[i] != nil) || exists && text != *existing[i] {
-				return &ItemError{Message: fmt.Sprintf("unable to remove %s: the file changed; try again", paths[i])}
-			}
-			if err := agents.RemovePath(paths[i]); err != nil {
-				return itemError(err)
-			}
+			err = FileWrite(files[i], paths[i], existing[i], nil, FileSecret(files[i]))
+		}
+		if err != nil {
+			return itemError(err)
 		}
 	}
 	records.Set(place, nil)
@@ -615,7 +592,7 @@ func Sync(home agents.Home, inferenceURL string, tokens Tokens) error {
 }
 
 func syncPlace(home agents.Home, records *Records, place Place, record *Record, paths []string, origin string) error {
-	existing, err := ReadFiles(paths)
+	existing, err := ReadFiles(place.Client, paths)
 	if err != nil {
 		return err
 	}
@@ -630,7 +607,7 @@ func syncPlace(home agents.Home, records *Records, place Place, record *Record, 
 	if err := WriteRecords(home, records); err != nil {
 		return err
 	}
-	if err := writeFiles(paths, existing, contents); err != nil {
+	if err := writeFiles(place.Client, paths, existing, contents); err != nil {
 		records.Set(place, record.Clone())
 		_ = WriteRecords(home, records)
 		return err

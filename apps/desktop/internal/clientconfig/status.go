@@ -3,6 +3,7 @@ package clientconfig
 import (
 	"iter"
 	"maps"
+	"os"
 	"slices"
 	"strings"
 
@@ -82,11 +83,16 @@ func StatusOf(home agents.Home, clients []Client, inferenceURL string, tokens To
 		for _, place := range Places(client) {
 			record := records.Get(place)
 			paths := client.ConfigPaths(home, place.Target, record)
-			existing, err := ReadFiles(paths)
-			if err != nil {
-				return nil, err
+			// A config that cannot be read is invalid, not a failed list.
+			existing, err := ReadFiles(client, paths)
+			unreadable := err != nil
+			if unreadable {
+				existing = make([]*string, len(paths))
 			}
-			state := PlaceState(records, place, existing, origin, tokens)
+			state := Invalid
+			if !unreadable {
+				state = PlaceState(records, place, existing, origin, tokens)
+			}
 			config, fileErr := ParseConfig(client, existing)
 			if fileErr != nil {
 				config = nil
@@ -110,8 +116,9 @@ func StatusOf(home agents.Home, clients []Client, inferenceURL string, tokens To
 				State:     state,
 				PasteInto: []string{},
 			}
-			for _, file := range existing {
-				status.Exists = append(status.Exists, file != nil)
+			for _, path := range paths {
+				_, err := os.Stat(path)
+				status.Exists = append(status.Exists, err == nil)
 			}
 			// Only a config AstrLink wrote or the user set up from its manual
 			// setup names its token and models.
@@ -128,6 +135,9 @@ func StatusOf(home agents.Home, clients []Client, inferenceURL string, tokens To
 				status.PasteInto = client.PasteInto(config)
 			}
 			status.Notes = client.Notes(home, place.Target, config)
+			if unreadable {
+				status.Notes = append(status.Notes, "unreadable")
+			}
 			if client.Running(home, place.Target) {
 				status.Notes = append(status.Notes, "running")
 			}

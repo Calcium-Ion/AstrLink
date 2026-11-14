@@ -35,6 +35,7 @@ func init() {
 		MistralVibe,
 		CodeWhale,
 		Reasonix,
+		DimAgent,
 		ZCode,
 		MiniMaxCode,
 		StepCode,

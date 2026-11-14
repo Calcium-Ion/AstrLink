@@ -1,8 +1,10 @@
 package clientconfig
 
 import (
+	"fmt"
 	"strings"
 
+	"github.com/QuantumNous/astrlink/desktop/internal/agents"
 	"github.com/QuantumNous/astrlink/desktop/internal/clientconfig/format"
 )
 
@@ -58,6 +60,51 @@ func FileSecret(f File) bool {
 		return s.Secret()
 	}
 	return false
+}
+
+// FileRead reads the settings the file represents, nil for a missing one.
+// A database client returns the rows it manages as JSON.
+func FileRead(f File, path string) (*string, error) {
+	if s, ok := f.(interface {
+		Read(string) (*string, error)
+	}); ok {
+		return s.Read(path)
+	}
+	text, exists, err := agents.ReadOptional(path)
+	if err != nil || !exists {
+		return nil, err
+	}
+	return &text, nil
+}
+
+// FileWrite commits after, or removes the file for nil, once what it holds
+// still is before.
+func FileWrite(f File, path string, before, after *string, secret bool) error {
+	if s, ok := f.(interface {
+		Write(path string, before, after *string, secret bool) error
+	}); ok {
+		return s.Write(path, before, after, secret)
+	}
+	if after != nil {
+		return agents.WriteText(path, *after, agents.WriteOptions{Secret: secret, Expected: expected(before)})
+	}
+	current, err := FileRead(f, path)
+	if err != nil {
+		return err
+	}
+	if !sameText(current, before) {
+		return fmt.Errorf("unable to remove %s: the file changed; try again", path)
+	}
+	return agents.RemovePath(path)
+}
+
+// FilePreview hides values whose privacy depends on their position, before
+// the preview masks credential-named keys.
+func FilePreview(f File, text string) string {
+	if s, ok := f.(interface{ Preview(string) string }); ok {
+		return s.Preview(text)
+	}
+	return text
 }
 
 // FileHolds reports whether this file of its client holds the key.

@@ -314,7 +314,7 @@ func describe(client Client, paths []string, before, after []*string, keys []str
 		if sameText(before[i], after[i]) {
 			continue
 		}
-		lines := diffLines(text(before[i]), text(after[i]))
+		lines := diffLines(FilePreview(files[i], text(before[i])), FilePreview(files[i], text(after[i])))
 		for j := range lines {
 			line := lines[j].Text
 			for _, hidden := range secrets {
@@ -396,7 +396,7 @@ func PreviewPlace(home agents.Home, place Place, origin string, write *PreviewWr
 	}
 	record := records.Get(place)
 	paths := client.ConfigPaths(home, place.Target, record)
-	before, err := ReadFiles(paths)
+	before, err := ReadFiles(client, paths)
 	if err != nil {
 		return nil, err
 	}
