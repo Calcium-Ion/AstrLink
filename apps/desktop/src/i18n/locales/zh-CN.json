@@ -4055,6 +4055,13 @@
       "vscode_copilot": {
         "stable": "VS Code",
         "insiders": "VS Code Insiders"
+      },
+      "dimagent": {
+        "standard": "常规版",
+        "rust": "Rust 版",
+        "alpha": "Rust Alpha",
+        "global_standard": "国际常规版",
+        "global_rust": "国际 Rust 版"
       }
     },
     "importIn": "在 {{client}} 中导入",
@@ -4143,7 +4150,11 @@
       },
       "qoder_cli": {
         "account": "Qoder CLI 只在登录、且账号允许使用自定义模型时才用这里写入的模型。"
-      }
+      },
+      "dimagent": {
+        "restart": "先退出 DimAgent 再写入，完成后重新打开。工作区里单独选过的模型仍优先使用，可在 /models 中切换。"
+      },
+      "unreadable": "无法读取 {{client}} 的配置。请先退出客户端；若仍失败，请检查配置格式和文件权限。"
     },
     "paste": {
       "waiting": "等你粘贴令牌",
@@ -4484,6 +4495,8 @@
     "update": "更新",
     "updateNamed": "更新 {{name}}",
     "updateAll": "全部更新（{{count}}）",
+    "repair": "修复",
+    "repairNamed": "修复 {{name}}",
     "current": "当前版本",
     "latest": "最新版本",
     "retry": "重试",
@@ -4494,9 +4507,18 @@
     "installationPath": "安装位置",
     "installationMethod": "安装方式",
     "errorDetails": "错误详情",
+    "manualReinstall": "手动重新安装",
     "multiple": "检测到其他安装位置，只更新当前使用的客户端：",
     "reopen": "已更新，重新打开客户端即可使用。",
+    "repaired": "已修复，重新打开客户端即可使用。",
+    "kept": "仍在使用原来的 {{version}} 版本。",
     "wslUnchecked": "{{names}} 未运行，没有检测其中的客户端。启动后点「刷新」。",
+    "damaged": {
+      "restore": "上次更新没有完成，客户端无法启动。点「修复」恢复到 {{version}} 版本，无需下载。",
+      "restoreUnversioned": "上次更新没有完成，客户端无法启动。点「修复」恢复到原来的版本，无需下载。",
+      "reinstall": "安装不完整，客户端无法启动。点「修复」重新下载并安装最新版本。",
+      "manual": "安装不完整，客户端无法启动。请点「如何安装」，按说明重新安装。"
+    },
     "phase": {
       "idle": "待检查",
       "checking": "检查中",
@@ -4506,7 +4528,10 @@
       "manual": "需手动更新",
       "updating": "更新中…",
       "updated": "更新成功",
-      "error": "检查或更新失败"
+      "error": "检查或更新失败",
+      "damaged": "无法启动",
+      "repairing": "修复中…",
+      "repaired": "修复成功"
     },
     "method": {
       "native": "独立安装包",
@@ -4527,7 +4552,10 @@
       "changed": "安装位置已改变，请刷新后再更新。",
       "unchanged": "没有安装成功，请点击“查看详情”了解原因后重试。",
       "damaged": "安装不完整或文件已损坏，无法启动。请重新安装后重试。",
-      "proxy": "无法读取或使用系统代理，请检查代理设置。"
+      "proxy": "无法读取或使用系统代理，请检查代理设置。",
+      "running": "客户端正在运行，没有更新。请先退出客户端，再刷新并更新。",
+      "busy": "另一个 AstrLink 正在更新这个客户端，请稍后刷新。",
+      "incomplete": "新版本没有下载完整，常见原因是网络中断或代理。请检查网络后重试。"
     }
   },
   "proofDialog": {

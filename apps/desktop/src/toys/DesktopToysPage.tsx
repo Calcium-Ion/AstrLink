@@ -16,8 +16,10 @@ import { getDesktopPlatform } from "../window-chrome";
 import { useWorkspaceSnapshot } from "../workspace-snapshots";
 import { DesktopToysSettings } from "./DesktopToysSettings";
 
-/** Only macOS has desktop pets so far. */
-export const hasDesktopToys = () => getDesktopPlatform() === "macos";
+/** The host says whether the pet can come out here: not on Wayland. */
+export const hasDesktopToys = () =>
+  getDesktopPlatform() !== "browser" &&
+  window.__ASTRLINK_DESKTOP_TOYS__ === true;
 
 const messageOf = (error: unknown) =>
   error instanceof Error ? error.message : i18n.t("settings.failed");

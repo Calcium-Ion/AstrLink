@@ -560,6 +560,11 @@ struct CoreInner {
     local_key_storage: Option<LocalKeyStorage>,
     #[cfg(windows)]
     job: Option<windows_job::JobObject>,
+    /// Jobs of exited Cores whose helper processes were told to stop but may
+    /// still be shutting down. Kept so an update can wait until they are gone
+    /// and no longer hold their executables and DLLs open.
+    #[cfg(windows)]
+    retired_jobs: Vec<windows_job::JobObject>,
 }
 
 impl Default for CoreInner {
@@ -601,6 +606,8 @@ impl Default for CoreInner {
             local_key_storage: None,
             #[cfg(windows)]
             job: None,
+            #[cfg(windows)]
+            retired_jobs: Vec::new(),
         }
     }
 }
@@ -857,9 +864,35 @@ impl CoreInner {
         self.observer_token = None;
     }
 
+    /// Ends whatever is left of the Core process tree. On Windows the job is
+    /// terminated right away, so helpers still die with Core, but its handle
+    /// is kept until the job is empty so an update can wait for that.
     fn clear_process_guard(&mut self) {
         #[cfg(windows)]
-        self.job.take();
+        if let Some(job) = self.job.take() {
+            match job.terminate() {
+                Ok(()) => self.retired_jobs.push(job),
+                // Closing the handle still kills the job's processes.
+                Err(error) => eprintln!("unable to stop astrlink-core helper processes: {error}"),
+            }
+        }
+        self.prune_retired_jobs();
+    }
+
+    /// Forgets retired jobs that have no running process left and returns how
+    /// many processes the remaining ones still run.
+    fn prune_retired_jobs(&mut self) -> u32 {
+        #[cfg(windows)]
+        {
+            prune_retired_trees(
+                &mut self.retired_jobs,
+                windows_job::JobObject::active_processes,
+            )
+        }
+        #[cfg(not(windows))]
+        {
+            0
+        }
     }
 }
 
@@ -1307,6 +1340,19 @@ impl CoreManager {
             self.wait_until_stopped(generation).await?;
         }
         Ok(())
+    }
+
+    /// Waits until the helper processes of stopped Cores have exited too. Core
+    /// returning does not mean its workers are gone: on Windows they are killed
+    /// with Core's job and may still hold their executables and DLLs open while
+    /// they shut down, which makes an installer fail to replace those files.
+    pub async fn wait_for_process_tree_exit(&self, timeout: Duration) -> Result<(), String> {
+        wait_for_retired_trees(
+            || self.lock_inner().prune_retired_jobs(),
+            timeout,
+            STOP_POLL_DELAY,
+        )
+        .await
     }
 
     async fn request_graceful_stop(&self) -> Result<Option<u64>, String> {
@@ -3648,6 +3694,45 @@ impl CoreManager {
                 .unwrap_or_else(|poisoned| poisoned.into_inner()),
             changes: &self.changes,
         }
+    }
+}
+
+/// Keeps only the process trees that still run processes and returns how many
+/// they run. A tree whose count cannot be read is forgotten, so a broken
+/// handle never blocks an update.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn prune_retired_trees<T>(trees: &mut Vec<T>, running: impl Fn(&T) -> Result<u32, String>) -> u32 {
+    let mut remaining = 0u32;
+    trees.retain(|tree| match running(tree) {
+        Ok(count) if count > 0 => {
+            remaining = remaining.saturating_add(count);
+            true
+        }
+        _ => false,
+    });
+    remaining
+}
+
+/// Polls `prune` until it reports no running processes, or fails once
+/// `timeout` has passed with the last count in the message.
+async fn wait_for_retired_trees(
+    mut prune: impl FnMut() -> u32,
+    timeout: Duration,
+    poll: Duration,
+) -> Result<(), String> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let remaining = prune();
+        if remaining == 0 {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            return Err(format!(
+                "{remaining} astrlink-core helper process(es) still running after {} ms",
+                timeout.as_millis()
+            ));
+        }
+        tokio::time::sleep(poll).await;
     }
 }
 
@@ -6749,8 +6834,10 @@ pub(crate) mod windows_job {
         Foundation::{CloseHandle, HANDLE},
         System::{
             JobObjects::{
-                AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
-                SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+                AssignProcessToJobObject, CreateJobObjectW, JobObjectBasicAccountingInformation,
+                JobObjectExtendedLimitInformation, QueryInformationJobObject,
+                SetInformationJobObject, TerminateJobObject,
+                JOBOBJECT_BASIC_ACCOUNTING_INFORMATION, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
                 JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
             },
             Threading::{OpenProcess, PROCESS_SET_QUOTA, PROCESS_TERMINATE},
@@ -6817,6 +6904,40 @@ pub(crate) mod windows_job {
             }
             Ok(job)
         }
+
+        /// Asks Windows to end every process in the job. Termination is
+        /// asynchronous; poll `active_processes` to see when they are gone.
+        pub(crate) fn terminate(&self) -> Result<(), String> {
+            let terminated = unsafe { TerminateJobObject(self.0, 1) };
+            if terminated == 0 {
+                return Err(format!(
+                    "TerminateJobObject failed: {}",
+                    std::io::Error::last_os_error()
+                ));
+            }
+            Ok(())
+        }
+
+        /// How many processes in the job have not exited yet.
+        pub(crate) fn active_processes(&self) -> Result<u32, String> {
+            let mut accounting = JOBOBJECT_BASIC_ACCOUNTING_INFORMATION::default();
+            let queried = unsafe {
+                QueryInformationJobObject(
+                    self.0,
+                    JobObjectBasicAccountingInformation,
+                    &mut accounting as *mut _ as *mut c_void,
+                    size_of::<JOBOBJECT_BASIC_ACCOUNTING_INFORMATION>() as u32,
+                    ptr::null_mut(),
+                )
+            };
+            if queried == 0 {
+                return Err(format!(
+                    "QueryInformationJobObject failed: {}",
+                    std::io::Error::last_os_error()
+                ));
+            }
+            Ok(accounting.ActiveProcesses)
+        }
     }
 
     impl Drop for JobObject {
@@ -6829,12 +6950,64 @@ pub(crate) mod windows_job {
 
     #[cfg(test)]
     mod tests {
+        use std::{
+            io::Write,
+            os::windows::process::CommandExt,
+            process::{Command, Stdio},
+            time::{Duration, Instant},
+        };
+
         use super::*;
+
+        /// Polls `condition` for up to ten seconds.
+        fn eventually(mut condition: impl FnMut() -> bool) -> bool {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            loop {
+                if condition() {
+                    return true;
+                }
+                if Instant::now() >= deadline {
+                    return false;
+                }
+                std::thread::sleep(Duration::from_millis(25));
+            }
+        }
 
         #[test]
         fn creates_a_kill_on_close_job_object() {
             let job = JobObject::new().expect("a configured Job Object should be creatable");
             drop(job);
+        }
+
+        #[test]
+        fn terminate_ends_every_process_in_the_job() {
+            // cmd.exe starts ping only after it reads a line, so ping is
+            // created inside the job, like a worker started by Core.
+            let mut child = Command::new("cmd.exe")
+                .raw_arg("/d /s /c \"set /p ready= & ping -n 30 127.0.0.1 >NUL\"")
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .expect("cmd.exe should start");
+            let job = JobObject::attach(child.id()).expect("cmd.exe should join the job");
+            child
+                .stdin
+                .take()
+                .expect("stdin is piped")
+                .write_all(b"\r\n")
+                .expect("cmd.exe should accept its start line");
+
+            assert!(
+                eventually(|| job.active_processes().is_ok_and(|count| count >= 2)),
+                "cmd.exe and its ping child should both run in the job"
+            );
+            job.terminate().expect("the job should terminate");
+            assert!(
+                eventually(|| job.active_processes() == Ok(0)),
+                "every process in the job should exit after termination"
+            );
+            child.wait().expect("cmd.exe should be reaped");
         }
 
         #[test]
@@ -10101,5 +10274,47 @@ mod tests {
         let error = tauri::async_runtime::block_on(manager.stop_and_wait())
             .expect_err("a missing process handle must remain unrecoverable");
         assert!(error.contains("PID 99"));
+    }
+
+    #[test]
+    fn pruning_forgets_trees_without_running_processes() {
+        let mut trees = vec![Ok(2), Ok(0), Err("handle closed".to_string()), Ok(1)];
+        let remaining = prune_retired_trees(&mut trees, Clone::clone);
+        assert_eq!(remaining, 3);
+        assert_eq!(trees, vec![Ok(2), Ok(1)]);
+    }
+
+    #[test]
+    fn process_tree_wait_returns_once_every_process_exited() {
+        let mut counts = vec![0, 1, 2].into_iter();
+        let mut polls = 0;
+        tauri::async_runtime::block_on(wait_for_retired_trees(
+            || {
+                polls += 1;
+                counts.next_back().unwrap_or(0)
+            },
+            Duration::from_secs(10),
+            Duration::from_millis(1),
+        ))
+        .expect("the wait should end when no process is left");
+        assert_eq!(polls, 3);
+    }
+
+    #[test]
+    fn process_tree_wait_reports_processes_left_after_the_timeout() {
+        let error = tauri::async_runtime::block_on(wait_for_retired_trees(
+            || 2,
+            Duration::ZERO,
+            Duration::from_millis(1),
+        ))
+        .expect_err("running processes must fail the wait after the timeout");
+        assert!(error.contains("2 astrlink-core helper process"), "{error}");
+    }
+
+    #[test]
+    fn process_tree_wait_is_immediate_without_retired_cores() {
+        let manager = CoreManager::new();
+        tauri::async_runtime::block_on(manager.wait_for_process_tree_exit(Duration::ZERO))
+            .expect("a manager without stopped Cores has nothing to wait for");
     }
 }

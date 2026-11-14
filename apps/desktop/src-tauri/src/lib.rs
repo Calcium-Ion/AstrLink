@@ -3012,6 +3012,7 @@ pub fn run() {
         ))
         .append_invoke_initialization_script(platform_initialization_script(std::env::consts::OS))
         .append_invoke_initialization_script(instance::initialization_script())
+        .append_invoke_initialization_script(toys::initialization_script())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -3044,6 +3045,7 @@ pub fn run() {
             local_import::dismiss_local_import,
             client_updates::refresh_local_clients,
             client_updates::update_local_clients,
+            client_updates::repair_local_clients,
             updates::app_update_status,
             model_updates::privacy_model_update_status,
             currency::display_currency,

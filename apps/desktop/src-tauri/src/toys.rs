@@ -5,10 +5,15 @@
 //! take the mouse, where the other apps' windows are, and how long the
 //! keyboard and mouse, and the AI, have been idle.
 //!
-//! Only macOS has the pet for now. Elsewhere `apply` builds nothing and the
-//! commands answer with empty values, so the frontend needs no second path.
+//! macOS, Windows and Linux on X11 have the pet; each answers the few
+//! questions in `sys` its own way. A Wayland session lets no app place its
+//! windows or keep them on top, so there `available` is false, `apply`
+//! builds nothing and the frontend shows no pets page.
 
-#![cfg_attr(not(target_os = "macos"), allow(dead_code))]
+#![cfg_attr(
+    not(any(target_os = "macos", windows, target_os = "linux")),
+    allow(dead_code)
+)]
 
 use std::{
     collections::HashMap,
@@ -58,15 +63,30 @@ const AWAY_SECS: f64 = 600.0;
 /// after this many times as long.
 const AWAY_BUSY_FACTOR: f64 = 3.0;
 
-/// x, y, width and height in global top-left points.
+/// x, y, width and height in global top-left units: points on macOS, pixels
+/// on Windows and Linux.
 type Rect = (f64, f64, f64, f64);
 type Point = (f64, f64);
 
-/// A screen's frame and the part of it the menu bar and the Dock leave.
+/// A screen: the frame a pet window covers on it, the part of that the menu
+/// bar and the Dock leave, and how many global units make one of the
+/// window's points.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Screen {
     frame: Rect,
     visible: Rect,
+    scale: f64,
+}
+
+/// Screens in global units.
+#[derive(Clone, Debug, Default)]
+struct Geometry {
+    /// The main screen: the pet's until you carry her elsewhere.
+    main: Rect,
+    /// Every screen, the main one first.
+    screens: Vec<Screen>,
+    /// The Dock's own frame, as the Dock reports it; macOS only.
+    dock: Option<Rect>,
 }
 
 fn holds((x, y, w, h): Rect, (px, py): Point) -> bool {
@@ -96,6 +116,8 @@ fn carried_to(screens: &[Screen], on: Rect, cursor: Point) -> Option<Screen> {
 }
 
 /// Another app's window on the screens: its number, its kind and its frame.
+/// Only macOS lists them; the big pet does not need them.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 struct OtherWindow {
     id: i64,
     kind: &'static str,
@@ -107,6 +129,7 @@ struct OtherWindow {
 /// and the menu bar.
 fn frames_on(screen: &Screen, dock: Option<Rect>, others: &[OtherWindow]) -> serde_json::Value {
     let (mx, my, mw, mh) = screen.frame;
+    let s = screen.scale;
     let mut wins = Vec::new();
     let mut full = false;
     for other in others {
@@ -118,16 +141,16 @@ fn frames_on(screen: &Screen, dock: Option<Rect>, others: &[OtherWindow]) -> ser
         {
             full = true;
         }
-        if w < 120.0 || h < 60.0 || x + w < mx || x > mx + mw || y + h < my || y > my + mh {
+        if w / s < 120.0 || h / s < 60.0 || x + w < mx || x > mx + mw || y + h < my || y > my + mh {
             continue;
         }
         wins.push(serde_json::json!({
             "id": other.id,
             "kind": other.kind,
-            "x": x - mx,
-            "y": y - my,
-            "w": w,
-            "h": h,
+            "x": (x - mx) / s,
+            "y": (y - my) / s,
+            "w": w / s,
+            "h": h / s,
         }));
         if wins.len() >= 40 {
             break;
@@ -140,17 +163,17 @@ fn frames_on(screen: &Screen, dock: Option<Rect>, others: &[OtherWindow]) -> ser
     let dock_height = (my + mh) - (vy + vh);
     let dock = dock
         .filter(|&(_, y, _, h)| dock_height > 8.0 && (y + h - (my + mh)).abs() < 2.0)
-        .map(|(x, _, w, _)| ((x - mx).max(0.0), (x + w - mx).min(mw)))
+        .map(|(x, _, w, _)| ((x - mx).max(0.0) / s, (x + w - mx).min(mw) / s))
         .filter(|(x0, x1)| x1 - x0 >= 60.0)
-        .map(|(x0, x1)| serde_json::json!({ "x0": x0, "x1": x1, "y": vy + vh - my }));
+        .map(|(x0, x1)| serde_json::json!({ "x0": x0, "x1": x1, "y": (vy + vh - my) / s }));
     serde_json::json!({
         "wins": wins,
         "dock": dock,
-        "floor": mh - 2.0,
-        "top": (vy - my).max(24.0),
+        "floor": mh / s - 2.0,
+        "top": ((vy - my) / s).max(sys::MIN_TOP),
         "full": full,
-        "w": mw,
-        "h": mh,
+        "w": mw / s,
+        "h": mh / s,
     })
 }
 
@@ -179,8 +202,10 @@ struct Hits {
     hold: bool,
     /// A pet is in your hand: her window follows the mouse to other screens.
     carry: bool,
-    /// Top-left in global points, and its size, as last read.
+    /// Top-left in global units, and its size, as last read.
     origin: Option<(f64, f64, f64, f64)>,
+    /// Global units in one of the window's points.
+    unit: f64,
     origin_at: Option<Instant>,
     interactive: bool,
     pointer: Option<(f64, f64, bool)>,
@@ -202,8 +227,7 @@ struct Runtime {
     homes: Option<HashMap<String, Point>>,
     /// Per pet window: the screen frame it was last put on.
     placed: HashMap<String, Rect>,
-    #[cfg(target_os = "macos")]
-    geometry: Option<mac::Geometry>,
+    geometry: Option<Geometry>,
 }
 
 #[derive(Default)]
@@ -340,14 +364,20 @@ fn emit_toys<S: Serialize + Clone>(app: &AppHandle, event: &str, payload: S) {
 /// tells her the preferences.
 pub fn apply(app: &AppHandle) {
     let prefs = prefs_of(app);
-    #[cfg(target_os = "macos")]
-    mac::reconcile(app, &prefs.toys);
-    emit_toys(app, PREFS_EVENT, prefs.clone());
-    if prefs.toys.on.any() {
-        start_feed(app);
-        #[cfg(target_os = "macos")]
-        mac::start_poll(app);
+    if sys::available() {
+        reconcile(app);
     }
+    emit_toys(app, PREFS_EVENT, prefs.clone());
+    if prefs.toys.on.any() && sys::available() {
+        start_feed(app);
+        start_poll(app);
+    }
+}
+
+/// Whether this desktop can show the pet: a script for every page, so the
+/// pets page shows only where she can come out.
+pub fn initialization_script() -> String {
+    format!("window.__ASTRLINK_DESKTOP_TOYS__ = {};", sys::available())
 }
 
 /// The language changed: the pet says things.
@@ -553,6 +583,375 @@ pub fn toys_hit(
     hits.origin_at = None;
 }
 
+/// Runs `f` on the main thread and waits for its answer; screens and windows
+/// are read there. Never call it on the main thread itself.
+fn on_main<T: Send + 'static>(
+    app: &AppHandle,
+    f: impl FnOnce(&AppHandle) -> T + Send + 'static,
+) -> Option<T> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let handle = app.clone();
+    app.run_on_main_thread(move || {
+        let _ = tx.send(f(&handle));
+    })
+    .ok()?;
+    rx.recv_timeout(Duration::from_secs(5)).ok()
+}
+
+/// The pet's window: her screen, the one under her home point.
+fn placement(geometry: &Geometry, home: Option<Point>) -> Rect {
+    home_screen(&geometry.screens, home).map_or(geometry.main, |s| s.frame)
+}
+
+/// Builds or closes the pet's window to match the preferences. On its own
+/// thread, one at a time, reading the preferences once it runs: a quick on
+/// and off ends with the last word.
+fn reconcile(app: &AppHandle) {
+    static TURN: Mutex<()> = Mutex::new(());
+    let app = app.clone();
+    let spawned = std::thread::Builder::new()
+        .name("astrlink-toys-windows".into())
+        .spawn(move || {
+            let _turn = TURN.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let Some(Some(geometry)) = on_main(&app, sys::geometry) else {
+                eprintln!("desktop toys: unable to read the screens");
+                return;
+            };
+            if let Some(state) = toys_state(&app) {
+                state.lock().geometry = Some(geometry.clone());
+            }
+            let on = prefs_of(&app).toys.on.pet;
+            match (on, app.get_webview_window(PET)) {
+                (true, None) => {
+                    let rect = placement(&geometry, homes(&app).get(PET).copied());
+                    if sys::build(&app, PET, &geometry, rect) {
+                        if let Some(state) = toys_state(&app) {
+                            state.lock().placed.insert(PET.to_string(), rect);
+                        }
+                    }
+                }
+                (false, Some(window)) => {
+                    let _ = window.destroy();
+                    if let Some(state) = toys_state(&app) {
+                        let mut runtime = state.lock();
+                        runtime.hits.remove(PET);
+                        runtime.placed.remove(PET);
+                        runtime.frames.remove(PET);
+                    }
+                }
+                _ => {}
+            }
+        });
+    if let Err(error) = spawned {
+        eprintln!("desktop toys: unable to open the pet's window: {error}");
+    }
+}
+
+fn start_poll(app: &AppHandle) {
+    let Some(state) = toys_state(app) else {
+        return;
+    };
+    {
+        let mut runtime = state.lock();
+        if runtime.polling {
+            return;
+        }
+        runtime.polling = true;
+    }
+    let app = app.clone();
+    std::thread::Builder::new()
+        .name("astrlink-toys".into())
+        .spawn(move || poll(app))
+        .ok();
+}
+
+/// Reads the screens again, and puts the pet's window back on her own
+/// screen, or on the main one while that screen is unplugged.
+fn refresh_geometry(app: &AppHandle) {
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        let (Some(geometry), Some(state)) = (sys::geometry(&handle), toys_state(&handle)) else {
+            return;
+        };
+        state.lock().geometry = Some(geometry.clone());
+        let homes = homes(&handle);
+        for label in [PET] {
+            let Some(window) = handle.get_webview_window(label) else {
+                continue;
+            };
+            let want = placement(&geometry, homes.get(label).copied());
+            {
+                let mut runtime = state.lock();
+                // Not out of your hand; she goes once you let go.
+                let held = runtime.hits.get(label).is_some_and(|hits| hits.hold);
+                if held || runtime.placed.get(label) == Some(&want) {
+                    continue;
+                }
+                runtime.placed.insert(label.to_string(), want);
+                if let Some(hits) = runtime.hits.get_mut(label) {
+                    hits.origin_at = None;
+                }
+            }
+            sys::set_frame(&window, geometry.main, want);
+        }
+    });
+}
+
+/// How far a point under the cursor moves in a pet window's own points when
+/// the window goes from `from` to `to`: the spot in your hand stays under
+/// the mouse whatever either screen's scale.
+fn carried_shift(cursor: Point, from: (Rect, f64), to: (Rect, f64)) -> Point {
+    let ((fx, fy, _, _), fs) = from;
+    let ((tx, ty, _, _), ts) = to;
+    (
+        (cursor.0 - tx) / ts - (cursor.0 - fx) / fs,
+        (cursor.1 - ty) / ts - (cursor.1 - fy) / fs,
+    )
+}
+
+/// A held pet carried onto another screen: her window follows, and its
+/// page hears how far its points moved. The screen is kept for next time.
+fn carry(app: &AppHandle, window: &tauri::WebviewWindow, cursor: Point) {
+    let Some(state) = toys_state(app) else {
+        return;
+    };
+    let label = window.label();
+    let (shift, to, main, homes) = {
+        let mut runtime = state.lock();
+        let Some((true, unit)) = runtime.hits.get(label).map(|hits| (hits.carry, hits.unit)) else {
+            return;
+        };
+        let Some(geometry) = runtime.geometry.as_ref() else {
+            return;
+        };
+        let main = geometry.main;
+        let Some(&from) = runtime.placed.get(label) else {
+            return;
+        };
+        let Some(to) = carried_to(&geometry.screens, from, cursor) else {
+            return;
+        };
+        let from_scale = geometry
+            .screens
+            .iter()
+            .find(|screen| screen.frame == from)
+            .map_or(unit, |screen| screen.scale);
+        let shift = carried_shift(cursor, (from, from_scale), (to.frame, to.scale));
+        runtime.placed.insert(label.to_string(), to.frame);
+        let homes = runtime.homes.get_or_insert_with(HashMap::new);
+        homes.insert(label.to_string(), middle(to.frame));
+        let homes = homes.clone();
+        if let Some(hits) = runtime.hits.get_mut(label) {
+            hits.origin = Some(to.frame);
+            hits.unit = to.scale;
+            hits.origin_at = Some(Instant::now());
+            hits.pointer = None;
+        }
+        (shift, to, main, homes)
+    };
+    let (_, _, w, h) = to.frame;
+    let _ = app.emit_to(
+        label,
+        SCREEN_EVENT,
+        serde_json::json!({ "dx": shift.0, "dy": shift.1, "w": w / to.scale, "h": h / to.scale }),
+    );
+    sys::set_frame(window, main, to.frame);
+    save_homes(app, &homes);
+}
+
+fn poll(app: AppHandle) {
+    let probe = sys::Probe::open();
+    let mut tick: u64 = 0;
+    let mut last_frames: HashMap<&str, String> = HashMap::new();
+    let mut debug_after = debug_overrides(&app).away_after;
+    loop {
+        std::thread::sleep(TICK);
+        tick += 1;
+        let toys = prefs_of(&app).toys;
+        if !toys.on.any() {
+            break;
+        }
+        let (point, down) = probe.pointer();
+        // The Dock widens and narrows as apps open and quit.
+        if tick % 30 == 0 {
+            refresh_geometry(&app);
+        }
+        if tick % 150 == 0 {
+            debug_after = debug_overrides(&app).away_after;
+        }
+        if let Some(point) = point {
+            track_pointer(&app, point, down);
+        }
+        let pets: Vec<&str> = [(PET, toys.on.pet)]
+            .into_iter()
+            .filter(|&(label, on)| on && app.get_webview_window(label).is_some())
+            .map(|(label, _)| label)
+            .collect();
+        if !pets.is_empty() && (tick % 6 == 0 || (down && tick % 2 == 0)) {
+            send_frames(&app, &probe, &pets, &mut last_frames);
+        }
+        if pets.contains(&PET) && tick % 30 == 0 {
+            let (idle_wait, busy_wait) = away_waits(debug_after);
+            let quiet = toys_state(&app).map_or(f64::INFINITY, |state| {
+                ai_quiet_seconds(state.lock().activity.as_ref(), Utc::now())
+            });
+            let away = away_after(idle_wait, busy_wait, quiet);
+            // Without an idle reading you are never away.
+            let idle = probe.idle_seconds().unwrap_or(0.0);
+            let _ = app.emit_to(
+                PET,
+                IDLE_EVENT,
+                serde_json::json!({ "idle": idle, "away": away }),
+            );
+        }
+    }
+    if let Some(state) = toys_state(&app) {
+        state.lock().polling = false;
+    }
+}
+
+/// Tells each pet what is on her own screen, when it changed.
+fn send_frames(
+    app: &AppHandle,
+    probe: &sys::Probe,
+    pets: &[&'static str],
+    last: &mut HashMap<&str, String>,
+) {
+    let Some(state) = toys_state(app) else {
+        return;
+    };
+    let Some(geometry) = state.lock().geometry.clone() else {
+        return;
+    };
+    let others = probe.other_windows();
+    for &label in pets {
+        let placed = state.lock().placed.get(label).copied();
+        let Some(screen) = home_screen(&geometry.screens, placed.map(middle)) else {
+            continue;
+        };
+        let frames = frames_on(&screen, geometry.dock, &others);
+        let text = frames.to_string();
+        if last.get(label) == Some(&text) {
+            continue;
+        }
+        last.insert(label, text);
+        state
+            .lock()
+            .frames
+            .insert(label.to_string(), frames.clone());
+        let _ = app.emit_to(label, FRAMES_EVENT, frames);
+    }
+}
+
+/// Lets the mouse through everywhere but the parts the pet says are her
+/// own, and tells her where the mouse is.
+fn track_pointer(app: &AppHandle, point: Point, down: bool) {
+    let Some(state) = toys_state(app) else {
+        return;
+    };
+    for label in [PET] {
+        let Some(window) = app.get_webview_window(label) else {
+            continue;
+        };
+        carry(app, &window, point);
+        let fresh_for = Duration::from_millis(if down { 60 } else { 500 });
+        let stale = state.lock().hits.get(label).map_or(true, |hits| {
+            hits.origin.is_none() || hits.origin_at.map_or(true, |at| at.elapsed() >= fresh_for)
+        });
+        if stale {
+            if let Some((origin, unit)) = sys::origin(&window) {
+                let mut runtime = state.lock();
+                let hits = runtime.hits.entry(label.to_string()).or_default();
+                hits.origin = Some(origin);
+                hits.unit = unit;
+                hits.origin_at = Some(Instant::now());
+            }
+        }
+        let (change, emit) = {
+            let mut runtime = state.lock();
+            let hits = runtime.hits.entry(label.to_string()).or_default();
+            let Some((ox, oy, ow, oh)) = hits.origin else {
+                continue;
+            };
+            let unit = if hits.unit > 0.0 { hits.unit } else { 1.0 };
+            let x = (point.0 - ox) / unit;
+            let y = (point.1 - oy) / unit;
+            let inside = x >= 0.0 && y >= 0.0 && x < ow / unit && y < oh / unit;
+            let over = inside && hits.rects.iter().any(|rect| rect.contains(x, y));
+            let click = hits.hold
+                || (inside
+                    && hits
+                        .rects
+                        .iter()
+                        .any(|rect| rect.click && rect.contains(x, y)));
+            let change = (click != hits.interactive).then(|| {
+                hits.interactive = click;
+                click
+            });
+            let next = (x, y, over || hits.hold);
+            let emit = if inside || hits.hold {
+                let moved = hits.down != down
+                    || hits.pointer.map_or(true, |(px, py, pover)| {
+                        (px - x).abs() >= 0.5 || (py - y).abs() >= 0.5 || pover != next.2
+                    });
+                hits.pointer = Some(next);
+                hits.down = down;
+                moved.then_some(Some(next))
+            } else if hits.pointer.take().is_some() {
+                Some(None)
+            } else {
+                None
+            };
+            (change, emit)
+        };
+        if let Some(click) = change {
+            let _ = window.set_ignore_cursor_events(!click);
+        }
+        if let Some(next) = emit {
+            let payload = match next {
+                Some((x, y, over)) => {
+                    serde_json::json!({ "x": x, "y": y, "over": over, "down": down })
+                }
+                None => serde_json::Value::Null,
+            };
+            let _ = app.emit_to(label, POINTER_EVENT, payload);
+        }
+    }
+}
+
+/// The options every desktop gives the pet's window; each `sys` adds its own
+/// touches before she comes out.
+fn window_builder<'a>(
+    app: &'a AppHandle,
+    label: &'a str,
+) -> tauri::WebviewWindowBuilder<'a, tauri::Wry, AppHandle> {
+    tauri::WebviewWindowBuilder::new(app, label, tauri::WebviewUrl::default())
+        .title("AstrLink")
+        .decorations(false)
+        .transparent(true)
+        .shadow(false)
+        .always_on_top(true)
+        .skip_taskbar(true)
+        .resizable(false)
+        .minimizable(false)
+        .maximizable(false)
+        .closable(false)
+        .visible(false)
+        .focused(false)
+        .focusable(false)
+        .visible_on_all_workspaces(true)
+        .background_throttling(tauri::utils::config::BackgroundThrottlingPolicy::Disabled)
+}
+
+#[cfg(target_os = "macos")]
+use mac as sys;
+#[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
+use none as sys;
+#[cfg(windows)]
+use win as sys;
+#[cfg(target_os = "linux")]
+use x11 as sys;
+
 #[cfg(target_os = "macos")]
 mod mac {
     use std::ffi::c_void;
@@ -567,7 +966,6 @@ mod mac {
     use objc2::{runtime::NSObjectProtocol, MainThreadMarker};
     use objc2_app_kit::{NSScreen, NSWindow, NSWindowCollectionBehavior};
     use objc2_foundation::{NSPoint, NSRect, NSSize};
-    use tauri::{WebviewUrl, WebviewWindowBuilder};
 
     use super::*;
 
@@ -615,16 +1013,11 @@ mod mac {
     /// Above the Dock (20), under the menu bar (24) and its menus.
     const PET_LEVEL: isize = 21;
 
-    /// Screens in global top-left points.
-    #[derive(Clone, Debug, Default)]
-    pub struct Geometry {
-        /// The screen with the menu bar: the pet's until you carry her
-        /// elsewhere.
-        pub main: Rect,
-        /// Every screen, the main one first.
-        pub screens: Vec<Screen>,
-        /// The Dock's own frame, as the Dock reports it.
-        pub dock: Option<Rect>,
+    /// The menu bar's height at least, where the pet does not go.
+    pub const MIN_TOP: f64 = 24.0;
+
+    pub fn available() -> bool {
+        true
     }
 
     fn cocoa_rect(rect: NSRect) -> Rect {
@@ -636,8 +1029,10 @@ mod mac {
         )
     }
 
-    /// Reads the screens. AppKit needs the main thread.
-    pub fn geometry(mtm: MainThreadMarker) -> Option<Geometry> {
+    /// Reads the screens in global top-left points. AppKit needs the main
+    /// thread.
+    pub fn geometry(_app: &AppHandle) -> Option<Geometry> {
+        let mtm = MainThreadMarker::new()?;
         let screens = NSScreen::screens(mtm);
         let main = screens.firstObject()?;
         let (_, _, _, main_height) = cocoa_rect(main.frame());
@@ -647,6 +1042,7 @@ mod mac {
             .map(|screen| Screen {
                 frame: flip(cocoa_rect(screen.frame())),
                 visible: flip(cocoa_rect(screen.visibleFrame())),
+                scale: 1.0,
             })
             .collect();
         Some(Geometry {
@@ -712,44 +1108,20 @@ mod mac {
         NSRect::new(NSPoint::new(x, main_height - (y + h)), NSSize::new(w, h))
     }
 
-    /// The pet's window: her whole screen, the one under her home point.
-    fn placement(geometry: &Geometry, home: Option<Point>) -> Rect {
-        home_screen(&geometry.screens, home).map_or(geometry.main, |s| s.frame)
-    }
-
-    fn build(app: &AppHandle, label: &'static str, geometry: &Geometry, home: Option<Point>) {
-        let (x, y, w, h) = placement(geometry, home);
-        let builder = WebviewWindowBuilder::new(app, label, WebviewUrl::default())
-            .title("AstrLink")
+    pub fn build(app: &AppHandle, label: &str, geometry: &Geometry, rect: Rect) -> bool {
+        let (x, y, w, h) = rect;
+        let builder = window_builder(app, label)
             .inner_size(w, h)
             .position(x, y)
-            .decorations(false)
-            .transparent(true)
-            .shadow(false)
-            .always_on_top(true)
-            .skip_taskbar(true)
-            .resizable(false)
-            .minimizable(false)
-            .maximizable(false)
-            .closable(false)
-            .visible(false)
-            .focused(false)
-            .focusable(false)
-            .visible_on_all_workspaces(true)
-            .accept_first_mouse(true)
-            .background_throttling(tauri::utils::config::BackgroundThrottlingPolicy::Disabled);
+            .accept_first_mouse(true);
         let window = match builder.build() {
             Ok(window) => window,
             Err(error) => {
                 eprintln!("unable to open the desktop toy {label}: {error}");
-                return;
+                return false;
             }
         };
-        if let Some(state) = super::toys_state(app) {
-            state.lock().placed.insert(label.to_string(), (x, y, w, h));
-        }
-        let main_height = geometry.main.3;
-        let frame = to_cocoa(main_height, (x, y, w, h));
+        let frame = to_cocoa(geometry.main.3, rect);
         // She floats where she was left, over full-screen apps too.
         let behavior = NSWindowCollectionBehavior::CanJoinAllSpaces
             | NSWindowCollectionBehavior::Stationary
@@ -766,63 +1138,100 @@ mod mac {
             ns_window.setFrame_display(frame, false);
             ns_window.orderFrontRegardless();
         });
+        true
     }
 
-    pub fn reconcile(app: &AppHandle, toys: &DesktopToysPreferences) {
-        let wanted = [(PET, toys.on.pet)];
-        let app = app.clone();
-        let homes = super::homes(&app);
-        let _ = app.clone().run_on_main_thread(move || {
-            let Some(mtm) = MainThreadMarker::new() else {
-                return;
-            };
-            let Some(geometry) = geometry(mtm) else {
-                return;
-            };
-            if let Some(state) = super::toys_state(&app) {
-                state.lock().geometry = Some(geometry.clone());
-            }
-            for (label, on) in wanted {
-                let window = app.get_webview_window(label);
-                match (on, window) {
-                    (true, None) => build(&app, label, &geometry, homes.get(label).copied()),
-                    (false, Some(window)) => {
-                        let _ = window.destroy();
-                        if let Some(state) = super::toys_state(&app) {
-                            let mut runtime = state.lock();
-                            runtime.hits.remove(label);
-                            runtime.placed.remove(label);
-                            runtime.frames.remove(label);
-                        }
-                    }
-                    _ => {}
-                }
-            }
+    pub fn set_frame(window: &tauri::WebviewWindow, main: Rect, rect: Rect) {
+        let frame = to_cocoa(main.3, rect);
+        with_ns_window(window, move |ns_window| {
+            ns_window.setFrame_display(frame, false)
         });
     }
 
-    fn cursor() -> CGPoint {
-        // SAFETY: a null source asks for the current location; the event is
-        // released after reading it.
-        unsafe {
-            let event = CGEventCreate(std::ptr::null());
-            if event.is_null() {
-                return CGPoint::default();
-            }
-            let point = CGEventGetLocation(event);
-            CFRelease(event as *const c_void);
-            point
+    /// The window's frame in global points, one point to its point.
+    pub fn origin(window: &tauri::WebviewWindow) -> Option<(Rect, f64)> {
+        let scale = window.scale_factor().ok()?;
+        let origin = window.outer_position().ok()?.to_logical::<f64>(scale);
+        let size = window.outer_size().ok()?.to_logical::<f64>(scale);
+        Some(((origin.x, origin.y, size.width, size.height), 1.0))
+    }
+
+    /// The mouse, the idle time and the other windows, read on the poll
+    /// thread.
+    pub struct Probe;
+
+    impl Probe {
+        pub fn open() -> Self {
+            Probe
         }
-    }
 
-    fn button_down() -> bool {
-        // SAFETY: plain query of the combined session state.
-        unsafe { CGEventSourceButtonState(COMBINED_STATE, 0) }
-    }
+        /// Where the mouse is, and whether its main button is down.
+        pub fn pointer(&self) -> (Option<Point>, bool) {
+            // SAFETY: a null source asks for the current location; the event
+            // is released after reading it. The button state is a plain query
+            // of the combined session state.
+            unsafe {
+                let event = CGEventCreate(std::ptr::null());
+                let point = (!event.is_null()).then(|| {
+                    let point = CGEventGetLocation(event);
+                    CFRelease(event as *const c_void);
+                    (point.x, point.y)
+                });
+                (point, CGEventSourceButtonState(COMBINED_STATE, 0))
+            }
+        }
 
-    fn idle_seconds() -> f64 {
-        // SAFETY: plain query; no permission is needed for the HID idle time.
-        unsafe { CGEventSourceSecondsSinceLastEventType(HID_STATE, ANY_INPUT) }
+        pub fn idle_seconds(&self) -> Option<f64> {
+            // SAFETY: plain query; no permission is needed for the HID idle time.
+            Some(unsafe { CGEventSourceSecondsSinceLastEventType(HID_STATE, ANY_INPUT) })
+        }
+
+        /// Other apps' windows on every screen, front to back.
+        pub fn other_windows(&self) -> Vec<OtherWindow> {
+            let own = std::process::id() as i64;
+            let mut others = Vec::new();
+            // SAFETY: the list follows the copy rule and is released by `CFArray`.
+            let list = unsafe { CGWindowListCopyWindowInfo(ON_SCREEN_ONLY | EXCLUDE_DESKTOP, 0) };
+            if list.is_null() {
+                return others;
+            }
+            let list: CFArray<CFDictionary<CFString, CFType>> =
+                unsafe { TCFType::wrap_under_create_rule(list) };
+            for dict in list.iter() {
+                if number(&dict, unsafe { kCGWindowLayer }) != Some(0.0) {
+                    continue;
+                }
+                if number(&dict, unsafe { kCGWindowOwnerPID }).map(|pid| pid as i64) == Some(own) {
+                    continue;
+                }
+                if number(&dict, unsafe { kCGWindowAlpha }).unwrap_or(1.0) < 0.1 {
+                    continue;
+                }
+                let bounds_key = unsafe { CFString::wrap_under_get_rule(kCGWindowBounds) };
+                let Some(bounds) = dict.find(bounds_key) else {
+                    continue;
+                };
+                let mut rect = CGRect::default();
+                // SAFETY: `bounds` is the window's bounds dictionary.
+                if !unsafe {
+                    CGRectMakeWithDictionaryRepresentation(bounds.as_CFTypeRef(), &mut rect)
+                } {
+                    continue;
+                }
+                let owner_key = unsafe { CFString::wrap_under_get_rule(kCGWindowOwnerName) };
+                let owner = dict
+                    .find(owner_key)
+                    .and_then(|value| value.downcast::<CFString>())
+                    .map(|name| name.to_string())
+                    .unwrap_or_default();
+                others.push(OtherWindow {
+                    id: number(&dict, unsafe { kCGWindowNumber }).unwrap_or(0.0) as i64,
+                    kind: kind_of(&owner),
+                    frame: (rect.origin.x, rect.origin.y, rect.size.x, rect.size.y),
+                });
+            }
+            others
+        }
     }
 
     fn number(dict: &CFDictionary<CFString, CFType>, key: CFStringRef) -> Option<f64> {
@@ -893,307 +1302,458 @@ mod mac {
             "other"
         }
     }
+}
 
-    /// Other apps' windows on every screen, front to back.
-    fn other_windows() -> Vec<OtherWindow> {
-        let own = std::process::id() as i64;
-        let mut others = Vec::new();
-        // SAFETY: the list follows the copy rule and is released by `CFArray`.
-        let list = unsafe { CGWindowListCopyWindowInfo(ON_SCREEN_ONLY | EXCLUDE_DESKTOP, 0) };
-        if list.is_null() {
-            return others;
+/// The work area a pet window covers on Windows and Linux: what the taskbar
+/// and panels leave, a pixel short when nothing is left out, so neither
+/// system takes her window for a full-screen app (Windows hides the taskbar
+/// for one, and Mutter stops compositing it, which turns her black).
+#[cfg(any(windows, target_os = "linux", test))]
+fn pet_area(monitor: Rect, work: Rect) -> Rect {
+    let (x, y, w, h) = work;
+    if work == monitor {
+        (x, y, w, h - 1.0)
+    } else {
+        work
+    }
+}
+
+/// The screens as Tauri sees them, in pixels, the primary one first.
+#[cfg(any(windows, target_os = "linux"))]
+fn monitor_geometry(app: &AppHandle) -> Option<Geometry> {
+    let rect = |position: tauri::PhysicalPosition<i32>, size: tauri::PhysicalSize<u32>| {
+        (
+            f64::from(position.x),
+            f64::from(position.y),
+            f64::from(size.width),
+            f64::from(size.height),
+        )
+    };
+    let primary = app
+        .primary_monitor()
+        .ok()
+        .flatten()
+        .map(|monitor| *monitor.position());
+    let mut monitors = app.available_monitors().ok()?;
+    monitors.sort_by_key(|monitor| Some(*monitor.position()) != primary);
+    let screens: Vec<Screen> = monitors
+        .iter()
+        .map(|monitor| {
+            let work = monitor.work_area();
+            let area = pet_area(
+                rect(*monitor.position(), *monitor.size()),
+                rect(work.position, work.size),
+            );
+            Screen {
+                frame: area,
+                visible: area,
+                scale: monitor.scale_factor(),
+            }
+        })
+        .collect();
+    Some(Geometry {
+        main: screens.first()?.frame,
+        screens,
+        dock: None,
+    })
+}
+
+/// Opens the pet's window on Windows and Linux: built hidden, then let the
+/// mouse through, put on her screen in pixels and shown without focus.
+#[cfg(any(windows, target_os = "linux"))]
+fn build_on_pixels(app: &AppHandle, label: &str, rect: Rect) -> bool {
+    let window = match window_builder(app, label).build() {
+        Ok(window) => window,
+        Err(error) => {
+            eprintln!("unable to open the desktop toy {label}: {error}");
+            return false;
         }
-        let list: CFArray<CFDictionary<CFString, CFType>> =
-            unsafe { TCFType::wrap_under_create_rule(list) };
-        for dict in list.iter() {
-            if number(&dict, unsafe { kCGWindowLayer }) != Some(0.0) {
-                continue;
-            }
-            if number(&dict, unsafe { kCGWindowOwnerPID }).map(|pid| pid as i64) == Some(own) {
-                continue;
-            }
-            if number(&dict, unsafe { kCGWindowAlpha }).unwrap_or(1.0) < 0.1 {
-                continue;
-            }
-            let bounds_key = unsafe { CFString::wrap_under_get_rule(kCGWindowBounds) };
-            let Some(bounds) = dict.find(bounds_key) else {
-                continue;
-            };
-            let mut rect = CGRect::default();
-            // SAFETY: `bounds` is the window's bounds dictionary.
-            if !unsafe { CGRectMakeWithDictionaryRepresentation(bounds.as_CFTypeRef(), &mut rect) }
-            {
-                continue;
-            }
-            let owner_key = unsafe { CFString::wrap_under_get_rule(kCGWindowOwnerName) };
-            let owner = dict
-                .find(owner_key)
-                .and_then(|value| value.downcast::<CFString>())
-                .map(|name| name.to_string())
-                .unwrap_or_default();
-            others.push(OtherWindow {
-                id: number(&dict, unsafe { kCGWindowNumber }).unwrap_or(0.0) as i64,
-                kind: kind_of(&owner),
-                frame: (rect.origin.x, rect.origin.y, rect.size.x, rect.size.y),
-            });
-        }
-        others
+    };
+    if let Err(error) = window.set_ignore_cursor_events(true) {
+        eprintln!("desktop toys: the pet's window may take clicks: {error}");
+    }
+    set_pixels(&window, rect);
+    if let Err(error) = window.show() {
+        eprintln!("unable to show the desktop toy {label}: {error}");
+    }
+    true
+}
+
+/// Moves a window first, so a screen with another scale has taken it, then
+/// gives it its size there.
+#[cfg(any(windows, target_os = "linux"))]
+fn set_pixels(window: &tauri::WebviewWindow, (x, y, w, h): Rect) {
+    let _ = window.set_position(tauri::PhysicalPosition::new(x.round(), y.round()));
+    let _ = window.set_size(tauri::PhysicalSize::new(w.round(), h.round()));
+}
+
+/// The window's frame in pixels, and its scale.
+#[cfg(any(windows, target_os = "linux"))]
+fn pixel_origin(window: &tauri::WebviewWindow) -> Option<(Rect, f64)> {
+    let scale = window.scale_factor().ok()?;
+    let origin = window.outer_position().ok()?;
+    let size = window.outer_size().ok()?;
+    Some((
+        (
+            f64::from(origin.x),
+            f64::from(origin.y),
+            f64::from(size.width),
+            f64::from(size.height),
+        ),
+        scale,
+    ))
+}
+
+#[cfg(windows)]
+mod win {
+    use windows_sys::Win32::{
+        Foundation::POINT,
+        System::SystemInformation::GetTickCount,
+        UI::{
+            Input::KeyboardAndMouse::{
+                GetAsyncKeyState, GetLastInputInfo, LASTINPUTINFO, VK_LBUTTON, VK_RBUTTON,
+            },
+            WindowsAndMessaging::{GetCursorPos, GetSystemMetrics, SM_SWAPBUTTON},
+        },
+    };
+
+    use super::*;
+
+    /// No menu bar to keep under.
+    pub const MIN_TOP: f64 = 0.0;
+
+    pub fn available() -> bool {
+        true
     }
 
-    pub fn start_poll(app: &AppHandle) {
-        let Some(state) = super::toys_state(app) else {
-            return;
-        };
-        {
-            let mut runtime = state.lock();
-            if runtime.polling {
-                return;
-            }
-            runtime.polling = true;
+    pub fn geometry(app: &AppHandle) -> Option<Geometry> {
+        monitor_geometry(app)
+    }
+
+    pub fn build(app: &AppHandle, label: &str, _geometry: &Geometry, rect: Rect) -> bool {
+        build_on_pixels(app, label, rect)
+    }
+
+    pub fn set_frame(window: &tauri::WebviewWindow, _main: Rect, rect: Rect) {
+        set_pixels(window, rect);
+    }
+
+    pub fn origin(window: &tauri::WebviewWindow) -> Option<(Rect, f64)> {
+        pixel_origin(window)
+    }
+
+    /// The mouse and the idle time; Tauri makes AstrLink aware of each
+    /// screen's scale, so both are in physical pixels.
+    pub struct Probe;
+
+    impl Probe {
+        pub fn open() -> Self {
+            Probe
         }
-        let app = app.clone();
-        std::thread::Builder::new()
-            .name("astrlink-toys".into())
-            .spawn(move || poll(app))
-            .ok();
-    }
 
-    fn set_frame(window: &tauri::WebviewWindow, main_height: f64, rect: Rect) {
-        let frame = to_cocoa(main_height, rect);
-        with_ns_window(window, move |ns_window| {
-            ns_window.setFrame_display(frame, false)
-        });
-    }
-
-    /// Reads the screens again, and puts the pet's window back on her own
-    /// screen, or on the main one while that screen is unplugged.
-    fn refresh_geometry(app: &AppHandle) {
-        let handle = app.clone();
-        let _ = app.run_on_main_thread(move || {
-            let Some(mtm) = MainThreadMarker::new() else {
-                return;
-            };
-            let (Some(geometry), Some(state)) = (geometry(mtm), super::toys_state(&handle)) else {
-                return;
-            };
-            state.lock().geometry = Some(geometry.clone());
-            let homes = super::homes(&handle);
-            for label in [PET] {
-                let Some(window) = handle.get_webview_window(label) else {
-                    continue;
+        /// Where the mouse is, and whether its main button is down, the right
+        /// one for a left-handed mouse.
+        pub fn pointer(&self) -> (Option<Point>, bool) {
+            let mut point = POINT { x: 0, y: 0 };
+            // SAFETY: plain queries; `point` outlives the call that fills it.
+            unsafe {
+                let point = (GetCursorPos(&mut point) != 0)
+                    .then(|| (f64::from(point.x), f64::from(point.y)));
+                let main = if GetSystemMetrics(SM_SWAPBUTTON) != 0 {
+                    VK_RBUTTON
+                } else {
+                    VK_LBUTTON
                 };
-                let want = placement(&geometry, homes.get(label).copied());
-                {
-                    let mut runtime = state.lock();
-                    // Not out of your hand; she goes once you let go.
-                    let held = runtime.hits.get(label).is_some_and(|hits| hits.hold);
-                    if held || runtime.placed.get(label) == Some(&want) {
-                        continue;
-                    }
-                    runtime.placed.insert(label.to_string(), want);
-                    if let Some(hits) = runtime.hits.get_mut(label) {
-                        hits.origin_at = None;
-                    }
-                }
-                set_frame(&window, geometry.main.3, want);
+                let down = (GetAsyncKeyState(i32::from(main)) as u16) & 0x8000 != 0;
+                (point, down)
             }
+        }
+
+        pub fn idle_seconds(&self) -> Option<f64> {
+            let mut info = LASTINPUTINFO {
+                cbSize: std::mem::size_of::<LASTINPUTINFO>() as u32,
+                dwTime: 0,
+            };
+            // SAFETY: `info` is sized for the call, which fills it in.
+            if unsafe { GetLastInputInfo(&mut info) } == 0 {
+                return None;
+            }
+            // Both count milliseconds since boot and wrap together.
+            let now = unsafe { GetTickCount() };
+            Some(f64::from(now.wrapping_sub(info.dwTime)) / 1000.0)
+        }
+
+        pub fn other_windows(&self) -> Vec<OtherWindow> {
+            Vec::new()
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+mod x11 {
+    use std::ffi::{c_char, c_int, c_uint, c_ulong, c_void, CStr};
+
+    use super::*;
+
+    /// No menu bar to keep under; panels are outside the work area.
+    pub const MIN_TOP: f64 = 0.0;
+
+    /// An X11 session: there the pet's window may be placed and kept on
+    /// top. Wayland allows neither, nor reading the mouse outside a window.
+    pub fn available() -> bool {
+        let set = |name: &str| std::env::var_os(name).is_some_and(|value| !value.is_empty());
+        set("DISPLAY")
+            && !set("WAYLAND_DISPLAY")
+            && std::env::var("XDG_SESSION_TYPE").map_or(true, |kind| kind != "wayland")
+    }
+
+    pub fn geometry(app: &AppHandle) -> Option<Geometry> {
+        monitor_geometry(app)
+    }
+
+    pub fn build(app: &AppHandle, label: &str, _geometry: &Geometry, rect: Rect) -> bool {
+        // A see-through window needs a compositor; without one she would be
+        // a black sheet over the screen.
+        let composited = on_main(app, |_| {
+            gtk::gdk::Screen::default().is_some_and(|screen| screen.is_composited())
         });
+        if composited != Some(true) {
+            eprintln!("desktop toys: no compositor is running; the pet stays in");
+            return false;
+        }
+        build_on_pixels(app, label, rect)
     }
 
-    /// A held pet carried onto another screen: her window follows, and its
-    /// page hears how far its points moved. The screen is kept for next time.
-    fn carry(app: &AppHandle, window: &tauri::WebviewWindow, cursor: Point) {
-        let Some(state) = super::toys_state(app) else {
-            return;
-        };
-        let label = window.label();
-        let (from, to, main_height, homes) = {
-            let mut runtime = state.lock();
-            if !runtime.hits.get(label).is_some_and(|hits| hits.carry) {
-                return;
-            }
-            let Some(geometry) = runtime.geometry.as_ref() else {
-                return;
-            };
-            let main_height = geometry.main.3;
-            let Some(&from) = runtime.placed.get(label) else {
-                return;
-            };
-            let Some(to) = carried_to(&geometry.screens, from, cursor) else {
-                return;
-            };
-            runtime.placed.insert(label.to_string(), to.frame);
-            let homes = runtime.homes.get_or_insert_with(HashMap::new);
-            homes.insert(label.to_string(), middle(to.frame));
-            let homes = homes.clone();
-            if let Some(hits) = runtime.hits.get_mut(label) {
-                hits.origin = Some(to.frame);
-                hits.origin_at = Some(Instant::now());
-                hits.pointer = None;
-            }
-            (from, to.frame, main_height, homes)
-        };
-        let _ = app.emit_to(
-            label,
-            SCREEN_EVENT,
-            serde_json::json!({ "dx": from.0 - to.0, "dy": from.1 - to.1, "w": to.2, "h": to.3 }),
-        );
-        set_frame(window, main_height, to);
-        super::save_homes(app, &homes);
+    pub fn set_frame(window: &tauri::WebviewWindow, _main: Rect, rect: Rect) {
+        set_pixels(window, rect);
     }
 
-    fn poll(app: AppHandle) {
-        let mut tick: u64 = 0;
-        let mut last_frames: HashMap<&str, String> = HashMap::new();
-        let mut debug_after = super::debug_overrides(&app).away_after;
-        loop {
-            std::thread::sleep(TICK);
-            tick += 1;
-            let toys = super::prefs_of(&app).toys;
-            if !toys.on.any() {
-                break;
-            }
-            let down = button_down();
-            // The Dock widens and narrows as apps open and quit.
-            if tick % 30 == 0 {
-                refresh_geometry(&app);
-            }
-            if tick % 150 == 0 {
-                debug_after = super::debug_overrides(&app).away_after;
-            }
-            track_pointer(&app, down);
-            let pets: Vec<&str> = [(PET, toys.on.pet)]
-                .into_iter()
-                .filter(|&(label, on)| on && app.get_webview_window(label).is_some())
-                .map(|(label, _)| label)
-                .collect();
-            if !pets.is_empty() && (tick % 6 == 0 || (down && tick % 2 == 0)) {
-                send_frames(&app, &pets, &mut last_frames);
-            }
-            if pets.contains(&PET) && tick % 30 == 0 {
-                let (idle_wait, busy_wait) = away_waits(debug_after);
-                let quiet = super::toys_state(&app).map_or(f64::INFINITY, |state| {
-                    ai_quiet_seconds(state.lock().activity.as_ref(), Utc::now())
-                });
-                let away = away_after(idle_wait, busy_wait, quiet);
-                let _ = app.emit_to(
-                    PET,
-                    IDLE_EVENT,
-                    serde_json::json!({ "idle": idle_seconds(), "away": away }),
+    pub fn origin(window: &tauri::WebviewWindow) -> Option<(Rect, f64)> {
+        pixel_origin(window)
+    }
+
+    type Display = c_void;
+    type OpenDisplay = unsafe extern "C" fn(*const c_char) -> *mut Display;
+    type CloseDisplay = unsafe extern "C" fn(*mut Display) -> c_int;
+    type DefaultRootWindow = unsafe extern "C" fn(*mut Display) -> c_ulong;
+    type QueryPointer = unsafe extern "C" fn(
+        *mut Display,
+        c_ulong,
+        *mut c_ulong,
+        *mut c_ulong,
+        *mut c_int,
+        *mut c_int,
+        *mut c_int,
+        *mut c_int,
+        *mut c_uint,
+    ) -> c_int;
+    type Free = unsafe extern "C" fn(*mut c_void) -> c_int;
+    type AllocInfo = unsafe extern "C" fn() -> *mut ScreenSaverInfo;
+    type QueryInfo = unsafe extern "C" fn(*mut Display, c_ulong, *mut ScreenSaverInfo) -> c_int;
+
+    #[repr(C)]
+    struct ScreenSaverInfo {
+        window: c_ulong,
+        state: c_int,
+        kind: c_int,
+        til_or_since: c_ulong,
+        idle: c_ulong,
+        event_mask: c_ulong,
+    }
+
+    const BUTTON1_MASK: c_uint = 1 << 8;
+
+    /// A library opened at run time, so a system without it only loses what
+    /// it gives.
+    fn open_library(names: &[&CStr]) -> *mut c_void {
+        names
+            .iter()
+            // SAFETY: dlopen with a valid C string; a miss returns null.
+            .map(|name| unsafe { libc::dlopen(name.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) })
+            .find(|library| !library.is_null())
+            .unwrap_or(std::ptr::null_mut())
+    }
+
+    /// # Safety
+    /// `T` must be the symbol's function pointer type.
+    unsafe fn symbol<T: Copy>(library: *mut c_void, name: &CStr) -> Option<T> {
+        if library.is_null() {
+            return None;
+        }
+        let pointer = unsafe { libc::dlsym(library, name.as_ptr()) };
+        (!pointer.is_null()).then(|| unsafe { std::mem::transmute_copy(&pointer) })
+    }
+
+    struct Xlib {
+        close: CloseDisplay,
+        root: DefaultRootWindow,
+        query: QueryPointer,
+        free: Free,
+    }
+
+    struct Saver {
+        alloc: AllocInfo,
+        query: QueryInfo,
+    }
+
+    /// The mouse and the idle time from the X server, on the poll thread's
+    /// own connection; X11 coordinates are the pixels Tauri reports too.
+    pub struct Probe {
+        display: *mut Display,
+        xlib: Option<Xlib>,
+        saver: Option<Saver>,
+    }
+
+    impl Probe {
+        pub fn open() -> Self {
+            let x11 = open_library(&[c"libX11.so.6", c"libX11.so"]);
+            let xss = open_library(&[c"libXss.so.1", c"libXss.so"]);
+            // SAFETY: each type below is the documented signature of its symbol.
+            let (open, xlib, saver) = unsafe {
+                let open = symbol::<OpenDisplay>(x11, c"XOpenDisplay");
+                let xlib = (|| {
+                    Some(Xlib {
+                        close: symbol(x11, c"XCloseDisplay")?,
+                        root: symbol(x11, c"XDefaultRootWindow")?,
+                        query: symbol(x11, c"XQueryPointer")?,
+                        free: symbol(x11, c"XFree")?,
+                    })
+                })();
+                let saver = (|| {
+                    Some(Saver {
+                        alloc: symbol(xss, c"XScreenSaverAllocInfo")?,
+                        query: symbol(xss, c"XScreenSaverQueryInfo")?,
+                    })
+                })();
+                (open, xlib, saver)
+            };
+            let display = match (open, &xlib) {
+                // SAFETY: a null name opens $DISPLAY; this connection is used
+                // only by the thread that owns the probe.
+                (Some(open), Some(_)) => unsafe { open(std::ptr::null()) },
+                _ => std::ptr::null_mut(),
+            };
+            if display.is_null() {
+                eprintln!(
+                    "desktop toys: unable to reach the X server; the pet cannot see the mouse"
                 );
             }
-        }
-        if let Some(state) = super::toys_state(&app) {
-            state.lock().polling = false;
-        }
-    }
-
-    /// Tells each pet what is on her own screen, when it changed.
-    fn send_frames(app: &AppHandle, pets: &[&'static str], last: &mut HashMap<&str, String>) {
-        let Some(state) = super::toys_state(app) else {
-            return;
-        };
-        let Some(geometry) = state.lock().geometry.clone() else {
-            return;
-        };
-        let others = other_windows();
-        for &label in pets {
-            let placed = state.lock().placed.get(label).copied();
-            let Some(screen) = home_screen(&geometry.screens, placed.map(middle)) else {
-                continue;
-            };
-            let frames = frames_on(&screen, geometry.dock, &others);
-            let text = frames.to_string();
-            if last.get(label) == Some(&text) {
-                continue;
+            if saver.is_none() {
+                eprintln!("desktop toys: no libXss; the pet will not notice you stepping away");
             }
-            last.insert(label, text);
-            state
-                .lock()
-                .frames
-                .insert(label.to_string(), frames.clone());
-            let _ = app.emit_to(label, FRAMES_EVENT, frames);
+            Probe {
+                display,
+                xlib,
+                saver,
+            }
         }
-    }
 
-    /// Lets the mouse through everywhere but the parts the pet says are her
-    /// own, and tells her where the mouse is.
-    fn track_pointer(app: &AppHandle, down: bool) {
-        let Some(state) = super::toys_state(app) else {
-            return;
-        };
-        let point = cursor();
-        for label in [PET] {
-            let Some(window) = app.get_webview_window(label) else {
-                continue;
+        /// Where the mouse is, and whether its main button is down.
+        pub fn pointer(&self) -> (Option<Point>, bool) {
+            let Some(xlib) = self.xlib.as_ref().filter(|_| !self.display.is_null()) else {
+                return (None, false);
             };
-            carry(app, &window, (point.x, point.y));
-            let fresh_for = Duration::from_millis(if down { 60 } else { 500 });
-            let stale = state.lock().hits.get(label).map_or(true, |hits| {
-                hits.origin.is_none() || hits.origin_at.map_or(true, |at| at.elapsed() >= fresh_for)
-            });
-            if stale {
-                let scale = window.scale_factor().unwrap_or(1.0);
-                let origin = window
-                    .outer_position()
-                    .ok()
-                    .map(|p| p.to_logical::<f64>(scale));
-                let size = window.outer_size().ok().map(|s| s.to_logical::<f64>(scale));
-                if let (Some(origin), Some(size)) = (origin, size) {
-                    let mut runtime = state.lock();
-                    let hits = runtime.hits.entry(label.to_string()).or_default();
-                    hits.origin = Some((origin.x, origin.y, size.width, size.height));
-                    hits.origin_at = Some(Instant::now());
+            let (mut root, mut child) = (0, 0);
+            let (mut x, mut y, mut wx, mut wy) = (0, 0, 0, 0);
+            let mut mask: c_uint = 0;
+            // SAFETY: an open display and out-pointers that outlive the call.
+            let on_screen = unsafe {
+                (xlib.query)(
+                    self.display,
+                    (xlib.root)(self.display),
+                    &mut root,
+                    &mut child,
+                    &mut x,
+                    &mut y,
+                    &mut wx,
+                    &mut wy,
+                    &mut mask,
+                )
+            } != 0;
+            if !on_screen {
+                return (None, false);
+            }
+            (Some((f64::from(x), f64::from(y))), mask & BUTTON1_MASK != 0)
+        }
+
+        pub fn idle_seconds(&self) -> Option<f64> {
+            let (Some(xlib), Some(saver)) = (self.xlib.as_ref(), self.saver.as_ref()) else {
+                return None;
+            };
+            if self.display.is_null() {
+                return None;
+            }
+            // SAFETY: the info is allocated by Xss, filled for the root
+            // window of an open display, and freed with XFree.
+            unsafe {
+                let info = (saver.alloc)();
+                if info.is_null() {
+                    return None;
                 }
+                let read = (saver.query)(self.display, (xlib.root)(self.display), info) != 0;
+                let idle = (*info).idle;
+                (xlib.free)(info.cast());
+                read.then(|| idle as f64 / 1000.0)
             }
-            let (change, emit) = {
-                let mut runtime = state.lock();
-                let hits = runtime.hits.entry(label.to_string()).or_default();
-                let Some((ox, oy, ow, oh)) = hits.origin else {
-                    continue;
-                };
-                let x = point.x - ox;
-                let y = point.y - oy;
-                let inside = x >= 0.0 && y >= 0.0 && x < ow && y < oh;
-                let over = inside && hits.rects.iter().any(|rect| rect.contains(x, y));
-                let click = hits.hold
-                    || (inside
-                        && hits
-                            .rects
-                            .iter()
-                            .any(|rect| rect.click && rect.contains(x, y)));
-                let change = (click != hits.interactive).then(|| {
-                    hits.interactive = click;
-                    click
-                });
-                let next = (x, y, over || hits.hold);
-                let emit = if inside || hits.hold {
-                    let moved = hits.down != down
-                        || hits.pointer.map_or(true, |(px, py, pover)| {
-                            (px - x).abs() >= 0.5 || (py - y).abs() >= 0.5 || pover != next.2
-                        });
-                    hits.pointer = Some(next);
-                    hits.down = down;
-                    moved.then_some(Some(next))
-                } else if hits.pointer.take().is_some() {
-                    Some(None)
-                } else {
-                    None
-                };
-                (change, emit)
-            };
-            if let Some(click) = change {
-                let _ = window.set_ignore_cursor_events(!click);
+        }
+
+        pub fn other_windows(&self) -> Vec<OtherWindow> {
+            Vec::new()
+        }
+    }
+
+    impl Drop for Probe {
+        fn drop(&mut self) {
+            if let (Some(xlib), false) = (self.xlib.as_ref(), self.display.is_null()) {
+                // SAFETY: the display was opened by this probe and is closed once.
+                unsafe { (xlib.close)(self.display) };
             }
-            if let Some(next) = emit {
-                let payload = match next {
-                    Some((x, y, over)) => {
-                        serde_json::json!({ "x": x, "y": y, "over": over, "down": down })
-                    }
-                    None => serde_json::Value::Null,
-                };
-                let _ = app.emit_to(label, POINTER_EVENT, payload);
-            }
+        }
+    }
+}
+
+/// Elsewhere there is no pet.
+#[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
+mod none {
+    use super::*;
+
+    pub const MIN_TOP: f64 = 0.0;
+
+    pub fn available() -> bool {
+        false
+    }
+
+    pub fn geometry(_app: &AppHandle) -> Option<Geometry> {
+        None
+    }
+
+    pub fn build(_app: &AppHandle, _label: &str, _geometry: &Geometry, _rect: Rect) -> bool {
+        false
+    }
+
+    pub fn set_frame(_window: &tauri::WebviewWindow, _main: Rect, _rect: Rect) {}
+
+    pub fn origin(_window: &tauri::WebviewWindow) -> Option<(Rect, f64)> {
+        None
+    }
+
+    pub struct Probe;
+
+    impl Probe {
+        pub fn open() -> Self {
+            Probe
+        }
+
+        pub fn pointer(&self) -> (Option<Point>, bool) {
+            (None, false)
+        }
+
+        pub fn idle_seconds(&self) -> Option<f64> {
+            None
+        }
+
+        pub fn other_windows(&self) -> Vec<OtherWindow> {
+            Vec::new()
         }
     }
 }
@@ -1229,10 +1789,12 @@ mod tests {
         let laptop = Screen {
             frame: (0.0, 0.0, 1512.0, 982.0),
             visible: (0.0, 33.0, 1512.0, 879.0),
+            scale: 1.0,
         };
         let big = Screen {
             frame: (1512.0, -200.0, 3008.0, 1692.0),
             visible: (1512.0, -175.0, 3008.0, 1667.0),
+            scale: 1.0,
         };
         let screens = [laptop, big];
 
@@ -1259,10 +1821,12 @@ mod tests {
         let laptop = Screen {
             frame: (0.0, 0.0, 1512.0, 982.0),
             visible: (0.0, 33.0, 1512.0, 949.0),
+            scale: 1.0,
         };
         let big = Screen {
             frame: (1512.0, -200.0, 3008.0, 1692.0),
             visible: (1512.0, -175.0, 3008.0, 1595.0),
+            scale: 1.0,
         };
         let others = [
             OtherWindow {
@@ -1300,6 +1864,57 @@ mod tests {
         assert!(on_laptop["dock"].is_null());
         assert_eq!(on_laptop["top"], 33.0);
         assert_eq!(on_laptop["full"], false);
+    }
+
+    #[test]
+    fn a_scaled_screen_is_told_in_its_own_points() {
+        // A 150% screen in pixels, its taskbar at the bottom, to the right
+        // of a 100% one.
+        let plain = Screen {
+            frame: (0.0, 0.0, 1920.0, 1079.0),
+            visible: (0.0, 0.0, 1920.0, 1079.0),
+            scale: 1.0,
+        };
+        let scaled = Screen {
+            frame: (1920.0, 0.0, 2560.0, 1536.0),
+            visible: (1920.0, 0.0, 2560.0, 1536.0),
+            scale: 1.5,
+        };
+        let others = [OtherWindow {
+            id: 7,
+            kind: "web",
+            frame: (2220.0, 150.0, 1500.0, 900.0),
+        }];
+        let frames = frames_on(&scaled, None, &others);
+        assert_eq!(
+            (frames["w"].as_f64(), frames["h"].as_f64()),
+            (Some(2560.0 / 1.5), Some(1024.0))
+        );
+        assert_eq!(frames["floor"], 1022.0);
+        let wins = frames["wins"].as_array().unwrap();
+        assert_eq!(
+            (wins[0]["x"].as_f64(), wins[0]["w"].as_f64()),
+            (Some(200.0), Some(1000.0))
+        );
+
+        // Carried from the plain screen onto the scaled one, the spot in
+        // your hand stays under the mouse: (2100 - 1920) / 1.5 = 120 points
+        // into the new window, 2100 points into the old one.
+        let shift = carried_shift((2100.0, 300.0), (plain.frame, 1.0), (scaled.frame, 1.5));
+        assert_eq!(shift, (120.0 - 2100.0, 200.0 - 300.0));
+    }
+
+    #[test]
+    fn a_pet_window_stops_a_pixel_short_of_a_bare_screen() {
+        let monitor = (0.0, 0.0, 1920.0, 1080.0);
+        // A taskbar leaves less: the work area as it is.
+        assert_eq!(
+            pet_area(monitor, (0.0, 0.0, 1920.0, 1032.0)),
+            (0.0, 0.0, 1920.0, 1032.0)
+        );
+        // An auto-hidden taskbar leaves it all: a pixel short, so she is not
+        // taken for a full-screen app.
+        assert_eq!(pet_area(monitor, monitor), (0.0, 0.0, 1920.0, 1079.0));
     }
 
     #[test]

@@ -25,6 +25,12 @@ const onnxRuntimeVersion = "1.23.2";
 // silicon only, and Core ML variants are offered there only, so Intel Macs
 // ship 1.23.2 alone.
 const coreMLRuntimeVersion = "1.24.4";
+// Windows workers link the ONNX Runtime build that ort downloads with
+// DirectML, not a pinned Microsoft archive, so they ship that build's notices.
+// ort-sys 2.0.0-rc.15 downloads ONNX Runtime 1.31.0; another ort-sys version
+// fails the Windows build until both values are updated together.
+const windowsRuntimeVersion = "1.31.0";
+const windowsRuntimeOrtSysVersion = "2.0.0-rc.15";
 const macOSRuntimeLibraryName = `libonnxruntime.${onnxRuntimeVersion}.dylib`;
 const coreMLRuntimeLibraryName = `libonnxruntime.${coreMLRuntimeVersion}.dylib`;
 const linuxRuntimeLibraryName = `libonnxruntime.so.${onnxRuntimeVersion}`;
@@ -53,6 +59,16 @@ const onnxRuntimeNotices = {
       sha256:
         "0e07b95f3a8d6230037707c5c4a2b554d12c4cb67369669ac255635528ffcee2",
       size: 325_054,
+    },
+  ],
+  [windowsRuntimeVersion]: [
+    onnxRuntimeLicense,
+    {
+      source: "ThirdPartyNotices.txt",
+      name: "ThirdPartyNotices.txt",
+      sha256:
+        "143764b952fdb1a7c69ce653bfba74a7744d6a8a573bfb73e235fba356c83de3",
+      size: 338_088,
     },
   ],
 };
@@ -438,6 +454,21 @@ function materializeWindowsWorkerRuntime(directory) {
   console.log(`Materialized ${runtime} from ${source}`);
 }
 
+function assertWindowsRuntimeVersion() {
+  const locked = /^name = "ort-sys"\r?\nversion = "([^"]+)"/m;
+  for (const directory of [workerDirectory, classifierWorkerDirectory]) {
+    const lockfile = path.join(directory, "Cargo.lock");
+    const version = readFileSync(lockfile, "utf8").match(locked)?.[1];
+    if (version !== windowsRuntimeOrtSysVersion) {
+      throw new Error(
+        `${lockfile} locks ort-sys ${version ?? "(missing)"}, but the Windows ` +
+          `ONNX Runtime ${windowsRuntimeVersion} notices belong to ort-sys ` +
+          `${windowsRuntimeOrtSysVersion}.`,
+      );
+    }
+  }
+}
+
 function fileMatches(filePath, size, expectedSha256) {
   return (
     statSync(filePath).size === size &&
@@ -471,7 +502,12 @@ if (process.argv.includes("--test-runtime-only")) {
   process.exit(0);
 }
 
-await stageOnnxRuntimeNotices(onnxRuntimeVersion);
+if (target.includes("windows")) {
+  assertWindowsRuntimeVersion();
+  await stageOnnxRuntimeNotices(windowsRuntimeVersion);
+} else {
+  await stageOnnxRuntimeNotices(onnxRuntimeVersion);
+}
 if (coreMLRuntimeAssets[target]) {
   await stageOnnxRuntimeNotices(coreMLRuntimeVersion);
 }

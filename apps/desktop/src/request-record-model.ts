@@ -21,6 +21,7 @@ export const CLIENT_TYPES = [
   "deepseek_harness",
   "codewhale",
   "reasonix",
+  "dimagent",
   "qwen_code",
   "kimi_code",
   "codebuddy",

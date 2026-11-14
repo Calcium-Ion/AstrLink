@@ -45,6 +45,12 @@ func TestDetectClientType(t *testing.T) {
 		{name: "Codewhale OpenRouter", ua: "Mozilla/5.0", title: "Codewhale", want: contract.ClientCodewhale},
 		{name: "Reasonix", ua: "Reasonix/1.39.7", want: contract.ClientReasonix},
 		{name: "Reasonix unversioned", ua: "Reasonix", want: contract.ClientReasonix},
+		{name: "DimAgent configured identity", ua: "DimAgent", want: contract.ClientDimAgent},
+		{name: "DimAgent versioned", ua: "DimAgent/0.5.24", want: contract.ClientDimAgent},
+		{name: "DimCode", ua: "dimcode/0.5.24 (darwin; arm64)", want: contract.ClientDimAgent},
+		{name: "Dim", ua: "dim/0.1.0", want: contract.ClientDimAgent},
+		{name: "DimAgent title", ua: "ai-sdk/openai/3.0.0", title: "DimAgent", want: contract.ClientDimAgent},
+		{name: "DimAgent title beats provider identity", ua: "codex_cli_rs/0.144.0", originator: "codex_cli_rs", title: "DimAgent", want: contract.ClientDimAgent},
 		{name: "Qwen Code", ua: "QwenCode/0.24.7 (darwin; arm64)", want: contract.ClientQwenCode},
 		{name: "Qwen Code OpenRouter", ua: "OpenAI/JS 5.0.0", extraHeader: "X-OpenRouter-Title", extraValue: "Qwen Code", want: contract.ClientQwenCode},
 		{name: "Kimi Code", ua: "kimi-code-cli/2.1.1", want: contract.ClientKimiCode},
@@ -73,6 +79,10 @@ func TestDetectClientType(t *testing.T) {
 		{name: "application beats provider identity", ua: "claude-cli/2.1.2", originator: "codex_cli_rs", title: "OpenCode", want: contract.ClientOpenCode},
 		{name: "case and whitespace", ua: "  CODEX-TUI/0.1.0  ", want: contract.ClientCodex},
 		{name: "generic SDK", ua: "openai-python/2.0", want: contract.ClientUnknown},
+		{name: "shared Aimux SDK", ua: "aimux/openai/0.6.0", want: contract.ClientUnknown},
+		{name: "DimAgent substring is not a product", ua: "not-dimagent/1.0", want: contract.ClientUnknown},
+		{name: "Dim prefix is not a product", ua: "dimension/1.0", want: contract.ClientUnknown},
+		{name: "DimAgent URL is not a product", ua: "https://dimagent.cn", want: contract.ClientUnknown},
 		{name: "generic Google SDK", ua: "google-genai-sdk/1.72.0 gl-go/go1.28", want: contract.ClientUnknown},
 		{name: "Gemini prefix is not a product", ua: "geminiclient/1.0", want: contract.ClientUnknown},
 		{name: "empty Copilot header", ua: "OpenAI/JS 5.20.1", extraHeader: "X-Interaction-Type", extraValue: " ", want: contract.ClientUnknown},
@@ -112,6 +122,7 @@ func TestClientTypeSurvivesUpstreamIdentityAndRetry(t *testing.T) {
 	}{
 		{ua: "Cursor/1.0.0", want: contract.ClientCursor},
 		{ua: "pi (darwin 25.0.0; arm64)", want: contract.ClientPi},
+		{ua: "DimAgent", want: contract.ClientDimAgent},
 	} {
 		t.Run(string(test.want), func(t *testing.T) {
 			request := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)

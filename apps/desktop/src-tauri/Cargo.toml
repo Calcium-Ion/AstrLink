@@ -54,6 +54,7 @@ tauri-plugin-shell = "=2.3.5"
 tauri-plugin-updater = { version = "=2.12.0", default-features = false, features = ["rustls-tls", "system-proxy"] }
 tokio = { version = "=1.51.6", features = ["sync", "time", "macros"] }
 zeroize = { version = "=1.9.0", features = ["serde"] }
+rusqlite = { version = "=0.42.0", features = ["bundled"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # Touch ID for raw content and the screen lock and sleep notifications; the
@@ -103,9 +104,12 @@ windows-sys = { version = "=0.61.2", features = [
   "Win32_Storage_FileSystem",
   "Win32_System_LibraryLoader",
   "Win32_System_Registry",
+  "Win32_System_Diagnostics_ToolHelp",
   "Win32_System_JobObjects",
   "Win32_System_RemoteDesktop",
+  "Win32_System_SystemInformation",
   "Win32_System_Threading",
+  "Win32_UI_Input_KeyboardAndMouse",
   "Win32_UI_WindowsAndMessaging",
 ] }
 

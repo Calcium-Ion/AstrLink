@@ -7,7 +7,7 @@
 //! `pub(crate) const CLIENT: Client` for its `ClientSpec`, and add `<id>` to
 //! `registry!` below, where the order is the dialog's.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::agent_home::Home;
 
@@ -54,6 +54,7 @@ registry!(
     mistral_vibe,
     codewhale,
     reasonix,
+    dimagent,
     zcode,
     minimax_code,
     step_code,
@@ -239,6 +240,39 @@ pub trait ClientSpec: Sync {
 
 /// One file a client reads its connection from.
 pub(crate) trait ConfigFile: Sync {
+    /// Reads the settings represented by this file. Database clients return
+    /// the selected configuration rows as JSON.
+    fn read(&self, path: &Path) -> Result<Option<String>, String> {
+        crate::host_files::read_optional(path)
+    }
+    /// Commits a replacement after checking the values used to prepare it.
+    fn write(
+        &self,
+        path: &Path,
+        before: Option<&str>,
+        after: Option<&str>,
+        secret: bool,
+    ) -> Result<(), String> {
+        match after {
+            Some(contents) => crate::host_files::write_text(
+                path,
+                contents,
+                crate::host_files::WriteOptions {
+                    secret,
+                    expected: Some(before),
+                },
+            ),
+            None => {
+                if self.read(path)?.as_deref() != before {
+                    return Err(format!(
+                        "unable to remove {}: the file changed; try again",
+                        path.display()
+                    ));
+                }
+                crate::host_files::remove_path(path)
+            }
+        }
+    }
     /// How the client reads it.
     fn format(&self) -> Format;
     /// Whether the file holds credentials and nothing a preview may show.
@@ -247,6 +281,11 @@ pub(crate) trait ConfigFile: Sync {
     /// it, and its preview masks every value, whatever the key's name.
     fn secret(&self) -> bool {
         false
+    }
+    /// Hides values whose privacy depends on their position, before the
+    /// preview masks credential-named keys.
+    fn preview(&self, text: &str) -> String {
+        text.to_string()
     }
     /// Whether this file of its client holds the key.
     fn holds(&self, _key: &str) -> bool {

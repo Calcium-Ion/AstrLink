@@ -286,6 +286,19 @@ fn identifies_cursor_and_pi_installations() {
         ),
         InstallMethod::Native
     );
+    // Windows PowerShell 5.1 writes the marker with a BOM.
+    fixture.write(
+        ".pi/agent/install/managed-install.json",
+        "\u{feff}{\"kind\":\"pi-managed-install\",\"schemaVersion\":1,\"layout\":\"releases-v1\"}",
+    );
+    assert_eq!(
+        installation_method(
+            &fixture.environment(),
+            ClientId::Pi,
+            &fixture.0.join(".pi/agent/bin/pi-launcher.js")
+        ),
+        InstallMethod::Native
+    );
 }
 
 #[cfg(unix)]
@@ -357,14 +370,79 @@ endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\node_
                 .join("npm/node_modules/@anthropic-ai/claude-code/bin/claude.exe")
         )
     );
+    // Pi's installer writes `%~dp0` without a backslash, which it ends in.
+    let path = fixture.write(".pi/agent/bin/pi.cmd", PI_INSTALLER_CMD);
+    assert_eq!(
+        cmd_shim_target(&path),
+        Some(fixture.0.join(".pi/agent/bin/pi-launcher.js"))
+    );
     for invalid in [
         r#""%dp0%\..\@openai\codex\bin\codex.js" %*"#,
         r#""%dp0%\C:\other\codex.js" %*"#,
+        r#""%~dp0..\codex.js" %*"#,
         "@echo off\ncodex.exe %*\n",
+        // The shim's own directory is not a target.
+        r#"cd /d "%~dp0" %*"#,
     ] {
         let path = fixture.write("npm/codex.cmd", invalid);
         assert_eq!(cmd_shim_target(&path), None);
     }
+}
+
+/// The pi.cmd that https://pi.dev/install.ps1 writes when it installed a
+/// standalone Node.js.
+const PI_INSTALLER_CMD: &str = "@ECHO off\r
+SETLOCAL\r
+SET \"node=node\"\r
+IF EXIST \"%LOCALAPPDATA%\\pi-node\\current\\node.exe\" SET \"node=%LOCALAPPDATA%\\pi-node\\current\\node.exe\"\r
+\"%node%\" \"%~dp0pi-launcher.js\" %*\r
+SET \"pi_exit_code=%ERRORLEVEL%\"\r
+IF \"%pi_exit_code%\"==\"9009\" (\r
+  IF \"%node%\"==\"node\" (\r
+    \"%SystemRoot%\\System32\\where.exe\" /Q node\r
+    IF ERRORLEVEL 1 GOTO node_missing\r
+  ) ELSE IF NOT EXIST \"%node%\" GOTO node_missing\r
+)\r
+EXIT /B %pi_exit_code%\r
+:node_missing\r
+ECHO Pi could not find Node.js. Install Node.js 22.19.0 or newer, or rerun the installer at https://pi.dev. 1>&2\r
+EXIT /B %pi_exit_code%\r
+";
+
+#[cfg(unix)]
+#[test]
+fn runs_the_node_a_shim_names() {
+    let fixture = Fixture::new();
+    let environment = fixture.environment();
+    let shim = fixture.write(".pi/agent/bin/pi.cmd", PI_INSTALLER_CMD);
+    let local = fixture.0.join("local");
+    let var = |name: &str| (name == "LOCALAPPDATA").then(|| local.clone().into_os_string());
+    // Without its standalone Node.js, Pi's launcher runs `node` from PATH.
+    assert_eq!(shim_node(&environment, &shim, var), None);
+    let node = fixture.script("local/pi-node/current/node.exe", "");
+    assert_eq!(shim_node(&environment, &shim, var).unwrap().path, node);
+
+    // npm's shims name the node.exe beside them.
+    let npm = fixture.write(
+        "npm/codex.cmd",
+        r#"IF EXIST "%dp0%\node.exe" (
+  SET "_prog=%dp0%\node.exe"
+)
+"#,
+    );
+    assert_eq!(shim_node(&environment, &npm, |_| None), None);
+    let sibling = fixture.script("npm/node.exe", "");
+    assert_eq!(
+        shim_node(&environment, &npm, |_| None).unwrap().path,
+        sibling
+    );
+    let script = fixture
+        .0
+        .join("npm/node_modules/@openai/codex/bin/codex.js");
+    assert_eq!(
+        shim_command(&environment, &npm, &script).unwrap().program,
+        sibling
+    );
 }
 
 #[cfg(unix)]
@@ -479,6 +557,59 @@ fn follows_npm_shims_on_windows_without_verbatim_paths() {
         nodejs.join(r"node_modules\npm\bin\npm-cli.js")
     );
     assert_eq!(command.args[4], npm.as_os_str());
+}
+
+#[cfg(windows)]
+#[test]
+fn follows_the_pi_installer_launcher_on_windows() {
+    let fixture = Fixture::new();
+    let root = dunce::canonicalize(&fixture.0).unwrap();
+    let bin = root.join(r".pi\agent\bin");
+    let nodejs = root.join("nodejs");
+    for (name, contents) in [
+        ("pi.cmd", PI_INSTALLER_CMD),
+        ("pi.ps1", ""),
+        ("pi", "#!/bin/sh\n"),
+        ("pi-launcher.js", ""),
+    ] {
+        fixture.write(&format!(".pi/agent/bin/{name}"), contents);
+    }
+    fixture.write(
+        ".pi/agent/install/managed-install.json",
+        "\u{feff}{\"kind\":\"pi-managed-install\",\"schemaVersion\":1,\"layout\":\"releases-v1\"}",
+    );
+    fixture.write("nodejs/node.exe", "");
+    let environment = Environment {
+        home: root.clone(),
+        path: std::env::join_paths([&bin, &nodejs]).unwrap(),
+        use_system_proxy: false,
+        proxy_env: None,
+        wsl: None,
+    };
+
+    let pi = detect(&environment, ClientId::Pi).unwrap();
+    assert_eq!(pi.method, InstallMethod::Native);
+    assert_eq!(pi.executable, bin.join("pi.cmd"));
+    assert_eq!(pi.resolved, bin.join("pi-launcher.js"));
+    assert!(pi.others.is_empty());
+    let command = update_command(
+        &environment,
+        ClientId::Pi,
+        &pi,
+        &version(ClientId::Pi, "99.0.0"),
+    )
+    .unwrap();
+    let node = shim_node(&environment, &pi.executable, |name| std::env::var_os(name))
+        .map_or(nodejs.join("node.exe"), |node| node.path);
+    assert_eq!(command.program, node);
+    assert_eq!(
+        command.args,
+        [
+            bin.join("pi-launcher.js").into_os_string(),
+            "update".into(),
+            "--self".into()
+        ]
+    );
 }
 
 #[test]
@@ -666,6 +797,15 @@ fn reports_masked_curl_failures_as_network_errors_and_keeps_the_error_tail() {
     assert_eq!(error.code, "network");
     assert!(error.detail.contains("SSL_ERROR_SYSCALL"));
     assert!(error.detail.chars().count() <= 4096);
+    // npm on Windows cannot clean up a half-extracted package that
+    // antivirus holds; the cause is the reset download.
+    let error = ClientError::new(
+        "command",
+        "npm warn cleanup [Error: EPERM: operation not permitted, rmdir 'C:\\stage\\node_modules']
+         npm error code ECONNRESET
+npm error network aborted",
+    );
+    assert_eq!(error.code, "network");
 }
 
 #[test]
@@ -947,6 +1087,31 @@ fn npm_update_targets_the_detected_prefix_and_allows_the_package_scripts() {
             ]
         );
     }
+    // Staged Pi gets the options its own updater passes to npm, and the
+    // installation's global npmrc.
+    let stage = fixture.0.join("stage");
+    let command = npm_command(
+        &fixture.environment(),
+        ClientId::Pi,
+        &prefix,
+        &stage,
+        &version(ClientId::Pi, "1.5.2"),
+    )
+    .unwrap();
+    assert_eq!(
+        command.args[3..],
+        [
+            "--prefix".into(),
+            stage.into_os_string(),
+            "--globalconfig".into(),
+            prefix.join("etc/npmrc").into_os_string(),
+            "--cache".into(),
+            fixture.0.join(".cache/astrlink/npm").into_os_string(),
+            "--ignore-scripts".into(),
+            "--min-release-age=0".into(),
+            "@earendil-works/pi-coding-agent@1.5.2".into(),
+        ]
+    );
 }
 
 #[cfg(unix)]
@@ -1216,4 +1381,342 @@ async fn posts_the_cursor_channel_to_the_release_service() {
     let request = worker.join().unwrap();
     assert!(request.starts_with("post /latest "));
     assert!(request.contains("connect-protocol-version: 1\r\n"));
+}
+
+/// Fixtures whose home turns on the Windows update guard (`guarded`).
+pub(super) static GUARDED: std::sync::Mutex<Vec<PathBuf>> = std::sync::Mutex::new(Vec::new());
+
+/// An npm-installed Claude Code in `<home>/node` and a stand-in for npm that
+/// works like npm's reify: it renames the live package and shim aside
+/// first, then "downloads" (which `$NPM_MODE` can make fail, stop, or skip
+/// the platform binary), writes the new files and finally deletes what it
+/// retired.
+#[cfg(unix)]
+struct NpmFixture {
+    fixture: Fixture,
+    prefix: PathBuf,
+}
+
+#[cfg(unix)]
+impl NpmFixture {
+    fn new(mode: &str) -> Self {
+        let fixture = Fixture::new();
+        GUARDED.lock().unwrap().push(fixture.0.clone());
+        let prefix = dunce::canonicalize(&fixture.0).unwrap().join("node");
+        fixture.script("node/bin/node", "#!/bin/sh\nexec /bin/sh \"$@\"\n");
+        let this = Self { fixture, prefix };
+        this.install_live("2.1.321");
+        // Arguments: npm-cli.js install --global --prefix <target> ... <pkg>@<v>
+        this.fixture.write(
+            "node/lib/node_modules/npm/bin/npm-cli.js",
+            &format!(
+                "#!/bin/sh\nset -eu\nmode='{mode}'\nshift 3\ntarget=$1\n\
+                 for spec; do :; done\nversion=${{spec##*@}}\n\
+                 pkg=$target/lib/node_modules/@anthropic-ai/claude-code\n\
+                 shim=$target/bin/claude\n\
+                 [ -e \"$pkg\" ] && mv \"$pkg\" \"$target/lib/node_modules/@anthropic-ai/.claude-code-AbCd1234\"\n\
+                 {{ [ -e \"$shim\" ] || [ -L \"$shim\" ]; }} && mv \"$shim\" \"$target/bin/.claude-EfGh5678\"\n\
+                 echo \"$target\" >> npm-targets\n\
+                 case $mode in\n\
+                   killed) kill -9 $$ ;;\n\
+                   fail) echo 'npm error code ECONNRESET' >&2; exit 1 ;;\n\
+                 esac\n\
+                 mkdir -p \"$pkg/bin\" \"$target/bin\"\n\
+                 printf '{{\"name\":\"@anthropic-ai/claude-code\",\"version\":\"%s\",\"bin\":{{\"claude\":\"bin/claude.exe\"}}}}' \"$version\" > \"$pkg/package.json\"\n\
+                 if [ \"$mode\" = stub ]; then\n\
+                   printf '#!/bin/sh\\necho \"Error: claude native binary not installed.\" >&2\\nexit 1\\n' > \"$pkg/bin/claude.exe\"\n\
+                 else\n\
+                   printf '#!/bin/sh\\necho \"%s (Claude Code)\"\\n' \"$version\" > \"$pkg/bin/claude.exe\"\n\
+                 fi\n\
+                 chmod +x \"$pkg/bin/claude.exe\"\n\
+                 ln -s ../lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe \"$shim\"\n\
+                 rm -rf \"$target/lib/node_modules/@anthropic-ai/.claude-code-AbCd1234\" \"$target/bin/.claude-EfGh5678\"\n"
+            ),
+        );
+        this
+    }
+    fn install_live(&self, version: &str) {
+        let package = "node/lib/node_modules/@anthropic-ai/claude-code";
+        self.fixture.write(
+            &format!("{package}/package.json"),
+            &format!(
+                r#"{{"name":"@anthropic-ai/claude-code","version":"{version}","bin":{{"claude":"bin/claude.exe"}}}}"#
+            ),
+        );
+        let binary = self.fixture.script(
+            &format!("{package}/bin/claude.exe"),
+            &format!("#!/bin/sh\necho '{version} (Claude Code)'\n"),
+        );
+        let shim = self.prefix.join("bin/claude");
+        let _ = fs::remove_file(&shim);
+        std::os::unix::fs::symlink(binary, shim).unwrap();
+    }
+    fn environment(&self) -> Environment {
+        Environment {
+            path: std::env::join_paths([
+                self.prefix.join("bin"),
+                PathBuf::from("/usr/bin"),
+                PathBuf::from("/bin"),
+            ])
+            .unwrap(),
+            ..self.fixture.environment()
+        }
+    }
+    fn installed(&self) -> Option<String> {
+        let environment = self.environment();
+        let install = detect(&environment, ClientId::Claude)?;
+        current_version(&environment, ClientId::Claude, &install)
+            .ok()
+            .map(|v| v.to_string())
+    }
+    fn update(&self) -> Result<ClientVersion, ClientError> {
+        let environment = self.environment();
+        let install = detect(&environment, ClientId::Claude).unwrap();
+        perform_update(
+            &environment,
+            ClientId::Claude,
+            &install,
+            &version(ClientId::Claude, "2.1.323"),
+        )
+    }
+    /// What the old updater did: npm straight into the live prefix.
+    fn update_in_place(&self, mode: &str) {
+        let _ = mode;
+        let environment = self.environment();
+        let install = detect(&environment, ClientId::Claude).unwrap();
+        let command = update_command(
+            &environment,
+            ClientId::Claude,
+            &install,
+            &version(ClientId::Claude, "2.1.323"),
+        )
+        .unwrap();
+        let _ = process::run(&environment, &command, Duration::from_secs(10));
+    }
+    fn leftovers(&self) -> Vec<String> {
+        let mut found = Vec::new();
+        for directory in ["bin", "lib/node_modules/@anthropic-ai"] {
+            for entry in fs::read_dir(self.prefix.join(directory)).unwrap().flatten() {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                if name.starts_with('.') {
+                    found.push(format!("{directory}/{name}"));
+                }
+            }
+        }
+        if self.prefix.join(".astrlink-update").exists() {
+            found.push(".astrlink-update".into());
+        }
+        found
+    }
+}
+
+#[cfg(unix)]
+impl Drop for NpmFixture {
+    fn drop(&mut self) {
+        GUARDED.lock().unwrap().retain(|p| *p != self.fixture.0);
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_stopped_or_failed_npm_update_keeps_the_installed_client() {
+    for (mode, code) in [
+        // npm stopped midway: the update deadline or quitting AstrLink.
+        ("killed", "command"),
+        ("fail", "network"),
+        // The platform binary did not download; npm finishes anyway.
+        ("stub", "incomplete"),
+    ] {
+        let npm = NpmFixture::new(mode);
+        let error = npm.update().unwrap_err();
+        assert_eq!(error.code, code, "{mode}: {}", error.detail);
+        assert_eq!(npm.installed().as_deref(), Some("2.1.321"), "{mode}");
+        assert_eq!(npm.leftovers(), Vec::<String>::new(), "{mode}");
+        // npm never ran in the live prefix.
+        let targets = fs::read_to_string(npm.fixture.0.join("npm-targets")).unwrap();
+        assert!(
+            targets.lines().all(|t| Path::new(t) != npm.prefix),
+            "{targets}"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_verified_npm_update_replaces_the_installed_client() {
+    let npm = NpmFixture::new("ok");
+    assert_eq!(npm.update().unwrap(), version(ClientId::Claude, "2.1.323"));
+    assert_eq!(npm.installed().as_deref(), Some("2.1.323"));
+    assert_eq!(npm.leftovers(), Vec::<String>::new());
+    let install = detect(&npm.environment(), ClientId::Claude).unwrap();
+    assert_eq!(install.executable, npm.prefix.join("bin/claude"));
+    assert_eq!(
+        install.method,
+        InstallMethod::Npm {
+            prefix: npm.prefix.clone()
+        }
+    );
+}
+
+/// A client for version checks that fails at once instead of reaching the
+/// release services.
+#[cfg(unix)]
+fn offline() -> reqwest::Client {
+    reqwest::Client::builder()
+        .proxy(reqwest::Proxy::all("http://127.0.0.1:9").unwrap())
+        .build()
+        .unwrap()
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn reports_and_repairs_a_client_npm_left_broken() {
+    // The old updater ran npm in the live prefix: stopped midway it leaves
+    // only npm's retired copy; with a missing download, only a stub.
+    for (mode, repair, previous) in [
+        ("killed", "restore", Some("2.1.321")),
+        ("stub", "reinstall", None),
+    ] {
+        let npm = NpmFixture::new(mode);
+        npm.update_in_place(mode);
+        assert_eq!(npm.installed(), None, "{mode}");
+        let environment = npm.environment();
+        let (status, _) = inspect(&environment, &offline(), ClientId::Claude).await;
+        assert_eq!(status.phase, "damaged", "{mode}: {status:?}");
+        assert_eq!(status.repair, Some(repair), "{mode}");
+        assert_eq!(status.previous_version.as_deref(), previous, "{mode}");
+        assert_eq!(status.install_method, "npm");
+
+        // The repair itself must not fail the same way.
+        let npm_cli = npm.prefix.join("lib/node_modules/npm/bin/npm-cli.js");
+        let script = fs::read_to_string(&npm_cli).unwrap();
+        fs::write(
+            &npm_cli,
+            script.replacen(&format!("mode='{mode}'"), "mode='ok'", 1),
+        )
+        .unwrap();
+        let repaired = perform_repair(
+            &environment,
+            ClientId::Claude,
+            Some(&version(ClientId::Claude, "2.1.323")),
+        )
+        .unwrap();
+        let expected = previous.unwrap_or("2.1.323");
+        assert_eq!(repaired.to_string(), expected, "{mode}");
+        assert_eq!(npm.installed().as_deref(), Some(expected), "{mode}");
+        assert_eq!(npm.leftovers(), Vec::<String>::new(), "{mode}");
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn undoes_an_interrupted_swap_before_the_next_check() {
+    let npm = NpmFixture::new("ok");
+    // AstrLink quit after moving the live client aside, before moving the
+    // new one in.
+    let run = npm.prefix.join(".astrlink-update/claude/1");
+    let saved = run.join("previous");
+    fs::create_dir_all(&saved).unwrap();
+    let package = npm
+        .prefix
+        .join("lib/node_modules/@anthropic-ai/claude-code");
+    let shim = npm.prefix.join("bin/claude");
+    fs::rename(&package, saved.join("package-0")).unwrap();
+    fs::rename(&shim, saved.join("claude")).unwrap();
+    fs::write(
+        npm.prefix.join(".astrlink-update/claude/journal.json"),
+        serde_json::json!({
+            "run": run,
+            "retired": [[package, saved.join("package-0")], [shim, saved.join("claude")]],
+            "placed": [[run.join("stage/pkg"), package], [run.join("stage/claude"), shim]],
+        })
+        .to_string(),
+    )
+    .unwrap();
+    assert_eq!(npm.installed(), None);
+    let (status, _) = inspect(&npm.environment(), &offline(), ClientId::Claude).await;
+    assert_eq!(status.current_version.as_deref(), Some("2.1.321"));
+    assert_eq!(npm.installed().as_deref(), Some("2.1.321"));
+    // The run AstrLink left behind goes too.
+    assert_eq!(npm.leftovers(), Vec::<String>::new());
+}
+
+#[cfg(unix)]
+#[test]
+fn leaves_other_systems_on_the_previous_update_path() {
+    let npm = NpmFixture::new("ok");
+    GUARDED.lock().unwrap().retain(|p| *p != npm.fixture.0);
+    npm.update().unwrap();
+    // npm ran in the live prefix, as before.
+    let targets = fs::read_to_string(npm.fixture.0.join("npm-targets")).unwrap();
+    assert_eq!(targets.trim(), npm.prefix.to_string_lossy());
+}
+
+#[cfg(unix)]
+#[test]
+fn a_slow_first_start_is_not_damage() {
+    let npm = NpmFixture::new("ok");
+    let environment = npm.environment();
+    let damage = |error: ClientError| {
+        staged::damage(&environment, ClientId::Claude, &npm.prefix, Some(&error))
+    };
+    // Antivirus can hold a fresh program past the version probe's deadline;
+    // an old Node.js fails a script client the same before and after a
+    // reinstall.
+    assert!(damage(ClientError::new("timeout", "Command timed out")).is_none());
+    assert!(damage(ClientError::new(
+        "command",
+        "SyntaxError: Unexpected token '?'\n    at wrapSafe (node:internal/modules/cjs/loader:1001:15)"
+    ))
+    .is_none());
+    let found = damage(ClientError::new(
+        "command",
+        "Error: claude native binary not installed.",
+    ))
+    .unwrap();
+    assert!(found.detail.contains("not installed"), "{}", found.detail);
+
+    // Uninstalled, with only the copy npm once could not delete because the
+    // client was running: not an installation.
+    let package = npm.prefix.join("lib/node_modules/@anthropic-ai");
+    fs::rename(
+        package.join("claude-code"),
+        package.join(".claude-code-AbCd1234"),
+    )
+    .unwrap();
+    fs::remove_file(npm.prefix.join("bin/claude")).unwrap();
+    assert!(staged::find_damage(&environment, ClientId::Claude).is_none());
+}
+
+/// nvm-windows puts a link to the active Node.js folder on PATH; detection
+/// resolves it, and so must a repair.
+#[cfg(unix)]
+#[test]
+fn repairs_a_client_found_through_a_linked_folder_on_path() {
+    for (mode, expected) in [("killed", "2.1.321"), ("stub", "2.1.323")] {
+        let npm = NpmFixture::new(mode);
+        npm.update_in_place(mode);
+        let npm_cli = npm.prefix.join("lib/node_modules/npm/bin/npm-cli.js");
+        let script = fs::read_to_string(&npm_cli).unwrap();
+        fs::write(
+            &npm_cli,
+            script.replacen(&format!("mode='{mode}'"), "mode='ok'", 1),
+        )
+        .unwrap();
+        let link = npm.fixture.0.join("current");
+        std::os::unix::fs::symlink(&npm.prefix, &link).unwrap();
+        let environment = Environment {
+            path: std::env::join_paths([link.join("bin"), "/usr/bin".into(), "/bin".into()])
+                .unwrap(),
+            ..npm.environment()
+        };
+        let repaired = perform_repair(
+            &environment,
+            ClientId::Claude,
+            Some(&version(ClientId::Claude, "2.1.323")),
+        )
+        .unwrap();
+        assert_eq!(repaired.to_string(), expected, "{mode}");
+        assert_eq!(npm.installed().as_deref(), Some(expected), "{mode}");
+    }
 }

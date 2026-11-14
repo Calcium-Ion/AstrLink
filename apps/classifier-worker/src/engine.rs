@@ -3,7 +3,7 @@ use std::{
     ffi::OsStr,
     io,
     path::Path,
-    sync::{Arc, OnceLock},
+    sync::{Mutex, OnceLock, PoisonError},
 };
 // PathBuf only backs the Linux/macOS runtime discovery and the tests; an
 // unconditional import is flagged as unused on Windows.
@@ -13,7 +13,10 @@ use std::path::PathBuf;
 use ort::{
     environment::Environment,
     logging::LogLevel,
-    session::{Session, SessionInputValue, builder::GraphOptimizationLevel},
+    session::{
+        Session, SessionInputValue,
+        builder::{GraphOptimizationLevel, SessionBuilder},
+    },
     value::Tensor,
 };
 use tokenizers::Tokenizer;
@@ -114,8 +117,11 @@ impl ClassifierEngine {
         manifest.validate_files(model_directory)?;
         let tokenizer =
             load_tokenizer(&manifest.resolve(model_directory, &manifest.tokenizer_path))?;
-        initialize_onnx_runtime()?;
-        let session = commit_session(&manifest.resolve(model_directory, &manifest.model_path))?;
+        let environment = initialize_onnx_runtime()?;
+        let session = commit_session(
+            environment,
+            &manifest.resolve(model_directory, &manifest.model_path),
+        )?;
         validate_session(&session, &manifest)?;
         let labels = manifest.labels()?;
         Ok(Self {
@@ -137,8 +143,8 @@ impl ClassifierEngine {
             return Err(io::Error::other("non_synthetic_model_in_ci").into());
         }
         let tokenizer = load_tokenizer(&bundle.join("tokenizer.json"))?;
-        initialize_onnx_runtime()?;
-        let session = commit_session(&bundle.join("model.onnx"))?;
+        let environment = initialize_onnx_runtime()?;
+        let session = commit_session(environment, &bundle.join("model.onnx"))?;
         Ok(Self {
             tokenizer,
             session,
@@ -263,17 +269,26 @@ pub fn pad_to_multiple(ids: &[i64], pad_id: i64, multiple: usize) -> (Vec<i64>, 
     (padded, mask)
 }
 
-fn commit_session(model_path: &Path) -> Result<Session, Box<dyn std::error::Error + Send + Sync>> {
-    // Without spinning, idle pool threads sleep between operators instead of
-    // busy-waiting on cores the rest of the machine could use.
-    let builder = Session::builder()?
+fn commit_session(
+    environment: &Environment,
+    model_path: &Path,
+) -> Result<Session, Box<dyn std::error::Error + Send + Sync>> {
+    Ok(
+        priority::lower_pool_threads(session_builder(environment)?)?
+            .commit_from_file(model_path)?,
+    )
+}
+
+// Without spinning, idle pool threads sleep between operators instead of
+// busy-waiting on cores the rest of the machine could use.
+fn session_builder(environment: &Environment) -> ort::Result<SessionBuilder> {
+    Ok(Session::builder(environment)?
         .with_log_level(LogLevel::Error)?
         .with_intra_threads(INTRA_OP_THREADS)?
         .with_intra_op_spinning(false)?
         .with_inter_threads(INTER_OP_THREADS)?
         .with_parallel_execution(false)?
-        .with_optimization_level(GraphOptimizationLevel::Level3)?;
-    Ok(priority::lower_pool_threads(builder)?.commit_from_file(model_path)?)
+        .with_optimization_level(GraphOptimizationLevel::Level3)?)
 }
 
 fn load_tokenizer(path: &Path) -> Result<Tokenizer, Box<dyn std::error::Error + Send + Sync>> {
@@ -301,42 +316,43 @@ fn validate_session(session: &Session, manifest: &ModelManifest) -> io::Result<(
     Ok(())
 }
 
-fn initialize_onnx_runtime() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+/// ONNX Runtime allows one environment per process, and ort keeps only a weak
+/// reference to it. The worker builds it once and keeps it so a new default
+/// logger cannot race the previous environment's teardown.
+fn initialize_onnx_runtime()
+-> Result<&'static Environment, Box<dyn std::error::Error + Send + Sync>> {
+    static ENVIRONMENT: OnceLock<Environment> = OnceLock::new();
+    static INITIALIZING: Mutex<()> = Mutex::new(());
+    if let Some(environment) = ENVIRONMENT.get() {
+        return Ok(environment);
+    }
+    let _initializing = INITIALIZING.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some(environment) = ENVIRONMENT.get() {
+        return Ok(environment);
+    }
     #[cfg(target_os = "macos")]
-    {
+    let builder = {
         const RUNTIME_NAME: &str = "libonnxruntime.1.23.2.dylib";
         let executable = env::current_exe()?;
         let runtime = runtime_library_candidates(&executable, RUNTIME_NAME)
             .into_iter()
             .find(|candidate| candidate.is_file())
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "onnx_runtime_not_installed"))?;
-        let _ = ort::init_from(runtime)?
-            .with_name("astrlink-classifier-worker")
-            .commit();
-    }
+        ort::init_from(runtime)?
+    };
     #[cfg(target_os = "linux")]
-    {
+    let builder = {
         const RUNTIME_NAME: &str = "libonnxruntime.so.1.23.2";
         let executable = env::current_exe()?;
         let configured = env::var_os(LINUX_ONNX_RUNTIME_PATH_ENV);
         let runtime =
             resolve_linux_runtime_library(&executable, configured.as_deref(), RUNTIME_NAME)?;
-        let _ = ort::init_from(runtime)?
-            .with_name("astrlink-classifier-worker")
-            .commit();
-    }
+        ort::init_from(runtime)?
+    };
     #[cfg(target_os = "windows")]
-    {
-        let _ = ort::init().with_name("astrlink-classifier-worker").commit();
-    }
-    // ort keeps only a weak reference. Retain the environment between sessions
-    // so a new default logger cannot race the previous environment's teardown.
-    static ENVIRONMENT: OnceLock<Arc<Environment>> = OnceLock::new();
-    if ENVIRONMENT.get().is_none() {
-        let environment = ort::environment::get_environment()?;
-        let _ = ENVIRONMENT.set(environment);
-    }
-    Ok(())
+    let builder = ort::init();
+    let environment = builder.with_name("astrlink-classifier-worker").build()?;
+    Ok(ENVIRONMENT.get_or_init(|| environment))
 }
 
 #[cfg(target_os = "linux")]
@@ -378,22 +394,9 @@ fn runtime_library_candidates(executable: &Path, runtime_name: &str) -> Vec<Path
         candidates.push(contents_directory.join("Frameworks").join(runtime_name));
     }
     #[cfg(test)]
-    if let Some(debug_directory) = executable_directory.parent()
-        && debug_directory
-            .file_name()
-            .is_some_and(|name| name == "debug" || name == "deps")
-    {
-        let search_root = if debug_directory
-            .file_name()
-            .is_some_and(|name| name == "deps")
-        {
-            debug_directory.parent().and_then(Path::parent)
-        } else {
-            debug_directory.parent()
-        };
-        if let Some(target_directory) = search_root {
-            candidates.push(target_directory.join("release").join(runtime_name));
-            candidates.push(target_directory.join(runtime_name));
+    for candidate in test_runtime_library_candidates(executable_directory, runtime_name) {
+        if !candidates.contains(&candidate) {
+            candidates.push(candidate);
         }
     }
     if let Some(manifest_dir) = option_env!("CARGO_MANIFEST_DIR") {
@@ -403,6 +406,28 @@ fn runtime_library_candidates(executable: &Path, runtime_name: &str) -> Vec<Path
                 .join("release")
                 .join(runtime_name),
         );
+    }
+    candidates
+}
+
+/// Test executables run from `target/debug/deps`, or, with Cargo's newer
+/// build-directory layout, from `target/debug/build/<package>/<hash>/out`.
+/// Either way the runtime staged for tests sits in `target/debug/deps`, and a
+/// release build leaves its copy in `target/release`.
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+fn test_runtime_library_candidates(
+    executable_directory: &Path,
+    runtime_name: &str,
+) -> Vec<PathBuf> {
+    let Some(debug_directory) = executable_directory
+        .ancestors()
+        .find(|directory| directory.file_name().is_some_and(|name| name == "debug"))
+    else {
+        return Vec::new();
+    };
+    let mut candidates = vec![debug_directory.join("deps").join(runtime_name)];
+    if let Some(target_directory) = debug_directory.parent() {
+        candidates.push(target_directory.join("release").join(runtime_name));
     }
     candidates
 }
@@ -476,30 +501,86 @@ mod tests {
             return;
         }
 
-        initialize_onnx_runtime().expect("initialize runtime");
-        let environment = ort::environment::get_environment().expect("get environment");
-        let weak = std::sync::Arc::downgrade(&environment);
-        drop(environment);
-        assert!(
-            weak.upgrade().is_some(),
-            "environment dropped before sessions"
-        );
-
+        // ONNX Runtime allows one environment per process, so threads that
+        // race to initialize it must all get the same one.
+        use ort::AsPointer;
         let start = std::sync::Barrier::new(8);
-        std::thread::scope(|scope| {
-            for _ in 0..8 {
-                scope.spawn(|| {
-                    start.wait();
-                    for _ in 0..256 {
-                        initialize_onnx_runtime().expect("reuse runtime");
-                        drop(Session::builder().expect("create concurrent session builder"));
-                    }
-                });
-            }
+        let environments = std::thread::scope(|scope| {
+            let threads = (0..8)
+                .map(|_| {
+                    scope.spawn(|| {
+                        start.wait();
+                        let mut environments = std::collections::BTreeSet::new();
+                        for _ in 0..256 {
+                            let environment =
+                                initialize_onnx_runtime().expect("initialize runtime");
+                            environments.insert(environment.ptr().addr());
+                            drop(
+                                Session::builder(environment)
+                                    .expect("create concurrent session builder"),
+                            );
+                        }
+                        environments
+                    })
+                })
+                .collect::<Vec<_>>();
+            threads
+                .into_iter()
+                .flat_map(|thread| thread.join().expect("session thread"))
+                .collect::<std::collections::BTreeSet<_>>()
         });
+        assert_eq!(environments.len(), 1, "one environment for every session");
+        let environment = initialize_onnx_runtime().expect("reuse runtime");
+        assert!(environments.contains(&environment.ptr().addr()));
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn test_runtime_lookup_covers_both_cargo_build_layouts() {
+        let target = Path::new("/workspace/apps/classifier-worker/target");
+        let name = "libonnxruntime.test";
+        let staged = target.join("debug").join("deps").join(name);
+        let release = target.join("release").join(name);
+        for executable_directory in [
+            target.join("debug").join("deps"),
+            target
+                .join("debug")
+                .join("build")
+                .join("astrlink-classifier-worker")
+                .join("0123456789abcdef")
+                .join("out"),
+        ] {
+            let executable =
+                executable_directory.join("astrlink_classifier_worker-0123456789abcdef");
+            let mut expected = vec![executable_directory.join(name)];
+            #[cfg(target_os = "macos")]
+            expected.push(
+                executable_directory
+                    .parent()
+                    .expect("executable parent")
+                    .join("Frameworks")
+                    .join(name),
+            );
+            if !expected.contains(&staged) {
+                expected.push(staged.clone());
+            }
+            expected.push(release.clone());
+            expected.push(
+                Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("target")
+                    .join("release")
+                    .join(name),
+            );
+            assert_eq!(
+                runtime_library_candidates(&executable, name),
+                expected,
+                "{}",
+                executable.display()
+            );
+        }
         assert!(
-            weak.upgrade().is_some(),
-            "environment dropped after sessions"
+            test_runtime_library_candidates(Path::new("/opt/AstrLink"), name).is_empty(),
+            "an installed worker has no development candidates"
         );
     }
 

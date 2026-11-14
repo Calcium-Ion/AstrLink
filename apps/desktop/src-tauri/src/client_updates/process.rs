@@ -125,7 +125,6 @@ fn capture(mut stream: impl Read) -> Vec<u8> {
 /// "Unsupported 16-Bit Application" dialog on top of the error. Claude Code's
 /// npm package keeps a text stub at bin/claude.exe when its postinstall did
 /// not run or its platform package was not downloaded.
-#[cfg(any(windows, test))]
 pub(super) fn windows_image(path: &std::path::Path) -> std::io::Result<bool> {
     use std::io::{Seek, SeekFrom};
     let mut file = std::fs::File::open(path)?;

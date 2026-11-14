@@ -79,14 +79,20 @@ pub(crate) fn status_of(
         let client = place.client;
         let record = records.get(place);
         let paths = client.config_paths(home, place.target, record);
-        let existing = read_files(&paths)?;
-        let mut state = place_state(
-            &records,
-            place,
-            &texts(&existing),
-            origin.as_deref(),
-            tokens,
-        );
+        let read = read_files(client, &paths);
+        let unreadable = read.is_err();
+        let existing = read.unwrap_or_else(|_| vec![None; paths.len()]);
+        let mut state = if unreadable {
+            ClientState::Invalid
+        } else {
+            place_state(
+                &records,
+                place,
+                &texts(&existing),
+                origin.as_deref(),
+                tokens,
+            )
+        };
         let config = Config::parse(client, &texts(&existing)).ok();
         let manual = match (&config, origin.as_deref(), tokens) {
             (Some(config), Some(origin), Some(tokens))
@@ -125,9 +131,12 @@ pub(crate) fn status_of(
                 .iter()
                 .map(|path| path.display().to_string())
                 .collect(),
-            exists: existing.iter().map(Option::is_some).collect(),
+            exists: paths.iter().map(|path| path.exists()).collect(),
             notes: {
                 let mut notes = client.notes(home, place.target, config.as_ref());
+                if unreadable {
+                    notes.push("unreadable");
+                }
                 if client.running(home, place.target) {
                     notes.push("running");
                 }
@@ -280,6 +289,13 @@ mod tests {
         let chatbox = CHATBOX.dir(Home::local(&home), None);
         fs::write(chatbox.join("config.json"), "{}").unwrap();
         fs::create_dir_all(home.join(".trae/cli")).unwrap();
+        for place in Place::all(super::super::clients::dimagent::CLIENT) {
+            let path = place
+                .client
+                .config_paths(Home::local(&home), place.target, None)
+                .remove(0);
+            fs::write(path, []).unwrap();
+        }
         assert!(detected(&home).iter().all(|(_, detected)| *detected));
         fs::remove_dir_all(home).unwrap();
     }

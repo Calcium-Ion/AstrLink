@@ -1104,6 +1104,7 @@ describe("client attribution", () => {
     "deepseek_harness",
     "codewhale",
     "reasonix",
+    "dimagent",
     "qwen_code",
     "kimi_code",
     "codebuddy",

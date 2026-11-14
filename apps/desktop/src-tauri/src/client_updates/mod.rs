@@ -1,6 +1,8 @@
 mod process;
 #[cfg(any(target_os = "macos", test))]
 mod proxy;
+mod running;
+mod staged;
 mod wsl;
 
 use std::{
@@ -147,6 +149,13 @@ pub struct ClientStatus {
     checked_at: Option<String>,
     error_code: Option<String>,
     error_detail: Option<String>,
+    /// For a damaged installation: `restore` puts back the version from
+    /// before an interrupted update, `reinstall` installs the latest again.
+    repair: Option<&'static str>,
+    /// The version `restore` puts back.
+    previous_version: Option<String>,
+    /// After a failed update or repair: the version from before still works.
+    kept_previous: bool,
 }
 
 impl ClientStatus {
@@ -164,6 +173,9 @@ impl ClientStatus {
             checked_at: None,
             error_code: None,
             error_detail: None,
+            repair: None,
+            previous_version: None,
+            kept_previous: false,
         }
     }
     fn fail(&mut self, error: ClientError) {
@@ -171,6 +183,20 @@ impl ClientStatus {
         self.can_update = false;
         self.error_code = Some(error.code.into());
         self.error_detail = Some(error.detail);
+    }
+    fn damaged(&mut self, damage: &staged::Damage) {
+        self.phase = "damaged".into();
+        self.can_update = false;
+        self.install_method = "npm".into();
+        self.executable = Some(damage.executable.to_string_lossy().into_owned());
+        self.error_code = None;
+        self.error_detail = Some(damage.detail.clone());
+        self.repair = Some(if damage.restore.is_some() {
+            "restore"
+        } else {
+            "reinstall"
+        });
+        self.previous_version = damage.restore.as_ref().map(|r| r.version.clone());
     }
     fn at(&self, wsl: Option<&str>, ids: &[ClientId]) -> bool {
         self.wsl.as_deref() == wsl && ids.contains(&self.id)
@@ -216,6 +242,7 @@ impl ClientError {
                 "curl: (35)",
                 "curl: (60)",
                 "ECONNREFUSED",
+                "ECONNRESET",
                 "ENOTFOUND",
                 "ETIMEDOUT",
             ]
@@ -283,16 +310,13 @@ struct Installation {
 }
 
 fn executable(path: &Path) -> bool {
-    if !path.is_file() {
-        return false;
-    }
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        fs::metadata(path).is_ok_and(|m| m.permissions().mode() & 0o111 != 0)
+        path.is_file() && fs::metadata(path).is_ok_and(|m| m.permissions().mode() & 0o111 != 0)
     }
     #[cfg(not(unix))]
-    true
+    path.is_file()
 }
 
 /// A program on PATH and the file it resolves to.
@@ -330,11 +354,17 @@ impl Environment {
             Some(wsl) => wsl::program(self, wsl, path),
         }
     }
+    /// A text file without the BOM Windows PowerShell 5.1 writes, which JSON
+    /// parsers reject.
     fn read(&self, path: &Path) -> Option<String> {
-        match &self.wsl {
+        let raw = match &self.wsl {
             None => fs::read_to_string(path).ok(),
             Some(wsl) => fs::read_to_string(wsl.shared(path)?).ok(),
-        }
+        }?;
+        Some(match raw.strip_prefix('\u{feff}') {
+            Some(text) => text.to_owned(),
+            None => raw,
+        })
     }
     fn executable(&self, path: &Path) -> bool {
         match &self.wsl {
@@ -385,24 +415,73 @@ fn find_programs(path: &std::ffi::OsStr, name: &str) -> Vec<Program> {
 }
 
 /// npm's Windows shims run their target as `"%dp0%\<path>"` (`"%~dp0\<path>"`
-/// before npm 7), after the script's interpreter. Read the target instead of
-/// guessing each package's entry point; package ownership is checked later.
+/// before npm 7), after the script's interpreter. `%~dp0` already ends in a
+/// backslash, so Pi's installer writes `"%~dp0pi-launcher.js"`. Read the target
+/// instead of guessing each package's entry point; package ownership is checked
+/// later.
 fn cmd_shim_target(shim: &Path) -> Option<PathBuf> {
     let raw = fs::read_to_string(shim).ok()?;
     let (_, rest) = raw
-        .rsplit_once("\"%dp0%\\")
-        .or_else(|| raw.rsplit_once("\"%~dp0\\"))?;
+        .rsplit_once("\"%dp0%")
+        .or_else(|| raw.rsplit_once("\"%~dp0"))?;
     let (target, _) = rest.split_once('"')?;
-    let mut path = shim.parent()?.to_path_buf();
-    for part in target.split(['\\', '/']).filter(|p| !p.is_empty()) {
-        // Global shims point into their own directory. A project's
-        // node_modules\.bin shim climbs out of it and is not a global install.
+    // Global shims point into their own directory. A project's
+    // node_modules\.bin shim climbs out of it and is not a global install.
+    shim_join(shim.parent()?, target)
+}
+
+/// `base` joined with a path a shim wrote after it, if that names something
+/// inside `base`.
+fn shim_join(base: &Path, relative: &str) -> Option<PathBuf> {
+    let mut path = base.to_path_buf();
+    let mut parts = relative
+        .split(['\\', '/'])
+        .filter(|p| !p.is_empty())
+        .peekable();
+    parts.peek()?;
+    for part in parts {
         if part == ".." || part.contains(':') {
             return None;
         }
         path.push(part);
     }
     Some(path)
+}
+
+/// The node.exe a shim runs if it exists: npm's `"%dp0%\node.exe"` beside it,
+/// or the standalone Node.js that Pi's installer names under `%LOCALAPPDATA%`.
+/// A new terminal's PATH lists the system's Node.js before that one.
+fn shim_node(
+    environment: &Environment,
+    shim: &Path,
+    var: impl Fn(&str) -> Option<OsString>,
+) -> Option<Program> {
+    let raw = fs::read_to_string(shim).ok()?;
+    let directory = shim.parent()?;
+    raw.split("EXIST \"")
+        .skip(1)
+        .filter_map(|rest| {
+            let (written, _) = rest.split_once('"')?;
+            let (base, relative) = match written.strip_prefix("%~dp0") {
+                Some(relative) => (directory.to_path_buf(), relative),
+                None => {
+                    let (name, relative) = written.strip_prefix('%')?.split_once('%')?;
+                    let base = match name {
+                        "dp0" => directory.to_path_buf(),
+                        _ => PathBuf::from(var(name)?),
+                    };
+                    (base, relative)
+                }
+            };
+            base.is_absolute()
+                .then(|| shim_join(&base, relative))
+                .flatten()
+                .filter(|node| {
+                    node.file_name()
+                        .is_some_and(|name| name.eq_ignore_ascii_case("node.exe"))
+                })
+        })
+        .find_map(|node| environment.program(&node))
 }
 
 fn manifest_name(environment: &Environment, directory: &Path) -> Option<String> {
@@ -585,9 +664,18 @@ fn current_version(
     id: ClientId,
     install: &Installation,
 ) -> Result<ClientVersion, ClientError> {
+    version_within(environment, id, install, PROBE_TIMEOUT)
+}
+
+fn version_within(
+    environment: &Environment,
+    id: ClientId,
+    install: &Installation,
+    deadline: Duration,
+) -> Result<ClientVersion, ClientError> {
     let mut command = client_command(environment, install)?;
     command.args.push("--version".into());
-    parse_version(id, &process::run(environment, &command, PROBE_TIMEOUT)?)
+    parse_version(id, &process::run(environment, &command, deadline)?)
 }
 
 /// Node.js beside an npm prefix, else the first on PATH. Bun also answers to
@@ -659,10 +747,9 @@ fn shim_command(
     match extension.as_deref() {
         Some("exe") => Ok(CommandSpec::new(target, &[])),
         Some("js" | "cjs" | "mjs") => {
-            // Like the shim, prefer a node.exe beside it, then PATH.
-            let node = shim
-                .parent()
-                .and_then(|prefix| node_program(environment, prefix))
+            // Like the shim, prefer the node.exe it names, then PATH.
+            let node = shim_node(environment, shim, |name| std::env::var_os(name))
+                .or_else(|| node_program(environment, shim.parent()?))
                 .ok_or_else(|| ClientError::new("unsupported", "Node.js is unavailable"))?;
             Ok(CommandSpec {
                 program: node.path,
@@ -736,59 +823,130 @@ fn update_command(
                 ],
             ))
         }
-        InstallMethod::Npm { prefix } => {
-            let npm = if environment.windows() {
-                prefix.join("node_modules/npm/bin/npm-cli.js")
-            } else {
-                prefix.join("lib/node_modules/npm/bin/npm-cli.js")
-            };
-            let npm = if environment.is_file(&npm) {
-                npm
-            } else {
-                environment
-                    .programs("npm")
-                    .into_iter()
-                    .filter_map(|p| {
-                        // Node's Windows npm.cmd runs the npm-cli.js beside it.
-                        if p.path.extension().is_some_and(|s| s == "cmd") {
-                            p.path
-                                .parent()
-                                .map(|d| d.join("node_modules/npm/bin/npm-cli.js"))
-                        } else {
-                            Some(p.resolved)
-                        }
-                    })
-                    .find(|p| p.ends_with("npm/bin/npm-cli.js") && environment.is_file(p))
-                    .ok_or_else(|| ClientError::new("unsupported", "npm is unavailable"))?
-            };
-            let node = node_program(environment, prefix)
-                .ok_or_else(|| ClientError::new("unsupported", "Node.js is unavailable"))?;
-            let package = id.packages()[0];
-            Ok(CommandSpec {
-                program: node.path,
-                args: vec![
-                    environment.path_arg(&npm),
-                    "install".into(),
-                    "--global".into(),
-                    "--prefix".into(),
-                    environment.path_arg(prefix),
-                    // Earlier sudo installs can leave ~/.npm owned by root.
-                    // Keep update downloads in this user's separate cache,
-                    // using a Linux path for a client inside WSL.
-                    "--cache".into(),
-                    environment.path_arg(&environment.home.join(".cache/astrlink/npm")),
-                    // npm 12 skips install scripts missing from allowScripts
-                    // and still exits 0. Claude Code's postinstall replaces
-                    // the bin/claude.exe stub with its native binary.
-                    format!("--allow-scripts={package}").into(),
-                    format!("{package}@{latest}").into(),
-                ],
-            })
-        }
+        InstallMethod::Npm { prefix } => npm_command(environment, id, prefix, prefix, latest),
         InstallMethod::Package(_) | InstallMethod::Unknown => Err(ClientError::new(
             "unsupported",
             "Use the original installer or package manager",
         )),
+    }
+}
+
+/// npm's command line that installs `latest` globally into `target`, using the
+/// npm and Node.js that serve the installation in `prefix`.
+fn npm_command(
+    environment: &Environment,
+    id: ClientId,
+    prefix: &Path,
+    target: &Path,
+    latest: &ClientVersion,
+) -> Result<CommandSpec, ClientError> {
+    let npm = if environment.windows() {
+        prefix.join("node_modules/npm/bin/npm-cli.js")
+    } else {
+        prefix.join("lib/node_modules/npm/bin/npm-cli.js")
+    };
+    let npm = if environment.is_file(&npm) {
+        npm
+    } else {
+        environment
+            .programs("npm")
+            .into_iter()
+            .filter_map(|p| {
+                // Node's Windows npm.cmd runs the npm-cli.js beside it.
+                if p.path.extension().is_some_and(|s| s == "cmd") {
+                    p.path
+                        .parent()
+                        .map(|d| d.join("node_modules/npm/bin/npm-cli.js"))
+                } else {
+                    Some(p.resolved)
+                }
+            })
+            .find(|p| p.ends_with("npm/bin/npm-cli.js") && environment.is_file(p))
+            .ok_or_else(|| ClientError::new("unsupported", "npm is unavailable"))?
+    };
+    let node = node_program(environment, prefix)
+        .ok_or_else(|| ClientError::new("unsupported", "Node.js is unavailable"))?;
+    let package = id.packages()[0];
+    let mut args = vec![
+        environment.path_arg(&npm),
+        "install".into(),
+        "--global".into(),
+        "--prefix".into(),
+        environment.path_arg(target),
+    ];
+    if target != prefix {
+        // npm reads the global npmrc from <prefix>/etc/npmrc. The staging
+        // prefix has none, so keep the installation's own settings.
+        args.extend([
+            "--globalconfig".into(),
+            environment.path_arg(&prefix.join("etc").join("npmrc")),
+        ]);
+    }
+    args.extend([
+        // Earlier sudo installs can leave ~/.npm owned by root.
+        // Keep update downloads in this user's separate cache,
+        // using a Linux path for a client inside WSL.
+        "--cache".into(),
+        environment.path_arg(&environment.home.join(".cache/astrlink/npm")),
+    ]);
+    if id == ClientId::Pi {
+        // As `pi update --self` installs Pi with npm.
+        args.extend(["--ignore-scripts".into(), "--min-release-age=0".into()]);
+    } else {
+        // npm 12 skips install scripts missing from allowScripts
+        // and still exits 0. Claude Code's postinstall replaces
+        // the bin/claude.exe stub with its native binary.
+        args.push(format!("--allow-scripts={package}").into());
+    }
+    args.push(format!("{package}@{latest}").into());
+    Ok(CommandSpec {
+        program: node.path,
+        args,
+    })
+}
+
+/// Whether updates here are guarded against leaving a client that no longer
+/// starts: npm installs into a staging prefix that replaces the live files
+/// only once it works, and broken installations are reported with a repair.
+/// Windows only; elsewhere npm and the standalone updaters replace files
+/// safely.
+fn guarded(environment: &Environment) -> bool {
+    environment.windows() || guarded_in_test(environment)
+}
+
+#[cfg(not(test))]
+fn guarded_in_test(_environment: &Environment) -> bool {
+    false
+}
+
+/// Tests turn the guard on for a fixture's home to run the Windows code
+/// paths with a Unix npm layout.
+#[cfg(test)]
+fn guarded_in_test(environment: &Environment) -> bool {
+    tests::GUARDED
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .contains(&environment.home)
+}
+
+/// The npm prefix of an installation updated through a staging prefix: an
+/// npm installation on Windows, where npm stopped midway or missing a
+/// download leaves a client that no longer starts. Pi's own updater runs the
+/// same npm command, so Pi is installed the same way here.
+fn staged_prefix(environment: &Environment, install: &Installation) -> Option<PathBuf> {
+    match &install.method {
+        InstallMethod::Npm { prefix } if guarded(environment) => Some(prefix.clone()),
+        _ => None,
+    }
+}
+
+/// The npm prefix of a damaged installation, from the path of its command.
+fn staged_prefix_of(environment: &Environment, executable: &Path) -> PathBuf {
+    let directory = executable.parent().unwrap_or(executable);
+    if environment.windows() {
+        directory.into()
+    } else {
+        directory.parent().unwrap_or(directory).into()
     }
 }
 
@@ -1060,16 +1218,33 @@ async fn inspect(
     // Detection reads files and starts processes, wsl.exe among them.
     let env = environment.clone();
     let detected = blocking(move || {
-        Ok(detect(&env, id).map(|install| {
-            let current = current_version(&env, id, &install);
-            let source = latest_source(&env, id, &install);
-            (install, current, source)
-        }))
+        if guarded(&env) {
+            staged::recover_all(&env, id);
+        }
+        Ok(match detect(&env, id) {
+            Some(install) => {
+                let current = current_version(&env, id, &install);
+                let damage = match (&current, &install.method) {
+                    (Err(error), InstallMethod::Npm { prefix }) if guarded(&env) => {
+                        staged::damage(&env, id, prefix, Some(error))
+                    }
+                    _ => None,
+                };
+                let source = latest_source(&env, id, &install);
+                Ok((install, current, source, damage))
+            }
+            None if guarded(&env) => Err(staged::find_damage(&env, id)),
+            None => Err(None),
+        })
     })
     .await;
-    let (install, current, source) = match detected {
-        Ok(Some(detected)) => detected,
-        Ok(None) => {
+    let (install, current, source, damage) = match detected {
+        Ok(Ok(detected)) => detected,
+        Ok(Err(Some(damage))) => {
+            status.damaged(&damage);
+            return (status, None);
+        }
+        Ok(Err(None)) => {
             status.phase = "not_installed".into();
             return (status, None);
         }
@@ -1078,6 +1253,10 @@ async fn inspect(
             return (status, None);
         }
     };
+    if let Some(damage) = damage {
+        status.damaged(&damage);
+        return (status, None);
+    }
     status.executable = Some(install.executable.to_string_lossy().into_owned());
     status.install_method = install.method.label().into();
     status.other_installations.clone_from(&install.others);
@@ -1131,6 +1310,12 @@ fn perform_update(
     if !latest.newer_than(&current) {
         return Ok(current);
     }
+    if let Some(prefix) = staged_prefix(environment, &fresh) {
+        return staged::update(environment, id, &prefix, latest);
+    }
+    // On Windows only npm needs the staging above. Codex's and Pi's own
+    // updaters install a new release beside the old one and then switch to
+    // it, which a running client does not hinder.
     let command = update_command(environment, id, &fresh, latest)?;
     let output = process::run(environment, &command, UPDATE_TIMEOUT)?;
     let after = detect(environment, id)
@@ -1146,6 +1331,101 @@ fn perform_update(
         ));
     }
     Ok(version)
+}
+
+/// Repairs a damaged npm installation: puts back the version from before an
+/// interrupted update, or installs the latest one again.
+fn perform_repair(
+    environment: &Environment,
+    id: ClientId,
+    latest: Option<&ClientVersion>,
+) -> Result<ClientVersion, ClientError> {
+    staged::recover_all(environment, id);
+    let damage = match detect(environment, id) {
+        Some(install) => {
+            let InstallMethod::Npm { prefix } = &install.method else {
+                return Err(ClientError::new("changed", "Client installation changed"));
+            };
+            match current_version(environment, id, &install) {
+                Ok(version) => return Ok(version),
+                Err(error) => staged::damage(environment, id, prefix, Some(&error)),
+            }
+        }
+        None => staged::find_damage(environment, id),
+    }
+    .ok_or_else(|| ClientError::new("changed", "Client installation changed"))?;
+    if damage.restore.is_some() {
+        return staged::restore(environment, id, &damage);
+    }
+    let latest =
+        latest.ok_or_else(|| ClientError::new("version", "Could not read the latest version"))?;
+    staged::update(environment, id, &damage.prefix, latest)
+}
+
+/// A failed update, and what it left behind.
+enum Failure {
+    /// The client still starts and reports this version.
+    Kept(ClientError, ClientVersion),
+    /// The client no longer starts; this is what remains of it.
+    Damaged(ClientError, staged::Damage),
+    Other(ClientError),
+}
+
+/// On Windows, checks the client again after a failed update: whether the
+/// earlier version still starts, or what can repair it.
+fn after_failure(environment: &Environment, id: ClientId, error: ClientError) -> Failure {
+    // Other systems report a failed update as before.
+    if !guarded(environment) {
+        return Failure::Other(error);
+    }
+    let after = detect(environment, id);
+    match after
+        .as_ref()
+        .map(|install| current_version(environment, id, install))
+    {
+        Some(Ok(version)) => return Failure::Kept(error, version),
+        Some(Err(problem)) => {
+            if let Some(InstallMethod::Npm { prefix }) = after.as_ref().map(|i| &i.method) {
+                if let Some(damage) = staged::damage(environment, id, prefix, Some(&problem)) {
+                    return Failure::Damaged(error, damage);
+                }
+            }
+        }
+        None => {
+            if let Some(damage) = staged::find_damage(environment, id) {
+                return Failure::Damaged(error, damage);
+            }
+        }
+    }
+    Failure::Other(error)
+}
+
+/// What a run of the client manager does to the clients it checks.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Action {
+    Check,
+    Update,
+    Repair,
+}
+
+/// The latest release of a client installed with npm, for reinstalling one
+/// that no longer starts.
+async fn npm_latest(
+    client: &reqwest::Client,
+    environment: &Environment,
+    id: ClientId,
+    prefix: &Path,
+) -> Result<ClientVersion, ClientError> {
+    let install = Installation {
+        executable: PathBuf::new(),
+        resolved: PathBuf::new(),
+        method: InstallMethod::Npm {
+            prefix: prefix.into(),
+        },
+        others: vec![],
+    };
+    let source = latest_source(environment, id, &install);
+    fetch_latest(client, &source, &install, id).await
 }
 
 #[derive(Default)]
@@ -1174,6 +1454,7 @@ impl ClientUpdateManager {
         self: &Arc<Self>,
         app: AppHandle,
         update: Vec<ClientTarget>,
+        action: Action,
     ) -> Result<ClientSnapshot, String> {
         let Ok(guard) = self.operation.clone().try_lock_owned() else {
             return Ok(self.snapshot());
@@ -1197,15 +1478,16 @@ impl ClientUpdateManager {
                         .iter()
                         .any(|target| status.at(target.wsl.as_deref(), &[target.id]))
                 {
-                    status.phase = if update.is_empty() {
-                        "checking"
-                    } else {
-                        "updating"
+                    status.phase = match action {
+                        Action::Check => "checking",
+                        Action::Update => "updating",
+                        Action::Repair => "repairing",
                     }
                     .into();
                     status.can_update = false;
                     status.error_code = None;
                     status.error_detail = None;
+                    status.kept_previous = false;
                 }
             }
         });
@@ -1229,20 +1511,20 @@ impl ClientUpdateManager {
                     let environment =
                         blocking(move || load_environment(home, use_system_proxy)).await;
                     manager
-                        .check(&app, &client, None, environment, &local, !update.is_empty())
+                        .check(&app, &client, None, environment, &local, action)
                         .await;
                 }
             };
             tokio::join!(
                 check_local,
-                manager.check_wsl(&app, &client, &update, use_system_proxy)
+                manager.check_wsl(&app, &client, &update, action, use_system_proxy)
             );
             manager.publish(&app, |s| s.busy = false);
         });
         Ok(initial)
     }
-    /// Checks `ids` in one place, this computer or a WSL distribution, and
-    /// with `update` set updates those that can be.
+    /// Checks `ids` in one place, this computer or a WSL distribution, then
+    /// updates or repairs those that can be.
     async fn check(
         &self,
         app: &AppHandle,
@@ -1250,7 +1532,7 @@ impl ClientUpdateManager {
         wsl: Option<&str>,
         environment: Result<Environment, ClientError>,
         ids: &[ClientId],
-        update: bool,
+        action: Action,
     ) {
         let environment = match environment {
             Ok(environment) => environment,
@@ -1258,7 +1540,7 @@ impl ClientUpdateManager {
                 return self.publish(app, |s| {
                     for item in &mut s.clients {
                         if item.at(wsl, ids)
-                            && ["checking", "updating"].contains(&item.phase.as_str())
+                            && ["checking", "updating", "repairing"].contains(&item.phase.as_str())
                         {
                             item.fail(ClientError::new(error.code, &error.detail));
                         }
@@ -1268,21 +1550,66 @@ impl ClientUpdateManager {
         };
         for &id in ids {
             let (mut status, plan) = inspect(&environment, client, id).await;
-            if update && status.can_update {
-                if let Some((install, latest)) = plan {
+            match (action, plan) {
+                (Action::Update, Some((install, latest))) if status.can_update => {
                     status.phase = "updating".into();
                     status.can_update = false;
                     self.replace(app, status.clone());
                     let env = environment.clone();
-                    match blocking(move || perform_update(&env, id, &install, &latest)).await {
-                        Ok(version) => {
+                    let result = blocking(move || {
+                        Ok(perform_update(&env, id, &install, &latest)
+                            .map_err(|error| after_failure(&env, id, error)))
+                    })
+                    .await;
+                    match result {
+                        Ok(Ok(version)) => {
                             status.current_version = Some(version.to_string());
                             status.phase = "updated".into();
+                            status.checked_at = Some(chrono::Utc::now().to_rfc3339());
+                        }
+                        Ok(Err(Failure::Kept(error, version))) => {
+                            let unchanged =
+                                status.current_version.as_deref() == Some(&version.to_string());
+                            status.kept_previous = unchanged && error.code != "running";
+                            status.current_version = Some(version.to_string());
+                            status.fail(error);
+                        }
+                        Ok(Err(Failure::Damaged(error, damage))) => {
+                            status.damaged(&damage);
+                            status.error_detail =
+                                Some(format!("{}\n{}", error.detail, damage.detail));
+                        }
+                        Ok(Err(Failure::Other(error))) | Err(error) => status.fail(error),
+                    }
+                }
+                (Action::Repair, _) if status.phase == "damaged" => {
+                    status.phase = "repairing".into();
+                    self.replace(app, status.clone());
+                    let latest = match (status.repair, &status.executable) {
+                        (Some("reinstall"), Some(executable)) => {
+                            let prefix = staged_prefix_of(&environment, Path::new(executable));
+                            Some(npm_latest(client, &environment, id, &prefix).await)
+                        }
+                        _ => None,
+                    };
+                    let env = environment.clone();
+                    let result = match latest.transpose() {
+                        Ok(latest) => {
+                            blocking(move || perform_repair(&env, id, latest.as_ref())).await
+                        }
+                        Err(error) => Err(error),
+                    };
+                    match result {
+                        Ok(version) => {
+                            status.current_version = Some(version.to_string());
+                            status.phase = "repaired".into();
+                            status.error_detail = None;
                             status.checked_at = Some(chrono::Utc::now().to_rfc3339());
                         }
                         Err(error) => status.fail(error),
                     }
                 }
+                _ => {}
             }
             self.replace(app, status);
         }
@@ -1295,6 +1622,7 @@ impl ClientUpdateManager {
         app: &AppHandle,
         client: &reqwest::Client,
         update: &[ClientTarget],
+        action: Action,
         use_system_proxy: bool,
     ) {
         let distributions = blocking(|| Ok(crate::wsl::distributions()))
@@ -1321,7 +1649,7 @@ impl ClientUpdateManager {
                         format!("WSL distribution {name} is no longer available"),
                     ))
                 };
-                self.check(app, client, Some(name), environment, &ids, true)
+                self.check(app, client, Some(name), environment, &ids, action)
                     .await;
             }
             return;
@@ -1395,7 +1723,7 @@ pub fn refresh_local_clients(
     app: AppHandle,
     manager: State<'_, Arc<ClientUpdateManager>>,
 ) -> Result<ClientSnapshot, String> {
-    manager.start(app, vec![])
+    manager.start(app, vec![], Action::Check)
 }
 
 #[tauri::command]
@@ -1404,10 +1732,24 @@ pub fn update_local_clients(
     manager: State<'_, Arc<ClientUpdateManager>>,
     targets: Vec<ClientTarget>,
 ) -> Result<ClientSnapshot, String> {
+    manager.start(app, selection(targets)?, Action::Update)
+}
+
+/// Puts back or reinstalls clients whose installation no longer starts.
+#[tauri::command]
+pub fn repair_local_clients(
+    app: AppHandle,
+    manager: State<'_, Arc<ClientUpdateManager>>,
+    targets: Vec<ClientTarget>,
+) -> Result<ClientSnapshot, String> {
+    manager.start(app, selection(targets)?, Action::Repair)
+}
+
+fn selection(targets: Vec<ClientTarget>) -> Result<Vec<ClientTarget>, String> {
     if targets.is_empty() || targets.iter().collect::<HashSet<_>>().len() != targets.len() {
         return Err("Invalid client selection".into());
     }
-    manager.start(app, targets)
+    Ok(targets)
 }
 
 #[cfg(test)]

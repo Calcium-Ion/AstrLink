@@ -3,7 +3,7 @@
 
 use std::{
     collections::{BTreeMap, BTreeSet},
-    path::{Path, PathBuf},
+    path::PathBuf,
 };
 
 use serde::{Deserialize, Serialize};
@@ -21,7 +21,7 @@ use super::{
 };
 use crate::{
     agent_home::{Home, Homes},
-    host_files::{self, WriteOptions},
+    host_files,
     sidecar::CoreManager,
 };
 
@@ -325,7 +325,7 @@ fn check(
     let paths = place
         .client
         .config_paths(home, place.target, records.get(place));
-    let existing = read_files(&paths)?;
+    let existing = read_files(place.client, &paths)?;
     let confirmation = confirmation(
         home,
         place,
@@ -400,10 +400,11 @@ fn confirmation(
     })
 }
 
-pub(crate) fn read_files(paths: &[PathBuf]) -> Result<Vec<Option<String>>, String> {
+pub(crate) fn read_files(client: Client, paths: &[PathBuf]) -> Result<Vec<Option<String>>, String> {
     paths
         .iter()
-        .map(|path| host_files::read_optional(path))
+        .zip(client.files())
+        .map(|(path, file)| file.read(path))
         .collect()
 }
 
@@ -414,50 +415,32 @@ pub(crate) fn texts(files: &[Option<String>]) -> Vec<Option<&str>> {
 /// Writes each file whose contents changed. When one fails, the files
 /// already written get their old contents back.
 fn write_files(
+    client: Client,
     paths: &[PathBuf],
     existing: &[Option<String>],
     contents: &[String],
 ) -> Result<(), String> {
-    let mut written: Vec<(&Path, Option<&str>, &str)> = Vec::new();
-    for ((path, before), after) in paths.iter().zip(existing).zip(contents) {
+    let mut written: Vec<usize> = Vec::new();
+    for (index, ((path, before), after)) in paths.iter().zip(existing).zip(contents).enumerate() {
         let before = before.as_deref();
         if before.unwrap_or_default() == after {
             continue;
         }
-        let result = if after.is_empty() {
-            host_files::remove_path(path)
-        } else {
-            host_files::write_text(
-                path,
-                after,
-                WriteOptions {
-                    secret: true,
-                    expected: Some(before),
-                },
-            )
-        };
-        if let Err(error) = result {
-            for (path, before, after) in written.into_iter().rev() {
-                let _ = match before {
-                    Some(before) => host_files::write_text(
-                        path,
-                        before,
-                        WriteOptions {
-                            secret: true,
-                            expected: Some((!after.is_empty()).then_some(after)),
-                        },
-                    ),
-                    None if host_files::read_optional(path).ok().flatten().as_deref()
-                        == Some(after) =>
-                    {
-                        host_files::remove_path(path)
-                    }
-                    None => Ok(()),
-                };
+        let file = client.files()[index];
+        let after = (!after.is_empty()).then_some(after.as_str());
+        if let Err(error) = file.write(path, before, after, true) {
+            for index in written.into_iter().rev() {
+                let after = &contents[index];
+                let _ = client.files()[index].write(
+                    &paths[index],
+                    (!after.is_empty()).then_some(after.as_str()),
+                    existing[index].as_deref(),
+                    true,
+                );
             }
             return Err(error);
         }
-        written.push((path, before, after));
+        written.push(index);
     }
     Ok(())
 }
@@ -496,7 +479,7 @@ pub(crate) fn write_with(
     let _lock = host_files::lock();
     let mut records = read_records(&home)?;
     let paths = client.config_paths(home, place.target, records.get(place));
-    let existing = read_files(&paths)?;
+    let existing = read_files(place.client, &paths)?;
     let confirmation = confirmation(
         home,
         place,
@@ -521,7 +504,7 @@ pub(crate) fn write_with(
     plan.record.file = client.recorded_file(&paths);
     let previous = records.set(place, Some(plan.record));
     write_records(&home, &mut records)?;
-    if let Err(error) = write_files(&paths, &existing, &plan.contents) {
+    if let Err(error) = write_files(client, &paths, &existing, &plan.contents) {
         records.set(place, previous);
         let _ = write_records(&home, &mut records);
         return Err(error.into());
@@ -545,7 +528,7 @@ pub fn remove(home: Home, place: impl Into<Place>) -> Result<(), ItemError> {
         return Err(open_error(place.client));
     }
     let paths = place.client.config_paths(home, place.target, Some(&record));
-    let existing = read_files(&paths)?;
+    let existing = read_files(place.client, &paths)?;
     let removals =
         plan_remove(place.client, &texts(&existing), &record).map_err(|error| error.at(&paths))?;
     let files = place.client.files();
@@ -553,24 +536,10 @@ pub fn remove(home: Home, place: impl Into<Place>) -> Result<(), ItemError> {
     {
         match removal {
             Removal::Unchanged => {}
-            Removal::Write(contents) => host_files::write_text(
-                path,
-                &contents,
-                WriteOptions {
-                    secret: file.secret(),
-                    expected: Some(existing.as_deref()),
-                },
-            )?,
-            Removal::Delete => {
-                if host_files::read_optional(path)? != *existing {
-                    return Err(format!(
-                        "unable to remove {}: the file changed; try again",
-                        path.display()
-                    )
-                    .into());
-                }
-                host_files::remove_path(path)?;
+            Removal::Write(contents) => {
+                file.write(path, existing.as_deref(), Some(&contents), file.secret())?
             }
+            Removal::Delete => file.write(path, existing.as_deref(), None, file.secret())?,
         }
     }
     records.set(place, None);
@@ -599,7 +568,7 @@ pub fn sync(home: Home, inference_url: &str, tokens: &Tokens) -> Result<(), Stri
         }
         let paths = client.config_paths(home, place.target, Some(&record));
         let result = (|| {
-            let existing = read_files(&paths)?;
+            let existing = read_files(place.client, &paths)?;
             let Some((contents, next)) = plan_sync(client, &texts(&existing), &record, &origin)
                 .map_err(|error| String::from(error.at(&paths)))?
             else {
@@ -607,7 +576,7 @@ pub fn sync(home: Home, inference_url: &str, tokens: &Tokens) -> Result<(), Stri
             };
             records.set(place, Some(next));
             write_records(&home, &mut records)?;
-            let written = write_files(&paths, &existing, &contents);
+            let written = write_files(client, &paths, &existing, &contents);
             if written.is_err() {
                 records.set(place, Some(record.clone()));
                 let _ = write_records(&home, &mut records);
