@@ -765,3 +765,27 @@ func TestTheCacheKeepsOnlyTheCurrentDownload(t *testing.T) {
 		t.Fatalf("left %v", entries)
 	}
 }
+
+// A latest release without this platform's update manifest, as the releases
+// before the first MyGo build are, still names the newest version to builds
+// that only link to it; a build that installs updates reports the missing
+// manifest.
+func TestALatestReleaseWithoutAManifestStillNamesItsVersion(t *testing.T) {
+	for _, development := range []bool{true, false} {
+		h := newHarness(t, "1.0.0", func(c *Config) { c.Development = development })
+		h.releases.publish("1.1.0", false)
+		h.releases.mu.Lock()
+		delete(h.releases.files, repositoryPath+"v1.1.0/update-"+testTarget+".json")
+		h.releases.mu.Unlock()
+		s := h.check()
+		if deref(s.LatestVersion) != "1.1.0" || s.Release == nil || s.Release.Version != "1.1.0" {
+			t.Fatalf("development %v: %+v", development, s)
+		}
+		if development && (s.Phase != PhaseManual || s.ErrorCode != nil) {
+			t.Fatalf("development: %+v", s)
+		}
+		if !development && (s.Phase != PhaseError || deref(s.ErrorCode) != "missing_artifact") {
+			t.Fatalf("installable: %+v", s)
+		}
+	}
+}

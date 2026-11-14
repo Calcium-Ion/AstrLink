@@ -302,7 +302,11 @@ func (l lookup) fetchLatest(ctx context.Context, endpoint string, retryAfter *in
 	}
 	defer manifest.Body.Close()
 	if manifest.StatusCode == http.StatusNotFound {
-		return nil, failure("missing_artifact", "Release has no %s update manifest", l.manifestName)
+		// The latest release has no update for this platform, as releases
+		// before the first MyGo build do. Builds that only link to the
+		// release still learn its version; the check reports the missing
+		// manifest to a build that would install it.
+		return []githubRelease{{TagName: tag}}, nil
 	}
 	if err := githubStatus(manifest, retryAfter, l.now()); err != nil {
 		return nil, err
