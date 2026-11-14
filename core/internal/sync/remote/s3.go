@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"path"
 	"sort"
 	"strings"
 	"time"
@@ -117,7 +116,15 @@ func s3Endpoint(config Config, addressing string) (string, string, error) {
 		}
 		return endpoint.Scheme + "://" + config.Path + ".s3." + endpoint.Host, "", nil
 	default:
-		return endpoint.Scheme + "://" + endpoint.Host, strings.Trim(endpoint.Path, "/"), nil
+		prefix := strings.Trim(endpoint.Path, "/")
+		// A proxy or the store resolves a dot segment before it checks the
+		// signature, so the path it signs would differ from the one sent.
+		for _, segment := range strings.Split(config.Path+"/"+prefix, "/") {
+			if segment == "." || segment == ".." {
+				return "", "", fmt.Errorf("an S3 bucket or endpoint path cannot contain %q", segment)
+			}
+		}
+		return endpoint.Scheme + "://" + endpoint.Host, prefix, nil
 	}
 }
 
@@ -125,25 +132,41 @@ func (store *s3) Identity(context.Context) (string, error) { return store.identi
 
 func (store *s3) Describe() string { return "s3://" + store.bucket }
 
-// objectURL builds the URL for one object. The path style keeps the bucket in
-// the path, which every S3-compatible store serves; the suffix style already
-// carries it in the host.
-func (store *s3) objectURL(name string) string {
-	parts := []string{}
+// objectPath builds the request path for one object. The path style keeps the
+// bucket in the path, which every S3-compatible store serves; the suffix style
+// already carries it in the host. Each segment is encoded the way Signature
+// Version 4 expects, and the same string is both sent and signed, so the
+// server signs exactly the path it receives. Empty segments in the prefix are
+// dropped: S3 keeps "a//b" as a distinct key, but a proxy in front of it may
+// not, and a folder prefix never needs one.
+func (store *s3) objectPath(name string) string {
+	location := store.prefix
 	if store.addressing != "suffix" {
-		parts = append(parts, store.bucket)
+		location = store.bucket + "/" + store.prefix
 	}
-	if store.prefix != "" {
-		parts = append(parts, store.prefix)
+	segments := []string{}
+	for _, segment := range strings.Split(location, "/") {
+		if segment != "" {
+			segments = append(segments, segment)
+		}
 	}
-	parts = append(parts, name)
-	return store.endpoint + "/" + strings.Join(parts, "/")
+	segments = append(segments, name)
+	for index, segment := range segments {
+		segments[index] = s3Escape(segment)
+	}
+	return "/" + strings.Join(segments, "/")
+}
+
+// objectURL is the full URL for one object.
+func (store *s3) objectURL(name string) string {
+	return store.endpoint + store.objectPath(name)
 }
 
 // do signs and sends one request. The body is always given as bytes, so it can
 // be hashed for the signature and sent unchanged.
 func (store *s3) do(ctx context.Context, method, name string, body []byte, conditions map[string]string) (*http.Response, error) {
-	target := store.objectURL(name)
+	objectPath := store.objectPath(name)
+	target := store.endpoint + objectPath
 	parsed, err := url.Parse(target)
 	if err != nil {
 		return nil, err
@@ -160,7 +183,7 @@ func (store *s3) do(ctx context.Context, method, name string, body []byte, condi
 	for header, value := range conditions {
 		headers[strings.ToLower(header)] = value
 	}
-	signature := store.sign(method, parsed, headers, payloadHex, now)
+	signature := store.sign(method, objectPath, headers, payloadHex, now)
 
 	request, err := http.NewRequestWithContext(ctx, method, target, bytes.NewReader(body))
 	if err != nil {
@@ -188,7 +211,7 @@ func (store *s3) do(ctx context.Context, method, name string, body []byte, condi
 }
 
 // sign computes the AWS Signature Version 4 authorization header.
-func (store *s3) sign(method string, parsed *url.URL, headers map[string]string, payloadHex string, now time.Time) string {
+func (store *s3) sign(method, canonicalURI string, headers map[string]string, payloadHex string, now time.Time) string {
 	names := make([]string, 0, len(headers))
 	for name := range headers {
 		names = append(names, name)
@@ -204,8 +227,8 @@ func (store *s3) sign(method string, parsed *url.URL, headers map[string]string,
 	signedHeaders := strings.Join(names, ";")
 	canonicalRequest := strings.Join([]string{
 		method,
-		canonicalURI(parsed),
-		parsed.RawQuery,
+		canonicalURI,
+		"",
 		canonicalHeaders.String(),
 		signedHeaders,
 		payloadHex,
@@ -237,26 +260,39 @@ func hmacSHA256(key []byte, data string) []byte {
 	return mac.Sum(nil)
 }
 
-// canonicalURI encodes the path segments the way the signature expects.
-func canonicalURI(parsed *url.URL) string {
-	segments := strings.Split(parsed.EscapedPath(), "/")
-	for index, segment := range segments {
-		decoded, err := url.PathUnescape(segment)
-		if err != nil {
-			continue
+// s3Escape encodes one path segment as Signature Version 4 requires: every
+// byte outside the unreserved set (letters, digits, "-", ".", "_", "~") becomes
+// %XX with uppercase hex. Go's own path escaping leaves characters such as
+// "+", "$" and "@" alone, which the server would encode before signing.
+func s3Escape(segment string) string {
+	const hexDigits = "0123456789ABCDEF"
+	var builder strings.Builder
+	for index := 0; index < len(segment); index++ {
+		character := segment[index]
+		switch {
+		case 'A' <= character && character <= 'Z', 'a' <= character && character <= 'z',
+			'0' <= character && character <= '9',
+			character == '-', character == '.', character == '_', character == '~':
+			builder.WriteByte(character)
+		default:
+			builder.WriteByte('%')
+			builder.WriteByte(hexDigits[character>>4])
+			builder.WriteByte(hexDigits[character&0x0f])
 		}
-		segments[index] = strings.ReplaceAll(url.PathEscape(decoded), "+", "%20")
 	}
-	joined := path.Join(segments...)
-	if joined == "" {
-		return "/"
-	}
-	// The path the server signs starts with a slash, so the canonical URI has
-	// to carry it as well: joining the segments drops the empty first one.
-	if !strings.HasPrefix(joined, "/") {
-		joined = "/" + joined
-	}
-	return joined
+	return builder.String()
+}
+
+// s3ResponseETag reads the object's entity tag without its quotes, the opaque
+// form the sync keeps. A proxy may have marked it weak; the value is the same.
+func s3ResponseETag(response *http.Response) string {
+	return strings.Trim(strings.TrimPrefix(response.Header.Get("ETag"), "W/"), `"`)
+}
+
+// s3QuotedETag restores the quotes HTTP requires around an entity tag in
+// If-Match; some S3-compatible stores refuse a bare value.
+func s3QuotedETag(etag string) string {
+	return `"` + strings.Trim(strings.TrimPrefix(etag, "W/"), `"`) + `"`
 }
 
 // headerName restores the conventional casing of a lowercased header.
@@ -316,7 +352,7 @@ func (store *s3) Read(ctx context.Context) ([]byte, string, bool, error) {
 	if err != nil {
 		return nil, "", false, err
 	}
-	return payload, strings.Trim(response.Header.Get("ETag"), `"`), true, nil
+	return payload, s3ResponseETag(response), true, nil
 }
 
 func (store *s3) Write(ctx context.Context, payload []byte, expectedETag string) (string, error) {
@@ -327,7 +363,7 @@ func (store *s3) Write(ctx context.Context, payload []byte, expectedETag string)
 	if expectedETag == "" {
 		conditions["If-None-Match"] = "*"
 	} else {
-		conditions["If-Match"] = expectedETag
+		conditions["If-Match"] = s3QuotedETag(expectedETag)
 	}
 	response, err := store.do(ctx, http.MethodPut, packageName, payload, conditions)
 	if err != nil {
@@ -337,7 +373,7 @@ func (store *s3) Write(ctx context.Context, payload []byte, expectedETag string)
 	if err := store.check(response, true); err != nil {
 		return "", err
 	}
-	return strings.Trim(response.Header.Get("ETag"), `"`), nil
+	return s3ResponseETag(response), nil
 }
 
 func (store *s3) ReadLock(ctx context.Context) (Lock, string, bool, error) {
@@ -361,7 +397,7 @@ func (store *s3) ReadLock(ctx context.Context) (Lock, string, bool, error) {
 	if err != nil {
 		return Lock{}, "", false, err
 	}
-	return lock, strings.Trim(response.Header.Get("ETag"), `"`), true, nil
+	return lock, s3ResponseETag(response), true, nil
 }
 
 func (store *s3) WriteLock(ctx context.Context, lock Lock, expectedETag string) (string, error) {
@@ -376,7 +412,7 @@ func (store *s3) WriteLock(ctx context.Context, lock Lock, expectedETag string) 
 	if expectedETag == "" {
 		conditions["If-None-Match"] = "*"
 	} else {
-		conditions["If-Match"] = expectedETag
+		conditions["If-Match"] = s3QuotedETag(expectedETag)
 	}
 	response, err := store.do(ctx, http.MethodPut, lockName, payload, conditions)
 	if err != nil {
@@ -386,7 +422,7 @@ func (store *s3) WriteLock(ctx context.Context, lock Lock, expectedETag string) 
 	if err := store.check(response, true); err != nil {
 		return "", err
 	}
-	return strings.Trim(response.Header.Get("ETag"), `"`), nil
+	return s3ResponseETag(response), nil
 }
 
 func (store *s3) DeleteLock(ctx context.Context, expectedETag string) error {
@@ -395,7 +431,7 @@ func (store *s3) DeleteLock(ctx context.Context, expectedETag string) error {
 	}
 	conditions := map[string]string{}
 	if expectedETag != "" {
-		conditions["If-Match"] = expectedETag
+		conditions["If-Match"] = s3QuotedETag(expectedETag)
 	}
 	response, err := store.do(ctx, http.MethodDelete, lockName, nil, conditions)
 	if err != nil {
