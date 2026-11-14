@@ -342,3 +342,32 @@ func TestWriteClipboardReportsARefusedClipboard(t *testing.T) {
 		t.Fatalf("written %q", written)
 	}
 }
+
+// A first run starts in the system's language, which the app reads from the
+// system's own list rather than from LANG.
+func TestAFirstRunFollowsTheSystemLanguages(t *testing.T) {
+	t.Setenv("LANG", "C.UTF-8")
+	t.Setenv("LANGUAGE", "")
+	t.Setenv("LC_ALL", "")
+	t.Setenv("LC_MESSAGES", "")
+	t.Cleanup(func() { prefs.SetSystemLanguages(func() []string { return nil }) })
+	for _, c := range []struct {
+		languages []string
+		want      prefs.Locale
+	}{
+		{[]string{"zh-Hans-SG", "en-SG"}, prefs.LocaleZhCN},
+		{[]string{"ja-JP", "en-US"}, prefs.LocaleJa},
+		{[]string{"fr-FR", "en-GB"}, prefs.LocaleEn},
+	} {
+		h := &Host{preferredLanguages: func() []string { return c.languages }}
+		h.followSystemLanguages()
+		config := t.TempDir()
+		store := prefs.Load(config, t.TempDir(), prefs.DefaultInferencePort)
+		if got := store.Values().Locale; got != c.want {
+			t.Errorf("%q: first-run locale = %s, want %s", c.languages, got, c.want)
+		}
+		if got := h.locale(); got != c.want {
+			t.Errorf("%q: locale before the preferences load = %s, want %s", c.languages, got, c.want)
+		}
+	}
+}

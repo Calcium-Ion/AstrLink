@@ -58,6 +58,10 @@ type Host struct {
 	openURL func(url string) error
 	// writeClipboard puts text on the system clipboard (mygo.Clipboard.Write).
 	writeClipboard func(text string) error
+	// preferredLanguages are the user's languages, most preferred first
+	// (mygo.App.PreferredLanguages): macOS and Windows keep them in their
+	// settings, not in LANG.
+	preferredLanguages func() []string
 	// applyTheme sets the appearance of native UI (mygo.Theme.SetSource).
 	applyTheme func(theme prefs.ThemePreference)
 	// stop ends the background polls; stopped is closed once they ended.
@@ -89,8 +93,9 @@ func New() *Host {
 		writeClipboard: func(text string) error {
 			return mygo.Clipboard.Write(transfer.TextData(text))
 		},
-		applyTheme: func(theme prefs.ThemePreference) { mygo.Theme.SetSource(mygo.ThemeSource(theme)) },
-		stopped:    make(chan struct{}),
+		applyTheme:         func(theme prefs.ThemePreference) { mygo.Theme.SetSource(mygo.ThemeSource(theme)) },
+		preferredLanguages: mygo.App.PreferredLanguages,
+		stopped:            make(chan struct{}),
 	}
 }
 
@@ -268,10 +273,24 @@ func (h *Host) WriteClipboard(text string) error { return h.writeClipboard(text)
 
 func (h *Host) appVersion() string { return mygo.App.Version() }
 
+// followSystemLanguages makes the language of a first run, and of native
+// prompts before the preferences load, the system's: the languages of
+// System Settings on macOS and the display languages on Windows. LANG
+// alone, which apps started from the Dock or Finder do not get, left them
+// in English.
+func (h *Host) followSystemLanguages() {
+	if h.preferredLanguages == nil {
+		return
+	}
+	languages := h.preferredLanguages
+	prefs.SetSystemLanguages(func() []string { return languages() })
+}
+
 // Start loads the preferences, starts Core and opens the main window. It
 // runs on the main thread once the app is ready (App.WhenReady).
 func (h *Host) Start() {
 	h.instance = instance.FromEnvironment()
+	h.followSystemLanguages()
 	dirs, err := h.instance.Dirs()
 	if err != nil {
 		log.Printf("astrlink: unable to resolve the app directories: %v", err)
