@@ -120,7 +120,10 @@ func TestTemporaryNamesAreUniqueAndPortable(t *testing.T) {
 func TestMissingFileUsesSafeDefaultsWithoutClaimingAnError(t *testing.T) {
 	directory := t.TempDir()
 	snapshot := load(directory).Snapshot()
-	if !reflect.DeepEqual(snapshot.Values, Default(DefaultInferencePort)) || snapshot.LoadWarning != nil {
+	expected := Default(DefaultInferencePort)
+	// A new install on macOS starts with the big pet out, and keeps it.
+	expected.DesktopToys.On.Pet = runtime.GOOS == "darwin"
+	if !reflect.DeepEqual(snapshot.Values, expected) || snapshot.LoadWarning != nil {
 		t.Fatalf("snapshot %+v", snapshot)
 	}
 	v := snapshot.Values

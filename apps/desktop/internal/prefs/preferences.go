@@ -289,6 +289,9 @@ type Preferences struct {
 	DisplayCurrency string            `json:"display_currency"`
 	Tray            TrayPreferences   `json:"tray"`
 	Updates         UpdatePreferences `json:"updates"`
+	// DesktopToys is saved on its own, like Updates, so the settings page
+	// and the toys never overwrite each other's changes.
+	DesktopToys DesktopToysPreferences `json:"desktop_toys"`
 }
 
 // Default returns the preferences of a new install whose default inference
@@ -309,6 +312,7 @@ func Default(port uint16) Preferences {
 		DisplayCurrency:             autoCurrency,
 		Tray:                        DefaultTrayPreferences(),
 		Updates:                     DefaultUpdatePreferences(),
+		DesktopToys:                 DefaultDesktopToys(),
 	}
 }
 
@@ -328,7 +332,7 @@ func decodePreferences(data []byte, port uint16) (Preferences, error) {
 
 // optionalInputFields are the fields the settings page may leave out; they
 // take their defaults.
-var optionalInputFields = []string{"autostart_hidden", "inference_listen", "tray", "updates"}
+var optionalInputFields = []string{"autostart_hidden", "inference_listen", "tray", "updates", "desktop_toys"}
 
 // ParseInput reads the preferences the settings page saves. Every field
 // but optionalInputFields is required and unknown fields are refused.
@@ -347,6 +351,7 @@ func ParseInput(data []byte) (Preferences, error) {
 		InferenceListen: defaults.InferenceListen,
 		Tray:            defaults.Tray,
 		Updates:         defaults.Updates,
+		DesktopToys:     defaults.DesktopToys,
 	}
 	type plain Preferences
 	v := plain(p)
@@ -466,6 +471,9 @@ func LoadWithFallbackLocale(configDirectory, dataDirectory string, port uint16, 
 		// Save new-install defaults before Core creates its database, so
 		// subsequent starts keep the same port. Do not migrate old installs.
 		if !hasExistingData {
+			// A new install greets you with the big pet; an old one that
+			// never saved keeps every toy off.
+			s.values.DesktopToys.On.Pet = runtime.GOOS == "darwin"
 			if err := persist(path, s.values); err != nil {
 				s.loadWarning = err.Error()
 			}
@@ -497,12 +505,14 @@ func (s *Store) snapshot() Snapshot {
 // Values returns the preferences.
 func (s *Store) Values() Preferences { return s.Snapshot().Values }
 
-// Replace validates and saves values. The update settings are kept, so the
-// general settings never overwrite those About saved on its own.
+// Replace validates and saves values. The update and desktop toy settings
+// are kept, so the general settings never overwrite those saved on their
+// own.
 func (s *Store) Replace(values Preferences) (Snapshot, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	values.Updates = s.values.Updates
+	values.DesktopToys = s.values.DesktopToys
 	if err := values.Validate(); err != nil {
 		return Snapshot{}, err
 	}
@@ -525,6 +535,19 @@ func (s *Store) ReplaceUpdates(updates UpdatePreferences) error {
 	}
 	s.values = values
 	return nil
+}
+
+// ReplaceDesktopToys saves the desktop toy settings alone.
+func (s *Store) ReplaceDesktopToys(toys DesktopToysPreferences) (Snapshot, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	values := s.values
+	values.DesktopToys = toys
+	if err := persist(s.path, values); err != nil {
+		return Snapshot{}, err
+	}
+	s.values = values
+	return s.snapshot(), nil
 }
 
 // ReportWarning adds warning to the load warning Settings shows.
