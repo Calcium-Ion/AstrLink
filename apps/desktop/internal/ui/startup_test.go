@@ -52,6 +52,36 @@ func TestScalesWithTheDisplayAndCentersOnOffsetMonitors(t *testing.T) {
 	}
 }
 
+func TestA1080pDisplayOpensALargerWindowAndSmallOnesKeepTheirs(t *testing.T) {
+	for _, c := range []struct {
+		area          mygo.Rectangle
+		width, height int
+		x, y          int
+	}{
+		// 1920 × 1080 above a 30-pixel taskbar: its height sets the size,
+		// under the maximum width.
+		{work(0, 0, 1920, 1050), 1363, 929, 278, 60},
+		// Smaller displays open as before.
+		{work(0, 0, 1280, 690), 895, 610, 192, 40},
+		{work(0, 0, 1024, 570), 740, 504, 142, 33},
+	} {
+		g := geometry(t, c.area, size(0, 0), size(mainMinWidth, mainMinHeight), maxStartupWidth)
+		if g.Content != size(c.width, c.height) || g.Position != (mygo.Point{X: c.x, Y: c.y}) {
+			t.Fatalf("%v: geometry = %+v", c.area, g)
+		}
+	}
+	// The overview still fits it to its first two modules, around its
+	// middle.
+	opened, minimumHeight := opening(t, work(0, 0, 1920, 1032), 1)
+	if fitted, ok := contentFitPlacement(opened, minimumHeight, 832); !ok || fitted != placement(290, 99, 1339, 832) {
+		t.Fatalf("fitted = %+v, %v", fitted, ok)
+	}
+	// A 1440p display stops at the maximum width.
+	if g := geometry(t, work(0, 0, 2560, 1400), size(0, 0), size(mainMinWidth, mainMinHeight), maxStartupWidth); g.Content != size(1440, 982) {
+		t.Fatalf("geometry = %+v", g)
+	}
+}
+
 func TestWideDisplaysStopAtTheMaximumWidth(t *testing.T) {
 	// 2560 × 1080 logical ultrawide below a 25-point menu bar, at 2×.
 	g := geometry(t, work(0, 50, 5120, 2110), size(0, 0), size(1520, 1200), 2400)
@@ -134,7 +164,7 @@ func TestAPageTallerThanTheWindowKeepsTheOpeningHeight(t *testing.T) {
 		area    mygo.Rectangle
 		content float64
 	}{
-		{work(0, 0, 1920, 1032), 832},
+		{work(0, 0, 1920, 1032), 960},
 		{work(0, 0, 1366, 728), 812},
 	} {
 		opened, minimumHeight := opening(t, c.area, 1)

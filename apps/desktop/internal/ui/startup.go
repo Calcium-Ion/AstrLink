@@ -18,8 +18,10 @@ const (
 	// room. The height stays below 89% of the work area (0.82 × 1.08).
 	defaultHeightScale = 1.08
 	// Large and ultrawide displays would otherwise open a window whose extra
-	// width only spreads fixed-size content apart.
-	maxStartupWidth = 1200
+	// width only spreads fixed-size content apart. A 1080p display's height
+	// sets its window below this, at about 1360 × 930 above a taskbar:
+	// lists and editors get the height and the page keeps its proportions.
+	maxStartupWidth = 1440
 	// mainMinWidth and mainMinHeight are the main window's configured
 	// minimum; a small display lowers it.
 	mainMinWidth  = 760
