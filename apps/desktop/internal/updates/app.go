@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -147,8 +148,15 @@ type Core interface {
 	// BeginUpdate keeps Core from starting until release.
 	BeginUpdate() (release func(), running bool, err error)
 	StopAndWait(ctx context.Context) error
+	// WaitForProcessTreeExit waits until the helpers of stopped Cores have
+	// exited too, which may still hold files the installer replaces.
+	WaitForProcessTreeExit(ctx context.Context, timeout time.Duration) error
 	Start() error
 }
+
+// helperExitTimeout is how long an install waits for Core's helpers to
+// exit after Core.
+const helperExitTimeout = 10 * time.Second
 
 // Config is what a Manager works with.
 type Config struct {
@@ -891,6 +899,11 @@ func (m *Manager) Install(ctx context.Context) (UpdateSnapshot, error) {
 		release()
 		m.fail(generation, failure("shutdown", "%v", err))
 		return m.Snapshot(), nil
+	}
+	// The installer waits for files still in use itself, so a helper that
+	// outlives the wait is only logged.
+	if err := m.cfg.Core.WaitForProcessTreeExit(ctx, helperExitTimeout); err != nil {
+		log.Printf("astrlink: installing the update before the gateway fully exited: %v", err)
 	}
 	if err := p.installer.Install(ctx, nil); err != nil {
 		release()

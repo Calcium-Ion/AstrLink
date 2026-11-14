@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"net/url"
 	"os"
 	"reflect"
@@ -136,7 +135,11 @@ type state struct {
 	rawKeyReplaced              bool
 	dataDirectory               string
 	localKeyStorage             keystore.LocalKeyStorage
-	job                         io.Closer
+	job                         processTree
+	// retiredTrees are the trees of exited Cores whose helpers were told
+	// to stop but may still be shutting down, kept so that an update can
+	// wait until they no longer hold their executables and DLLs open.
+	retiredTrees []processTree
 }
 
 func defaultState() state {
@@ -176,8 +179,11 @@ type Manager struct {
 	resolveKey func(dataDirectory string) keystore.ResolvedKey
 	locate     func() (binary, root string, err error)
 	sessions   sessionStore
-	attachJob  func(pid int) (io.Closer, error)
+	attachJob  func(pid int) (processTree, error)
 	now        func() time.Time
+	// treeTick paces WaitForProcessTreeExit in tests; nil polls on a
+	// ticker.
+	treeTick <-chan time.Time
 
 	tests serviceTests
 }
@@ -334,11 +340,21 @@ func (s *state) clearHandshake() {
 	s.observerToken = ""
 }
 
+// clearProcessGuard ends whatever is left of Core's process tree. The
+// tree is terminated at once, so helpers still end with Core, but kept
+// until it is empty so that an update can wait for that.
 func (s *state) clearProcessGuard() {
 	if s.job != nil {
-		s.job.Close()
+		if err := s.job.Terminate(); err != nil {
+			// Closing it still ends the tree's processes.
+			fmt.Fprintf(os.Stderr, "unable to stop astrlink-core helper processes: %v\n", err)
+			s.job.Close()
+		} else {
+			s.retiredTrees = append(s.retiredTrees, s.job)
+		}
 		s.job = nil
 	}
+	s.retiredTrees, _ = pruneRetired(s.retiredTrees)
 }
 
 // Snapshot returns Core's full state.

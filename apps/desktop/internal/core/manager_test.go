@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -56,7 +55,7 @@ func newTestManager(t *testing.T) (*Manager, *fakeSessions) {
 		t.Fatal(err)
 	}
 	m.locate = func() (string, string, error) { return "astrlink-core", resources, nil }
-	m.attachJob = func(int) (io.Closer, error) { return nil, nil }
+	m.attachJob = func(int) (processTree, error) { return nil, nil }
 	return m, sessions
 }
 
@@ -592,7 +591,7 @@ func TestStartFailuresKillTheProcessAndRecordWhy(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			m, _ := newTestManager(t)
-			m.attachJob = func(int) (io.Closer, error) { return nil, tt.attach }
+			m.attachJob = func(int) (processTree, error) { return nil, tt.attach }
 			m.spawn = func(spawnSpec) (child, <-chan processEvent, error) {
 				process := &fakeChild{pid: 77, events: make(chan processEvent, 1)}
 				err := tt.spawn(process)

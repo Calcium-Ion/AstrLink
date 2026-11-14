@@ -2,7 +2,6 @@ package core
 
 import (
 	"fmt"
-	"io"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -13,7 +12,7 @@ import (
 type jobObject windows.Handle
 
 // attachJobObject puts process pid in a new kill-on-close Job Object.
-func attachJobObject(pid int) (io.Closer, error) {
+func attachJobObject(pid int) (processTree, error) {
 	job, err := newJobObject()
 	if err != nil {
 		return nil, err
@@ -51,3 +50,40 @@ func newJobObject() (jobObject, error) {
 }
 
 func (j jobObject) Close() error { return windows.CloseHandle(windows.Handle(j)) }
+
+// Terminate ends every process in the job. Windows ends them
+// asynchronously; Running tells when they are gone.
+func (j jobObject) Terminate() error {
+	if err := windows.TerminateJobObject(windows.Handle(j), 1); err != nil {
+		return fmt.Errorf("TerminateJobObject failed: %w", err)
+	}
+	return nil
+}
+
+// basicAccounting is JOBOBJECT_BASIC_ACCOUNTING_INFORMATION, which
+// golang.org/x/sys does not declare.
+type basicAccounting struct {
+	TotalUserTime             int64
+	TotalKernelTime           int64
+	ThisPeriodTotalUserTime   int64
+	ThisPeriodTotalKernelTime int64
+	TotalPageFaultCount       uint32
+	TotalProcesses            uint32
+	ActiveProcesses           uint32
+	TotalTerminatedProcesses  uint32
+}
+
+// Running is how many processes in the job have not exited yet.
+func (j jobObject) Running() (uint32, error) {
+	var accounting basicAccounting
+	if err := windows.QueryInformationJobObject(
+		windows.Handle(j),
+		windows.JobObjectBasicAccountingInformation,
+		uintptr(unsafe.Pointer(&accounting)),
+		uint32(unsafe.Sizeof(accounting)),
+		nil,
+	); err != nil {
+		return 0, fmt.Errorf("QueryInformationJobObject failed: %w", err)
+	}
+	return accounting.ActiveProcesses, nil
+}

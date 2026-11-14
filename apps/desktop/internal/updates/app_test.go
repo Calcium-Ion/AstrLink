@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -195,6 +196,17 @@ type fakeCore struct {
 	running                  bool
 	stops, starts, released  int
 	stopErr, startErr, begin error
+	// events records the install's calls in order; waitErr is what the
+	// wait for Core's helpers returns.
+	events  []string
+	waitErr error
+}
+
+func (c *fakeCore) WaitForProcessTreeExit(_ context.Context, timeout time.Duration) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.events = append(c.events, "wait "+timeout.String())
+	return c.waitErr
 }
 
 func (c *fakeCore) BeginUpdate() (func(), bool, error) {
@@ -214,6 +226,7 @@ func (c *fakeCore) StopAndWait(context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.stops++
+	c.events = append(c.events, "stop")
 	if c.stopErr != nil {
 		return c.stopErr
 	}
@@ -238,6 +251,8 @@ type fakeUpdater struct {
 	current    string
 	installErr error
 	installed  []byte
+	// core records the install among Core's calls.
+	core *fakeCore
 }
 
 type fakeInstall struct {
@@ -260,6 +275,11 @@ func (u *fakeUpdater) Check(ctx context.Context, body []byte, open Opener) (Inst
 }
 
 func (i *fakeInstall) Install(ctx context.Context, _ func(int64, int64)) error {
+	if i.u.core != nil {
+		i.u.core.mu.Lock()
+		i.u.core.events = append(i.u.core.events, "install")
+		i.u.core.mu.Unlock()
+	}
 	if i.u.installErr != nil {
 		return i.u.installErr
 	}
@@ -293,6 +313,7 @@ func newHarness(t *testing.T, current string, configure func(*Config)) *harness 
 	t.Helper()
 	h := &harness{t: t, releases: newFakeReleases(t), core: &fakeCore{running: true},
 		updater: &fakeUpdater{current: current}, values: prefs.Default(18317), now: noon}
+	h.updater.core = h.core
 	h.values.Updates.AutoDownload = false
 	h.server = httptest.NewServer(h.releases)
 	t.Cleanup(h.server.Close)
@@ -572,6 +593,10 @@ func TestInstallStopsCoreAndRelaunches(t *testing.T) {
 	if h.core.stops != 1 || h.core.starts != 0 || h.relaunched != 1 {
 		t.Fatalf("core stops %d starts %d relaunched %d", h.core.stops, h.core.starts, h.relaunched)
 	}
+	// Core's helpers exit before the installer replaces their files.
+	if want := []string{"stop", "wait 10s", "install"}; !slices.Equal(h.core.events, want) {
+		t.Fatalf("events %q, want %q", h.core.events, want)
+	}
 	if string(h.updater.installed) != string(h.releases.files[repositoryPath+"v1.1.0/astrlink-1.1.0-"+testTarget+".tar.gz"]) {
 		t.Fatal("the installer did not read the verified download")
 	}
@@ -580,6 +605,21 @@ func TestInstallStopsCoreAndRelaunches(t *testing.T) {
 	}
 	if h.releases.count("github.com") > 3 {
 		t.Fatalf("install downloaded again: %d requests", h.releases.count("github.com"))
+	}
+}
+
+func TestHelpersStillRunningAfterTheWaitDoNotStopTheInstall(t *testing.T) {
+	h := newHarness(t, "1.0.0", nil)
+	h.core.waitErr = errors.New("2 astrlink-core helper process(es) still running after 10000 ms")
+	h.releases.publish("1.1.0", false)
+	h.check()
+	h.m.Download(context.Background())
+	s, err := h.m.Install(context.Background())
+	if err != nil || s.Phase != PhaseInstalling || s.ErrorCode != nil {
+		t.Fatal(s, err)
+	}
+	if h.relaunched != 1 || len(h.updater.installed) == 0 {
+		t.Fatal("the install did not go on after the wait timed out")
 	}
 }
 

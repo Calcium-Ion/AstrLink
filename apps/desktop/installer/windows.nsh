@@ -158,21 +158,27 @@ FunctionEnd
 ; ---------------------------------------------------------------------------
 ; Running AstrLink processes
 ;
-; Replaces the template's CheckIfAppIsRunning. That check looks only for the
-; main executable, by name, for any install and any user, and gives a killed
-; process a fixed half second before files are overwritten. Core's helper
-; processes are never checked. An update starts this installer while the app
-; is still exiting and while Core's workers may still be shutting down, so
-; File could find an executable or DirectML.dll still in use and stop with
-; "Error opening file for writing".
+; MyGo's CloseApp quits processes whose path starts with $INSTDIR and goes on
+; as soon as they are gone. Core's workers may still be shutting down after
+; Core, an exited process can keep its image mapped for a moment, and
+; security software may still hold a file it scans, so File could find
+; bin\DirectML.dll or an executable still in use and stop with "Error opening
+; file for writing".
 ;
-; This check matches only the current user's processes whose image is one of
-; this package's executables in $INSTDIR, waits for them to exit, and then
-; waits until every file the installer replaces can be written. Processes of
-; other users or of AstrLink copies in other directories are left alone. An
-; image matches by file identity, so a junction, subst drive or short name in
-; either path does not hide a running copy.
+; Before MyGo's section runs, this one waits for the current user's processes
+; whose image is AstrLink.exe or one of Core's helpers in $INSTDIR\bin to
+; exit, ends those left, and then waits until AstrLink.exe and every file in
+; $INSTDIR\bin can be written. Images match by file identity, so a junction,
+; subst drive or short name in either path does not hide a running copy.
+; Other users' processes and AstrLink copies in other directories are left
+; alone. The uninstaller runs the same check before it removes $INSTDIR.
 ; ---------------------------------------------------------------------------
+
+; MyGo names the executable after the app (name in mygo.config.ts).
+!define ASTRLINK_EXE "AstrLink.exe"
+; MyGo's own CloseApp texts.
+!define ASTRLINK_RUNNING "AstrLink is running. Close it to continue?"
+!define ASTRLINK_STUCK "AstrLink is still running. Quit it, then try again."
 
 ; PROCESSENTRY32W is read with its 32-bit layout below, and handles that may
 ; be INVALID_HANDLE_VALUE are returned as signed integers.
@@ -267,14 +273,12 @@ Function ${UN}AstrLinkFileId
   Exch $0
 FunctionEnd
 
-; Pops an action (0 counts, 1 ends the processes) and the main executable's
-; file name. Pushes how many matching processes are still running: those of
-; the current user whose image is the main executable or one of Core's helper
-; executables in $INSTDIR.
+; Pops an action (0 counts, 1 ends the processes). Pushes how many matching
+; processes are still running: the current user's whose image is
+; $INSTDIR\AstrLink.exe or one of Core's helpers in $INSTDIR\bin.
 Function ${UN}AstrLinkProcesses
   Exch $1
-  Exch
-  Exch $0
+  Push $0
   Push $2
   Push $3
   Push $4
@@ -292,21 +296,28 @@ Function ${UN}AstrLinkProcesses
     System::Call 'kernel32::Process32FirstW(p r2, p r3) i .r4'
     ${DoWhile} $4 <> 0
       System::Call '*$3(i, i, i .r5, i, i, i, i, i, i, &w260 .r6)'
-      ${If} $6 == $0
-      ${OrIf} $6 == "astrlink-core.exe"
+      ; $0: where this package keeps a program of that name.
+      StrCpy $0 ""
+      ${If} $6 == "${ASTRLINK_EXE}"
+        StrCpy $0 "$INSTDIR\$6"
+      ${EndIf}
+      ${If} $6 == "astrlink-core.exe"
       ${OrIf} $6 == "astrlink-privacy-worker.exe"
       ${OrIf} $6 == "astrlink-classifier-worker.exe"
       ${OrIf} $6 == "astrlink-cli.exe"
+        StrCpy $0 "$INSTDIR\bin\$6"
+      ${EndIf}
+      ${If} $0 != ""
         ; PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE
         System::Call 'kernel32::OpenProcess(i 0x101000, i 0, i r5) p .r7'
         ${If} $7 <> 0
           System::Call 'kernel32::QueryFullProcessImageNameW(p r7, i 0, w .R0, *i ${NSIS_MAX_STRLEN}) i .r4'
           StrCpy $8 0
           ${If} $4 <> 0
-            ${If} $R0 == "$INSTDIR\$6"
+            ${If} $R0 == $0
               StrCpy $8 1
             ${Else}
-              Push "$INSTDIR\$6"
+              Push $0
               Call ${UN}AstrLinkFileId
               Pop $4
               ${If} $4 != ""
@@ -351,7 +362,7 @@ Function ${UN}AstrLinkProcesses
     System::Free $3
     System::Call 'kernel32::CloseHandle(p r2)'
   ${EndIf}
-  StrCpy $0 $9
+  StrCpy $1 $9
   Pop $R0
   Pop $9
   Pop $8
@@ -361,9 +372,8 @@ Function ${UN}AstrLinkProcesses
   Pop $4
   Pop $3
   Pop $2
-  Exch
-  Pop $1
-  Exch $0
+  Pop $0
+  Exch $1
 FunctionEnd
 
 ; Pops a path and pushes 1 when the file exists but cannot be opened for
@@ -387,56 +397,71 @@ Function ${UN}AstrLinkFileBusy
   Pop $1
   Exch $0
 FunctionEnd
-!macroend
-!insertmacro ASTRLINK_PROCESS_FUNCTIONS ""
-!insertmacro ASTRLINK_PROCESS_FUNCTIONS "un."
 
-; Waits, within the shared deadline in $R4 (quarter seconds), until
-; $INSTDIR\FILE can be written.
-!macro AstrLinkWaitForFile FILE
+; Pops a path and waits, within the deadline shared through $R4 (quarter
+; seconds, 20 s in all), until the file can be written.
+Function ${UN}AstrLinkWaitForFile
+  Exch $0
+  Push $1
   ${Do}
-    Push "$INSTDIR\${FILE}"
-    Call ${ASTRLINK_FN}AstrLinkFileBusy
-    Pop $R0
-    ${If} $R0 = 0
+    Push $0
+    Call ${UN}AstrLinkFileBusy
+    Pop $1
+    ${If} $1 = 0
     ${OrIf} $R4 >= 80
       ${ExitDo}
     ${EndIf}
-    ${If} $R5 != "${FILE}"
-      DetailPrint "Waiting for ${FILE} to be released..."
-      StrCpy $R5 "${FILE}"
+    ${If} $R5 != $0
+      DetailPrint "Waiting for $0 to be released..."
+      StrCpy $R5 $0
     ${EndIf}
     Sleep 250
     IntOp $R4 $R4 + 1
   ${Loop}
-!macroend
+  Pop $1
+  Pop $0
+FunctionEnd
 
-!macroundef CheckIfAppIsRunning
-!macro CheckIfAppIsRunning executableName productName
-  ; Only the current user's processes are matched; a per-machine install
-  ; would also need other users' copies to exit.
-  !if "${INSTALLMODE}" != "currentUser"
-    !error "CheckIfAppIsRunning expects a current-user install"
-  !endif
-  !define /redef ASTRLINK_CHECK_ID ${__LINE__}
-  !ifdef __UNINSTALL__
-    !define /redef ASTRLINK_FN "un."
-  !else
-    !define /redef ASTRLINK_FN ""
-  !endif
-  nsis_tauri_utils::StrReplace "$(appRunning)" "{{product_name}}" "${productName}"
-  Pop $R1
-  nsis_tauri_utils::StrReplace "$(appRunningOkKill)" "{{product_name}}" "${productName}"
-  Pop $R2
-  nsis_tauri_utils::StrReplace "$(failedToKillApp)" "{{product_name}}" "${productName}"
-  Pop $R3
-  Push "${executableName}"
+; Waits until AstrLink.exe and every file in $INSTDIR\bin can be written;
+; File reports anything still locked after that.
+Function ${UN}AstrLinkWaitForFiles
+  Push $0
+  Push $1
+  Push $R4
+  Push $R5
+  StrCpy $R4 0
+  StrCpy $R5 ""
+  Push "$INSTDIR\${ASTRLINK_EXE}"
+  Call ${UN}AstrLinkWaitForFile
+  FindFirst $0 $1 "$INSTDIR\bin\*"
+  ${DoWhile} $1 != ""
+    ${If} $1 != "."
+    ${AndIf} $1 != ".."
+    ${AndIfNot} ${FileExists} "$INSTDIR\bin\$1\*.*"
+      Push "$INSTDIR\bin\$1"
+      Call ${UN}AstrLinkWaitForFile
+    ${EndIf}
+    FindNext $0 $1
+  ${Loop}
+  FindClose $0
+  Pop $R5
+  Pop $R4
+  Pop $1
+  Pop $0
+FunctionEnd
+
+; Ends the running AstrLink processes of this install and waits until their
+; files are free.
+Function ${UN}AstrLinkStopProcesses
+  Push $R0
+  Push $R4
   Push 0
-  Call ${ASTRLINK_FN}AstrLinkProcesses
+  Call ${UN}AstrLinkProcesses
   Pop $R0
-  ; An updating app exits by itself right after starting this installer,
-  ; once it has stopped Core. Give it and Core's workers time to finish.
-  ${If} $UpdateMode = 1
+  ; An app that quits by itself, and Core's workers after Core, need a
+  ; moment; a silent install, as scripts and updates run, waits 10 s for
+  ; them before ending them.
+  ${If} ${Silent}
     StrCpy $R4 0
     ${DoWhile} $R0 > 0
       ${If} $R4 >= 40
@@ -444,46 +469,41 @@ FunctionEnd
       ${EndIf}
       Sleep 250
       IntOp $R4 $R4 + 1
-      Push "${executableName}"
       Push 0
-      Call ${ASTRLINK_FN}AstrLinkProcesses
+      Call ${UN}AstrLinkProcesses
       Pop $R0
     ${Loop}
   ${EndIf}
   ${If} $R0 > 0
-    IfSilent astrlink_kill_${ASTRLINK_CHECK_ID} 0
-    ${IfThen} $PassiveMode != 1 ${|} MessageBox MB_OKCANCEL $R2 IDOK astrlink_kill_${ASTRLINK_CHECK_ID} IDCANCEL astrlink_cancel_${ASTRLINK_CHECK_ID} ${|}
-    astrlink_kill_${ASTRLINK_CHECK_ID}:
-      Push "${executableName}"
-      Push 1
-      Call ${ASTRLINK_FN}AstrLinkProcesses
-      Pop $R0
-      ${If} $R0 > 0
-        IfSilent 0 astrlink_ui_${ASTRLINK_CHECK_ID}
-          System::Call 'kernel32::AttachConsole(i -1) i .r0'
-          ${If} $0 != 0
-            System::Call 'kernel32::GetStdHandle(i -11) i .r0'
-            System::Call 'kernel32::SetConsoleTextAttribute(i r0, i 0x0004)'
-            FileWrite $0 "$R1$\n"
-          ${EndIf}
-          Abort
-        astrlink_ui_${ASTRLINK_CHECK_ID}:
-          Abort $R3
-      ${EndIf}
-      Goto astrlink_checked_${ASTRLINK_CHECK_ID}
-    astrlink_cancel_${ASTRLINK_CHECK_ID}:
-      Abort $R1
+    IfSilent astrlink_end
+    MessageBox MB_OKCANCEL|MB_ICONEXCLAMATION "${ASTRLINK_RUNNING}" IDOK astrlink_end
+    Abort
+    astrlink_end:
+    Push 1
+    Call ${UN}AstrLinkProcesses
+    Pop $R0
+    ${If} $R0 > 0
+      MessageBox MB_OK|MB_ICONSTOP "${ASTRLINK_STUCK}" /SD IDOK
+      SetErrorLevel 2
+      Quit
+    ${EndIf}
   ${EndIf}
-  astrlink_checked_${ASTRLINK_CHECK_ID}:
-  ; An exited process can keep its image mapped for a moment, and security
-  ; software may still hold a file it is scanning. Wait until every file the
-  ; installer replaces can be written; File reports anything still locked.
-  StrCpy $R4 0
-  StrCpy $R5 ""
-  !insertmacro AstrLinkWaitForFile "${executableName}"
-  !insertmacro AstrLinkWaitForFile "astrlink-core.exe"
-  !insertmacro AstrLinkWaitForFile "astrlink-privacy-worker.exe"
-  !insertmacro AstrLinkWaitForFile "astrlink-classifier-worker.exe"
-  !insertmacro AstrLinkWaitForFile "astrlink-cli.exe"
-  !insertmacro AstrLinkWaitForFile "DirectML.dll"
+  Call ${UN}AstrLinkWaitForFiles
+  Pop $R4
+  Pop $R0
+FunctionEnd
+!macroend
+!insertmacro ASTRLINK_PROCESS_FUNCTIONS ""
+!insertmacro ASTRLINK_PROCESS_FUNCTIONS "un."
+
+; MyGo includes this file ahead of its own section, so this hidden section
+; runs first, before CloseApp and the File commands.
+Section "-AstrLinkProcesses"
+  Call AstrLinkStopProcesses
+SectionEnd
+
+; Runs in MyGo's uninstall section, after CloseApp and before $INSTDIR is
+; removed.
+!macro customUnInstall
+  Call un.AstrLinkStopProcesses
 !macroend
