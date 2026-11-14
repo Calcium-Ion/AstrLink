@@ -18,6 +18,7 @@ import {
   PET_CHARACTERS,
   TOY_LEVELS,
   TOY_SIZES,
+  toysOn,
   type DesktopToysPreferences,
   type PetCharacter,
   type ToySize,
@@ -231,10 +232,10 @@ export function DesktopToysSettings({
           actions={
             <Switch
               aria-label={name}
-              checked={value.on.pet}
+              checked={toysOn(value).pet}
               disabled={disabled}
               onCheckedChange={(pet) =>
-                onChange({ ...value, on: { ...value.on, pet } })
+                onChange({ ...value, switched: { ...value.switched, pet } })
               }
             />
           }

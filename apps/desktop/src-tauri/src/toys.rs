@@ -368,7 +368,7 @@ pub fn apply(app: &AppHandle) {
         reconcile(app);
     }
     emit_toys(app, PREFS_EVENT, prefs.clone());
-    if prefs.toys.on.any() && sys::available() {
+    if prefs.toys.on().any() && sys::available() {
         start_feed(app);
         start_poll(app);
     }
@@ -399,7 +399,7 @@ fn start_feed(app: &AppHandle) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         loop {
-            if !prefs_of(&app).toys.on.any() {
+            if !prefs_of(&app).toys.on().any() {
                 break;
             }
             feed_once(&app).await;
@@ -620,7 +620,7 @@ fn reconcile(app: &AppHandle) {
             if let Some(state) = toys_state(&app) {
                 state.lock().geometry = Some(geometry.clone());
             }
-            let on = prefs_of(&app).toys.on.pet;
+            let on = prefs_of(&app).toys.on().pet;
             match (on, app.get_webview_window(PET)) {
                 (true, None) => {
                     let rect = placement(&geometry, homes(&app).get(PET).copied());
@@ -768,7 +768,8 @@ fn poll(app: AppHandle) {
         std::thread::sleep(TICK);
         tick += 1;
         let toys = prefs_of(&app).toys;
-        if !toys.on.any() {
+        let on = toys.on();
+        if !on.any() {
             break;
         }
         let (point, down) = probe.pointer();
@@ -782,7 +783,7 @@ fn poll(app: AppHandle) {
         if let Some(point) = point {
             track_pointer(&app, point, down);
         }
-        let pets: Vec<&str> = [(PET, toys.on.pet)]
+        let pets: Vec<&str> = [(PET, on.pet)]
             .into_iter()
             .filter(|&(label, on)| on && app.get_webview_window(label).is_some())
             .map(|(label, _)| label)

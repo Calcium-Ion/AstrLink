@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   defaultDesktopToys,
   defaultTrayPreferences,
+  toysOn,
   type DesktopToysPreferences,
 } from "../preferences-model";
 import { defaultUpdatePreferences } from "../update-model";
@@ -29,9 +30,11 @@ vi.mock("./DesktopToysSettings", () => ({
     onChange: (next: DesktopToysPreferences) => void;
   }) => (
     <button
-      data-pet={String(value.on.pet)}
+      data-pet={String(toysOn(value).pet)}
       disabled={disabled}
-      onClick={() => onChange({ ...value, on: { ...value.on, pet: true } })}
+      onClick={() =>
+        onChange({ ...value, switched: { pet: !toysOn(value).pet } })
+      }
       type="button"
     >
       pet
@@ -96,19 +99,19 @@ describe("DesktopToysPage", () => {
     await render();
     expect(container.querySelector("h1")?.textContent).toBe("桌宠");
     expect(container.textContent).not.toContain("小人");
-    expect(toggle().dataset.pet).toBe("false");
+    expect(toggle().dataset.pet).toBe("true");
   });
 
   it("saves a change on its own and keeps what the host saved", async () => {
     await render();
     const saved = {
       ...defaultDesktopToys(),
-      on: { ...defaultDesktopToys().on, pet: true },
+      switched: { pet: false },
     };
     bridge.updateDesktopToys.mockResolvedValue(snapshot(saved));
     await act(async () => toggle().click());
     expect(bridge.updateDesktopToys).toHaveBeenCalledWith(saved);
-    expect(toggle().dataset.pet).toBe("true");
+    expect(toggle().dataset.pet).toBe("false");
     expect(container.querySelector('[role="status"]')).toBeNull();
   });
 
@@ -116,7 +119,7 @@ describe("DesktopToysPage", () => {
     await render();
     bridge.updateDesktopToys.mockRejectedValue(new Error("disk full"));
     await act(async () => toggle().click());
-    expect(toggle().dataset.pet).toBe("false");
+    expect(toggle().dataset.pet).toBe("true");
     expect(container.textContent).toContain("disk full");
     expect(toggle().disabled).toBe(false);
   });

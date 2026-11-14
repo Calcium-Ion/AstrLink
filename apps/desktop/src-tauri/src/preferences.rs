@@ -228,13 +228,21 @@ pub enum ToyLevel {
     Lively,
 }
 
-/// Which desktop toys are out. Missing ones are off; only a new macOS install
-/// starts with the big pet out (see `load_with_fallback_locale`).
+/// The toy switches flipped by hand. One never flipped is left out and
+/// follows its default, so a new default reaches everyone who never chose.
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 // Not `deny_unknown_fields`, like the block it sits in.
 #[serde(default)]
+pub struct DesktopToysSwitched {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pet: Option<bool>,
+}
+
+/// Which desktop toys are out: each switch as flipped, or its default.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DesktopToysOn {
-    /// One big girl for every conversation, to pat, poke and throw.
+    /// One big girl for every conversation, to pat, poke and throw; out
+    /// unless switched off.
     pub pet: bool,
 }
 
@@ -306,8 +314,18 @@ pub struct DesktopToysPreferences {
     pub status: bool,
     /// She celebrates the day's token milestones.
     pub milestone: bool,
-    pub on: DesktopToysOn,
+    /// Earlier builds saved every switch under `on`, defaults included, so a
+    /// saved `on` says nothing about a choice; it is no longer read.
+    pub switched: DesktopToysSwitched,
     pub pet: DesktopToyPet,
+}
+
+impl DesktopToysPreferences {
+    pub fn on(&self) -> DesktopToysOn {
+        DesktopToysOn {
+            pet: self.switched.pet.unwrap_or(true),
+        }
+    }
 }
 
 impl Default for DesktopToysPreferences {
@@ -317,7 +335,7 @@ impl Default for DesktopToysPreferences {
             orb: true,
             status: true,
             milestone: true,
-            on: DesktopToysOn::default(),
+            switched: DesktopToysSwitched::default(),
             pet: DesktopToyPet::default(),
         }
     }
@@ -479,15 +497,12 @@ impl PreferencesStore {
                 ),
             },
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                let mut values = fallback(fallback_locale);
+                let values = fallback(fallback_locale);
                 // Save new-install defaults before Core creates its database, so
                 // subsequent starts keep the same port. Do not migrate old installs.
                 let warning = if has_existing_data {
                     None
                 } else {
-                    // A new install greets you with the big pet; an old one that
-                    // never saved keeps every toy off.
-                    values.desktop_toys.on.pet = cfg!(target_os = "macos");
                     persist_atomic(&path, &values).err()
                 };
                 (values, warning)
@@ -813,9 +828,8 @@ mod tests {
         let directory = temporary_directory("missing");
         let store = load(&directory);
         let snapshot = store.snapshot();
-        let mut expected = Preferences::default();
-        expected.desktop_toys.on.pet = cfg!(target_os = "macos");
-        assert_eq!(snapshot.values, expected);
+        assert_eq!(snapshot.values, Preferences::default());
+        assert!(snapshot.values.desktop_toys.on().pet);
         assert_eq!(snapshot.values.locale, Locale::En);
         assert_eq!(snapshot.values.theme, ThemePreference::System);
         assert_eq!(
@@ -887,7 +901,7 @@ mod tests {
         .snapshot();
         assert_eq!(snapshot.values.inference_port, 8317);
         assert_eq!(snapshot.load_warning, None);
-        assert!(!snapshot.values.desktop_toys.on.any());
+        assert!(snapshot.values.desktop_toys.on().pet);
         assert!(!config_directory.join(FILE_NAME).exists());
         fs::remove_dir_all(directory).unwrap();
     }
@@ -900,15 +914,11 @@ mod tests {
                 .snapshot();
         assert_eq!(snapshot.values.locale, Locale::ZhCN);
         assert_eq!(snapshot.load_warning, None);
-        // A new install on macOS starts with the big pet out, and keeps it.
-        assert_eq!(
-            snapshot.values.desktop_toys.on.pet,
-            cfg!(target_os = "macos")
-        );
-        let again =
-            PreferencesStore::load_with_fallback_locale(&directory, &directory, Locale::ZhCN)
-                .snapshot();
-        assert_eq!(again.values.desktop_toys.on.pet, cfg!(target_os = "macos"));
+        // A new install has the big pet out without saving her switch.
+        assert!(snapshot.values.desktop_toys.on().pet);
+        let saved: serde_json::Value =
+            serde_json::from_slice(&fs::read(directory.join(FILE_NAME)).unwrap()).unwrap();
+        assert_eq!(saved["desktop_toys"]["switched"], serde_json::json!({}));
 
         fs::create_dir_all(&directory).unwrap();
         fs::write(directory.join(FILE_NAME), b"{no").unwrap();
@@ -917,8 +927,7 @@ mod tests {
                 .snapshot();
         assert_eq!(snapshot.values.locale, Locale::ZhCN);
         assert!(snapshot.load_warning.is_some());
-        // A file that cannot be read is not a new install.
-        assert!(!snapshot.values.desktop_toys.on.any());
+        assert!(snapshot.values.desktop_toys.on().pet);
 
         // An explicit choice outlives other invalid settings in the same file.
         fs::write(
@@ -1092,7 +1101,7 @@ mod tests {
     }
 
     #[test]
-    fn desktop_toys_default_off_for_existing_files_and_save_on_their_own() {
+    fn desktop_toys_keep_only_hand_flipped_switches_and_save_on_their_own() {
         let directory = temporary_directory("toys-legacy");
         fs::create_dir_all(&directory).unwrap();
         // A preferences file written before the desktop toys existed.
@@ -1106,7 +1115,7 @@ mod tests {
         assert_eq!(snapshot.load_warning, None);
         let toys = &snapshot.values.desktop_toys;
         assert_eq!(toys, &DesktopToysPreferences::default());
-        assert!(!toys.on.any());
+        assert!(toys.on().pet);
         assert_eq!(toys.level, ToyLevel::Normal);
         assert!(toys.orb && toys.status && toys.milestone);
         assert!(toys.pet.grab && toys.pet.reply && toys.pet.failover);
@@ -1123,19 +1132,37 @@ mod tests {
 
         // A partial block keeps the defaults it leaves out.
         let partial: DesktopToysPreferences =
-            serde_json::from_str(r#"{"on":{"pet":true},"level":"lively","orb":false}"#).unwrap();
-        assert!(partial.on.pet && partial.on.any());
+            serde_json::from_str(r#"{"level":"lively","orb":false}"#).unwrap();
+        assert!(partial.on().pet && partial.on().any());
         assert_eq!(partial.level, ToyLevel::Lively);
         assert!(partial.pet.grab && partial.status && !partial.orb);
+
+        // An earlier build saved every switch, defaults included: its `on`
+        // is not a choice, so the pet follows her default.
+        let earlier: DesktopToysPreferences =
+            serde_json::from_str(r#"{"on":{"pet":false},"level":"calm"}"#).unwrap();
+        assert!(earlier.on().pet);
+        assert_eq!(earlier.switched, DesktopToysSwitched::default());
+        assert_eq!(earlier.level, ToyLevel::Calm);
+
+        // A switch flipped by hand sticks, either way.
+        let off: DesktopToysPreferences =
+            serde_json::from_str(r#"{"switched":{"pet":false}}"#).unwrap();
+        assert!(!off.on().pet && !off.on().any());
+        let on: DesktopToysPreferences =
+            serde_json::from_str(r#"{"switched":{"pet":true}}"#).unwrap();
+        assert!(on.on().pet);
 
         // The toys save alone; a stale general save does not undo them.
         let stale_general = store.snapshot().values;
         let mut toys = DesktopToysPreferences::default();
-        toys.on.pet = true;
+        toys.switched.pet = Some(false);
         toys.level = ToyLevel::Calm;
         store.replace_desktop_toys(toys.clone()).unwrap();
         store.replace(stale_general).unwrap();
-        assert_eq!(load(&directory).snapshot().values.desktop_toys, toys);
+        let saved = load(&directory).snapshot().values.desktop_toys;
+        assert_eq!(saved, toys);
+        assert!(!saved.on().pet);
 
         assert!(
             serde_json::from_str::<DesktopToysPreferences>(r#"{"pet":{"size":"huge"}}"#).is_err()
@@ -1143,14 +1170,16 @@ mod tests {
         assert!(serde_json::from_str::<DesktopToysPreferences>(r#"{"pet":{"egg":1}}"#).is_err());
         // Toys this build does not have are left out, not refused.
         let more: DesktopToysPreferences = serde_json::from_str(
-            r#"{"on":{"pet":true,"roam":true},"roam":{"size":"large"},"pet":{"size":"small"}}"#,
+            r#"{"switched":{"pet":false,"roam":true},"roam":{"size":"large"},"pet":{"size":"small"}}"#,
         )
         .unwrap();
-        assert!(more.on.pet);
+        assert!(!more.on().pet);
         assert_eq!(more.pet.size, ToySize::Small);
+        // Nothing flipped, nothing saved: the defaults stay free to change.
         let json = serde_json::to_value(Preferences::default()).unwrap();
         assert_eq!(json["desktop_toys"]["level"], "normal");
-        assert_eq!(json["desktop_toys"]["on"]["pet"], false);
+        assert_eq!(json["desktop_toys"]["switched"], serde_json::json!({}));
+        assert!(json["desktop_toys"].get("on").is_none());
         let _ = fs::remove_dir_all(directory);
     }
 

@@ -215,8 +215,9 @@ export function build(kit: Kit, pose: KitPose): Built {
 
   const grid = kit.base.join("").split("");
   const frame = kit.frames[name];
-  if (frame) overlay(kit, grid, frame);
+  // The face goes on first, so a hand at her chin stays in front of it.
   if (face) overlay(kit, grid, face);
+  if (frame) overlay(kit, grid, frame);
   if (leg >= 0 && kit.legs[leg]) lift(kit, grid, kit.legs[leg]);
   if (curl && kit.curl) sway(kit, grid, kit.curl, curl);
   for (const b of worn) {

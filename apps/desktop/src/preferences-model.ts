@@ -120,7 +120,8 @@ export interface DesktopToysPreferences {
   status: boolean;
   /** She celebrates the day's token milestones. */
   milestone: boolean;
-  on: { pet: boolean };
+  /** Switches flipped by hand; one left out follows its default. */
+  switched: Partial<DesktopToysOn>;
   pet: {
     size: ToySize;
     character: PetCharacter;
@@ -132,14 +133,24 @@ export interface DesktopToysPreferences {
   };
 }
 
-/** Mirrors `DesktopToysPreferences::default()`: the pet off. */
+/** Which toys are out; mirrors `DesktopToysOn`. */
+export interface DesktopToysOn {
+  pet: boolean;
+}
+
+/** Each switch as flipped, or its default; mirrors `DesktopToysPreferences::on`. */
+export function toysOn(toys: DesktopToysPreferences): DesktopToysOn {
+  return { pet: toys.switched.pet ?? true };
+}
+
+/** Mirrors `DesktopToysPreferences::default()`: nothing flipped yet. */
 export function defaultDesktopToys(): DesktopToysPreferences {
   return {
     level: "normal",
     orb: true,
     status: true,
     milestone: true,
-    on: { pet: false },
+    switched: {},
     pet: {
       size: "normal",
       character: "auto",
@@ -183,7 +194,11 @@ export function parseDesktopToys(
   path: string,
 ): DesktopToysPreferences {
   const toys = objectAt(value, path);
-  exactKeys(toys, ["level", "orb", "status", "milestone", "on", "pet"], path);
+  exactKeys(
+    toys,
+    ["level", "orb", "status", "milestone", "switched", "pet"],
+    path,
+  );
   if (
     typeof toys.level !== "string" ||
     !(TOY_LEVELS as readonly string[]).includes(toys.level)
@@ -194,7 +209,12 @@ export function parseDesktopToys(
     if (typeof toys[key] !== "boolean")
       invalid(`${path}.${key}`, "expected boolean");
   }
-  toyBlock(toys.on, `${path}.on`, ["pet"]);
+  const switched = objectAt(toys.switched, `${path}.switched`);
+  for (const [key, v] of Object.entries(switched)) {
+    if (key !== "pet") invalid(`${path}.switched.${key}`, "unexpected field");
+    if (typeof v !== "boolean")
+      invalid(`${path}.switched.${key}`, "expected boolean");
+  }
   toyBlock(toys.pet, `${path}.pet`, [
     "size",
     "character",
