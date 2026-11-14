@@ -112,7 +112,21 @@
     "output": "API provider response",
     "requestFailed": "Could not run the API provider test.",
     "notConnected": "Sign in to this subscription before testing.",
-    "unsupported": "No directly supported text generation protocol is configured. Configure a native or delegated protocol first."
+    "unsupported": "No directly supported text generation protocol is configured. Configure a native or delegated protocol first.",
+    "media": {
+      "open": "Open",
+      "download": "Download",
+      "saved": "Saved to {{path}}",
+      "saveFailed": "Could not save the file.",
+      "kinds": {
+        "image": "Image",
+        "video": "Video",
+        "audio": "Audio",
+        "file": "File"
+      }
+    },
+    "emptyTitle": "No test result yet",
+    "generating": "Waiting for the generation to finish (up to 5 minutes)…"
   },
   "common": {
     "previousPage": "Previous page",
@@ -152,7 +166,11 @@
     "discardUnsaved": "Discard unsaved changes?",
     "today": "Today",
     "yesterday": "Yesterday",
-    "checking": "Checking…"
+    "checking": "Checking…",
+    "justNow": "just now",
+    "minutesAgo": "{{count}} min ago",
+    "hoursAgo": "{{count}} h ago",
+    "daysAgo": "{{count}} d ago"
   },
   "nav": {
     "collapse": "Collapse sidebar",
@@ -171,7 +189,8 @@
     "settings": "Settings",
     "gateway": "Gateway",
     "gatewayStatus": "Gateway {{status}}",
-    "about": "About"
+    "about": "About",
+    "plugins": "Plugins"
   },
   "chrome": {
     "bar": "Window controls",
@@ -377,7 +396,8 @@
       "general": "General",
       "gateway": "Gateway & network",
       "tray": "Tray panel",
-      "sync": "Sync and backup"
+      "sync": "Sync and backup",
+      "metadata": "Metadata"
     },
     "sync": {
       "title": "Sync and backup",
@@ -1358,6 +1378,12 @@
       "messages": "Used by Claude Code",
       "gemini": "Used by Gemini CLI"
     },
+    "groupPlugins": "Plugins",
+    "kindPickerPluginHint": "Adapted by the {{plugin}} plugin",
+    "taskUpstream": "The upstream is another New API gateway",
+    "taskUpstreamHelp": "Sends requests to another New API gateway with the same plugin installed: enter that gateway's address and its token as the key.",
+    "serviceAccountKey": "Service account JSON",
+    "serviceAccountKeyHelp": "Paste the whole Google Cloud service account key file. The gateway exchanges it for access tokens and never hands it to the plugin.",
     "vertexProject": "Google Cloud project ID",
     "vertexLocation": "Location",
     "vertexLocationHint": "Use global, us, eu, or a region such as us-central1. The model must be available there; requests never fall back to another location.",
@@ -1376,7 +1402,40 @@
     "keyFileReplace": "Replace",
     "vertexKeyProject": "Key project: {{project}}",
     "vertexCredentialSaved": "Saved service account key",
-    "reorderCardKeys": "Drag cards to reorder; or focus the handle and use the arrow keys"
+    "reorderCardKeys": "Drag cards to reorder; or focus the handle and use the arrow keys",
+    "pluginSettings": "Plugin settings",
+    "pluginLogin": {
+      "account": "Account",
+      "saveFirst": "Save this provider first, then log in to its account.",
+      "loggedIn": "Logged in",
+      "notLoggedIn": "Not logged in",
+      "needsLogin": "Needs a new login",
+      "login": "Log in",
+      "loginAgain": "Log in again",
+      "title": "Log in",
+      "starting": "Starting the login…",
+      "inBrowser": "The login page opened in your browser. This goes on by itself once you log in.",
+      "openPage": "Open the login page",
+      "pasteHint": "Log in in your browser, then copy the address of the page it ends on below.",
+      "pasted": "Address the browser ended on",
+      "continue": "Continue",
+      "deviceHint": "Open the login page and enter the code below. This goes on by itself once you are done.",
+      "failed": "The login failed.",
+      "retry": "Start again"
+    },
+    "pluginBalance": {
+      "label": "Balance",
+      "status": "Status",
+      "reading": "Reading…",
+      "unread": "Not read yet",
+      "resting": "Paused",
+      "updated": "Updated {{time}}",
+      "read": "Read the balance now",
+      "unlimited": "Unlimited",
+      "window": "Quota",
+      "resets": "resets {{time}}",
+      "failed": "Could not read the balance."
+    }
   },
   "packages": {
     "subscriptions": "Subscriptions",
@@ -1635,6 +1694,7 @@
     "antigravity_subscription": "Antigravity subscription",
     "copilot_subscription": "GitHub Copilot subscription",
     "droid_subscription": "Droid subscription",
+    "plugin": "Plugin provider",
     "vertex": "Vertex AI"
   },
   "subscription": {
@@ -1693,6 +1753,7 @@
     "minimaxDescription": "MiniMax platform API key with usage-based billing. Use your platform API key.",
     "doubaoDescription": "Volcengine Ark API key with usage-based billing. Defaults to Beijing; add an enabled model ID or inference endpoint ID (ep-…).",
     "xaiDescription": "xAI platform API key with usage-based billing; supports Grok Chat, Responses, and model discovery.",
+    "pluginDescription": "A provider a plugin adapts: the plugin builds the requests and reads the answers, while the gateway sends them with the key and fails over.",
     "vertexDescription": "Use a service account for Gemini, Claude and compatible chat models, or an Express API key for Gemini."
   },
   "usage": {
@@ -3013,7 +3074,8 @@
       "UPSTREAM": "UPSTREAM",
       "RETRY": "RETRY",
       "RESTORE": "RESTORE",
-      "RESULT": "RESULT"
+      "RESULT": "RESULT",
+      "PLUGIN": "PLUGIN"
     },
     "lanes": {
       "client": "Client",
@@ -3125,7 +3187,8 @@
       "find": "Search keys or values; Enter jumps to the next hit and folded parts open on their own. Press {{shortcut}} to come back here any time.",
       "pinTitle": "Keep on top",
       "pin": "Float above other windows and hold this call. The next call you pick opens its own window."
-    }
+    },
+    "plugin": "Plugins"
   },
   "find": {
     "label": "Find in content",
@@ -3203,10 +3266,6 @@
     "showLessSubscriptions": "Show less",
     "hourlyChart": "Tokens per hour today",
     "hourlyPeak": "Peak {{hour}}:00 · {{tokens}}",
-    "justNow": "just now",
-    "minutesAgo": "{{count}} min ago",
-    "hoursAgo": "{{count}} h ago",
-    "daysAgo": "{{count}} d ago",
     "updatedAgo": "Updated {{ago}}",
     "refresh": "Refresh",
     "version": "AstrLink {{version}}",
@@ -3258,7 +3317,8 @@
     "window": {
       "trajectoryInspector": "AstrLink · Trajectory call",
       "trajectoryInspectorPinned": "AstrLink · Trajectory call (Pinned)",
-      "rawAccessApproval": "AstrLink · Raw access requests"
+      "rawAccessApproval": "AstrLink · Raw access requests",
+      "pluginApproval": "AstrLink · Plugin confirmation"
     },
     "rawAccess": {
       "notificationTitle": "An agent asks to read raw content",
@@ -4686,13 +4746,26 @@
       "missing": "missing",
       "unknownReason": "unknown reason",
       "unexpectedValue": "unexpected value"
-    }
+    },
+    "plugin": "Invalid plugin data ({{path}}): {{detail}}",
+    "metadata": "Invalid metadata ({{path}}): {{detail}}"
   },
   "controlErrors": {
     "image_provider_not_found": "The API provider chosen for image generation no longer exists. Choose another provider or turn image generation off.",
     "image_provider_unsupported": "The API provider chosen for image generation has no Images API. Provider’s Images API works with OpenAI, OpenAI-compatible, New API, and MiniMax providers. For a Codex subscription, choose Responses · image_generation instead.",
     "search_provider_not_found": "The API provider chosen for web search no longer exists. Choose another provider or turn web search off.",
-    "search_provider_unsupported": "The API provider chosen for web search has no search API. Provider’s search API works with Codex subscription and New API providers. For other providers, choose Responses · web_search instead."
+    "search_provider_unsupported": "The API provider chosen for web search has no search API. Provider’s search API works with Codex subscription and New API providers. For other providers, choose Responses · web_search instead.",
+    "invalid_plugin_settings": "These plugin settings are not valid. Check the capabilities, addresses and configuration.",
+    "metadata_attribute_conflict": "Another attribute already uses this key or session marker.",
+    "metadata_attribute_owned": "A plugin registered this attribute. Only its values can be set.",
+    "invalid_metadata_attribute": "This attribute is not valid. Check its key, pattern and session marker.",
+    "invalid_metadata_value": "A value does not match its attribute's pattern.",
+    "invalid_credential": "The credential must be 1 to 16384 bytes on one line, bound to an address the plugin may reach.",
+    "plugin_reload_failed": "The plugin directory could not be scanned.",
+    "plugin_unavailable": "The plugin settings could not be read or saved.",
+    "metadata_unavailable": "The metadata could not be read or saved.",
+    "credential_unavailable": "The credential could not be saved.",
+    "plaintext_consent_required": "The server is plain HTTP; tick Allow plain HTTP to save it."
   },
   "modelDiscoveryErrors": {
     "httpStatus": " (HTTP {{status}})",
@@ -4736,6 +4809,1136 @@
     "copy": "Copy configuration",
     "clipboard": "Clipboard is unavailable. Select and copy the text below."
   },
+  "plugins": {
+    "title": "Plugins",
+    "listLabel": "Plugins",
+    "loading": "Loading plugins…",
+    "loadFailed": "Couldn't load the plugins.",
+    "detailFailed": "Couldn't load this plugin.",
+    "statusFailed": "Couldn't load this plugin's status.",
+    "saveFailed": "Couldn't save the change.",
+    "testFailed": "The connection test did not run.",
+    "empty": "No plugins yet",
+    "emptyHint": "Put a plugin in the plugin directory, then scan again.",
+    "select": "Choose a plugin",
+    "rescan": "Scan again",
+    "rescanning": "Scanning…",
+    "directoryHelpLabel": "Plugin directory",
+    "directoryHelp": "Each plugin lives in its own folder here, as plugin.ts or plugin.js; the folder's name is the plugin's key.",
+    "rescanHelp": "After you add or change a plugin, scan again; nothing needs a restart. Requests already running finish with the old version.",
+    "errorAt": "{{file}} line {{line}}",
+    "source": {
+      "builtin": "Built in",
+      "directory": "Directory",
+      "override": "Replaces built-in",
+      "github": "GitHub",
+      "market": "Marketplace"
+    },
+    "state": {
+      "running": "Running",
+      "disabled": "Off",
+      "failed": "Failed to load"
+    },
+    "enable": "Enable",
+    "disable": "Turn off",
+    "test": "Test connection",
+    "testing": "Testing…",
+    "tabsLabel": "Plugin details",
+    "tabs": {
+      "overview": "Overview",
+      "settings": "Settings",
+      "status": "Activity",
+      "develop": "Develop",
+      "tasks": "Tasks"
+    },
+    "testStatus": {
+      "ok": "Connected",
+      "error": "Error",
+      "failed": "Test failed"
+    },
+    "truncated": "Cut to its limits",
+    "overviewNeedsViews": "Grant Views when you enable the plugin to see its overview here.",
+    "noCapabilities": "Asks for none",
+    "capabilities": {
+      "contextInject": "Inject context",
+      "requestRead": "Read the turn's text",
+      "network": "Network",
+      "storage": "Plugin storage",
+      "uiViews": "Views",
+      "modelTools": "Agent lookups",
+      "requestWrite": "Change requests",
+      "requestWriteRaw": "Rewrite whole request bodies",
+      "requestGate": "Refuse requests",
+      "routing": "Adjust routing",
+      "responseRead": "Read responses",
+      "responseWrite": "Rewrite responses",
+      "events": "Gateway events",
+      "schedule": "Scheduled tasks",
+      "httpServe": "Local endpoint",
+      "provider": "Provider adapter",
+      "uiCode": "Interface code"
+    },
+    "loadErrors": {
+      "not_found": "No plugin.ts or plugin.js",
+      "ambiguous": "Both plugin.ts and plugin.js",
+      "too_large": "Larger than 8 MiB",
+      "encoding": "Not UTF-8",
+      "syntax": "Syntax error",
+      "async": "async needs apiVersion 2",
+      "await": "await needs apiVersion 2",
+      "import": "import is not supported",
+      "reexport": "export … from is not supported",
+      "missing_meta": "No meta export",
+      "invalid_meta": "Invalid meta",
+      "unknown_export": "Exports something other than meta and hooks",
+      "not_function": "A hook is not a function",
+      "load_failed": "The top level failed"
+    },
+    "network": {
+      "originsHelpLabel": "About allowed addresses",
+      "originsHelp": "The plugin can only reach these addresses. Scheme, host and port must match; any path is allowed. Redirects are not followed.",
+      "originLabel": "Address to allow",
+      "invalidOrigin": "Enter an http or https address with a host, such as https://memory.example.com:8443.",
+      "add": "Add",
+      "remove": "Remove {{origin}}",
+      "plaintext": "Plain HTTP",
+      "allowPlaintext": "Allow plain HTTP",
+      "plaintextHelpLabel": "About plain HTTP",
+      "plaintextHelp": "Requests to this address, credentials included, travel unencrypted and can be read on the way. Put TLS in front of the server, or reach it through an SSH tunnel.",
+      "trusted": "Trusted",
+      "trustedHelpLabel": "About trusted plugins",
+      "trustedHelp": "Off: the text a plugin receives, for searching and for capture, passes the privacy policy first, as for an untrusted provider. On: it gets the text as it is."
+    },
+    "credentials": {
+      "title": "Credentials",
+      "helpLabel": "About credentials",
+      "help": "Credentials stay in AstrLink's local key store. Core adds one to a request only when it goes to the address the credential is bound to; the plugin never sees the value.",
+      "configured": "Set ···· {{hint}}",
+      "configuredNoHint": "Set",
+      "origin": "Bound address",
+      "secret": "Value",
+      "clear": "Clear"
+    },
+    "config": {
+      "help": "One JSON object of at most 64 KiB. The plugin reads it and cannot change it. Credentials do not belong here: use the credential slots.",
+      "size": "{{size}} KiB / 64 KiB",
+      "invalid": "The configuration must be one JSON object.",
+      "tooLarge": "The configuration is larger than 64 KiB."
+    },
+    "status": {
+      "calls": "Calls",
+      "timeouts": "Timeouts",
+      "memoryLimits": "Over memory",
+      "failures": "Failed calls",
+      "reasons": {
+        "timeout": "Timed out",
+        "memory_limit": "Over memory",
+        "plugin_error": "Plugin error",
+        "invalid_result": "Invalid result",
+        "canceled": "Canceled",
+        "unavailable": "Unavailable"
+      },
+      "networkRequests": "Network requests",
+      "networkDetail": "{{denied}} denied · {{errors}} failed"
+    },
+    "enableDialog": {
+      "purpose": "Network use: {{purpose}}",
+      "notice": "From the plugin",
+      "metadata": "Attributes it registers",
+      "marker": "session marker {{marker}}"
+    },
+    "blocked": "The gateway is not running",
+    "blockedHint": "Plugins load once the gateway is ready. If it has stopped, the overview shows why.",
+    "stale": "The gateway is not ready. Showing the plugins last read.",
+    "wait": {
+      "label": "Wait up to",
+      "helpLabel": "About the wait",
+      "help": "The first request of each turn waits this long for the plugin, the privacy check included, then goes to the model as usual; a late result is not injected this turn. 2.5 seconds by default.",
+      "seconds": "{{value}} s"
+    },
+    "about": {
+      "label": "About this plugin",
+      "does": "What it does",
+      "network": "Network use",
+      "capabilities": "Permissions it uses"
+    },
+    "overview": {
+      "noServer": "Not set",
+      "notTested": "Not tested",
+      "bindings": "Sessions by {{label}}",
+      "sessions": "Sessions",
+      "lastUsed": "Last used",
+      "none": "Left out",
+      "noBindings": "No session is bound to a {{label}} yet",
+      "statusUnread": "Could not be read",
+      "statusErrorLabel": "The plugin's error",
+      "gateway": "Local gateway",
+      "uses": "Built on the open-source project {{name}}",
+      "onGitHub": "View {{name}} on GitHub",
+      "onGitHubStars_one": "View {{name}} on GitHub, {{stars}} star",
+      "onGitHubStars_other": "View {{name}} on GitHub, {{stars}} stars"
+    },
+    "settings": {
+      "save": "Save",
+      "revert": "Revert",
+      "unsaved": "Unsaved changes",
+      "more": "More settings",
+      "json": "Edit as JSON",
+      "jsonTitle": "Edit the configuration as JSON",
+      "apply": "Apply",
+      "gatewayGroup": "Gateway",
+      "origins": "Other allowed addresses",
+      "required": "{{label}} is required",
+      "number": "{{label}} must be a number",
+      "between": "{{label}} must be between {{min}} and {{max}}",
+      "atLeast": "{{label}} must be at least {{min}}",
+      "atMost": "{{label}} must be at most {{max}}",
+      "address": "{{label}} must be an http or https address",
+      "consent": "{{label}} is plain HTTP; tick Allow plain HTTP to save it",
+      "replace": "Replace",
+      "keep": "Keep",
+      "noOrigin": "Fill in the server address before saving the token",
+      "choices": {
+        "all": "All",
+        "none": "None",
+        "clear": "Clear",
+        "selectAll": "Select all",
+        "count_one": "{{count}} selected",
+        "count_other": "{{count}} selected",
+        "separator": ", "
+      }
+    },
+    "host": {
+      "pause": "Pause all plugins",
+      "pauseHelp": "While paused, no plugin runs: nothing is loaded, asked or written, and requests go out as they came. The first request of each turn records why. Resume to carry on.",
+      "pausedNotice": "All plugins are paused; requests go out as they came.",
+      "budget": "Injection budget",
+      "budgetHelp": "What all plugins together may add to one request. Past it, the blocks of the plugins later in order stay out, and the request record says it went over the budget.",
+      "budgetValue": "{{value}} KB",
+      "saveFailed": "Couldn't save the settings of the plugins.",
+      "open": "Plugin settings",
+      "title": "Plugin settings",
+      "pausedShort": "All plugins paused",
+      "helpLabel": "About {{label}}"
+    },
+    "clients": {
+      "label": "Clients",
+      "helpLabel": "About the clients",
+      "help": "For a client left unticked the plugin stays out of its requests: nothing is loaded, asked or written, and the requests go out as they came. Clients AstrLink does not recognize count as Other. Useful to stay clear of a client's own memory.",
+      "all": "All clients",
+      "none": "No client",
+      "count_one": "{{count}} client",
+      "count_other": "{{count}} clients",
+      "search": "Search clients",
+      "empty": "No client matches",
+      "selectAll": "Select all",
+      "clear": "Select none",
+      "other": "Other"
+    },
+    "workspace": {
+      "label": "Bind by workspace",
+      "helpLabel": "About binding by workspace",
+      "help": "When a session first gets a project, AstrLink remembers this working directory → this project, and new sessions in the same directory start with it instead of being asked. Only a fingerprint of the directory's path and its last element are kept, on this computer."
+    },
+    "refresh": {
+      "label": "Automatic refresh",
+      "helpLabel": "About automatic refresh",
+      "help": "Each session checks the plugin's data at most every 10 minutes and swaps in a new block only when it changed. Each swap writes the session's prompt cache once more. Off by default.",
+      "confirmTitle": "Turn on automatic refresh?",
+      "confirmBody": "When the plugin's data changes, a session swaps in the new block. The system prompt changes, so the whole conversation after it goes into the prompt cache again; a long session may pay tens of thousands of tokens more. Each session checks at most every 10 minutes.",
+      "confirm": "Turn on"
+    },
+    "stored": {
+      "title": "Data kept",
+      "kinds": {
+        "session_bindings": {
+          "label": "Session bindings",
+          "what": "The value each session is bound to, how and in which turn.",
+          "retention": "As long as the session's records"
+        },
+        "workspace_bindings": {
+          "label": "Workspaces and their values",
+          "what": "A fingerprint of the working directory's path and its last element, never the whole path, so that new sessions in the directory bind on their own.",
+          "retention": "Until cleared"
+        },
+        "plugin_sessions": {
+          "label": "First turn and pause per session",
+          "what": "The turn the plugin first took part in each session, and whether the session paused it.",
+          "retention": "Kept"
+        },
+        "request_records": {
+          "label": "Plugin records",
+          "what": "What the plugin did in each request: counts, sizes, times and reasons, never what a lookup or report said.",
+          "retention": "As long as the request records"
+        },
+        "resident_block": {
+          "label": "The block a session carries",
+          "what": "The project memory in the session's system prompt.",
+          "retention": "Gone when the gateway restarts"
+        },
+        "plugin_values": {
+          "label": "Plugin storage",
+          "what": "The plugin's own small data, kept after the plugin is disabled. The plugin declares it keeps these:",
+          "retention": "Until cleared"
+        },
+        "lookup_credentials": {
+          "label": "Lookup credentials",
+          "what": "What each session runs lookups and reports with, kept as hashes.",
+          "retention": "Void after 24 hours without a request, or a restart"
+        },
+        "plugin_files": {
+          "label": "Plugin files",
+          "what": "Files the plugin reads and writes in its own data directory through node:fs. They stay when the plugin is removed, and a reinstall picks them up.",
+          "retention": "Until cleared"
+        }
+      },
+      "holds": {
+        "memory": "Memory content",
+        "conversation": "Conversation text"
+      },
+      "count_one": "{{count}} item",
+      "count_other": "{{count}} items",
+      "files_one": "{{count}} file · {{size}}",
+      "files_other": "{{count}} files · {{size}}",
+      "clear": "Clear",
+      "clearTitle": {
+        "workspaces": "Clear the workspace bindings?",
+        "values": "Clear the plugin storage?",
+        "lookups": "Revoke the lookup credentials?",
+        "files": "Clear the plugin's files?"
+      },
+      "clearConfirm": {
+        "workspaces": "New sessions no longer start with the project of their working directory and are asked again in their first turn. Sessions already bound keep their binding.",
+        "values": "Clears the plugin's own small data, such as the server ids of projects. The plugin gets it again when it needs it; the memory itself is untouched.",
+        "lookups": "The plugin's lookup credentials stop working at once, along with the commands the model already has. Each session's next request carries a new one; its system prompt changes, so its prompt cache is written once more.",
+        "files": "Deletes every file in the plugin's data directory; the plugin starts over the next time it needs them. The files it carries beside its code stay."
+      },
+      "clearFailed": "Couldn't clear it.",
+      "revoke": "Revoke",
+      "helpLabel": "About the data kept",
+      "help": "What AstrLink keeps for this plugin, by where it is kept. None of it holds conversation text unless marked.",
+      "places": {
+        "database": "AstrLink database",
+        "memory": "Memory only",
+        "records": "Request records",
+        "disk": "Plugin directory"
+      },
+      "retention": " Kept: {{retention}}.",
+      "declared": "{{label}} ({{retention}})"
+    },
+    "lookup": {
+      "label": "Let agents look things up",
+      "helpLabel": "About agent lookups",
+      "help": "When the agent needs details, it can run the plugin's read-only queries with its own shell, at most 3 a turn; when the plugin takes reports, the agent can also hand it what is worth keeping, at most 2 a turn, and the plugin's settings can turn reports off on their own. Both work in the session's project. The system prompt carries how to run them and the session's credential only when the client runs on the same computer as the gateway and its request offers a shell. The plugin needs “Agent lookups” granted when it is enabled. Its queries and reports:",
+      "toolSeparator": ": ",
+      "reportMark": " (report)"
+    },
+    "effects": {
+      "title": "Activity",
+      "helpLabel": "About the activity",
+      "help": "The last 7 days, summed from this computer’s request records: counts, sizes, durations and reasons only, no conversation text, and nothing is sent anywhere. What loading costs is estimated from the bytes injected, about 3 bytes a token; waits are medians. The small columns are the days, today on the right. Cache hits are the share of input tokens read from the prompt cache; “with memory” means sessions that carried something the plugin injected.",
+      "empty": "No records in the last 7 days.",
+      "load": "Load cost",
+      "refreshes_one": "{{count}} refresh",
+      "refreshes_other": "{{count}} refreshes",
+      "wait": "wait about {{p50}} ms",
+      "lookup": "Lookups",
+      "hitRate": "{{rate}} found something",
+      "refused_one": "{{count}} refused",
+      "refused_other": "{{count}} refused",
+      "binding": "How sessions were bound",
+      "changed_one": "{{count}} changed after automatic binding",
+      "changed_other": "{{count}} changed after automatic binding",
+      "write": "Writes",
+      "reported_one": "{{count}} reported by the agent",
+      "reported_other": "{{count}} reported by the agent",
+      "problems": "Problems",
+      "cache": "Cache hits",
+      "daily": "By day",
+      "dailyHelp": "Each row is a day in the gateway’s time zone; days without activity are grey. Cost is the bytes injected, results the share of lookups that found something, and the cache hits column reads “sessions with memory / other sessions”. The rest counts as the activity card does: counts, sizes and reasons only, no conversation text, nothing sent anywhere.",
+      "dailyHelpLabel": "About the daily account",
+      "writeCell": "{{ok}} ({{failed}} failed)",
+      "cacheCell": "{{with}} / {{without}}",
+      "columns": {
+        "date": "Date",
+        "loads": "Loads",
+        "injected": "Cost",
+        "lookups": "Lookups",
+        "hits": "Results",
+        "bindings": "Bindings",
+        "writes": "Writes",
+        "problems": "Problems",
+        "cache": "Cache hits"
+      },
+      "period": "Last 7 days",
+      "tokens": "about {{tokens}} tokens",
+      "loads_one": "{{count}} load",
+      "loads_other": "{{count}} loads",
+      "times_one": "{{count}} time",
+      "times_other": "{{count}} times",
+      "lookupSessions_one": "used in {{count}} session",
+      "lookupSessions_other": "used in {{count}} sessions",
+      "entries_one": "{{count}} entry",
+      "entries_other": "{{count}} entries",
+      "writeFailed_one": "{{count}} failed",
+      "writeFailed_other": "{{count}} failed",
+      "noProblems": "Running fine",
+      "problemKinds": {
+        "failed_one": "{{count}} failed",
+        "failed_other": "{{count}} failed",
+        "timeouts_one": "{{count}} timed out",
+        "timeouts_other": "{{count}} timed out",
+        "privacy_one": "{{count}} stopped for privacy",
+        "privacy_other": "{{count}} stopped for privacy",
+        "over_budget_one": "{{count}} over budget",
+        "over_budget_other": "{{count}} over budget"
+      },
+      "ways": {
+        "workspace": "By workspace",
+        "picked": "Picked an existing one",
+        "created": "New",
+        "declined": "Left out",
+        "unanswered": "No answer"
+      },
+      "cacheSides": {
+        "with": "With memory",
+        "without": "Other sessions"
+      }
+    },
+    "headerHelpLabel": "About the settings of all plugins",
+    "develop": {
+      "build": "Development build",
+      "builtAt": "built at {{time}}",
+      "loadFailed": "Could not read the plugin's log.",
+      "timings": "Hook timings",
+      "timingsHelpLabel": "About hook timings",
+      "timingsHelp": "How long each hook's last 256 calls took, dry runs left out. JS time counts only the script's own running, not its waits on the network or storage. The counts start over when Core restarts.",
+      "noCalls": "No calls yet.",
+      "hook": "Hook",
+      "calls": "Calls",
+      "failures": "Failures",
+      "p50": "Median",
+      "p95": "P95",
+      "max": "Longest",
+      "script": "JS time",
+      "dryRun": "Dry run",
+      "dryRunHelpLabel": "About dry runs",
+      "dryRunHelp": "Runs one hook in the sandbox with the plugin's current settings and grants. A dry run has no network, so the plugin's requests fail for lack of budget, and it is not kept in request records. The arguments are the JSON array the hook is called with.",
+      "args": "Arguments",
+      "argsInvalid": "Write the arguments as a JSON array.",
+      "run": "Run",
+      "running": "Running…",
+      "runFailed": "The dry run did not finish.",
+      "result": "Result",
+      "noResult": "No result (undefined)",
+      "took": "took {{elapsed}} · JS {{script}}",
+      "log": "Log",
+      "logHelpLabel": "About the log",
+      "logHelp": "What the plugin wrote with console and astrlink.log, and the calls that failed with their stacks, newest first. It lives in memory only, at most 400 lines a plugin, and clears when Core restarts.",
+      "noLog": "Nothing logged yet.",
+      "clear": "Clear",
+      "dryRunTag": "dry run",
+      "stack": "Stack",
+      "levels": {
+        "debug": "Debug",
+        "info": "Info",
+        "warn": "Warning",
+        "error": "Error"
+      },
+      "breaker": "{{point}} failed too often lately and sits out of requests until {{time}}."
+    },
+    "hooks": {
+      "onRequest": "Entry",
+      "route": "Routing",
+      "beforeForward": "Before forwarding",
+      "beforeUpstream": "Before the upstream",
+      "rewriteResponse": "Response rewrite",
+      "onStreamEvent": "Stream rewrite",
+      "onResponse": "After the response",
+      "onEvent": "Gateway events",
+      "onSchedule": "Scheduled task",
+      "onHttp": "Local endpoint",
+      "provider": "Provider adapter",
+      "providerEvent": "Adapter stream events",
+      "observeTurn": "After each turn",
+      "prepareSession": "Session load",
+      "prepareTurn": "Turn context"
+    },
+    "approval": {
+      "loading": "Reading the change to confirm…",
+      "nothing": "No plugin change is waiting for confirmation",
+      "enableTitle": "Enable {{name}}",
+      "grantTitle": "Let {{name}} do more",
+      "capabilitiesEnable": "The plugin asks for these capabilities; unticked ones are not granted:",
+      "capabilitiesAdded": "Capabilities this change grants; unticked ones are not granted:",
+      "noCapabilities": "The plugin asks for no capabilities.",
+      "origins": "New addresses it may reach",
+      "plaintext": "plain HTTP",
+      "plaintextExisting": "Plain HTTP allowed to: {{origins}}",
+      "trusted": "Trusted: the privacy check is skipped and the plugin sees conversations as they are.",
+      "failClosed": "When the plugin's entry hook fails or runs out of time, the request is refused instead of let in.",
+      "risk": {
+        "ui_code": "Interface code has the AstrLink interface's own powers: it can read request records, change settings, and do anything the interface can."
+      },
+      "deny": "Deny",
+      "confirm": "Allow",
+      "confirmEnable": "Enable",
+      "waiting": "This change is waiting for you in the plugin confirmation window.",
+      "open": "Open the confirmation window",
+      "pluginWords": "In the plugin's words"
+    },
+    "limits": {
+      "label": "Extension point time limits",
+      "helpLabel": "About extension point time limits",
+      "help": "How long a request waits for each of the plugin's extension points. Empty follows what the plugin asks for, shown greyed in the box, or the gateway's default. Past it, the entry lets the request in, routing keeps its order, forwarding sends the request as it was, and a rewrite leaves the response or the event as it came. The longer a plugin takes, the slower requests get; the Develop tab shows how long each point really took.",
+      "ms": "ms",
+      "invalid": "The time limit of {{point}} is a whole number of milliseconds from 1 to {{max}}",
+      "failClosed": "Refuse requests when it fails",
+      "failClosedHelpLabel": "About refusing requests when it fails",
+      "failClosedHelp": "The plugin asks that a request its entry hook fails on, or runs out of time for, is refused instead of let in, as a check that must run does. With it on, any trouble of the plugin fails requests, so it is confirmed in the confirmation window."
+    },
+    "order": {
+      "open": "Change the order",
+      "title": "The order plugins run in",
+      "description": "At each extension point the plugins run from top to bottom, each with what the one above returned."
+    },
+    "install": {
+      "open": "Install plugin",
+      "title": "Install a plugin",
+      "helpLabel": "About installing from GitHub",
+      "helpLinks": "Paste a repository's home page (installs its newest version tag, or its default branch without tags), a branch, tag or directory under tree/, a release, or a commit. Private repositories are not supported yet.",
+      "helpBuild": "AstrLink fetches the dependencies the lock file pins from npm on this computer, checks each against the lock file's hash, and builds the plugin with its own bundler, without running any install script. Dependencies with native modules cannot be used.",
+      "helpConfirm": "Review the result here first; the install itself is confirmed in the plugin confirmation window. An installed plugin stays off until you enable it.",
+      "link": "GitHub link",
+      "check": "Check",
+      "previewing": "Downloading and building…",
+      "failed": "This plugin cannot be installed.",
+      "checkFailed": "Could not check for updates.",
+      "rollbackFailed": "Could not roll back.",
+      "uninstallFailed": "Could not uninstall.",
+      "install": "Install",
+      "update": "Update",
+      "confirm": "Install",
+      "confirmWeb": "Installing “{{name}}” puts its code in the plugin directory. Install it?",
+      "waiting": "The install waits for you in the plugin confirmation window.",
+      "registry": "npm registry",
+      "registryLabel": "Registry for dependencies",
+      "registryHelp": "Leave empty for the npm registry; npmmirror is used when it fails. Every dependency is checked against the lock file's hash, so the registry never changes what gets installed.",
+      "installTitle": "Install “{{name}}”",
+      "updateTitle": "Update “{{name}}”",
+      "rollbackTitle": "Roll back “{{name}}”",
+      "rollbackTo": "Roll back",
+      "rollback": "Roll back to an earlier version…",
+      "uninstall": "Uninstall",
+      "uninstallTitle": "Uninstall “{{name}}”",
+      "uninstallDescription": "The plugin's files and the earlier versions kept are deleted. Its settings and stored data stay, for a later install.",
+      "uninstallBuiltin": "The plugin's files and the earlier versions kept are deleted, and the builtin plugin of the same name comes back. Its settings and stored data stay.",
+      "source": "Source",
+      "openRepository": "Open {{repository}} on GitHub",
+      "checkUpdate": "Check for updates",
+      "checking": "Checking…",
+      "more": "More actions",
+      "pinned": "Installed from a fixed commit: there is no newer version to follow.",
+      "latest": "This is the newest version.",
+      "available": "New version: {{version}} ({{day}})",
+      "newCommit": "a new commit on {{ref}}",
+      "reviewUpdate": "Review update",
+      "notes": "Release notes",
+      "unknownVersion": "Version not recorded",
+      "replacedAt": "replaced {{day}}",
+      "ref": {
+        "tag": "Tag {{ref}}",
+        "branch": "Branch {{ref}}",
+        "version": "version {{ref}}"
+      },
+      "refCommit": "Fixed commit",
+      "refAt": "{{ref}} · committed {{day}}",
+      "updateFrom": "From {{from}} to {{to}}",
+      "rollbackFrom": "From {{from}} back to {{to}}",
+      "replaces": {
+        "builtin": "Replaces the builtin plugin “{{name}}”.",
+        "source": "Replaces “{{name}}”, installed from {{repository}}.",
+        "development": "Replaces “{{name}}”, which is in development.",
+        "directory": "Replaces “{{name}}” in the plugin directory."
+      },
+      "client": "Brings interface code: once enabled, it runs in the main window and can do anything the AstrLink interface can.",
+      "changesTitle": "What changes",
+      "changes": {
+        "addedCapability": "Newly asks for: {{capability}}",
+        "removedCapability": "No longer asks for: {{capability}}",
+        "client": {
+          "added": "Adds interface code",
+          "removed": "Drops its interface code"
+        },
+        "network": "What it uses the network for changed",
+        "dependencies": "Dependency changes: {{count}}"
+      },
+      "capabilities": "Capabilities asked for",
+      "files": "Code and dependencies",
+      "code": "{{size}} built",
+      "dependencies": "Dependencies: {{count}}, {{size}}",
+      "noDependencies": "No dependencies",
+      "author": "By {{author}}",
+      "dependencyList": "Dependency list",
+      "scripts": "Install scripts of these dependencies did not run: {{packages}}",
+      "warnings": {
+        "version_mismatch": "package.json and the plugin declare different versions ({{detail}}).",
+        "build_warning": "Build note: {{detail}}",
+        "route_unsupported": "AstrLink cannot relay the route {{detail}} yet (the plugin converts it itself, or AstrLink does not serve that endpoint). It stays inactive after install."
+      },
+      "failures": {
+        "invalid_link": "This is not a GitHub repository link AstrLink can read.",
+        "repository_not_found": "The repository {{detail}} cannot be found, or it is private (not supported yet).",
+        "ref_not_found": "The repository has no {{detail}}.",
+        "rate_limited": "GitHub is limiting requests for now. Try again later.",
+        "source_unavailable": "Could not download the source: {{detail}}",
+        "too_large": "The plugin or its dependencies exceed the size limit ({{detail}}).",
+        "no_plugin": "There is no plugin entry here: src/plugin.ts, plugin.ts, or the file astrlink.plugin in package.json names.",
+        "no_lockfile": "The plugin has dependencies but no lock file (package-lock.json, pnpm-lock.yaml or bun.lock).",
+        "lockfile_unsupported": "This lock file is not supported: {{detail}}",
+        "dependency_unsupported": "A dependency does not come from an npm registry, which is not supported yet: {{detail}}",
+        "integrity_failed": "What was downloaded for {{detail}} does not match the lock file's hash.",
+        "registry_unavailable": "Could not download {{detail}} from the npm registries.",
+        "native_module": "The dependency {{detail}} has a native module, which plugins cannot use.",
+        "build_failed": "The build failed.",
+        "invalid_plugin": "The plugin did not pass the checks.",
+        "incompatible": "The plugin requires AstrLink {{detail}} and is not compatible with this version.",
+        "expired": "The review expired. Check again.",
+        "busy": "Another plugin is being built. Try again shortly.",
+        "unknown": "Could not install ({{reason}})."
+      },
+      "sourceLabel": "Install from",
+      "sources": {
+        "github": "GitHub",
+        "market": "Marketplace"
+      },
+      "backToMarket": "Choose another",
+      "marketRef": "Version {{version}} · verified",
+      "directorySource": "The version the plugin directory held",
+      "groups": {
+        "source": "Source",
+        "abilities": "What it can do",
+        "dependencies": "Code and dependencies",
+        "risks": "Risks"
+      },
+      "taskKind": "Task plugin",
+      "providerKind": "Provider plugin",
+      "requestKind": "Request plugin",
+      "keyHosts": "Key goes only to",
+      "highRisk": "Asks for a high-risk capability: {{capability}}",
+      "changelog": "Changelog"
+    },
+    "ui": {
+      "switch": "Plugin interfaces",
+      "switchHelp": "Turn this off for safe mode: no plugin's interface code loads, while plugins' backend parts keep running. When the window did not keep running after plugin interfaces last loaded, the next start enters safe mode by itself.",
+      "webHelp": "The web console does not load plugins' interface code by default. Once on, plugin interfaces run in this page and can do anything the console can.",
+      "webConfirmTitle": "Load plugin interfaces in the web console",
+      "webConfirmDescription": "Plugins with their interface on run their code in this page, where it can do anything the console can, including reading request records and changing settings. Turn it on?",
+      "webConfirm": "Turn on",
+      "crashed": "The window did not keep running after plugin interfaces last loaded, so none loaded this time.",
+      "load": "Load plugin interfaces",
+      "turnedOff": "The interface of “{{name}}” failed again and again and was turned off. You can turn it back on in Plugins.",
+      "failed": "The interface of “{{name}}” failed: {{message}}",
+      "pageGone": "This plugin page is no longer there",
+      "tab": "Plugin",
+      "pluginSwitch": "Load this plugin's interface",
+      "pluginSwitchLabel": "Interface"
+    },
+    "countLabel_one": "{{count}} plugin",
+    "countLabel_other": "{{count}} plugins",
+    "metrics": {
+      "label": "Plugins at a glance",
+      "installed": "Installed",
+      "running": "Running",
+      "calls": "Calls since start",
+      "recentCalls": "Requests handled, 30 days",
+      "tasks": "Tasks running",
+      "problems": "Problems",
+      "callCount_one": "{{count}} call",
+      "callCount_other": "{{count}} calls"
+    },
+    "list": {
+      "tabs": "Plugin sections",
+      "installed": "Installed",
+      "market": "Marketplace",
+      "develop": "Develop",
+      "browseMarket": "Browse the marketplace"
+    },
+    "groups": {
+      "providers": "Provider plugins",
+      "extensions": "Enhancement plugins"
+    },
+    "market": {
+      "failed": "Could not read the marketplace.",
+      "source": "Marketplace source",
+      "official": "Official marketplace",
+      "custom": "Another marketplace",
+      "indexLabel": "Address of the marketplace's index.json",
+      "open": "Open",
+      "search": "Search plugins, models or codes",
+      "count_one": "{{name}} · {{count}} plugin",
+      "count_other": "{{name}} · {{count}} plugins",
+      "loading": "Reading the marketplace…",
+      "noMatch": "No plugin matches",
+      "empty": "This marketplace has no plugins yet",
+      "listLabel": "Plugins of the marketplace",
+      "installed": "Installed",
+      "update": "Update to {{version}}",
+      "install": "Install",
+      "models_one": "{{count}} model",
+      "models_other": "{{count}} models",
+      "noDescription": "The plugin has no description.",
+      "installedVersion": "{{version}} installed",
+      "website": "Website",
+      "versions": "All versions",
+      "installVersion": "Install this version",
+      "fewerModels": "Show fewer",
+      "moreModels_one": "{{count}} more",
+      "moreModels_other": "{{count}} more",
+      "incompatible": "Not compatible",
+      "incompatibleReason": "Needs new-api's {{parts}}, which AstrLink does not run yet.",
+      "parts": {
+        "provider": "provider part",
+        "transform": "request processing part",
+        "other": "{{part}} part"
+      },
+      "partSeparator": ", ",
+      "community": "Community marketplace",
+      "recommended": "Recommended",
+      "by": "by {{author}}",
+      "author": "Author",
+      "repository": "Source",
+      "code": "Plugin code",
+      "installs": "Last 30 days",
+      "installsCount_one": "{{count}} install",
+      "installsCount_other": "{{count}} installs",
+      "guide": "Usage guide",
+      "guideSource": "View on GitHub",
+      "guideLoading": "Loading the usage guide…",
+      "guideFailed": "Could not load the usage guide. Try opening it again later.",
+      "notes": "Release notes",
+      "revoked": "Taken down",
+      "revokedReason": "The marketplace took down the version you installed: {{reason}}. Update to another version or uninstall it.",
+      "revokedNoReason": "The marketplace took down the version you installed. Update to another version or uninstall it.",
+      "finding": "Looking up plugin {{code}}…",
+      "foundByCode": "Plugin with code {{code}}",
+      "noCode": "No plugin has the code {{code}}"
+    },
+    "task": {
+      "protocols": {
+        "openai_video": "Videos",
+        "openai_image": "Images",
+        "openai_responses": "Responses"
+      },
+      "modes": {
+        "stream": "streaming",
+        "sync": "synchronous",
+        "background": "background"
+      },
+      "nativeRoutes": "Native routes",
+      "auth": {
+        "api_key": "API key",
+        "oauth2_jwt": "Service account (OAuth)",
+        "none": "No key"
+      },
+      "status": {
+        "NOT_START": "Queued",
+        "SUBMITTED": "Submitted",
+        "QUEUED": "Queued",
+        "IN_PROGRESS": "Generating",
+        "SUCCESS": "Done",
+        "FAILURE": "Failed",
+        "UNKNOWN": "Unknown"
+      },
+      "endpoints": "Endpoints",
+      "noEndpoints": "The plugin declares no endpoint.",
+      "routeTypes": {
+        "submit": "Submit",
+        "query": "Query",
+        "dynamic": "Submit or query"
+      },
+      "connection": "Connection",
+      "baseUrl": "Default address",
+      "noBaseUrl": "Set when adding a provider",
+      "authLabel": "Authentication",
+      "allowedHosts": "Extra hosts",
+      "author": "Author",
+      "website": "Website",
+      "fetchModeLabel": "Polling",
+      "fetchMode": {
+        "per_task": "One task at a time",
+        "batch": "In batches"
+      },
+      "metrics": {
+        "models": "Models",
+        "running": "Running",
+        "tasks": "All tasks",
+        "providers": "Providers"
+      },
+      "providers": "Providers using this plugin",
+      "addProvider": "Add provider",
+      "noProviders": "No provider uses this plugin yet. Add one with its key, and clients can generate with its models.",
+      "enableFirst": "Enable the plugin to add a provider.",
+      "providerOn": "On",
+      "providerOff": "Off",
+      "about": "About the plugin",
+      "tasksTitle": "Recent tasks",
+      "runningCount_one": "{{count}} running",
+      "runningCount_other": "{{count}} running",
+      "clear": "Clear finished tasks",
+      "clearTitle": "Clear the finished tasks?",
+      "clearConfirm": "Finished and failed tasks are deleted with the results the gateway keeps; clients can no longer read them. Tasks still running stay.",
+      "clearFailed": "Could not clear the tasks.",
+      "tasksFailed": "Could not read the tasks.",
+      "noTasks": "No tasks yet",
+      "loadMore": "Load more"
+    },
+    "developHome": {
+      "commands": "Command line",
+      "builds": "Plugins built from projects here",
+      "noBuilds": "None yet. Run astrlink plugin dev in a plugin project and it shows here, reloading as it changes.",
+      "command": {
+        "new": "Start a plugin project from a template",
+        "dev": "Watch, build and install into AstrLink here, with live logs",
+        "check": "Build and check the manifest, capabilities and APIs",
+        "test": "Run the hooks against the cases in tests/",
+        "build": "Build plugin.js and client.js"
+      }
+    },
+    "directoryPath": "Path",
+    "search": "Search plugins or models",
+    "view": {
+      "label": "Plugin view",
+      "map": "Star map",
+      "list": "List"
+    },
+    "map": {
+      "label": "Plugin star map",
+      "hubRunning": "Gateway running",
+      "helpLabel": "About {{kind}}",
+      "enhancersHelp": "Enhancement plugins take part while the gateway handles a request: they load context into sessions, rewrite requests and replies, choose the provider, or note what happened. Requests reach the gateway from this side. The larger a planet, the more it did over the last 30 days.",
+      "providersHelp": "Provider plugins connect the gateway to upstream services: they adapt chat APIs or bring in video, image and music generation. Clients use one once it is added as a provider with its key on the providers page. The larger a planet, the more it did over the last 30 days; the moons going round it are the providers that run it.",
+      "addEnhancer": "Install from GitHub",
+      "addProvider": "Browse the marketplace",
+      "providers_one": "{{count}} provider uses it",
+      "providers_other": "{{count}} providers use it",
+      "noProviders": "No provider uses it yet"
+    },
+    "star": {
+      "callCount_one": "{{value}} call",
+      "callCount_other": "{{value}} calls",
+      "taskCount_one": "{{value}} task",
+      "taskCount_other": "{{value}} tasks",
+      "open": "{{name}}, {{fact}}. Open the plugin",
+      "more_one": "{{count}} more",
+      "more_other": "{{count}} more",
+      "calls": "Requests handled",
+      "providers": "Providers using it",
+      "served": "Requests to its providers",
+      "tasks": "Generation tasks",
+      "failedTasks": "Failed tasks",
+      "kind": {
+        "enhancer": "Enhancement plugin",
+        "provider": "Provider plugin"
+      },
+      "state": {
+        "running": "Running",
+        "failing": "Running, with failures",
+        "off": "Off",
+        "failed": "Failed to load"
+      },
+      "failed": "Failed",
+      "times": "{{value}}",
+      "window": "Last 30 days: {{requests}} requests handled, {{tasks}} tasks generated",
+      "showList": "See every plugin in the list"
+    },
+    "requestPlugins": {
+      "title": "Request processing instances",
+      "add": "Add instance",
+      "addTitle": "Add a request processing instance",
+      "editTitle": "Edit request processing instance",
+      "edit": "Edit",
+      "remove": "Delete",
+      "removeTitle": "Delete this instance?",
+      "removeConfirm": "After “{{name}}” is deleted it no longer checks requests. The plugin stays installed.",
+      "empty": "No instances yet. Add one and it starts checking requests.",
+      "enabled": "Enabled",
+      "name": "Name",
+      "models": "Models",
+      "modelsHelp": "One model per line or separated by commas; the instance runs only for requests to these models. Leave empty for every model. @ modifiers after a model do not matter.",
+      "allModels": "All models",
+      "config": "Settings",
+      "keywords": "One keyword per line",
+      "invalidJSON": "This field takes JSON, and this is not valid JSON.",
+      "loadFailed": "Could not read the request processing instances.",
+      "saveFailed": "Could not save the request processing instances.",
+      "stages": {
+        "ingress": "Ingress check",
+        "request": "Request settings",
+        "outbound": "Outbound rewrite",
+        "egress": "Final check",
+        "reply": "Reply check",
+        "report": "Report"
+      },
+      "dryRun": "Dry run",
+      "sample": "Plugin samples",
+      "sampleChoose": "Choose a sample",
+      "format": "Request format",
+      "body": "Request (JSON)",
+      "reply": "Model reply",
+      "replyHelp": "With a reply, the reply check runs on it as on a whole answer.",
+      "runDryRun": "Run",
+      "dryRunFailed": "The dry run failed.",
+      "dryRunPassed": "This request goes through.",
+      "replyAfter": "The reply the client gets",
+      "bodyAfter": "The request after the ingress check",
+      "formats": {
+        "openai": "Chat Completions",
+        "openai_responses": "Responses",
+        "claude": "Claude Messages",
+        "gemini": "Gemini"
+      }
+    }
+  },
+  "pluginRecords": {
+    "none": "No plugin recorded anything for this request.",
+    "status": {
+      "ok": "Done",
+      "skipped": "Skipped",
+      "failed": "Failed"
+    },
+    "elapsed": "Time",
+    "skipped": "Skipped because",
+    "skipReasons": {
+      "no_project": "No project for this session",
+      "short_query": "The question was too short",
+      "no_hits": "Nothing matched",
+      "server_unavailable": "The server was unavailable",
+      "timeout": "Timed out",
+      "plugin_error": "Plugin error",
+      "privacy_blocked": "Blocked by the privacy policy",
+      "privacy_unavailable": "The privacy check was unavailable",
+      "search_failed": "Some searches failed; nothing matched",
+      "paused_all": "All plugins are paused",
+      "client_disabled": "The plugin is off for this client",
+      "session_paused": "Paused in this session",
+      "over_budget": "Over the injection budget",
+      "invalid_result": "The plugin returned an invalid result",
+      "no_system_channel": "The request has no system prompt to add to",
+      "no_opening_message": "The turn has no user message to add to",
+      "injection_failed": "Injection failed; the request went out as it came",
+      "rate_limited": "Too many lookups",
+      "turn_limit": "The turn's 3 lookups were used",
+      "unbound": "The session has no project yet",
+      "invalid_input": "Wrong input",
+      "circuit_open": "Off for a while after failing too often",
+      "no_request_gate": "Tried to refuse the request without Refuse requests granted",
+      "no_request_write": "Tried to change the request without Change requests granted",
+      "no_request_write_raw": "Tried to replace the body without Rewrite whole request bodies granted",
+      "would_exclude_all": "Tried to exclude every provider; nothing was excluded",
+      "invalid_body": "Returned a body that is not valid; it was not used",
+      "header_denied": "Set a header plugins may not set; it was ignored",
+      "stream_stopped": "Failed several events in a row; the rest of the stream went past it",
+      "memory_limit": "Out of memory",
+      "canceled": "The request had ended",
+      "unavailable": "The plugin is unavailable"
+    },
+    "reportSkipReasons": {
+      "rate_limited": "Too many reports",
+      "turn_limit": "The turn's 2 reports were used"
+    },
+    "injection": "Injected",
+    "placement": {
+      "system_append": "System prompt",
+      "turn_message_prefix": "Start of the turn's user message"
+    },
+    "replayed_one": "{{count}} earlier block kept",
+    "replayed_other": "{{count}} earlier blocks kept",
+    "dropped_one": "{{count}} item over budget",
+    "dropped_other": "{{count}} items over budget",
+    "network": "Network",
+    "networkCount": "{{requests}} requests · {{denied}} denied · {{errors}} failed · {{wait}} ms waiting",
+    "injected": "{{placement}} +{{size}}",
+    "observeLine": "Capture: {{state}}",
+    "networkShort_one": "{{count}} request · {{wait}} ms waiting",
+    "networkShort_other": "{{count}} requests · {{wait}} ms waiting",
+    "networkDenied_one": "{{count}} denied",
+    "networkDenied_other": "{{count}} denied",
+    "networkErrors_one": "{{count}} failed",
+    "networkErrors_other": "{{count}} failed",
+    "quiet": "Nothing new this turn",
+    "observe": "Capture",
+    "observeStates": {
+      "queued": "queued",
+      "skipped_privacy": "skipped by the privacy policy",
+      "skipped_binding_turn": "already written when the turn set the project",
+      "skipped_continuation": "not the turn's first call, so not again",
+      "queue_full": "dropped, the queue was full",
+      "disabled": "off",
+      "awaiting_reply": "waiting for the reply to set the project",
+      "held_unbound": "held until the session picks a project, then written",
+      "skipped_unbound": "not written, the session has no project"
+    },
+    "truncated": "Cut to its limits",
+    "metadata": "Metadata",
+    "metadataSources": {
+      "header": "header",
+      "session": "session",
+      "token": "token default"
+    },
+    "metadataTurn": "{{source}}, turn {{turn}}",
+    "metadataIgnored": "Ignored {{key}}={{value}}: {{reason}}",
+    "ignoredReasons": {
+      "invalid_value": "does not match the pattern",
+      "already_bound": "the session is already bound",
+      "in_code_block": "inside a code block"
+    },
+    "metadataEvents": {
+      "bound": "bound to",
+      "rebound": "changed to",
+      "cleared": "cleared"
+    },
+    "trigger": "Reason",
+    "triggers": {
+      "start": "First load",
+      "bound": "Project just bound",
+      "config": "Settings or language changed",
+      "compact": "Refreshed after compact",
+      "manual": "Refreshed by hand",
+      "auto": "Automatic refresh"
+    },
+    "actionDone": "Done",
+    "actionFailed": "Couldn't do it: {{reason}}",
+    "setBy": {
+      "token_default": "token default",
+      "model_marker": "model marker",
+      "user_marker": "user marker",
+      "user_answer": "answer matched",
+      "workspace": "workspace",
+      "manual": "by hand",
+      "header": "request header"
+    },
+    "metadataNew": "new project",
+    "metadataNormalized": "written as {{value}}",
+    "actionFailedPlain": "Couldn't do it.",
+    "lookup": "Lookup",
+    "report": "Report",
+    "lookupInput_one": "input of {{count}} character",
+    "lookupInput_other": "input of {{count}} characters",
+    "lookupResult": "result {{size}}",
+    "lookupHits_one": "{{count}} hit",
+    "lookupHits_other": "{{count}} hits",
+    "commands": "Lookups offered",
+    "usageOnly": "Only the lookup usage · {{placement}} +{{size}}",
+    "usagePart": "lookup usage {{size}}",
+    "effects": {
+      "deny": "refused the request",
+      "tag": "tagged the request",
+      "tagged": "tags: {{tags}}",
+      "order": "reordered the providers",
+      "exclude": "excluded some providers",
+      "model": "changed the model",
+      "system": "added to the system prompt",
+      "turn": "added context before the turn",
+      "params": "changed parameters",
+      "tools": "changed the tools",
+      "body": "replaced the request body",
+      "headers": "added headers",
+      "rewrite": "rewrote the response",
+      "stream": "rewrote stream events",
+      "observed": "read the response",
+      "separator": ", "
+    },
+    "streamEvents": "Handled {{count}} events",
+    "streamEventsFailed": "Handled {{count}} events; {{failures}} failed and went on as they came"
+  },
+  "metadata": {
+    "title": "Metadata",
+    "add": "Add attribute",
+    "loading": "Loading attributes…",
+    "loadFailed": "Couldn't load the attributes.",
+    "saveFailed": "Couldn't save the attribute.",
+    "deleteFailed": "Couldn't delete the attribute.",
+    "empty": "No attributes yet",
+    "emptyHint": "Add one to tag requests, such as the environment they come from.",
+    "helpLabel": "About metadata",
+    "help": {
+      "what": "Attributes are tags a request carries, such as a project or an environment. Plugins can register their own; you can only set values for those.",
+      "order": "A request takes each value from its header, then its session's binding, then its access token's default.",
+      "none": "none is reserved for every attribute: it leaves the request or session out.",
+      "headers": "The header of an attribute is X-AstrLink-Meta- and its key, such as X-AstrLink-Meta-Env. AstrLink removes it before forwarding, but keep it out of client configurations committed to shared repositories: without AstrLink it would reach the provider."
+    },
+    "columns": {
+      "label": "Name",
+      "key": "Key",
+      "pattern": "Pattern",
+      "marker": "Session marker",
+      "owner": "Defined by"
+    },
+    "ownerUser": "You",
+    "ownerPlugin": "Plugin {{plugin}}",
+    "ownerMissing": "Plugin {{plugin}} (removed)",
+    "edit": "Edit {{label}}",
+    "delete": "Delete {{label}}",
+    "addTitle": "Add an attribute",
+    "editTitle": "Edit the attribute",
+    "labelPlaceholder": "Environment",
+    "description": "Description",
+    "optional": "Optional",
+    "deleteTitle": "Delete this attribute?",
+    "deleteDescription": "“{{label}}” and every value set for it, token defaults and session bindings, are deleted.",
+    "deleteConfirm": "Delete",
+    "problems": {
+      "key": "The key is a lowercase letter, then up to 31 lowercase letters, digits or underscores.",
+      "label": "The name is 1 to 32 characters.",
+      "anchored": "The pattern starts with ^ and ends with $, so that it checks the whole value.",
+      "pattern": "The pattern is not a valid regular expression.",
+      "marker": "The session marker is a lowercase letter, then up to 31 lowercase letters, digits or hyphens, and must not name AstrLink."
+    }
+  },
+  "tokenMetadata": {
+    "open": "Default metadata of {{name}}",
+    "title": "Default metadata · {{name}}",
+    "helpLabel": "About default metadata",
+    "help": "Requests with this token get these values when their headers and session set none. Suits a token used for one project only.",
+    "loading": "Loading…",
+    "loadFailed": "Couldn't load the default metadata.",
+    "saveFailed": "Couldn't save the default metadata.",
+    "empty": "No attributes yet",
+    "emptyHint": "Add attributes in Settings → Metadata first.",
+    "unset": "Not set",
+    "invalidValue": "The value of {{label}} does not match its pattern."
+  },
+  "sessionMetadata": {
+    "title": "Session metadata",
+    "helpLabel": "About session metadata",
+    "help": "Pick a value from the list, or New project… to type a new name; it must match the attribute's pattern.",
+    "unbindHelp": "Unbinding stores none: the session is no longer loaded for, written or asked about, and older marker lines in its history do not bind it again. Pick a value here, or send a marker line on its own, to bind it again.",
+    "none": "left out",
+    "notBound": "not bound",
+    "unboundValue": "Not bound",
+    "unbind": "Unbind",
+    "unboundNotice": "Unbound {{label}}",
+    "invalidValue": "The value of {{label}} does not match its pattern.",
+    "saveFailed": "Couldn't save the session metadata.",
+    "turn": "{{source}} · turn {{turn}}",
+    "setBy": {
+      "model_marker": "Chosen when asked",
+      "user_marker": "User message",
+      "manual": "Set by hand",
+      "user_answer": "Answer matched",
+      "workspace": "Workspace"
+    },
+    "workspaceHelp": "This session runs in the {{name}} directory. The first value picked for a directory serves the sessions that start there later.",
+    "usage_one": "{{count}} session · {{ago}}",
+    "usage_other": "{{count}} sessions · {{ago}}",
+    "neverUsed": "not used yet",
+    "offered": "offered in the first turn",
+    "newValue": "New project…",
+    "newValueLabel": "New {{label}}",
+    "newValuePlaceholder": "lowercase letters, digits, . _ -",
+    "workspaceFollow": "New sessions in {{name}} use this too (now {{previous}})"
+  },
   "serviceTerminal": {
     "title": "Open “{{name}}” in a terminal",
     "description": "The client in this terminal uses this API provider only. When the provider fails, the request fails. Your usual client settings stay as they are.",
@@ -4756,6 +5959,43 @@
     "failed": "Couldn't open the terminal: {{error}}",
     "disabled": "This API provider is turned off. Requests from the terminal fail until you turn it on.",
     "signedOut": "This account isn't signed in. Requests from the terminal fail until you sign in."
+  },
+  "sessionMemory": {
+    "tab": "Memory",
+    "loadFailed": "Couldn't read this session's memory.",
+    "actionFailed": "Couldn't do it.",
+    "changeProject": "Change",
+    "project": "Project",
+    "workspace": "Working directory",
+    "noPlugins": "No enabled plugin loads blocks.",
+    "refresh": "Refresh memory",
+    "pause": "Pause in this session",
+    "resume": "Resume",
+    "paused": "Paused",
+    "refreshPending": "Loads again on the next request",
+    "helpLabel": "About a session's memory",
+    "help": "The block goes at the end of the system prompt and stays the same within the session: it changes only after a compact, a refresh, or with automatic refresh on. It lives in memory only; after the gateway restarts, the session's next request computes it again.",
+    "firstTurn": "Takes part from turn {{turn}}",
+    "noBlock": "The session carries no block now. After the gateway restarts, the session's next request computes it again.",
+    "records": "Records",
+    "confirm": {
+      "refresh": {
+        "title": "Refresh {{name}}?",
+        "body": "The session's next request loads again. The system prompt changes, so the session's prompt cache is written once more.",
+        "action": "Refresh"
+      },
+      "pause": {
+        "title": "Pause {{name}} in this session?",
+        "body": "While paused nothing is loaded, offered for lookups or written, and requests go out as they came; the session's lookup credential stops working, and what is already in the context stays. The system prompt changes, so the prompt cache is written once more.",
+        "action": "Pause"
+      },
+      "resume": {
+        "title": "Resume {{name}}?",
+        "body": "Loading and writing resume. The system prompt changes, so the prompt cache is written once more.",
+        "action": "Resume"
+      }
+    },
+    "lookup": "How the system prompt tells the model to run lookups (credential hidden)"
   },
   "desktopToys": {
     "title": "Desktop pets",

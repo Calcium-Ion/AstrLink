@@ -205,6 +205,7 @@ func printUsage(output io.Writer) {
 		fmt.Fprintf(&builder, "  %-20s %s\n", label, found.Summary)
 	}
 	builder.WriteString("\nRun \"astrlink help <command>\" for a command's details and flags.\n")
+	builder.WriteString("Run \"astrlink plugin help\" for the tools that write, build and test plugins.\n")
 	_, _ = io.WriteString(output, builder.String())
 }
 

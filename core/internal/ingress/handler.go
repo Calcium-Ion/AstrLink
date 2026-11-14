@@ -30,9 +30,13 @@ import (
 	"github.com/QuantumNous/astrlink/core/internal/endpoint"
 	"github.com/QuantumNous/astrlink/core/internal/imagecompress"
 	"github.com/QuantumNous/astrlink/core/internal/planner"
+	"github.com/QuantumNous/astrlink/core/internal/plugin"
+	"github.com/QuantumNous/astrlink/core/internal/pluginhost"
 	"github.com/QuantumNous/astrlink/core/internal/privacy"
 	"github.com/QuantumNous/astrlink/core/internal/relaykitbridge"
 	"github.com/QuantumNous/astrlink/core/internal/secretstore"
+	"github.com/QuantumNous/astrlink/core/internal/storage"
+	"github.com/QuantumNous/astrlink/core/internal/taskplugin"
 	"github.com/QuantumNous/astrlink/core/internal/transport"
 )
 
@@ -105,9 +109,25 @@ type Dependencies struct {
 	// Identities is optional. It learns the client identity of recognized
 	// official Claude Code and Codex requests; nil learns nothing.
 	Identities *accountauth.IdentityRegistry
+	// Metadata is optional. It resolves each request's metadata from its
+	// headers, its session's bindings and its access token's defaults.
+	Metadata MetadataResolver
+	// Plugins is optional. It runs the plugins' part in each request a
+	// client sends; nil runs none.
+	Plugins *pluginhost.Host
+	// Tasks is optional. It runs the tasks of task plugins: the video,
+	// image and Responses requests for the models they claim, their
+	// native routes and /v1/tasks; nil serves none.
+	Tasks *taskplugin.Engine
 	// ClaudeOfficial is optional. It serves official Claude accounts through
 	// their claude CLI; nil leaves those accounts unavailable.
 	ClaudeOfficial ClaudeOfficial
+}
+
+// MetadataResolver resolves a request's metadata; *metadata.Registry
+// satisfies it. session holds the values bound to the request's session.
+type MetadataResolver interface {
+	Resolve(header http.Header, token contract.AccessTokenID, session map[string]storage.MetadataValueRecord) contract.RequestMetadata
 }
 
 type Classifier interface {
@@ -133,16 +153,22 @@ func (function PolicyWarningReporterFunc) ReportPolicyWarning(warning privacy.Wa
 }
 
 type Handler struct {
-	builtinStates            builtintools.Store
-	searchRefs               searchRefStore
-	codexTurns               codexTurnStore
-	codexModels              codexCatalogModels
-	images                   imagecompress.Compressor
-	proxyCredentials         secretstore.SecretStore
-	affinities               responseAffinities
-	resolver                 endpoint.Resolver
-	authorizer               endpoint.Authorizer
-	forwarder                Forwarder
+	requestMetadata  MetadataResolver
+	plugins          *pluginhost.Host
+	tasks            *taskplugin.Engine
+	builtinStates    builtintools.Store
+	searchRefs       searchRefStore
+	codexTurns       codexTurnStore
+	codexModels      codexCatalogModels
+	images           imagecompress.Compressor
+	proxyCredentials secretstore.SecretStore
+	affinities       responseAffinities
+	resolver         endpoint.Resolver
+	authorizer       endpoint.Authorizer
+	forwarder        Forwarder
+	// providerTransport sends what a plugin's provider adapter asks for,
+	// as the forwarder sends every attempt.
+	providerTransport        *transport.Forwarder
 	accessTokenAuthenticator AccessTokenAuthenticator
 	privacyFilter            privacy.Filter
 	policyWarningReporter    PolicyWarningReporter
@@ -303,12 +329,20 @@ func NewWithDependencies(dependencies Dependencies) *Handler {
 	if dependencies.Forwarder == nil {
 		dependencies.Forwarder = transport.New(nil)
 	}
+	providerTransport, ok := dependencies.Forwarder.(*transport.Forwarder)
+	if !ok {
+		providerTransport = transport.New(nil)
+	}
 	var claudeOfficialForwarder Forwarder
 	if dependencies.ClaudeOfficial != nil {
 		claudeOfficialForwarder = transport.New(dependencies.ClaudeOfficial)
 	}
 	return &Handler{
-		claudeOfficial: dependencies.ClaudeOfficial, claudeOfficialForwarder: claudeOfficialForwarder,
+		providerTransport: providerTransport,
+		requestMetadata:   dependencies.Metadata,
+		plugins:           dependencies.Plugins,
+		tasks:             dependencies.Tasks,
+		claudeOfficial:    dependencies.ClaudeOfficial, claudeOfficialForwarder: claudeOfficialForwarder,
 		proxyCredentials: dependencies.ProxyCredentials,
 		resolver:         dependencies.Resolver, authorizer: dependencies.Authorizer, forwarder: dependencies.Forwarder,
 		accessTokenAuthenticator: dependencies.AccessTokenAuthenticator, privacyFilter: dependencies.PrivacyFilter,
@@ -332,6 +366,12 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 	// The policy warning header is owned by this local response boundary.
 	// Strip any client-supplied value so it cannot be spoofed upstream.
 	request.Header.Del(PolicyWarningHeader)
+	// The lookup outlet answers neither browsers nor other machines, so it
+	// comes before the cross-origin headers every other route sends.
+	if builtinInternalFrom(request.Context()) == nil && strings.HasPrefix(request.URL.Path, pluginhost.LookupPath) {
+		handler.serveLookup(writer, request)
+		return
+	}
 	if builtinInternalFrom(request.Context()) == nil && hasClaudeProcessHeader(request) {
 		// A serving claude CLI's own model call.
 		if accepted, ok := handler.acceptClaudeLoopback(writer, request); ok {
@@ -351,7 +391,33 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 		handler.serveReachability(writer, request)
 		return
 	}
+	if builtinInternalFrom(request.Context()) == nil && handler.tasks != nil && request.URL.Query().Has("access") {
+		// A task's artifact link opens without a token: the link is the
+		// capability.
+		if !handler.allowLocalCaller(writer, request) {
+			return
+		}
+		if handler.serveTaskArtifact(writer, request) {
+			return
+		}
+	}
+	if builtinInternalFrom(request.Context()) == nil && handler.plugins != nil &&
+		request.Method == http.MethodGet && strings.HasPrefix(request.URL.Path, pluginhost.LoginCallbackPath) {
+		// A vendor sends a plugin login's browser back here, which carries
+		// no access token: the login's state is the capability.
+		if handler.allowLocalCaller(writer, request) {
+			handler.plugins.ServeLoginCallback(writer, request)
+		}
+		return
+	}
 	if builtinInternalFrom(request.Context()) == nil && !handler.allowInferenceBoundary(writer, request) {
+		return
+	}
+	if builtinInternalFrom(request.Context()) == nil && handler.serveTasks(writer, request) {
+		return
+	}
+	if builtinInternalFrom(request.Context()) == nil && strings.HasPrefix(request.URL.Path, PluginHTTPPath) {
+		handler.servePluginHTTP(writer, request)
 		return
 	}
 	if isResponsesWebSocket(request) {
@@ -404,6 +470,7 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 		session.attachRequestCapture(request)
 	} else {
 		session = handler.startRecordSession(request, classified)
+		handler.beginPlugins(request, classified, session)
 	}
 	session.persistPending(request.Context(), handler.requestRecords, handler.recordLogger)
 	outWriter := session.wrap(writer)
@@ -422,12 +489,26 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 		if mode := builtinInternalFrom(request.Context()); mode != nil && mode.SharedSession != nil {
 			return
 		}
+		session.finishPlugins(request.Context())
 		// Never delay or fail the client response on persistence errors.
 		session.finish(context.Background(), handler.requestRecords, handler.auditBlobs, handler.recordLogger)
+		session.pluginsPersisted()
+		session.reportRequestPlugins()
 		if mode := builtinInternalFrom(request.Context()); mode != nil {
 			mode.Status, mode.Error = session.status, session.errorSummary
 		}
 	}()
+
+	// The entry hooks of plugins may refuse the request before routing.
+	if session != nil && builtinInternalFrom(request.Context()) == nil {
+		if handler.beginExtensions(outWriter, request, classified, session) {
+			return
+		}
+		var stopped bool
+		if request, classified, stopped = handler.beginRequestPlugins(outWriter, request, classified, session); stopped {
+			return
+		}
+	}
 
 	// One read serves model redirects, channel binding and discovery.
 	routingSettings, routingSettingsLoaded, err := handler.loadRoutingSettings(request.Context())
@@ -488,14 +569,15 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 	if pinned == "" {
 		session.channelBinding = handler.prepareChannelBinding(session, routingSettings, routingSettingsLoaded)
 	}
-	candidates, err := handler.resolveCandidates(request.Context(), endpoint.ResolveRequest{
+	resolveRequest := endpoint.ResolveRequest{
 		Protocol:      classified.Protocol,
 		Model:         classified.routingModel(),
 		Streaming:     classified.Streaming,
 		Continuation:  classified.PreviousResponseID != "",
 		AllCandidates: session.channelBinding != nil || responsesWSTurnFromContext(request.Context()) != nil || builtinInternalFrom(request.Context()) != nil,
 		Service:       pinned,
-	})
+	}
+	candidates, err := handler.resolveCandidates(request.Context(), resolveRequest)
 	if err != nil {
 		// No attempt will read the body, so capture it for the audit now.
 		session.captureUnreadRequestBody(request)
@@ -544,6 +626,7 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 		return
 	}
 	candidates = handler.preferChannelBinding(request, session, candidates)
+	classified, candidates = handler.routeExtensions(request.Context(), session, classified, resolveRequest, candidates)
 	if len(candidates) > 1 && candidates[0].Failover != nil && !candidates[0].Failover.Enabled {
 		candidates = candidates[:1]
 	}
@@ -974,6 +1057,10 @@ func (handler *Handler) allowInferenceBoundary(writer http.ResponseWriter, reque
 		return true
 	}
 	mediaType, _, err := mime.ParseMediaType(contentType)
+	if err == nil && mediaType == "multipart/form-data" && request.URL.Path == "/v1/images/edits" && handler.tasks != nil && handler.tasks.Claims(plugin.TaskProtocolImage) {
+		// A task plugin's image edit may upload its images.
+		return true
+	}
 	if err != nil || mediaType != "application/json" {
 		handler.writeRecordedInferenceError(writer, request, http.StatusUnsupportedMediaType, "unsupported_media_type", "inference request bodies must use application/json", false, nil)
 		return false
@@ -1013,6 +1100,9 @@ func (handler *Handler) startRecordSession(request *http.Request, classified Req
 		}
 	}
 	session.resolveSession(request.Context(), handler.requestRecords, handler.recordLogger)
+	if handler.requestMetadata != nil {
+		session.metadata = handler.requestMetadata.Resolve(request.Header, accessTokenID, nil)
+	}
 	// Snapshot the redacted HTTP envelope before any privacy or routing
 	// rewrite mutates the request (ADR 0008).
 	session.captureHTTPRequestMeta(request)

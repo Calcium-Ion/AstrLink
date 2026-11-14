@@ -440,6 +440,103 @@ func TestUsageSummaryGroupsModelsByUpstreamModel(t *testing.T) {
 	}
 }
 
+// A plugin counts the requests of the totals it acted on, once each, as
+// failed when one of its calls failed; skips, requests that are not counted
+// and records the column cannot read are left out. Tasks count by when they
+// were created.
+func TestUsageSummaryGroupsPlugins(t *testing.T) {
+	store := openTestStore(t, filepath.Join(t.TempDir(), "plugin-usage.db"))
+	defer store.Close()
+	ctx := context.Background()
+	from := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	to := from.AddDate(0, 0, 1)
+	record := func(plugin, hook string, status contract.PluginRecordStatus) contract.RequestPluginRecord {
+		record := contract.RequestPluginRecord{Plugin: plugin, PluginVersion: "1.0.0", Hook: hook, Title: plugin, Status: status}
+		if status == contract.PluginRecordSkipped {
+			record.SkippedReason = contract.PluginSkipPausedAll
+		}
+		return record
+	}
+	insert := func(id string, status contract.RequestStatus, at time.Time, protocol contract.ProtocolID, parent string, records ...contract.RequestPluginRecord) {
+		t.Helper()
+		request := contract.RequestRecord{ID: contract.RequestID(id), StartedAt: at, Status: status,
+			InputProtocol: protocol, Audit: contract.NotCapturedAuditSummary(), PluginRecords: records}
+		if parent != "" {
+			parentID := contract.RequestID(parent)
+			request.ParentRequestID, request.AttemptIndex = &parentID, 1
+		}
+		if err := store.InsertRequestRecord(ctx, request); err != nil {
+			t.Fatal(err)
+		}
+	}
+	responses := contract.ProtocolOpenAIResponses
+	insert("request_both", contract.RequestStatusSucceeded, from.Add(time.Hour), responses, "",
+		record("memory", "prepareSession", contract.PluginRecordOK),
+		record("memory", "prepareTurn", contract.PluginRecordSkipped),
+		record("rules", "onRequest", contract.PluginRecordOK))
+	insert("request_memory_failed", contract.RequestStatusSucceeded, from.Add(2*time.Hour), responses, "",
+		record("memory", "prepareSession", contract.PluginRecordFailed),
+		record("memory", "prepareTurn", contract.PluginRecordOK))
+	// The request failed, not the plugin.
+	insert("request_failed", contract.RequestStatusFailed, from.Add(3*time.Hour), responses, "",
+		record("memory", "prepareTurn", contract.PluginRecordOK))
+	insert("request_skipped", contract.RequestStatusSucceeded, from.Add(4*time.Hour), responses, "",
+		record("memory", "prepareTurn", contract.PluginRecordSkipped))
+	insert("request_blocked", contract.RequestStatusBlocked, from.Add(5*time.Hour), responses, "",
+		record("memory", "prepareTurn", contract.PluginRecordOK))
+	insert("request_retry", contract.RequestStatusSucceeded, from.Add(6*time.Hour), responses, "request_both",
+		record("rules", "onRequest", contract.PluginRecordOK))
+	insert("request_before", contract.RequestStatusSucceeded, from.Add(-time.Second), responses, "",
+		record("rules", "onRequest", contract.PluginRecordOK))
+	insert("request_models", contract.RequestStatusSucceeded, from.Add(7*time.Hour), contract.ProtocolOpenAIModels, "",
+		record("rules", "onRequest", contract.PluginRecordOK))
+	insert("request_unreadable", contract.RequestStatusSucceeded, from.Add(8*time.Hour), responses, "")
+	if _, err := store.db.ExecContext(ctx, `UPDATE request_records SET plugin_records_json = '[{"plugin":' WHERE id = 'request_unreadable'`); err != nil {
+		t.Fatal(err)
+	}
+	for index, task := range []struct {
+		plugin, status string
+		at             time.Time
+	}{
+		{"sora", contract.PluginTaskSuccess, from.Add(time.Hour)},
+		{"sora", contract.PluginTaskFailure, from.Add(2 * time.Hour)},
+		{"sora", contract.PluginTaskSuccess, from.Add(-time.Hour)},
+		{"kling", contract.PluginTaskInProgress, to.Add(-time.Second)},
+		{"kling", contract.PluginTaskSuccess, to},
+	} {
+		if err := store.CreatePluginTask(ctx, storage.PluginTask{
+			ID: fmt.Sprintf("task_%016d", index), PluginKey: task.plugin, PluginVersion: "1.0.0", ServiceID: "svc_1",
+			Surface: "openai_video", Model: "video", UpstreamModel: "video", Status: task.status, Retain: true,
+			CreatedAt: task.at, UpdatedAt: task.at,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	summary, err := store.GetUsageSummary(ctx, storage.UsageSummaryOptions{From: from, To: to, TimeZone: "UTC", Bucket: "day"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []storage.UsagePluginGroup{
+		{Plugin: "memory", Requests: 2, FailedRequests: 1},
+		{Plugin: "rules", Requests: 1},
+		{Plugin: "sora", Tasks: 2, FailedTasks: 1},
+		{Plugin: "kling", Tasks: 1},
+	}
+	if !reflect.DeepEqual(summary.ByPlugin, want) {
+		t.Fatalf("by_plugin=%+v want %+v", summary.ByPlugin, want)
+	}
+	if _, err := store.PurgeRequestRecords(ctx, contract.PurgeRequest{Scope: contract.PurgeScopeAll, Confirm: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `DELETE FROM plugin_tasks`); err != nil {
+		t.Fatal(err)
+	}
+	summary, err = store.GetUsageSummary(ctx, storage.UsageSummaryOptions{From: from, To: to, TimeZone: "UTC", Bucket: "day"})
+	if err != nil || summary.ByPlugin == nil || len(summary.ByPlugin) != 0 {
+		t.Fatalf("empty by_plugin=%#v err=%v", summary.ByPlugin, err)
+	}
+}
+
 func TestUsageSummaryHourModelBucketsAndClients(t *testing.T) {
 	store := openTestStore(t, filepath.Join(t.TempDir(), "usage-hour-models.db"))
 	defer store.Close()

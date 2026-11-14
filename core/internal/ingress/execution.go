@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -20,6 +21,8 @@ import (
 	"github.com/QuantumNous/astrlink/core/internal/endpoint"
 	"github.com/QuantumNous/astrlink/core/internal/networkproxy"
 	"github.com/QuantumNous/astrlink/core/internal/planner"
+	"github.com/QuantumNous/astrlink/core/internal/plugin"
+	"github.com/QuantumNous/astrlink/core/internal/pluginhost"
 	"github.com/QuantumNous/astrlink/core/internal/providerapi"
 	"github.com/QuantumNous/astrlink/core/internal/relaykitbridge"
 	"github.com/QuantumNous/astrlink/core/internal/transport"
@@ -118,9 +121,14 @@ func (handler *Handler) executeCandidatesWithTest(
 	if request.Context().Err() != nil {
 		return
 	}
+	records := recordSessionFromContext(request.Context())
+	plugins := test == nil && records != nil && (records.plugins != nil ||
+		records.extensions.Serves(plugin.HookBeforeForward) || records.extensions.Serves(plugin.HookBeforeUpstream))
+	// Plugin blocks go into the body once, so it must be replayable: a
+	// Gemini body is otherwise streamed through.
 	body, err := captureRequestBody(
 		request,
-		requiresInspectedJSON(classified.Protocol),
+		requiresInspectedJSON(classified.Protocol) || plugins,
 	)
 	if err != nil {
 		writeInferenceError(
@@ -141,6 +149,10 @@ func (handler *Handler) executeCandidatesWithTest(
 		return
 	}
 	defer body.Close()
+	if plugins {
+		records.injectPlugins(body)
+		records.forwardExtensions(request.Context(), body)
+	}
 	if session := recordSessionFromContext(request.Context()); session != nil {
 		session.noteInboundBodyReady(body.Replayable())
 	}
@@ -162,7 +174,6 @@ func (handler *Handler) executeCandidatesWithTest(
 	var last executionFailure
 	var lastNetworkFailure executionFailure
 	var replayLastHTTP func()
-	records := recordSessionFromContext(request.Context())
 	for {
 		candidateIndex, hasNext := schedule.next(request.Context())
 		if !hasNext {
@@ -199,6 +210,7 @@ func (handler *Handler) executeCandidatesWithTest(
 		var plan contract.ExecutionPlan
 		var planErr error
 		convertTo := declaredConvertTo(candidate.Service, classified.Protocol, mode)
+		routed := false
 		upstreamModel := candidate.UpstreamModel
 		if upstreamModel == "" {
 			upstreamModel = classified.routingModel()
@@ -208,6 +220,13 @@ func (handler *Handler) executeCandidatesWithTest(
 			convertTo = ""
 			if format != classified.Protocol {
 				convertTo = format
+			}
+		} else if upstream, ok := handler.plugins.RelayUpstreamProtocol(candidate.Service, request.URL.Path, upstreamModel); ok {
+			// The route of the plugin that serves the model says whether
+			// the request is converted, and into what.
+			convertTo, routed = "", true
+			if upstream != classified.Protocol {
+				convertTo = upstream
 			}
 		}
 		if test != nil {
@@ -227,7 +246,7 @@ func (handler *Handler) executeCandidatesWithTest(
 			plan, planErr = planner.BuildRelayKit(planner.RelayKitInput{
 				Service: candidate.Service, InputProtocol: classified.Protocol,
 				UpstreamProtocol: upstreamProtocol, UpstreamModel: upstreamModel, Streaming: classified.Streaming,
-				Edges: handler.conversionEngine.Edges(),
+				Edges: handler.conversionEngine.Edges(), Routed: routed,
 			})
 		} else {
 			plan, planErr = planner.BuildAlpha(planner.AlphaInput{
@@ -474,6 +493,28 @@ func (handler *Handler) executeCandidatesWithTest(
 			clientClass = accountauth.ClientClassConverted
 		}
 		records.noteCodexOfficial(clientClass == accountauth.ClientClassOfficial)
+		// Plugins change what this attempt sends, in its provider's protocol;
+		// an official client's request goes out untouched.
+		if test == nil && clientClass != accountauth.ClientClassOfficial {
+			records.upstreamExtensions(request.Context(), attemptRequest, candidate, plan.UpstreamProtocol, upstreamModel, candidateIndex)
+		}
+		// The request processing instances check and change what the
+		// attempt sends; one that stops the request answers it here, and
+		// no other provider is tried.
+		if test == nil {
+			refusal := handler.requestStagePlugins(request.Context(), records, attemptRequest, classified, plan.UpstreamProtocol, upstreamModel, candidateIndex)
+			if refusal == nil {
+				refusal = records.outboundRequestPlugins(request.Context(), attemptRequest, candidate, plan.UpstreamProtocol, upstreamModel, candidateIndex)
+			}
+			if refusal != nil {
+				finishPrivacy()
+				_ = attemptRequest.Body.Close()
+				records.noteAttemptedService(candidate.Service.ID)
+				writeInferenceError(downstream, refusal.Status, refusal.Code, refusal.Message, false, nil)
+				records.noteFailed(errorSummaryFromInference(refusal.Code, refusal.Message, false))
+				return
+			}
+		}
 		identity := protection.sendsClientIdentity(candidate.Service.Kind, clientClass)
 		var headers http.Header
 		authorizationEndpoint, authorizeErr := candidate.AuthorizationEndpoint()
@@ -574,9 +615,12 @@ func (handler *Handler) executeCandidatesWithTest(
 		outWriter := http.ResponseWriter(downstream)
 		var restoring *restoringResponseWriter
 		var relayWriter *relayKitResponseWriter
+		// A compressed reply hides its text from the capture and from the
+		// plugins' marker lines.
 		if recordSession != nil &&
 			(recordSession.responseCaptureEnabled() ||
-				recordSession.upstreamResponseCapture.enabled) {
+				recordSession.upstreamResponseCapture.enabled ||
+				recordSession.plugins != nil) {
 			attemptRequest.Header.Del("Accept-Encoding")
 		}
 		canRepairThinking := body.Replayable() && policy.AllowsThinkingSignatureRecovery() &&
@@ -604,6 +648,26 @@ func (handler *Handler) executeCandidatesWithTest(
 				privacyResult.toolArguments,
 			)
 			outWriter = restoring
+		}
+		// Plugins rewrite and read the response in the client's protocol,
+		// before the privacy restore.
+		var pluginWriter *pluginResponseWriter
+		if test == nil && recordSession != nil && (recordSession.extensions.RewritesResponses(classified.Streaming) || recordSession.extensions.Observes()) {
+			attemptRequest.Header.Del("Accept-Encoding")
+			pluginWriter = newPluginResponseWriter(request.Context(), outWriter, recordSession.extensions, classified.Protocol, classified.Streaming)
+			recordSession.replyPlugins = pluginWriter
+			outWriter = pluginWriter
+		}
+		// The request processing instances check the answer's text in the
+		// client's protocol, after any conversion.
+		var replyCheck *replyWriter
+		if test == nil && replyChecked(classified.Protocol) {
+			attempt := pluginhost.RequestAttempt{Protocol: plan.UpstreamProtocol, UpstreamModel: upstreamModel, Index: candidateIndex}
+			if check := recordSession.requestPluginRun().Reply(request.Context(), classified.Protocol, classified.Streaming, attempt); check != nil {
+				attemptRequest.Header.Del("Accept-Encoding")
+				replyCheck = newReplyWriter(outWriter, check, classified.Protocol, classified.Streaming)
+				outWriter = replyCheck
+			}
 		}
 		if plan.Type == contract.PlanTypeRelayKit {
 			attemptRequest.Header.Del("Accept-Encoding")
@@ -878,7 +942,14 @@ func (handler *Handler) executeCandidatesWithTest(
 			return transport.WriteResponse(startWriter, response)
 		}
 		var forwardErr error
-		if turn := responsesWSTurnFromContext(request.Context()); turn != nil {
+		if candidate.Service.Kind == contract.ServiceKindPlugin {
+			// A plugin adapts this provider: it builds the upstream request
+			// and turns the answer into the attempt's protocol.
+			forwardErr = handler.plugins.ForwardProvider(startWriter, attemptRequest, forwardTarget, pluginhost.ProviderAttempt{
+				Protocol: plan.UpstreamProtocol, Model: upstreamModel, Stream: classified.Streaming, Index: candidateIndex,
+				ClientPath: request.URL.Path,
+			}, handler.providerTransport.RoundTrip)
+		} else if turn := responsesWSTurnFromContext(request.Context()); turn != nil {
 			forwardErr = turn.forward(startWriter, attemptRequest, forwardTarget, candidate, upstreamModel)
 		} else if official && loopback == nil {
 			forwardErr = handler.forwardClaudeOfficial(startWriter, attemptRequest, forwardTarget)
@@ -923,6 +994,16 @@ func (handler *Handler) executeCandidatesWithTest(
 		}
 		if relayWriter != nil && attemptStarted {
 			recordSession.noteConversionDiagnostics(contract.ConversionDiagnosticPhaseResponse, relayWriter.responseDiagnostics())
+		}
+		if retryHTTP == nil && replyCheck != nil && (forwardErr == nil || classified.Streaming) {
+			if finishErr := replyCheck.Finish(); finishErr != nil && forwardErr == nil {
+				forwardErr = transport.NewResponseError(finishErr)
+			}
+		}
+		if retryHTTP == nil && pluginWriter != nil && (forwardErr == nil || classified.Streaming) {
+			if finishErr := pluginWriter.Finish(); finishErr != nil && forwardErr == nil {
+				forwardErr = transport.NewResponseError(finishErr)
+			}
 		}
 		if retryHTTP == nil && restoring != nil && (forwardErr == nil || classified.Streaming) {
 			if finishErr := restoring.Finish(); finishErr != nil && forwardErr == nil {
@@ -1259,6 +1340,8 @@ type requestBodySource struct {
 	replayable bool
 	used       bool
 	release    func()
+	// contents is the whole body when the source holds it in memory.
+	contents []byte
 }
 
 func captureRequestBody(request *http.Request, forceBuffer bool) (*requestBodySource, error) {
@@ -1307,17 +1390,44 @@ func captureRequestBody(request *http.Request, forceBuffer bool) (*requestBodySo
 		source.Close()
 		return nil, err
 	}
-	contents := buffered
 	source.replayable = true
-	source.factory = func() (io.ReadCloser, error) {
-		return io.NopCloser(bytes.NewReader(contents)), nil
-	}
+	source.replace(buffered)
 	source.releasePermit()
 	return source, nil
 }
 
 func (source *requestBodySource) Replayable() bool {
 	return source != nil && source.replayable
+}
+
+// bytes returns the whole body of a replayable source.
+func (source *requestBodySource) bytes() ([]byte, error) {
+	if source.contents != nil {
+		return source.contents, nil
+	}
+	body, err := source.factory()
+	if err != nil {
+		return nil, err
+	}
+	defer body.Close()
+	return io.ReadAll(body)
+}
+
+// rewrite makes every attempt send contents in place of the client's body,
+// with the length to match.
+func (source *requestBodySource) rewrite(contents []byte) {
+	source.replace(contents)
+	source.request.ContentLength = int64(len(contents))
+	source.request.Header.Set("Content-Length", strconv.Itoa(len(contents)))
+	source.request.TransferEncoding = nil
+}
+
+// replace makes every attempt of a replayable source send contents.
+func (source *requestBodySource) replace(contents []byte) {
+	source.contents = contents
+	source.factory = func() (io.ReadCloser, error) {
+		return io.NopCloser(bytes.NewReader(contents)), nil
+	}
 }
 
 func (source *requestBodySource) Next(ctx context.Context) (*http.Request, bool, error) {

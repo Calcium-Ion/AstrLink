@@ -29,6 +29,7 @@ import { SubscriptionQuotaMeter } from "@/components/SubscriptionQuotaMeter";
 import { UsageMeterGrid } from "@/components/UsageMeter";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { formatAgo } from "@/lib/format-ago";
 import { cn } from "@/lib/utils";
 
 import { useDisplayCurrency } from "./currency-display";
@@ -100,19 +101,6 @@ function phaseKey(phase: CorePhase): string {
 
 function displayAddress(url: string): string {
   return url.replace(/^https?:\/\//, "").replace(/\/$/, "");
-}
-
-export function formatAgo(from: Date, now: Date): string {
-  const seconds = Math.max(
-    0,
-    Math.floor((now.getTime() - from.getTime()) / 1000),
-  );
-  if (seconds < 60) return i18n.t("tray.justNow");
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return i18n.t("tray.minutesAgo", { count: minutes });
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return i18n.t("tray.hoursAgo", { count: hours });
-  return i18n.t("tray.daysAgo", { count: Math.floor(hours / 24) });
 }
 
 function rawKeyEventKey(kind: TrayRawKeyEventKind): string {

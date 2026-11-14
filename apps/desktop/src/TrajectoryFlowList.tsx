@@ -46,7 +46,11 @@ import { i18n, useT } from "./i18n";
 import { useLiveClock } from "./live-clock";
 import { formatDuration } from "./request-live-model";
 import type { RequestServiceIdentity } from "./request-service-model";
-import type { TrajectoryRow, TrajectoryTone } from "./request-trajectory-model";
+import {
+  trajectoryChipLabel,
+  type TrajectoryRow,
+  type TrajectoryTone,
+} from "./request-trajectory-model";
 import type { TrajectoryCardRow } from "./trajectory-card-model";
 import { chipDotClass, chipToneClass } from "./trajectory-chip";
 import {
@@ -838,7 +842,7 @@ const CallJourney = memo(function CallJourney({
       ? "unknown"
       : entry.tone;
   const outcome = entry.running
-    ? `${t(`trajectory.chips.${entry.activeRow!.chip}`)} · ${t("status.pending")}`
+    ? `${trajectoryChipLabel(entry.activeRow!.chip, entry.activeRow!.title)} · ${t("status.pending")}`
     : status === "unknown"
       ? t("common.unknown")
       : entry.resultRow.result ||
@@ -846,7 +850,8 @@ const CallJourney = memo(function CallJourney({
   const retries = entry.attempts.length - 1;
   const focusRow = entry.rows.find((row) => row.id === focusRowId) ?? null;
   const bodyId = `journey-${entry.id}`;
-  const label = (row: TrajectoryRow) => t(`trajectory.chips.${row.chip}`);
+  const label = (row: TrajectoryRow) =>
+    trajectoryChipLabel(row.chip, row.title);
   const serviceFor = (row: TrajectoryRow) =>
     row.chip === "UPSTREAM" || row.chip === "RETRY"
       ? services[row.requestId]

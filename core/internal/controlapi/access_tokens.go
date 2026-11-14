@@ -103,6 +103,14 @@ func (handler *Handler) accessTokenItem(writer http.ResponseWriter, request *htt
 		handler.revealAccessToken(writer, request, id)
 		return
 	}
+	if rawID, found := strings.CutSuffix(suffix, "/metadata"); found && rawID != "" && !strings.Contains(rawID, "/") {
+		id, ok := parseAccessTokenID(writer, rawID)
+		if !ok {
+			return
+		}
+		handler.accessTokenDefaults(writer, request, id)
+		return
+	}
 	if suffix == "" || strings.Contains(suffix, "/") {
 		writeError(writer, http.StatusNotFound, "not_found", "control API path not found")
 		return
@@ -252,6 +260,10 @@ func (handler *Handler) deleteAccessToken(
 	if err := handler.accessTokens.Delete(request.Context(), id); err != nil {
 		handler.writeAccessTokenError(writer, err)
 		return
+	}
+	// The token's default metadata goes with it.
+	if handler.metadataStore != nil && handler.metadataStore.ReplaceTokenMetadata(request.Context(), id, nil) == nil && handler.metadata != nil {
+		_ = handler.metadata.Refresh(request.Context())
 	}
 	writer.WriteHeader(http.StatusNoContent)
 }

@@ -34,9 +34,16 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Menu, RefreshCw, Server, SlidersHorizontal } from "@/components/icons";
+import {
+  Menu,
+  RefreshCw,
+  ScanText,
+  Server,
+  SlidersHorizontal,
+} from "@/components/icons";
 import { cn } from "@/lib/utils";
 import { SyncSettings } from "./SyncSettings";
+import { MetadataSettings } from "./MetadataSettings";
 
 import {
   getCoreStatus,
@@ -99,7 +106,7 @@ const TRAY_PREVIEW_REFRESH_MS = 30_000;
 /** Time for a requested usage collection to land before the preview re-reads. */
 const TRAY_PREVIEW_SETTLE_MS = 2_500;
 
-type SettingsTab = "general" | "gateway" | "tray" | "sync";
+type SettingsTab = "general" | "gateway" | "tray" | "sync" | "metadata";
 
 type InstantPatch = Omit<
   Preferences,
@@ -758,6 +765,10 @@ export function SettingsCenter({
               <RefreshCw aria-hidden="true" />
               {t("settings.tabs.sync")}
             </TabsTrigger>
+            <TabsTrigger value="metadata">
+              <ScanText aria-hidden="true" />
+              {t("settings.tabs.metadata")}
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent
@@ -1358,6 +1369,14 @@ export function SettingsCenter({
             value="sync"
           >
             <SyncSettings onDirtyChange={setSyncDirty} />
+          </TabsContent>
+
+          <TabsContent
+            className="gutter-scroller min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain"
+            data-tab-scroller
+            value="metadata"
+          >
+            <MetadataSettings />
           </TabsContent>
         </Tabs>
       </div>

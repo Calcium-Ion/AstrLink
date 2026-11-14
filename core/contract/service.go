@@ -47,6 +47,9 @@ const (
 	ServiceKindDoubao                  ServiceKind = "doubao"
 	ServiceKindXAI                     ServiceKind = "xai"
 	ServiceKindCustom                  ServiceKind = "custom"
+	// ServiceKindPlugin is a provider a plugin adapts: its HTTP connection
+	// holds the address and key, and ServicePlugin names the plugin.
+	ServiceKindPlugin ServiceKind = "plugin"
 )
 
 func (kind ServiceKind) Valid() bool {
@@ -56,7 +59,8 @@ func (kind ServiceKind) Valid() bool {
 		ServiceKindCustom, ServiceKindClaudeSubscription, ServiceKindGrokSubscription, ServiceKindAntigravitySubscription,
 		ServiceKindCopilotSubscription, ServiceKindDroidSubscription, ServiceKindOpenCodeGo,
 		ServiceKindOpenCodeZen, ServiceKindKimiCoding, ServiceKindGLMCoding, ServiceKindMiniMaxCoding,
-		ServiceKindDeepSeek, ServiceKindQwen, ServiceKindMoonshot, ServiceKindGLM, ServiceKindMiniMax, ServiceKindDoubao, ServiceKindXAI:
+		ServiceKindDeepSeek, ServiceKindQwen, ServiceKindMoonshot, ServiceKindGLM, ServiceKindMiniMax, ServiceKindDoubao, ServiceKindXAI,
+		ServiceKindPlugin:
 		return true
 	default:
 		return false
@@ -234,8 +238,10 @@ type Service struct {
 	Capabilities   []Capability            `json:"capabilities"`
 	HTTP           *HTTPConnection         `json:"http,omitempty"`
 	Subscription   *SubscriptionConnection `json:"subscription,omitempty"`
-	CreatedAt      time.Time               `json:"created_at,omitempty"`
-	UpdatedAt      time.Time               `json:"updated_at,omitempty"`
+	// Plugin names the plugin that adapts a provider of kind plugin.
+	Plugin    *ServicePlugin `json:"plugin,omitempty"`
+	CreatedAt time.Time      `json:"created_at,omitempty"`
+	UpdatedAt time.Time      `json:"updated_at,omitempty"`
 }
 
 // copilotClaudeRedirects maps the model ids Claude Code sends to the dotted
@@ -314,9 +320,13 @@ func (service Service) ModelProtocol(model string) ProtocolID {
 }
 
 // ResponsesWebSocket reports the effective per-channel transport setting.
-// Copilot, Droid and Vertex do not expose native Responses WebSockets.
+// Copilot, Droid and Vertex do not expose native Responses WebSockets, and
+// a task plugin's provider answers Responses through its tasks over HTTP.
 func (service Service) ResponsesWebSocket() bool {
 	if service.Kind == ServiceKindCopilotSubscription || service.Kind == ServiceKindDroidSubscription || service.Kind == ServiceKindVertex {
+		return false
+	}
+	if service.Plugin != nil && service.Plugin.Provider == PluginProviderTask {
 		return false
 	}
 	if service.ResponsesWebSocketEnabled != nil {
@@ -371,6 +381,9 @@ func (service Service) Validate() error {
 		if err := service.Subscription.Validate(service.ID); err != nil {
 			return fmt.Errorf("subscription: %w", err)
 		}
+	}
+	if err := service.Plugin.validate(service.Kind); err != nil {
+		return err
 	}
 	if service.Capabilities == nil {
 		return fmt.Errorf("service capabilities must be a non-null array")

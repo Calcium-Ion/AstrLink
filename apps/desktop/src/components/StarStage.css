@@ -1,0 +1,314 @@
+/* The star map's stage: a star with its bodies round it, on paper by day
+ * and in a night sky in the dark theme, lit in the logo's tide. Colors,
+ * shadows and glows come from the --star-* tokens in styles/globals.css. These rules are unlayered, so they win over the
+ * Button utilities a body is built on; they set only paint, never the size
+ * or spacing a caller gives.
+ */
+
+.star-stage {
+  background: var(--star-sky);
+  box-shadow: inset 0 0 0 1px var(--star-frame);
+  color: var(--star-ink);
+}
+
+/* The sky: three layers of points; two of them twinkle out of step. */
+.star-stage-sky {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+@keyframes star-stage-twinkle {
+  50% {
+    opacity: 0.15;
+  }
+}
+
+.star-stage-stars {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 1px;
+  height: 1px;
+  border-radius: 9999px;
+  color: var(--star-dust);
+  opacity: 0.35;
+}
+
+.star-stage-stars[data-layer="1"] {
+  width: 1.5px;
+  height: 1.5px;
+  opacity: 0.6;
+  animation: star-stage-twinkle 5s ease-in-out infinite;
+}
+
+.star-stage-stars[data-layer="2"] {
+  width: 2px;
+  height: 2px;
+  opacity: 0.7;
+  animation: star-stage-twinkle 7s ease-in-out -3s infinite;
+}
+
+.star-stage-plane {
+  position: absolute;
+  transform-origin: 50% 50%;
+  transform-style: preserve-3d;
+  pointer-events: none;
+}
+
+.star-stage-orbit {
+  fill: none;
+  stroke: var(--star-line);
+  stroke-width: 2;
+}
+
+.star-stage-orbit[data-fine] {
+  stroke-dasharray: 4 9;
+  stroke-width: 1.5;
+}
+
+.star-stage-ray {
+  transition: opacity 250ms ease;
+}
+
+.star-stage-ray[data-dimmed] {
+  opacity: 0.12;
+}
+
+.star-stage-ray path {
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+}
+
+.star-stage-ray-line {
+  opacity: 0.32;
+  stroke-width: 2;
+}
+
+/* Sparks: dots a dash pattern spaces out along the ray. The steps keep the
+ * plane from repainting every frame. */
+@keyframes star-stage-spark {
+  to {
+    stroke-dashoffset: -40;
+  }
+}
+
+.star-stage-ray .star-stage-spark {
+  stroke-dasharray: 0.1 40;
+  stroke-width: 5;
+  opacity: 0.85;
+  animation: star-stage-spark 2s steps(40) infinite;
+}
+
+/* The star: a bright core in a corona that breathes. */
+@keyframes star-stage-corona {
+  50% {
+    opacity: 0.55;
+    transform: scale(1.08);
+  }
+}
+
+.star-stage-sun {
+  display: grid;
+  place-items: center;
+  transform: translate(-50%, -50%);
+}
+
+.star-stage-sun::before,
+.star-stage-sun::after {
+  position: absolute;
+  border-radius: 9999px;
+  content: "";
+  pointer-events: none;
+}
+
+.star-stage-sun::before {
+  inset: -85%;
+  background: radial-gradient(
+    closest-side,
+    color-mix(in srgb, var(--star-sun) var(--star-corona-inner), transparent),
+    color-mix(in srgb, var(--star-sun) var(--star-corona-outer), transparent)
+      55%,
+    transparent
+  );
+  animation: star-stage-corona 6s ease-in-out infinite;
+}
+
+.star-stage-sun::after {
+  inset: 0;
+  background: radial-gradient(
+    circle at 42% 38%,
+    #fff,
+    color-mix(in srgb, #fff 45%, var(--star-sun)) 55%,
+    var(--star-sun)
+  );
+  box-shadow:
+    0 0 32px 6px
+      color-mix(in srgb, var(--star-sun) var(--star-halo-near), transparent),
+    0 0 90px 20px
+      color-mix(in srgb, var(--star-sun) var(--star-halo-far), transparent);
+}
+
+.star-stage-sun > * {
+  position: relative;
+  z-index: 1;
+}
+
+/* A body: a sphere lit from the star's side, glowing in its color at night
+ * and casting a soft shadow of it by day. */
+.star-stage-sphere {
+  position: relative;
+  display: block;
+  border-radius: 9999px;
+  background: radial-gradient(
+    circle at var(--star-light-x) var(--star-light-y),
+    color-mix(in srgb, #fff 70%, var(--star-sphere)),
+    var(--star-sphere) 42%,
+    color-mix(
+      in srgb,
+      var(--star-shade) var(--star-shade-depth),
+      var(--star-sphere)
+    )
+  );
+  box-shadow: var(--star-glow)
+    color-mix(
+      in srgb,
+      var(--star-sphere) var(--star-glow-strength),
+      transparent
+    );
+  transition: box-shadow 250ms ease;
+}
+
+.star-stage-sphere[data-quiet] {
+  background: radial-gradient(
+    circle at var(--star-light-x) var(--star-light-y),
+    color-mix(in srgb, #fff 25%, var(--star-off)),
+    var(--star-off) 45%,
+    color-mix(
+      in srgb,
+      var(--star-shade) var(--star-shade-depth),
+      var(--star-off)
+    )
+  );
+  box-shadow: none;
+  opacity: 0.7;
+}
+
+@keyframes star-stage-moon {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.star-stage-moon-orbit {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: var(--star-moon-orbit);
+  height: var(--star-moon-orbit);
+  margin: calc(var(--star-moon-orbit) / -2) 0 0
+    calc(var(--star-moon-orbit) / -2);
+  border-radius: 9999px;
+  outline: 1px solid color-mix(in srgb, var(--star-ink) 12%, transparent);
+  transform: rotate(-14deg) scaleY(0.36);
+  pointer-events: none;
+}
+
+.star-stage-moon-path {
+  position: absolute;
+  inset: 0;
+  animation: star-stage-moon var(--star-moon-turn) linear var(--star-moon-phase)
+    infinite;
+}
+
+.star-stage-moon {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  border-radius: 9999px;
+  box-shadow: 0 0 5px currentColor;
+  transform: translate(-50%, -50%) scaleY(2.8);
+}
+
+/* The button a body and its name make. */
+.star-stage-body,
+.star-stage-body:hover {
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--star-ink);
+  transition: opacity 250ms ease;
+}
+
+.star-stage-label {
+  text-shadow: var(--star-label-halo);
+}
+
+.star-stage-body:hover .star-stage-sphere,
+.star-stage-body[data-focus="lit"] .star-stage-sphere {
+  box-shadow:
+    var(--star-glow-lit)
+      color-mix(
+        in srgb,
+        var(--star-sphere) var(--star-glow-lit-strength),
+        transparent
+      ),
+    0 0 0 2px color-mix(in srgb, var(--star-lit) 60%, transparent);
+}
+
+.star-stage-body:focus-visible {
+  outline: 2px solid var(--star-gateway);
+  outline-offset: 2px;
+}
+
+.star-stage-body[data-focus="dim"] {
+  opacity: 0.3;
+}
+
+/* A pill on the stage, for what is not a body, such as "3 more". */
+.star-stage-mark {
+  border: 1px solid var(--star-mark-tone, var(--star-line));
+  background: var(--star-surface);
+  color: var(--star-ink);
+  box-shadow: var(--star-mark-shadow);
+  transition:
+    opacity 250ms ease,
+    border-color 250ms ease,
+    background-color 250ms ease;
+}
+
+.star-stage-mark:hover,
+.star-stage-mark[data-focus="lit"] {
+  border-color: var(--star-lit);
+  background: var(--star-surface-raised);
+  color: var(--star-ink);
+}
+
+.star-stage-mark:focus-visible {
+  outline: 2px solid var(--star-gateway);
+  outline-offset: 2px;
+}
+
+.star-stage-mark[data-focus="dim"] {
+  opacity: 0.3;
+}
+
+.star-stage-card {
+  border: 1px solid var(--star-line);
+  border-radius: var(--radius-lg);
+  background: var(--star-surface);
+  box-shadow: var(--star-card-shadow);
+  color: var(--star-ink);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .star-stage-ray .star-stage-spark {
+    display: none;
+  }
+
+  .star-stage-stars,
+  .star-stage-sun::before,
+  .star-stage-moon-path {
+    animation: none;
+  }
+}

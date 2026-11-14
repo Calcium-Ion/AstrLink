@@ -358,3 +358,48 @@ func TestResponsesWebSocketOversizedMessage(t *testing.T) {
 		t.Fatalf("close=%v", err)
 	}
 }
+
+func TestResponsesWebSocketTurnsRunRequestPlugins(t *testing.T) {
+	var turns atomic.Int32
+	upstream := wsUpstream(t, func(conn *websocket.Conn, r *http.Request) {
+		for {
+			var event map[string]any
+			if err := conn.ReadJSON(&event); err != nil {
+				return
+			}
+			turns.Add(1)
+			for _, delta := range []string{"The laun", "ch codes are 0000."} {
+				_ = conn.WriteJSON(map[string]any{"type": "response.output_text.delta", "delta": delta, "output_index": 0, "content_index": 0, "item_id": "msg_1"})
+			}
+			_ = conn.WriteJSON(map[string]any{"type": "response.completed", "response": map[string]any{"id": "resp_1", "model": "gpt-test", "status": "completed", "output": []any{}}})
+		}
+	})
+	host := newRequestPluginHost(t, nil, contract.RequestPluginInstance{
+		ID: "rpi_wsfilter1", Name: "过滤", Plugin: "request-filter", Enabled: true, Models: []string{},
+		Config: json.RawMessage(`{"keywords":"secret plan\nlaunch codes","replies":true}`),
+	})
+	handler := NewWithDependencies(Dependencies{
+		Resolver: candidateResolver{candidates: []endpoint.Resolved{wsCandidate(upstream.URL + "/v1")}},
+		Plugins:  host,
+	})
+	client := dialResponses(t, handler, nil)
+	// A turn the filter refuses never reaches the upstream.
+	sendWS(t, client, `{"type":"response.create","model":"gpt-test","input":"tell me the secret plan"}`)
+	if refused := readWS(t, client); refused["type"] != "error" || !strings.Contains(fmt.Sprint(refused), contract.RequestRejectedCode) || turns.Load() != 0 {
+		t.Fatalf("refused turn = %#v, upstream turns %d", refused, turns.Load())
+	}
+	// A reply the filter stops never shows the words it stops at.
+	sendWS(t, client, `{"type":"response.create","model":"gpt-test","input":"hello"}`)
+	var seen []string
+	for {
+		event := readWS(t, client)
+		seen = append(seen, fmt.Sprint(event))
+		if event["type"] == "error" || event["type"] == "response.completed" || event["type"] == "response.failed" {
+			break
+		}
+	}
+	all := strings.Join(seen, "\n")
+	if !strings.Contains(all, contract.ResponseRejectedCode) || strings.Contains(all, "0000") || turns.Load() != 1 {
+		t.Fatalf("stopped reply:\n%s", all)
+	}
+}

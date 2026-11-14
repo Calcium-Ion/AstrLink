@@ -1,11 +1,14 @@
 import { isWebEdition } from "./edition";
 import { ConsoleLogout } from "./ConsoleEntry";
 import { WebSettings } from "./WebSettings";
+import { PluginManager } from "./PluginManager";
+import { usePluginLanguageSync } from "./use-plugin-language-sync";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { isTauri } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import {
   Activity,
+  Blocks,
   CircleHelp,
   Bot,
   Home as House,
@@ -23,6 +26,7 @@ import { WorkspaceSnapshotProvider } from "./workspace-snapshots";
 import { ValueTransition } from "./components/ValueTransition";
 import { AppShell } from "@/components/AppShell";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { EmptyState } from "@/components/EmptyState";
 import { IconButton } from "@/components/IconButton";
 import { StatusDot } from "@/components/StatusDot";
 import { Badge } from "@/components/ui/badge";
@@ -79,6 +83,13 @@ import {
   type ServiceManagerView,
 } from "./ServiceManager";
 import { ProviderImportDialog } from "./ProviderImportDialog";
+import {
+  pluginUiPages,
+  PluginSlotView,
+  PluginUiLoader,
+  usePluginSlot,
+  type PluginNavigation,
+} from "./plugin-ui";
 import { LocalImportDialog } from "./LocalImportDialog";
 import { useProviderImport } from "./use-provider-import";
 import { notify } from "./notify";
@@ -104,6 +115,10 @@ type WorkspacePage =
   | { kind: "records"; target?: RecordsTarget }
   | { kind: "routing" }
   | { kind: "agentTools"; preselectSkill?: AgentSkillId }
+  /** The plugins; `plugin` opens one, e.g. from the overview's star map. */
+  | { kind: "plugins"; plugin?: string }
+  /** A page a plugin's interface registered, by its registration. */
+  | { kind: "pluginPage"; entry: string }
   | { kind: "settings" }
   | { kind: "desktopToys" }
   | { kind: "about" }
@@ -112,6 +127,7 @@ type WorkspacePage =
 type IconName =
   | "about"
   | "activity"
+  | "blocks"
   | "bot"
   | "home"
   | "key"
@@ -238,6 +254,7 @@ export function trayNavigationTarget(
 const icons: Record<IconName, AnimatedIcon> = {
   about: CircleHelp,
   activity: Activity,
+  blocks: Blocks,
   bot: Bot,
   home: House,
   key: KeyRound,
@@ -309,6 +326,37 @@ function NavButton({
         </Badge>
       ) : null}
     </Button>
+  );
+}
+
+/** Where a plugin's interface sends the window. */
+function pluginTarget(plugin: string, to: PluginNavigation): WorkspacePage {
+  if (to.page !== "plugin") return { kind: to.page };
+  const pages = pluginUiPages().filter((entry) => entry.plugin === plugin);
+  const entry = pages.find((page) => page.id === to.entry) ?? pages[0];
+  return entry ? { kind: "pluginPage", entry: entry.id } : { kind: "plugins" };
+}
+
+/** A page a plugin's interface registered, scrolling within the workspace. */
+function PluginPage({ entry: id }: { entry: string }) {
+  const t = useT();
+  const entry = usePluginSlot("page").find((page) => page.id === id);
+  if (!entry)
+    return (
+      <EmptyState
+        className="flex-1"
+        title={t("plugins.ui.pageGone")}
+        variant="page"
+      />
+    );
+  return (
+    <div
+      className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
+      data-plugin={entry.plugin}
+      data-testid="plugin-page"
+    >
+      <PluginSlotView entry={entry} />
+    </div>
   );
 }
 
@@ -425,6 +473,7 @@ export default function App() {
       ? `${snapshot.pid ?? "none"}|${snapshot.ready.control_url}|${snapshot.ready.inference_url}`
       : null;
   const rawSealing = useRawSealingStatus(coreSessionKey, isReady);
+  usePluginLanguageSync(coreSessionKey);
   const onboarding = useOnboarding({
     isReady,
     catalog,
@@ -697,6 +746,7 @@ export default function App() {
     }
   };
 
+  const pluginPages = usePluginSlot("page");
   const navigate = useCallback(
     (next: WorkspacePage) => {
       const leavingServiceEditor =
@@ -969,6 +1019,23 @@ export default function App() {
                 />
               )}
               <NavButton
+                active={page.kind === "plugins"}
+                icon="blocks"
+                label={t("nav.plugins")}
+                onClick={() => navigate({ kind: "plugins" })}
+              />
+              {pluginPages.map((entry) => (
+                <NavButton
+                  active={page.kind === "pluginPage" && page.entry === entry.id}
+                  icon="blocks"
+                  key={entry.id}
+                  label={entry.title ?? entry.pluginName}
+                  onClick={() =>
+                    navigate({ kind: "pluginPage", entry: entry.id })
+                  }
+                />
+              ))}
+              <NavButton
                 active={page.kind === "settings"}
                 icon="settings"
                 label={t("nav.settings")}
@@ -1062,6 +1129,8 @@ export default function App() {
                 "safety",
                 "routing",
                 "agentTools",
+                "plugins",
+                "pluginPage",
                 "settings",
               ].includes(page.kind)
                 ? "overflow-hidden"
@@ -1200,6 +1269,22 @@ export default function App() {
               />
             ) : page.kind === "agentTools" ? (
               <AgentDebugSettings preselectSkill={page.preselectSkill} />
+            ) : page.kind === "plugins" ? (
+              <PluginManager
+                coreSessionKey={coreSessionKey}
+                isReady={isReady}
+                open={page.plugin}
+                onAddProvider={(plugin) =>
+                  navigate({ kind: "create", serviceKind: "plugin", plugin })
+                }
+                onOpenService={(serviceId) =>
+                  navigate({ kind: "edit", serviceId })
+                }
+                services={catalog.items}
+                visit={page}
+              />
+            ) : page.kind === "pluginPage" ? (
+              <PluginPage entry={page.entry} />
             ) : page.kind === "desktopToys" ? (
               <DesktopToysPage />
             ) : page.kind === "about" ? (
@@ -1247,10 +1332,21 @@ export default function App() {
           </main>
         </ValueTransition>
       </WorkspaceSnapshotProvider>
+      <PluginUiLoader
+        isReady={isReady}
+        onNavigate={(plugin, to) => navigate(pluginTarget(plugin, to))}
+        sessionKey={coreSessionKey}
+      />
       <ServiceKindPickerDialog
         onLocalImport={startLocalImport}
         onOpenChange={setServiceKindPickerOpen}
-        onSelect={(serviceKind) => navigate({ kind: "create", serviceKind })}
+        onSelect={(serviceKind, plugin) =>
+          navigate({
+            kind: "create",
+            serviceKind,
+            ...(plugin ? { plugin } : {}),
+          })
+        }
         open={serviceKindPickerOpen}
       />
       <ConfirmDialog

@@ -491,6 +491,54 @@
   --sidebar-border: #e5e7f0;
   --sidebar-ring: #3b82f6;
 
+  /* The star map: a sheet of paper by day, a night sky in the dark theme,
+     lit in the logo's tide. Enhancers take its teal, providers its pink,
+     the gateway its periwinkle; models get one hue each by rank. By day
+     the bodies cast soft shadows where at night they glow. */
+  --star-sky: #f6f8fc;
+  --star-frame: var(--border);
+  --star-surface: #ffffff;
+  --star-surface-raised: #f0f4fb;
+  --star-pedestal: #e6ecf6;
+  --star-ink: #1a2a3d;
+  --star-dim: #5b6b82;
+  --star-line: rgb(29 77 135 / 20%);
+  --star-lit: rgb(47 111 224 / 45%);
+  --star-grid: rgb(29 77 135 / 6%);
+  --star-dust: #8fa2c4;
+  --star-gateway: #6576de;
+  --star-disc: 0.14;
+  --star-corona-inner: 30%;
+  --star-corona-outer: 8%;
+  --star-halo-near: 40%;
+  --star-halo-far: 12%;
+  --star-shade: #23314f;
+  --star-shade-depth: 40%;
+  --star-glow: 0 3px 8px;
+  --star-glow-strength: 35%;
+  --star-glow-lit: 0 4px 14px;
+  --star-glow-lit-strength: 55%;
+  --star-label-halo:
+    0 0 2px rgb(255 255 255 / 95%), 0 0 6px rgb(255 255 255 / 85%);
+  --star-mark-shadow: 0 2px 8px rgb(26 42 61 / 8%);
+  --star-card-shadow: 0 10px 28px rgb(26 42 61 / 12%);
+  --star-client-1: #9fb3ff;
+  --star-client-2: #6cc6ff;
+  --star-client-3: #8fe0e8;
+  --star-client-4: #b8a6ff;
+  --star-client-5: #7da3e0;
+  --star-client-other: #8f9bb3;
+  --star-enhancer: #12a3b0;
+  --star-provider: #d0629b;
+  --star-warn: #d2911a;
+  --star-off: #9aa6b8;
+  --star-model-1: #e0866a;
+  --star-model-2: #3cc79a;
+  --star-model-3: #5b8def;
+  --star-model-4: #a98bf5;
+  --star-model-5: #a3c85a;
+  --star-model-other: #9aa8bf;
+
   /* Details */
   --text-secondary: #45566d;
   --overlay: rgb(26 42 61 / 20%);
@@ -729,6 +777,37 @@
   --sidebar-ring: var(--ring);
   --text-secondary: #adb5c0;
   --overlay: rgb(8 10 13 / 65%);
+  /* The night sky, a shade deeper than the charcoal around it. */
+  --star-sky: #0c1220;
+  --star-frame: transparent;
+  --star-surface: #0f1a30;
+  --star-surface-raised: #17243f;
+  --star-pedestal: #1a2648;
+  --star-ink: #eef3fb;
+  --star-dim: #9aa8c0;
+  --star-line: rgb(160 185 230 / 20%);
+  --star-lit: rgb(214 224 255 / 75%);
+  --star-grid: rgb(140 170 220 / 9%);
+  --star-dust: #eef3fb;
+  --star-gateway: #7f8fe8;
+  --star-disc: 0.28;
+  --star-corona-inner: 55%;
+  --star-corona-outer: 18%;
+  --star-halo-near: 65%;
+  --star-halo-far: 25%;
+  --star-shade: #000000;
+  --star-shade-depth: 65%;
+  --star-glow: 0 0 14px;
+  --star-glow-strength: 50%;
+  --star-glow-lit: 0 0 22px;
+  --star-glow-lit-strength: 75%;
+  --star-label-halo: 0 1px 3px rgb(0 0 0 / 85%);
+  --star-mark-shadow: 0 10px 26px rgb(0 0 0 / 35%);
+  --star-card-shadow: 0 18px 40px rgb(0 0 0 / 45%);
+  --star-enhancer: #20bbc7;
+  --star-provider: #da7baf;
+  --star-warn: #e8b052;
+  --star-off: #6b7891;
   --shadow-overlay: 0 1px 3px rgb(0 0 0 / 24%), 0 10px 30px rgb(0 0 0 / 22%);
   --shadow-floating:
     0 0 0 1px rgb(203 208 216 / 6%), 0 18px 48px -12px rgb(0 0 0 / 55%);
@@ -1128,6 +1207,16 @@
   --color-sidebar-ring: var(--sidebar-ring);
   --color-text-secondary: var(--text-secondary);
   --color-overlay: var(--overlay);
+  --color-star-sky: var(--star-sky);
+  --color-star-surface: var(--star-surface);
+  --color-star-ink: var(--star-ink);
+  --color-star-dim: var(--star-dim);
+  --color-star-line: var(--star-line);
+  --color-star-gateway: var(--star-gateway);
+  --color-star-enhancer: var(--star-enhancer);
+  --color-star-provider: var(--star-provider);
+  --color-star-warn: var(--star-warn);
+  --color-star-off: var(--star-off);
 }
 
 @layer base {

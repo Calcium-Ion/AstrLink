@@ -322,6 +322,99 @@ describe("web command transport", () => {
       expect.objectContaining({ method }),
     );
   });
+  it.each([
+    [
+      "plugin_action",
+      { action: "host" },
+      "GET",
+      "/control/v1/plugin-host",
+      undefined,
+    ],
+    [
+      "plugin_action",
+      { action: "update_host", input: { language: "ja" } },
+      "PATCH",
+      "/control/v1/plugin-host",
+      { language: "ja" },
+    ],
+    [
+      "plugin_action",
+      { action: "stats", key: "powercontext", input: { days: 7 } },
+      "GET",
+      "/control/v1/plugins/powercontext/stats?days=7",
+      undefined,
+    ],
+    [
+      "plugin_action",
+      { action: "credits", key: "powercontext" },
+      "GET",
+      "/control/v1/plugins/powercontext/credits",
+      undefined,
+    ],
+    [
+      "plugin_action",
+      { action: "revoke_lookups", key: "powercontext" },
+      "DELETE",
+      "/control/v1/plugins/powercontext/lookup-credentials",
+      undefined,
+    ],
+    [
+      "plugin_action",
+      {
+        action: "action",
+        key: "powercontext",
+        input: { action: "refresh", session: "session_1" },
+      },
+      "POST",
+      "/control/v1/plugins/powercontext/actions",
+      { action: "refresh", session: "session_1" },
+    ],
+    [
+      "plugin_action",
+      { action: "clear_workspaces", key: "powercontext" },
+      "DELETE",
+      "/control/v1/plugins/powercontext/workspaces",
+      undefined,
+    ],
+    [
+      "metadata_action",
+      { action: "values", key: "project" },
+      "GET",
+      "/control/v1/metadata/attributes/project/values",
+      undefined,
+    ],
+    [
+      "session_plugins",
+      { sessionId: "session_1" },
+      "GET",
+      "/control/v1/request-sessions/session_1/plugins",
+      undefined,
+    ],
+    [
+      "session_plugins",
+      { sessionId: "session_1", key: "powercontext", input: { paused: true } },
+      "PUT",
+      "/control/v1/request-sessions/session_1/plugins/powercontext",
+      { paused: true },
+    ],
+    [
+      "session_plugins",
+      { sessionId: "session_1", key: "powercontext", refresh: true },
+      "POST",
+      "/control/v1/request-sessions/session_1/plugins/powercontext/refresh",
+      undefined,
+    ],
+  ])("routes %s %o", async (command, args, method, path, body) => {
+    respond({});
+    await webInvoke(command, args);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(path);
+    expect(init.method ?? "GET").toBe(method);
+    expect(
+      init.body === undefined ? undefined : JSON.parse(String(init.body)),
+    ).toEqual(body);
+  });
+
   it("aborts a web provider test when cancelled", async () => {
     fetchMock.mockImplementationOnce(
       (_path: string, init?: RequestInit) =>

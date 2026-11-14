@@ -20,6 +20,10 @@ type gatewayExchange struct {
 	headersMS      *int64
 	upstreamStatus int
 	credentials    http.Header
+	// media are what a task plugin's provider generated, set before done
+	// closes and read after.
+	media []contract.ServiceTestMedia
+	done  <-chan struct{}
 }
 
 func (tester *Tester) execute(request *http.Request, service contract.Service, input contract.ServiceTestRequest) (*gatewayExchange, error) {
@@ -29,7 +33,7 @@ func (tester *Tester) execute(request *http.Request, service contract.Service, i
 	ready := make(chan *http.Response, 1)
 	done := make(chan struct{})
 	capture := &gatewayResponseWriter{header: make(http.Header), body: writer, ready: ready}
-	exchange := &gatewayExchange{}
+	exchange := &gatewayExchange{done: done}
 	baseURL := ""
 	if service.Subscription != nil && tester.subscriptionBaseURL != nil {
 		baseURL = tester.subscriptionBaseURL(service.Subscription.Provider)
@@ -52,6 +56,7 @@ func (tester *Tester) execute(request *http.Request, service contract.Service, i
 			WrapResponseBody: func(body io.ReadCloser) io.ReadCloser {
 				return &boundedGatewayBody{ReadCloser: body, remaining: maxResponseBytes + 1}
 			},
+			Media: func(media []contract.ServiceTestMedia) { exchange.media = media },
 		})
 		if !capture.committed {
 			capture.WriteHeader(http.StatusOK)

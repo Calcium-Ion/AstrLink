@@ -422,6 +422,51 @@ it("accepts a manual model without saved models and disables selection while tes
   );
 });
 
+it("titles an empty result and waits up to five minutes for what a task plugin's provider generates", async () => {
+  let finish!: (value: unknown) => void;
+  mocks.testService.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  await act(async () =>
+    root.render(
+      <ServiceTestDialog
+        service={{
+          ...service,
+          kind: "plugin",
+          plugin: { key: "alibaba", provider: "task" },
+          models: ["qwen-image-2.0"],
+          capabilities: [
+            { protocol: "openai.responses", mode: "native", streaming: true },
+          ],
+        }}
+        onClose={() => {}}
+      />,
+    ),
+  );
+  const results = () =>
+    document.querySelector('[data-testid="service-test-results"]')!.textContent;
+  expect(results()).toContain("还没有测试结果");
+  expect(results()).not.toContain("serviceTest.");
+  await act(async () => button("开始测试").click());
+  expect(results()).toContain("正在等待生成完成，最长 5 分钟…");
+  expect(results()).not.toContain("最长 60 秒");
+  await act(async () =>
+    finish({
+      service_id: service.id,
+      protocol: "openai.responses",
+      model: "qwen-image-2.0",
+      stream: true,
+      ok: true,
+      status_code: 200,
+      duration_ms: 100,
+      output: "",
+    }),
+  );
+});
+
 it("cancels a running provider test and returns to an idle state", async () => {
   let reject!: (reason: unknown) => void;
   mocks.testService.mockImplementationOnce(

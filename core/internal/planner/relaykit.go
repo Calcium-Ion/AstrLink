@@ -19,6 +19,9 @@ type RelayKitInput struct {
 	UpstreamModel string
 	Streaming     bool
 	Edges         []contract.ConversionEdge
+	// Routed is set when the provider's plugin routes the model to
+	// UpstreamProtocol, which its capabilities cannot say per model.
+	Routed bool
 }
 
 // BuildRelayKit binds exactly one engine-advertised conversion edge to a
@@ -41,7 +44,7 @@ func BuildRelayKit(input RelayKitInput) (contract.ExecutionPlan, error) {
 	if !service.Enabled {
 		return contract.ExecutionPlan{}, ErrEndpointDisabled
 	}
-	modelFormat := input.UpstreamModel != "" && service.ModelProtocol(input.UpstreamModel) == input.UpstreamProtocol
+	modelFormat := input.Routed || (input.UpstreamModel != "" && service.ModelProtocol(input.UpstreamModel) == input.UpstreamProtocol)
 	if !modelFormat && !supportsNative(service, input.UpstreamProtocol, input.Streaming) &&
 		!hasDeclaredConversion(service, input.InputProtocol, input.UpstreamProtocol, input.Streaming) {
 		return contract.ExecutionPlan{}, &CapabilityUnavailableError{

@@ -46,6 +46,8 @@ type serviceCreateRequest struct {
 	Models                    json.RawMessage         `json:"models,omitempty"`
 	HTTP                      json.RawMessage         `json:"http,omitempty"`
 	Capabilities              json.RawMessage         `json:"capabilities,omitempty"`
+	// Plugin names the plugin that adapts a provider of kind plugin.
+	Plugin *contract.ServicePlugin `json:"plugin,omitempty"`
 	// SubscriptionMode picks how a Claude subscription signs in; without it a
 	// new Claude subscription is official.
 	SubscriptionMode *contract.SubscriptionMode `json:"subscription_mode,omitempty"`
@@ -326,7 +328,7 @@ func (handler *Handler) createService(writer http.ResponseWriter, request *http.
 	now := time.Now().UTC()
 	service := contract.Service{
 		ID: id, Name: input.Name, Kind: *input.Kind, Enabled: enabled, FailurePolicy: input.FailurePolicy,
-		CreatedAt: now, UpdatedAt: now,
+		Plugin: input.Plugin, CreatedAt: now, UpdatedAt: now,
 	}
 	if input.ResponsesWebSocketEnabled != nil {
 		var enabled bool
@@ -417,6 +419,14 @@ func (handler *Handler) createService(writer http.ResponseWriter, request *http.
 		service.HTTP = &connection
 		service.Capabilities = capabilities
 		credential = mutation
+		if _, err := handler.applyTaskProvider(&service); err != nil {
+			writeError(writer, http.StatusUnprocessableEntity, "invalid_service", err.Error())
+			return
+		}
+		if err := handler.checkRelayKey(request.Context(), service, credential); err != nil {
+			writeError(writer, http.StatusUnprocessableEntity, "invalid_service", err.Error())
+			return
+		}
 	default:
 		writeError(writer, http.StatusUnprocessableEntity, "invalid_service", "service kind is unsupported")
 		return
@@ -476,6 +486,14 @@ func (handler *Handler) patchService(writer http.ResponseWriter, request *http.R
 		writeError(writer, http.StatusUnprocessableEntity, "invalid_service_patch", err.Error())
 		return
 	}
+	if _, err := handler.applyTaskProvider(&service); err != nil {
+		writeError(writer, http.StatusUnprocessableEntity, "invalid_service_patch", err.Error())
+		return
+	}
+	if err := handler.checkRelayKey(request.Context(), service, credential); err != nil {
+		writeError(writer, http.StatusUnprocessableEntity, "invalid_service_patch", err.Error())
+		return
+	}
 	defer clear(credential.Secret)
 	record, err := handler.serviceStore.UpdateService(request.Context(), service, credential, expectedETag)
 	if err != nil {
@@ -510,6 +528,11 @@ func (handler *Handler) deleteService(writer http.ResponseWriter, request *http.
 			writeError(writer, http.StatusServiceUnavailable, accountauth.ErrCodeStoreUnavailable, "secure account credential store is unavailable")
 			return
 		}
+	}
+	if handler.pluginHost != nil {
+		// A credential a plugin logged the provider in with is revoked
+		// before it goes.
+		handler.pluginHost.RevokePluginCredential(request.Context(), current.Service)
 	}
 	if err := handler.serviceStore.DeleteService(request.Context(), id, expectedETag); err != nil {
 		handler.writeStoreError(writer, err)

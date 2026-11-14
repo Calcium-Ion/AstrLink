@@ -73,6 +73,19 @@ type UsageTimeBucket struct {
 	UsageTotals
 }
 
+// UsagePluginGroup is one plugin's part in the window. Requests counts the
+// requests of Totals its hooks acted on without failing and FailedRequests
+// those where one of its calls failed; a request the plugin only skipped
+// counts in neither. Tasks counts the tasks its providers took in the window
+// and FailedTasks those that failed.
+type UsagePluginGroup struct {
+	Plugin         string `json:"plugin"`
+	Requests       int64  `json:"requests"`
+	FailedRequests int64  `json:"failed_requests"`
+	Tasks          int64  `json:"tasks"`
+	FailedTasks    int64  `json:"failed_tasks"`
+}
+
 // UsageDetailMaxSpan is the longest window that gets hour-by-model buckets
 // and routes: a month of local days with room for a DST shift. Longer windows
 // leave them empty, so a year of history never ships thousands of buckets.
@@ -121,6 +134,7 @@ type UsageSummary struct {
 	ByClient []UsageGroup `json:"by_client"`
 	// ByRoute holds the routes of succeeded and failed calls for windows up to
 	// UsageDetailMaxSpan, busiest first.
-	ByRoute        []UsageRoute `json:"by_route"`
-	ScannedRecords int64        `json:"scanned_records"`
+	ByRoute        []UsageRoute       `json:"by_route"`
+	ByPlugin       []UsagePluginGroup `json:"by_plugin"`
+	ScannedRecords int64              `json:"scanned_records"`
 }

@@ -1,5 +1,8 @@
 import { useWorkspaceSnapshot } from "./workspace-snapshots";
 import { SessionChannelBindings } from "./SessionChannelBindings";
+import { SessionMemory } from "./SessionMemory";
+import { PluginSlotView, usePluginSlot } from "./plugin-ui";
+import { SessionMetadataChips } from "./SessionMetadata";
 import {
   Fragment,
   memo,
@@ -103,6 +106,7 @@ import {
   getRawSealingStatus,
   getRequestAuditContent,
   getRequestSession,
+  getSessionPlugins,
   listenRawSealingChanged,
   listRequestRecordChildren,
   listRequestSessions,
@@ -114,7 +118,8 @@ import {
 import { copyButtonLabel, useCopyFeedback } from "./copy-feedback";
 import { compactTitle } from "./file-path-spans";
 import { formatCompactNumber } from "./format-compact-number";
-import { currentLocale, i18n, useT } from "./i18n";
+import { formatClockTime, formatDateTime } from "./format-time";
+import { i18n, useT } from "./i18n";
 import { useLiveClock } from "./live-clock";
 import { notify } from "./notify";
 import { PageHeader } from "./PageHeader";
@@ -261,7 +266,10 @@ type DetailTab =
   | "trajectory"
   | "content"
   | "audit"
-  | "binding";
+  | "binding"
+  | "memory"
+  /** A tab a plugin's interface registered. */
+  | `plugin:${string}`;
 // Copies started from a menu lose their button when it closes, so their
 // outcome is announced beside the actions instead.
 const MENU_COPY_KEYS: ReadonlySet<string> = new Set([
@@ -276,6 +284,7 @@ const DETAIL_TABS: readonly DetailTab[] = [
   "content",
   "audit",
   "binding",
+  "memory",
 ];
 type PendingConfirm =
   | { kind: "audit-risk"; patch: AuditSettingsPatch }
@@ -2985,7 +2994,7 @@ const DiscoveryRow = memo(function DiscoveryRow({
           dateTime={session.last_started_at}
           title={formatDateTime(session.last_started_at)}
         >
-          {formatTime(session.last_started_at)}
+          {formatClockTime(session.last_started_at)}
         </time>
       </Button>
     </DataRow>
@@ -3111,7 +3120,7 @@ const SessionRow = memo(function SessionRow({
             dateTime={session.last_started_at}
             title={formatDateTime(session.last_started_at)}
           >
-            {formatTime(session.last_started_at)}
+            {formatClockTime(session.last_started_at)}
           </time>
         </span>
         {/* Capped by the list width, not a fixed size: a redirect shows two names. */}
@@ -3767,6 +3776,29 @@ function RecordDetail({
     true,
     "desktop",
   );
+  // The memory tab shows once a plugin that loads blocks takes part in the
+  // session, or a plugin's interface adds to it.
+  const [pluginsInSession, setPluginsInSession] = useState(false);
+  const sessionSections = usePluginSlot("session.section");
+  const memoryAvailable = pluginsInSession || sessionSections.length > 0;
+  const pluginTabs = usePluginSlot("request.tab");
+  useEffect(() => {
+    if (discovery) {
+      setPluginsInSession(false);
+      return;
+    }
+    let current = true;
+    getSessionPlugins(session.id)
+      .then((plugins) => {
+        if (current) setPluginsInSession(plugins.length > 0);
+      })
+      .catch(() => {
+        if (current) setPluginsInSession(false);
+      });
+    return () => {
+      current = false;
+    };
+  }, [discovery, session.id]);
   const [childrenByRoot, setChildrenByRoot] = useState<
     Record<string, RequestRecord[]>
   >({});
@@ -4037,6 +4069,12 @@ function RecordDetail({
                 />
               </>
             ) : null}
+            {!discovery ? (
+              <SessionMetadataChips
+                refreshKey={`${session.call_count}:${session.status}`}
+                sessionId={session.id}
+              />
+            ) : null}
           </>
         }
         actionsClassName="flex-wrap justify-end gap-1.5"
@@ -4185,11 +4223,21 @@ function RecordDetail({
       <Tabs
         className="flex min-h-0 min-w-0 flex-1 flex-col gap-0"
         onValueChange={(value) => {
-          if (DETAIL_TABS.includes(value as DetailTab)) {
+          if (
+            DETAIL_TABS.includes(value as DetailTab) ||
+            pluginTabs.some((entry) => `plugin:${entry.id}` === value)
+          ) {
             setDetailTab(value as DetailTab);
           }
         }}
-        value={detailTab}
+        // A session no plugin loads for has no memory tab to stay on.
+        value={
+          (detailTab === "memory" && !memoryAvailable) ||
+          (detailTab.startsWith("plugin:") &&
+            !pluginTabs.some((entry) => `plugin:${entry.id}` === detailTab))
+            ? "trajectory"
+            : detailTab
+        }
       >
         <div className="flex shrink-0 flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b py-1.5">
           <TabsList aria-label={t("records.sections")} className="h-8">
@@ -4221,7 +4269,15 @@ function RecordDetail({
             >
               {t("records.tabContent")}
             </TabsTrigger>
-            {!isModelDiscoveryProtocol(session.input_protocol) && (
+            {!discovery && memoryAvailable ? (
+              <TabsTrigger
+                value="memory"
+                onClick={() => setDetailTab("memory")}
+              >
+                {t("sessionMemory.tab")}
+              </TabsTrigger>
+            ) : null}
+            {!discovery && (
               <TabsTrigger
                 value="binding"
                 onClick={() => setDetailTab("binding")}
@@ -4232,6 +4288,15 @@ function RecordDetail({
             <TabsTrigger onClick={() => setDetailTab("audit")} value="audit">
               {t("records.tabAudit")}
             </TabsTrigger>
+            {pluginTabs.map((entry) => (
+              <TabsTrigger
+                key={entry.id}
+                onClick={() => setDetailTab(`plugin:${entry.id}`)}
+                value={`plugin:${entry.id}`}
+              >
+                {entry.title ?? entry.pluginName}
+              </TabsTrigger>
+            ))}
           </TabsList>
           <dl
             data-testid="session-performance"
@@ -4399,6 +4464,40 @@ function RecordDetail({
             }}
           />
         </TabsContent>
+
+        {pluginTabs.map((entry) => (
+          <TabsContent
+            className="mt-0 min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain py-3"
+            data-tab-scroller
+            key={entry.id}
+            value={`plugin:${entry.id}`}
+          >
+            {detailTab === `plugin:${entry.id}` ? (
+              <PluginSlotView
+                context={{ session: session.id, request: record.id }}
+                entry={entry}
+              />
+            ) : null}
+          </TabsContent>
+        ))}
+
+        {!discovery && memoryAvailable ? (
+          <TabsContent
+            className="mt-0 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+            value="memory"
+          >
+            <SessionMemory
+              key={session.id}
+              onSelectRequest={(id) => {
+                onSelectTurn(id);
+                setDetailTab("trajectory");
+              }}
+              records={turns}
+              refreshKey={`${session.call_count}:${session.status}`}
+              sessionId={session.id}
+            />
+          </TabsContent>
+        ) : null}
 
         {!discovery && (
           <TabsContent
@@ -4710,39 +4809,6 @@ function serviceLabel(
 ): string | null {
   if (!serviceId) return null;
   return services.find((service) => service.id === serviceId)?.name ?? null;
-}
-
-// Same output as toLocaleString / toLocaleTimeString with `hour12: false`,
-// which build a new formatter per call; the list formats two times per row.
-const dateTimeFormats = new Map<string, Intl.DateTimeFormat>();
-
-function formatDate(value: string, withDate: boolean): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  const locale = currentLocale();
-  const key = `${locale}:${withDate}`;
-  let format = dateTimeFormats.get(key);
-  if (!format) {
-    format = new Intl.DateTimeFormat(locale, {
-      ...(withDate
-        ? { year: "numeric", month: "numeric", day: "numeric" }
-        : {}),
-      hour: "numeric",
-      minute: "numeric",
-      second: "numeric",
-      hour12: false,
-    });
-    dateTimeFormats.set(key, format);
-  }
-  return format.format(date);
-}
-
-function formatDateTime(value: string): string {
-  return formatDate(value, true);
-}
-
-function formatTime(value: string): string {
-  return formatDate(value, false);
 }
 
 function formatBytes(bytes: number): string {
