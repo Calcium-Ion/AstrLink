@@ -14,6 +14,12 @@ export const eventTable = {
   "display-currency-changed": events.displayCurrencyChanged,
   "quota-display-mode-changed": events.quotaDisplayModeChanged,
   "theme-preference-changed": events.themePreferenceChanged,
+  "toys:feed": events.toysFeed,
+  "toys:prefs": events.toysPrefs,
+  "toys:pointer": events.toysPointer,
+  "toys:frames": events.toysFrames,
+  "toys:idle": events.toysIdle,
+  "toys:screen": events.toysScreen,
 } satisfies Record<string, GoEvent<unknown>>;
 
 export type EventName = keyof typeof eventTable;

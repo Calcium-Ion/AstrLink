@@ -77,6 +77,8 @@ var navigationKinds = []string{
 	"routing",
 	"agentTools",
 	"settings",
+	// The desktop pets page.
+	"desktopToys",
 }
 
 // TrayIconState is the icon's state image.

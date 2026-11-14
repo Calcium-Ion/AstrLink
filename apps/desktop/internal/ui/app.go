@@ -19,6 +19,7 @@ import (
 	"github.com/QuantumNous/astrlink/desktop/internal/host"
 	"github.com/QuantumNous/astrlink/desktop/internal/prefs"
 	"github.com/QuantumNous/astrlink/desktop/internal/raw"
+	"github.com/QuantumNous/astrlink/desktop/internal/toys"
 )
 
 const mac = runtime.GOOS == "darwin"
@@ -35,6 +36,8 @@ type App struct {
 	tray       *trayController
 	inspectors inspectorRegistry
 	rates      atomic.Pointer[currency.Rates]
+	// toys is the desktop pet, once the host started.
+	toys atomic.Pointer[toys.Runtime]
 
 	// quitting is set once a quit started, so closing a window no longer
 	// hides it.
@@ -59,6 +62,7 @@ func New(h *host.Host) *App {
 	a.tray = newTray(a)
 	a.legacyStorage = sync.OnceValue(func() string { return legacyStorageScript(readLegacyStorage(h.Instance().Identifier())) })
 	h.OnMainWindowPreload(a.legacyStorage)
+	h.OnPreload(toysPreload)
 	h.OnMainWindowOpened(a.mainOpened)
 	h.OnStarted(a.start)
 	h.OnRecordsChanged(a.tray.recordsChanged)
@@ -87,10 +91,11 @@ func New(h *host.Host) *App {
 	return a
 }
 
-// Services are the bound services of windows, the tray, inspectors, files
-// and the display currency (src/native-host/commands-window.ts).
+// Services are the bound services of windows, the tray, inspectors, files,
+// the display currency and the desktop pet
+// (src/native-host/commands-window.ts).
 func (a *App) Services() []any {
-	return []any{MainWindow{a}, Files{}, Currency{a}, Tray{a}, TrajectoryInspector{a}}
+	return []any{MainWindow{a}, Files{}, Currency{a}, Tray{a}, TrajectoryInspector{a}, Toys{a}}
 }
 
 func (a *App) prefs() prefs.Preferences {
@@ -110,6 +115,7 @@ func (a *App) start() {
 	go a.removeLegacyAutostart()
 	a.startCurrency(ctx)
 	a.tray.start(ctx)
+	a.startToys(ctx)
 	lock := a.sessionLock()
 	go lock.Watch(ctx)
 	if mac {
@@ -395,6 +401,10 @@ func (a *App) preferencesChanged(previous, current prefs.Preferences) {
 	}
 	if previous.Locale != current.Locale {
 		a.inspectorLocaleChanged(current.Locale)
+		// The pet says things.
+		if runtime := a.toys.Load(); runtime != nil {
+			runtime.PrefsChanged()
+		}
 	}
 	a.tray.preferencesChanged()
 }

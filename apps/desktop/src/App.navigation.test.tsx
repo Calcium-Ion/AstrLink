@@ -132,6 +132,13 @@ vi.mock("./bridge", () => bridgeMocks);
 const eventMocks = vi.hoisted(() => ({ listen: vi.fn() }));
 vi.mock("./native-host/event", () => ({ listen: eventMocks.listen }));
 
+// The desktop platform reads as set: the pages that depend on it show,
+// while the host's commands and events stay mocked.
+const presence = vi.hoisted(() => ({ native: false }));
+vi.mock("./native-host/presence", () => ({
+  hasNativeHost: () => presence.native,
+}));
+
 const modelUpdate = vi.hoisted(() => ({
   current: null as
     | import("./use-privacy-model-update").PrivacyModelUpdate
@@ -443,7 +450,7 @@ describe("tray navigation targets", () => {
     // The pets page exists only where the pets do.
     expect(trayNavigationTarget("desktopToys")).toBeNull();
     window.__ASTRLINK_DESKTOP_PLATFORM__ = "windows";
-    Object.assign(window, { __TAURI_INTERNALS__: {} });
+    presence.native = true;
     // A Wayland session has no pets either.
     expect(trayNavigationTarget("desktopToys")).toBeNull();
     window.__ASTRLINK_DESKTOP_TOYS__ = true;
@@ -454,7 +461,7 @@ describe("tray navigation targets", () => {
     } finally {
       delete window.__ASTRLINK_DESKTOP_PLATFORM__;
       delete window.__ASTRLINK_DESKTOP_TOYS__;
-      delete (window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+      presence.native = false;
     }
     expect(trayNavigationTarget("privacyOverview")).toEqual({
       kind: "safety",
@@ -801,7 +808,7 @@ describe("App workspace navigation", () => {
 
     window.__ASTRLINK_DESKTOP_PLATFORM__ = "linux";
     window.__ASTRLINK_DESKTOP_TOYS__ = true;
-    Object.assign(window, { __TAURI_INTERNALS__: {} });
+    presence.native = true;
     try {
       bridgeMocks.getPreferences.mockReturnValue(new Promise(() => {}));
       await renderApp();
@@ -817,7 +824,7 @@ describe("App workspace navigation", () => {
     } finally {
       delete window.__ASTRLINK_DESKTOP_PLATFORM__;
       delete window.__ASTRLINK_DESKTOP_TOYS__;
-      delete (window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+      presence.native = false;
     }
   });
 

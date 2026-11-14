@@ -2,17 +2,20 @@ import {
   Currency,
   Files,
   MainWindow,
+  Toys,
   TrajectoryInspector,
   Tray,
   Window,
+  type DesktopToysPreferences,
+  type HitRect,
   type TrayAction,
   type TrayPreferences,
 } from "../mygo";
 import type { CommandTable } from "./types";
 
 // Commands bound in commands_window.go: window chrome, the main window's
-// placement, the tray and its popover, trajectory inspectors, files and
-// the display currency. Optional arguments the frontend leaves out arrive
+// placement, the tray and its popover, trajectory inspectors, files, the
+// display currency and the desktop pet. Optional arguments the frontend leaves out arrive
 // as null.
 export const windowCommands = {
   window_chrome_preferences: () => Window.windowChromePreferences(),
@@ -48,4 +51,10 @@ export const windowCommands = {
     TrajectoryInspector.setTrajectoryInspectorPinned(a.pinned),
   set_trajectory_inspector_wide: (a: { wide: boolean }) =>
     TrajectoryInspector.setTrajectoryInspectorWide(a.wide),
+
+  toys_snapshot: () => Toys.toysSnapshot(),
+  update_desktop_toys: (a: { input: DesktopToysPreferences }) =>
+    Toys.updateDesktopToys(a.input),
+  toys_hit: (a: { rects: HitRect[]; hold: boolean; carry?: boolean | null }) =>
+    Toys.toysHit(a.rects, a.hold, a.carry ?? null),
 } satisfies CommandTable;

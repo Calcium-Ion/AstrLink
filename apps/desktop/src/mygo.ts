@@ -343,6 +343,46 @@ export interface DataBackupFile {
   modified_unix: number | null;
 }
 
+/** DesktopToyPet is the big pet floating where she was left. */
+export interface DesktopToyPet {
+  size: ToySize;
+  character: PetCharacter;
+  /** Grab lets her be picked up and thrown with the mouse. */
+  grab: boolean;
+  /** Reply shows a bubble when a reply is written. */
+  reply: boolean;
+  /** Failover shows a bubble when a call switches route. */
+  failover: boolean;
+}
+
+/**
+ * DesktopToysOn is which desktop toys are out. Missing ones are off; only
+ * a new macOS install starts with the big pet out.
+ */
+export interface DesktopToysOn {
+  /** Pet is one big girl for every conversation, to pat, poke and throw. */
+  pet: boolean;
+}
+
+/**
+ * DesktopToysPreferences are the desktop toys outside the main window, for
+ * now the big pet, saved apart from the general settings.
+ */
+export interface DesktopToysPreferences {
+  level: ToyLevel;
+  /** Orb floats each conversation's model beside the pet as a winged orb. */
+  orb: boolean;
+  /**
+   * Status shows what she is doing over her head: the tool, tok/s, a
+   * thought cloud, a snore.
+   */
+  status: boolean;
+  /** Milestone has her celebrate the day's token milestones. */
+  milestone: boolean;
+  on: DesktopToysOn;
+  pet: DesktopToyPet;
+}
+
 /** DiffLine is one line of a diff. */
 export interface DiffLine {
   kind: LineKind;
@@ -371,6 +411,17 @@ export interface Display {
 /** DownloadSource is where an update downloads from. */
 export type DownloadSource = "github" | "download_site";
 
+/** Feed is the activity every toy window reads. */
+export interface Feed {
+  activity: unknown;
+  tokens: number | null;
+  /**
+   * Sample is debug builds only: the toys play the sample conversations
+   * instead.
+   */
+  sample: boolean;
+}
+
 /** FileChanges is what a write or removal changes in one file. */
 export interface FileChanges {
   path: string;
@@ -387,8 +438,48 @@ export interface FileChanges {
   lines: DiffLine[];
 }
 
+export interface FrameDock {
+  x0: number;
+  x1: number;
+  y: number;
+}
+
+/** FrameWin is another app's window as a pet sees it. */
+export interface FrameWin {
+  id: number;
+  kind: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/** Frames is what a pet sees on her screen, in her window's points. */
+export interface Frames {
+  wins: FrameWin[];
+  dock: FrameDock | null;
+  floor: number;
+  top: number;
+  full: boolean;
+  w: number;
+  h: number;
+}
+
 export interface HealthResponse {
   status: string;
+}
+
+/**
+ * HitRect is a part of a toy window, in its own points, that hovers or
+ * takes clicks.
+ */
+export interface HitRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  /** Click takes clicks; otherwise only hover is reported. */
+  click?: boolean;
 }
 
 /** InferenceListen is which network interfaces the inference port answers. */
@@ -494,6 +585,12 @@ export interface Opened {
   sources: SourceView[];
 }
 
+/**
+ * PetCharacter is who the big pet is: one of the drawn girls, or whoever
+ * has the most conversations going.
+ */
+export type PetCharacter = "auto" | "claude_code" | "codex" | "deepseek_harness";
+
 /** Phase is where Core is in its lifecycle. */
 export type Phase = "stopped" | "spawning" | "waiting_for_ready" | "handshaking" | "ready" | "stopping" | "exited" | "error";
 
@@ -543,6 +640,11 @@ export interface Preferences {
   display_currency: string;
   tray: TrayPreferences;
   updates: UpdatePreferences;
+  /**
+   * DesktopToys is saved on its own, like Updates, so the settings page
+   * and the toys never overwrite each other's changes.
+   */
+  desktop_toys: DesktopToysPreferences;
 }
 
 /** Preview is what writing or removing one place would change. */
@@ -785,6 +887,13 @@ export interface Skipped {
   detail: string | null;
 }
 
+/** Snapshot is what a toy's page needs once it has loaded. */
+export interface Snapshot {
+  prefs: unknown;
+  feed: Feed;
+  frames: Frames | null;
+}
+
 /** SnippetFile is one file of a manual setup. */
 export interface SnippetFile {
   /** Path is where the file goes, from the home. */
@@ -835,6 +944,12 @@ export type ThemePreference = "system" | "light" | "dark";
 
 /** Tool is an agent tool whose config files the import reads. */
 export type Tool = "claude" | "codex" | "pi";
+
+/** ToyLevel is how much the desktop pet moves. */
+export type ToyLevel = "calm" | "normal" | "lively";
+
+/** ToySize is how big the pet draws. */
+export type ToySize = "small" | "normal" | "large";
 
 /**
  * TrayAction is an action the popover asks the host to perform:
@@ -1751,6 +1866,27 @@ export const TrajectoryInspector = {
   },
 } as const;
 
+/** Toys are the desktop pet's commands. */
+export const Toys = {
+  /**
+   * ToysHit takes which parts of the calling toy window hover or take
+   * clicks; hold keeps all of it taking the mouse while something is pressed
+   * or dragged, and carry (hold if null) lets a dragged pet take her window
+   * to another screen.
+   */
+  toysHit(rects: HitRect[], hold: boolean, carry: boolean | null): Promise<void> {
+    return call("Toys.ToysHit", rects, hold, carry);
+  },
+  /** ToysSnapshot is what the calling toy window's page needs once loaded. */
+  toysSnapshot(): Promise<Snapshot> {
+    return call("Toys.ToysSnapshot");
+  },
+  /** UpdateDesktopToys saves the pet's preferences and applies them at once. */
+  updateDesktopToys(input: DesktopToysPreferences): Promise<SettingsSnapshot> {
+    return call("Toys.UpdateDesktopToys", input);
+  },
+} as const;
+
 /**
  * Clients writes and removes the config files of the coding clients,
  * previews and copies their setups, and checks what reaches the gateway.
@@ -2039,4 +2175,15 @@ export const events = {
    * state again (getCurrentWindow().onResized).
    */
   windowResized: event<{}>("window:resized"),
+  /**
+   * The desktop pet's window hears its feed, preferences, the mouse over
+   * it, the other windows on its screen, the idle time and a move to
+   * another screen (internal/toys owns the payloads).
+   */
+  toysFeed: event<unknown>("toys:feed"),
+  toysPrefs: event<unknown>("toys:prefs"),
+  toysPointer: event<unknown>("toys:pointer"),
+  toysFrames: event<unknown>("toys:frames"),
+  toysIdle: event<unknown>("toys:idle"),
+  toysScreen: event<unknown>("toys:screen"),
 } as const;

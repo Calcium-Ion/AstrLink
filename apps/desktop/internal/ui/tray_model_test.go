@@ -481,7 +481,7 @@ func TestTrayActionsParseOnlyTheirOwnFields(t *testing.T) {
 }
 
 func TestNavigationAcceptsOnlyKnownPages(t *testing.T) {
-	for _, page := range []string{"records", "failedToday", "privacyOverview", "settings", "agentTools"} {
+	for _, page := range []string{"records", "failedToday", "privacyOverview", "settings", "agentTools", "desktopToys"} {
 		if err := checkNavigation(page); err != nil {
 			t.Fatalf("%s: %v", page, err)
 		}

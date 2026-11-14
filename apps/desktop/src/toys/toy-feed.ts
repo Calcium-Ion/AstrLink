@@ -1,7 +1,8 @@
 // The activity every toy window reads: the host polls once for all of them
 // and pushes it here; a page that just loaded asks for the last read.
-import { invoke, isTauri } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { invoke } from "../native-host/core";
+import { listen, type UnlistenFn } from "../native-host/event";
+import { hasNativeHost } from "../native-host/presence";
 
 import { applyLocale, isLocale } from "../i18n";
 import { readCrew, stagePassed } from "../live-crew-model";
@@ -148,7 +149,7 @@ export function readScreenMove(payload: unknown): ScreenMove | null {
 
 /** Follows the host's feed and preferences; resolves once the last read is in. */
 export async function startFeed(handlers: FeedHandlers = {}) {
-  if (!isTauri()) return () => {};
+  if (!hasNativeHost()) return () => {};
   const stops: UnlistenFn[] = await Promise.all([
     listen<unknown>(FEED_EVENT, ({ payload }) => acceptFeed(payload, handlers)),
     listen<unknown>(PREFS_EVENT, ({ payload }) =>
@@ -201,7 +202,7 @@ export function reportHits(
   hold = false,
   carry = hold,
 ) {
-  if (!isTauri()) return;
+  if (!hasNativeHost()) return;
   void invoke("toys_hit", { rects, hold, carry }).catch(() => undefined);
 }
 

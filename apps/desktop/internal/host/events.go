@@ -40,4 +40,14 @@ var (
 	// went into or out of full screen, so a custom title bar reads its
 	// state again (getCurrentWindow().onResized).
 	WindowResized = mygo.NewEvent[struct{}]("window:resized")
+
+	// The desktop pet's window hears its feed, preferences, the mouse over
+	// it, the other windows on its screen, the idle time and a move to
+	// another screen (internal/toys owns the payloads).
+	ToysFeed    = mygo.NewEvent[any]("toys:feed")
+	ToysPrefs   = mygo.NewEvent[any]("toys:prefs")
+	ToysPointer = mygo.NewEvent[any]("toys:pointer")
+	ToysFrames  = mygo.NewEvent[any]("toys:frames")
+	ToysIdle    = mygo.NewEvent[any]("toys:idle")
+	ToysScreen  = mygo.NewEvent[any]("toys:screen")
 )

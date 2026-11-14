@@ -73,6 +73,8 @@ type Host struct {
 	// mainPreload adds to the main window's preload script
 	// (OnMainWindowPreload).
 	mainPreload func() string
+	// preload adds to every window's preload script (OnPreload).
+	preload func() string
 
 	mu   sync.Mutex
 	main *mygo.Window
@@ -150,6 +152,10 @@ func (h *Host) OnMainWindowOpened(fn func(w *mygo.Window)) { h.mainOpened = fn }
 // OnMainWindowPreload appends what fn returns to the preload script of each
 // main window as it is built. Call it before Start.
 func (h *Host) OnMainWindowPreload(fn func() string) { h.mainPreload = fn }
+
+// OnPreload adds fn's script to every window's preload script. Call it
+// before Start.
+func (h *Host) OnPreload(fn func() string) { h.preload = fn }
 
 func (h *Host) run(hooks *[]func()) {
 	h.mu.Lock()
@@ -410,9 +416,13 @@ func (h *Host) PreloadScript(label string) string {
 		encoded, _ := json.Marshal(s)
 		return string(encoded)
 	}
-	return "window.__ASTRLINK_WINDOW_LABEL__ = " + quote(label) + ";\n" +
+	script := "window.__ASTRLINK_WINDOW_LABEL__ = " + quote(label) + ";\n" +
 		"window.__ASTRLINK_DESKTOP_PLATFORM__ = " + quote(PlatformName()) + ";\n" +
 		h.instance.InitializationScript() + "\n"
+	if h.preload != nil {
+		script += h.preload() + "\n"
+	}
+	return script
 }
 
 // mainBackground is the main window's background before the page paints,
@@ -488,6 +498,10 @@ func Label(w *mygo.Window) string {
 	text, _ := label.(string)
 	return text
 }
+
+// SettingsSnapshot is what the settings page shows, for the services that
+// save a part of the preferences on their own.
+func (h *Host) SettingsSnapshot() SettingsSnapshot { return h.settingsSnapshot() }
 
 // settingsSnapshot is what the settings page shows. The backups are
 // rescanned every time, so a backup the user deletes stops showing.
