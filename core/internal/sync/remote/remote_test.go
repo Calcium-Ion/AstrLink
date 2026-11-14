@@ -2,10 +2,13 @@ package remote
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -320,5 +323,82 @@ func TestDecodeLockRejectsIncomplete(t *testing.T) {
 	}
 	if _, err := decodeLock([]byte(`not json`)); err == nil {
 		t.Fatal("malformed lock was accepted")
+	}
+}
+
+// The canonical URI keeps the leading slash, so the signature covers the same
+// path the server signs.
+func TestS3CanonicalURIKeepsTheLeadingSlash(t *testing.T) {
+	cases := []struct {
+		path string
+		want string
+	}{
+		{"/bucket/astrlink-config.enc", "/bucket/astrlink-config.enc"},
+		{"/astrlink-config.enc", "/astrlink-config.enc"},
+		{"/", "/"},
+		{"", "/"},
+	}
+	for _, testCase := range cases {
+		parsed, err := url.Parse("https://s3.example" + testCase.path)
+		if err != nil {
+			t.Fatalf("parse %q: %v", testCase.path, err)
+		}
+		if got := canonicalURI(parsed); got != testCase.want {
+			t.Fatalf("canonicalURI(%q) = %q, want %q", testCase.path, got, testCase.want)
+		}
+	}
+}
+
+// A server that verifies the signature the way AWS SigV4 defines it refuses a
+// request whose canonical URI lost the leading slash, so the client has to
+// sign the path the server sees.
+func TestS3SignatureIsAcceptedByASpecCompliantServer(t *testing.T) {
+	const accessKey = "AKIDEXAMPLE"
+	const secretKey = "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY"
+	const region = "us-east-1"
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		amzDate := request.Header.Get("X-Amz-Date")
+		payloadHash := request.Header.Get("X-Amz-Content-Sha256")
+		canonicalHeaders := fmt.Sprintf("host:%s\nx-amz-content-sha256:%s\nx-amz-date:%s\n",
+			request.Host, payloadHash, amzDate)
+		signedHeaders := "host;x-amz-content-sha256;x-amz-date"
+		canonicalRequest := strings.Join([]string{
+			request.Method,
+			request.URL.EscapedPath(),
+			request.URL.RawQuery,
+			canonicalHeaders,
+			signedHeaders,
+			payloadHash,
+		}, "\n")
+		scope := amzDate[:8] + "/" + region + "/s3/aws4_request"
+		requestHash := sha256.Sum256([]byte(canonicalRequest))
+		stringToSign := strings.Join([]string{
+			"AWS4-HMAC-SHA256",
+			amzDate,
+			scope,
+			hex.EncodeToString(requestHash[:]),
+		}, "\n")
+		key := hmacSHA256([]byte("AWS4"+secretKey), amzDate[:8])
+		key = hmacSHA256(key, region)
+		key = hmacSHA256(key, "s3")
+		key = hmacSHA256(key, "aws4_request")
+		expected := hex.EncodeToString(hmacSHA256(key, stringToSign))
+		if !strings.HasSuffix(request.Header.Get("Authorization"), "Signature="+expected) {
+			writer.WriteHeader(http.StatusForbidden)
+			return
+		}
+		writer.WriteHeader(http.StatusNotFound)
+	}))
+	t.Cleanup(server.Close)
+
+	store, err := newS3(Config{
+		Kind: "s3", Endpoint: server.URL, Path: "bucket", Region: region,
+		AccessKey: accessKey, SecretKey: secretKey,
+	}, server.Client(), time.Now)
+	if err != nil {
+		t.Fatalf("new s3: %v", err)
+	}
+	if _, _, exists, err := store.Read(context.Background()); err != nil || exists {
+		t.Fatalf("read = %v, %v; a server that signs the way AWS SigV4 defines it refused the request", exists, err)
 	}
 }
