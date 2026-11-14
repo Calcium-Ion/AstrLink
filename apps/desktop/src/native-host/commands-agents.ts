@@ -53,6 +53,8 @@ export const agentsCommands = {
   refresh_local_clients: () => LocalClients.refreshLocalClients(),
   update_local_clients: (a: { targets: ClientTarget[] }) =>
     LocalClients.updateLocalClients(a.targets),
+  repair_local_clients: (a: { targets: ClientTarget[] }) =>
+    LocalClients.repairLocalClients(a.targets),
 
   list_terminal_apps: () => Terminal.listTerminalApps(),
   pick_terminal_directory: (a: { start?: string | null }) =>

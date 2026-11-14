@@ -275,6 +275,19 @@ export interface ClientupdatesClientStatus {
   checked_at: string | null;
   error_code: string | null;
   error_detail: string | null;
+  /**
+   * Repair is, for a damaged installation, "restore" to put back the
+   * version from before an interrupted update or "reinstall" to install
+   * the latest again.
+   */
+  repair: string | null;
+  /** PreviousVersion is the version restore puts back. */
+  previous_version: string | null;
+  /**
+   * KeptPrevious is set after a failed update or repair when the version
+   * from before still works.
+   */
+  kept_previous: boolean;
 }
 
 /** CloseBehavior is what closing the main window does. */
@@ -1912,6 +1925,13 @@ export const LocalClients = {
   /** RefreshLocalClients checks every client for updates in the background. */
   refreshLocalClients(): Promise<ClientSnapshot> {
     return call("LocalClients.RefreshLocalClients");
+  },
+  /**
+   * RepairLocalClients puts back or reinstalls targets whose installation no
+   * longer starts.
+   */
+  repairLocalClients(targets: ClientTarget[]): Promise<ClientSnapshot> {
+    return call("LocalClients.RepairLocalClients", targets);
   },
   /** UpdateLocalClients updates targets in the background. */
   updateLocalClients(targets: ClientTarget[]): Promise<ClientSnapshot> {

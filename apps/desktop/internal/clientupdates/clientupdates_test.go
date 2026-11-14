@@ -430,6 +430,9 @@ func TestSerializesOperationsAndRejectsUnknownClientIDs(t *testing.T) {
 		if _, err := manager.Update(targets); err == nil || err.Error() != "Invalid client selection" {
 			t.Errorf("%v: %v", targets, err)
 		}
+		if _, err := manager.Repair(targets); err == nil || err.Error() != "Invalid client selection" {
+			t.Errorf("repair %v: %v", targets, err)
+		}
 	}
 }
 
@@ -439,7 +442,8 @@ func TestSnapshotsSerializeAsTheTauriShellDid(t *testing.T) {
 		t.Fatal(err)
 	}
 	status := `{"id":"%s","wsl":null,"phase":"idle","current_version":null,"latest_version":null,"install_method":"unknown",` +
-		`"executable":null,"other_installations":[],"can_update":false,"checked_at":null,"error_code":null,"error_detail":null}`
+		`"executable":null,"other_installations":[],"can_update":false,"checked_at":null,"error_code":null,"error_detail":null,` +
+		`"repair":null,"previous_version":null,"kept_previous":false}`
 	var clients []string
 	for _, id := range allClients {
 		clients = append(clients, strings.Replace(status, "%s", string(id), 1))
@@ -681,5 +685,3 @@ func TestCommandsRunThroughWSLFromTheHomeWithTheLocalEnvironment(t *testing.T) {
 		}
 	}
 }
-
-func sameVersion(a, b clientVersion) bool { return a.text == b.text && a.order.compare(b.order) == 0 }

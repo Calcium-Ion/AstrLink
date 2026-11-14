@@ -630,12 +630,16 @@ func detect(env *Environment, id ClientID) *installation {
 }
 
 func currentVersion(env *Environment, id ClientID, install *installation) (clientVersion, *clientError) {
+	return versionWithin(env, id, install, probeTimeout)
+}
+
+func versionWithin(env *Environment, id ClientID, install *installation, deadline time.Duration) (clientVersion, *clientError) {
 	spec, failure := clientCommand(env, install)
 	if failure != nil {
 		return clientVersion{}, failure
 	}
 	spec.args = append(spec.args, "--version")
-	output, failure := run(env, spec, probeTimeout)
+	output, failure := run(env, spec, deadline)
 	if failure != nil {
 		return clientVersion{}, failure
 	}
@@ -774,56 +778,65 @@ func updateCommand(env *Environment, id ClientID, install *installation, latest 
 		}
 		return command(brewProgram, "upgrade", kind, method.pkg), nil
 	case method.kind == methodNpm:
-		npm := filepath.Join(method.prefix, "lib", "node_modules", "npm", "bin", "npm-cli.js")
-		if env.windows() {
-			npm = filepath.Join(method.prefix, "node_modules", "npm", "bin", "npm-cli.js")
-		}
-		if !env.isFile(npm) {
-			npm = ""
-			for _, found := range env.programs("npm") {
-				candidate := found.resolved
-				if extension(found.path) == "cmd" {
-					// Node's Windows npm.cmd runs the npm-cli.js beside
-					// it.
-					directory, ok := parent(found.path)
-					if !ok {
-						continue
-					}
-					candidate = filepath.Join(directory, "node_modules", "npm", "bin", "npm-cli.js")
-				}
-				if endsWith(candidate, "npm/bin/npm-cli.js") && env.isFile(candidate) {
-					npm = candidate
-					break
-				}
-			}
-			if npm == "" {
-				return commandSpec{}, newError("unsupported", "npm is unavailable")
-			}
-		}
-		node, ok := nodeProgram(env, method.prefix)
-		if !ok {
-			return commandSpec{}, newError("unsupported", "Node.js is unavailable")
-		}
-		pkg := id.packages()[0]
-		return command(node.path,
-			env.pathArg(npm),
-			"install",
-			"--global",
-			"--prefix",
-			env.pathArg(method.prefix),
-			// Earlier sudo installs can leave ~/.npm owned by root. Keep
-			// update downloads in this user's separate cache, using a
-			// Linux path for a client inside WSL.
-			"--cache",
-			env.pathArg(filepath.Join(env.home, npmCacheLocation)),
-			// npm 12 skips install scripts missing from allowScripts and
-			// still exits 0. Claude Code's postinstall replaces the
-			// bin/claude.exe stub with its native binary.
-			"--allow-scripts="+pkg,
-			pkg+"@"+latest.String(),
-		), nil
+		return npmCommand(env, id, method.prefix, method.prefix, latest)
 	}
 	return commandSpec{}, newError("unsupported", "Use the original installer or package manager")
+}
+
+// npmCommand is npm's command line that installs latest globally into
+// target, using the npm and Node.js that serve the installation in prefix.
+func npmCommand(env *Environment, id ClientID, prefix, target string, latest clientVersion) (commandSpec, *clientError) {
+	npm := filepath.Join(prefix, "lib", "node_modules", "npm", "bin", "npm-cli.js")
+	if env.windows() {
+		npm = filepath.Join(prefix, "node_modules", "npm", "bin", "npm-cli.js")
+	}
+	if !env.isFile(npm) {
+		npm = ""
+		for _, found := range env.programs("npm") {
+			candidate := found.resolved
+			if extension(found.path) == "cmd" {
+				// Node's Windows npm.cmd runs the npm-cli.js beside it.
+				directory, ok := parent(found.path)
+				if !ok {
+					continue
+				}
+				candidate = filepath.Join(directory, "node_modules", "npm", "bin", "npm-cli.js")
+			}
+			if endsWith(candidate, "npm/bin/npm-cli.js") && env.isFile(candidate) {
+				npm = candidate
+				break
+			}
+		}
+		if npm == "" {
+			return commandSpec{}, newError("unsupported", "npm is unavailable")
+		}
+	}
+	node, ok := nodeProgram(env, prefix)
+	if !ok {
+		return commandSpec{}, newError("unsupported", "Node.js is unavailable")
+	}
+	pkg := id.packages()[0]
+	args := []string{env.pathArg(npm), "install", "--global", "--prefix", env.pathArg(target)}
+	if target != prefix {
+		// npm reads the global npmrc from <prefix>/etc/npmrc. The staging
+		// prefix has none, so keep the installation's own settings.
+		args = append(args, "--globalconfig", env.pathArg(filepath.Join(prefix, "etc", "npmrc")))
+	}
+	// Earlier sudo installs can leave ~/.npm owned by root. Keep update
+	// downloads in this user's separate cache, using a Linux path for a
+	// client inside WSL.
+	args = append(args, "--cache", env.pathArg(filepath.Join(env.home, npmCacheLocation)))
+	if id == ClientPi {
+		// As `pi update --self` installs Pi with npm.
+		args = append(args, "--ignore-scripts", "--min-release-age=0")
+	} else {
+		// npm 12 skips install scripts missing from allowScripts and still
+		// exits 0. Claude Code's postinstall replaces the bin/claude.exe
+		// stub with its native binary.
+		args = append(args, "--allow-scripts="+pkg)
+	}
+	args = append(args, pkg+"@"+latest.String())
+	return command(node.path, args...), nil
 }
 
 // usualDirectories are where clients install that a PATH may miss: a GUI

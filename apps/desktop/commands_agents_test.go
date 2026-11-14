@@ -24,7 +24,7 @@ func TestEveryAgentCommandIsABoundMethod(t *testing.T) {
 		"agent_debug_status", "install_agent_debug", "uninstall_agent_debug",
 		"local_import_sources", "read_local_import", "probe_local_import_models", "confirm_local_import", "dismiss_local_import",
 		"pending_provider_import", "dismiss_provider_import", "confirm_provider_import",
-		"local_client_status", "refresh_local_clients", "update_local_clients",
+		"local_client_status", "refresh_local_clients", "update_local_clients", "repair_local_clients",
 		"list_terminal_apps", "pick_terminal_directory", "open_service_terminal",
 	}
 	var methods []string

@@ -12,7 +12,7 @@ const pendingCommands: Record<string, string[]> = {
   // Windows, the tray, inspectors, files and the currency.
   windows: ["update_desktop_toys"],
   // Agent tools, imports, terminals and local client updates.
-  agents: ["repair_local_clients"],
+  agents: [],
   // Only the server edition installs the claude CLI; the desktop never
   // offered it.
   webOnly: ["install_claude_cli"],

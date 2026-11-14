@@ -311,6 +311,12 @@ func (l LocalClients) UpdateLocalClients(targets []clientupdates.ClientTarget) (
 	return l.manager.Update(targets)
 }
 
+// RepairLocalClients puts back or reinstalls targets whose installation no
+// longer starts.
+func (l LocalClients) RepairLocalClients(targets []clientupdates.ClientTarget) (clientupdates.ClientSnapshot, error) {
+	return l.manager.Repair(targets)
+}
+
 // ---- Service terminal ----
 
 // Terminal opens a terminal running Claude Code or Codex through one

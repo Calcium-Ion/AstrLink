@@ -278,7 +278,7 @@ func (e *clientError) Error() string { return e.detail }
 var (
 	networkMarkers = []string{
 		"curl: (5)", "curl: (6)", "curl: (7)", "curl: (28)", "curl: (35)", "curl: (60)",
-		"ECONNREFUSED", "ENOTFOUND", "ETIMEDOUT",
+		"ECONNREFUSED", "ECONNRESET", "ENOTFOUND", "ETIMEDOUT",
 	}
 	permissionMarkers = []string{
 		"eacces", "eperm", "permission denied", "operation not permitted", "access is denied",
