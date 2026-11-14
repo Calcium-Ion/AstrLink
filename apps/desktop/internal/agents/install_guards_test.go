@@ -257,6 +257,60 @@ func TestEitherInstanceKeepsAndCountsTheGuardsTheOtherWrote(t *testing.T) {
 	}
 }
 
+// Guards installed when only the default instance had a session file get
+// the development instance's at the next startup.
+func TestSyncAddsTheDevSessionFileToGuardsInstalledBeforeIt(t *testing.T) {
+	home := t.TempDir()
+	local := Local(home)
+	mustMkdir(t, filepath.Join(home, ".claude"), filepath.Join(home, ".codex"))
+	data := filepath.Join(home, "data")
+	context := &InstallContext{Home: home, CLISource: filepath.Join(home, "src-astrlink-cli"), DataDirectories: []string{data}}
+	mustWrite(t, context.CLISource, "cli")
+	if _, err := installLocal(context, debugOnly, []AgentToolID{ToolClaude, ToolCodex}); err != nil {
+		t.Fatal(err)
+	}
+	const devRule = "Read(~/.astrlink/control-session-dev.json)"
+	// Rewrite what an earlier version installed: no dev rule anywhere.
+	settings, agentsFile := claudeSettingsPath(local), codexAgentsPath(local)
+	mustWrite(t, settings, strings.Replace(mustRead(t, settings), `"`+devRule+`",`, "", 1))
+	mustWrite(t, agentsFile, strings.Replace(mustRead(t, agentsFile),
+		"the control session files (`~/.astrlink/control-session.json`, `~/.astrlink/control-session-dev.json`)",
+		"`~/.astrlink/control-session.json`", 1))
+	record, err := readHostGuards(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record.Claude.Rules = slices.DeleteFunc(record.Claude.Rules, func(rule string) bool { return rule == devRule })
+	record.Claude.Managed = slices.DeleteFunc(record.Claude.Managed, func(rule string) bool { return rule == devRule })
+	if err := writeHostGuards(home, &record); err != nil {
+		t.Fatal(err)
+	}
+	if slices.Contains(denyList(t, settings), any(devRule)) || strings.Contains(mustRead(t, agentsFile), "control-session-dev.json") {
+		t.Fatal("the earlier guards already name the dev session")
+	}
+
+	if err := SyncInstalledHostGuards(local, []string{data}, nil); err != nil {
+		t.Fatal(err)
+	}
+	deny := denyList(t, settings)
+	if !slices.Contains(deny, any(devRule)) || !slices.Contains(deny, any("Read(~/.astrlink/control-session.json)")) {
+		t.Fatalf("deny = %v", deny)
+	}
+	if !strings.Contains(mustRead(t, agentsFile), "`~/.astrlink/control-session.json`, `~/.astrlink/control-session-dev.json`") {
+		t.Fatal(mustRead(t, agentsFile))
+	}
+	if record, err := readHostGuards(home); err != nil || !slices.Contains(record.Claude.Managed, devRule) {
+		t.Fatalf("record = %+v, %v", record, err)
+	}
+	// Uninstall removes it with the rest.
+	if err := Uninstall(context); err != nil {
+		t.Fatal(err)
+	}
+	if pathExists(settings) && strings.Contains(mustRead(t, settings), "control-session") {
+		t.Fatal(mustRead(t, settings))
+	}
+}
+
 func TestSyncAddsCLIAccessToGuardsInstalledBeforeTheCLI(t *testing.T) {
 	home := t.TempDir()
 	local := Local(home)

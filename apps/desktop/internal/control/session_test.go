@@ -15,7 +15,7 @@ func TestUnixSessionOmitsTheControlToken(t *testing.T) {
 	}
 	home := t.TempDir()
 	data := filepath.Join(home, "data")
-	if err := PublishSession(home, data, "http://127.0.0.1:9", "secret-token", 7); err != nil {
+	if err := PublishSession(SessionPath(home), Locator{DataDirectory: data, ControlURL: "http://127.0.0.1:9", ObserverToken: "secret-token", PID: 7}); err != nil {
 		t.Fatal(err)
 	}
 	raw, err := os.ReadFile(SessionPath(home))
@@ -39,11 +39,11 @@ func TestUnixSessionOmitsTheControlToken(t *testing.T) {
 }
 
 func TestWindowsSessionCarriesOnlyTheObserverToken(t *testing.T) {
-	session := sessionFile(true, "C:/data", "http://127.0.0.1:9", "observer-token", 7)
+	session := sessionFile(true, Locator{DataDirectory: "C:/data", ControlURL: "http://127.0.0.1:9", ObserverToken: "observer-token", PID: 7})
 	if session.ControlToken != "observer-token" || session.ControlURL != "http://127.0.0.1:9" || session.ControlSocket != "" {
 		t.Fatalf("windows session %+v", session)
 	}
-	unix := sessionFile(false, "/data", "http://127.0.0.1:9", "observer-token", 7)
+	unix := sessionFile(false, Locator{DataDirectory: "/data", ControlURL: "http://127.0.0.1:9", ObserverToken: "observer-token", PID: 7})
 	if unix.ControlToken != "" || unix.ControlURL != "" || unix.ControlSocket == "" || unix.DesktopPID != os.Getpid() {
 		t.Fatalf("unix session %+v", unix)
 	}
@@ -58,18 +58,18 @@ func TestWindowsSessionCarriesOnlyTheObserverToken(t *testing.T) {
 
 func TestClearRemovesOnlyOurSession(t *testing.T) {
 	home := t.TempDir()
-	if err := PublishSession(home, filepath.Join(home, "data"), "http://127.0.0.1:9", "", 0); err != nil {
+	if err := PublishSession(SessionPath(home), Locator{DataDirectory: filepath.Join(home, "data"), ControlURL: "http://127.0.0.1:9"}); err != nil {
 		t.Fatal(err)
 	}
 	// A different desktop process (the successor after a development
 	// restart) must not lose its locator to our shutdown.
-	if err := clearSessionFor(home, os.Getpid()+1); err != nil {
+	if err := clearSessionFor(SessionPath(home), os.Getpid()+1); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(SessionPath(home)); err != nil {
 		t.Fatal("another desktop removed our session")
 	}
-	if err := ClearSession(home); err != nil {
+	if err := ClearSession(SessionPath(home)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(SessionPath(home)); !os.IsNotExist(err) {
@@ -79,14 +79,81 @@ func TestClearRemovesOnlyOurSession(t *testing.T) {
 	if err := os.WriteFile(SessionPath(home), []byte(`{"schema_version":1,"control_socket":"/tmp/x.sock"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := clearSessionFor(home, os.Getpid()+1); err != nil {
+	if err := clearSessionFor(SessionPath(home), os.Getpid()+1); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(SessionPath(home)); !os.IsNotExist(err) {
 		t.Fatal("a legacy session survived")
 	}
-	if err := ClearSession(home); err != nil {
+	if err := ClearSession(SessionPath(home)); err != nil {
 		t.Fatalf("clearing a missing session: %v", err)
+	}
+}
+
+func TestEachInstanceKeepsItsOwnSession(t *testing.T) {
+	home := t.TempDir()
+	defaultPath, devPath := InstanceSessionPath(home, false), InstanceSessionPath(home, true)
+	if defaultPath != filepath.Join(home, ".astrlink", "control-session.json") || defaultPath != SessionPath(home) ||
+		devPath != filepath.Join(home, ".astrlink", "control-session-dev.json") {
+		t.Fatal(defaultPath, devPath)
+	}
+	if err := PublishSession(defaultPath, Locator{DataDirectory: filepath.Join(home, "default"), ControlURL: "http://127.0.0.1:9", ObserverToken: "a", GatewayURL: "http://localhost:8317", PID: 7}); err != nil {
+		t.Fatal(err)
+	}
+	if err := PublishSession(devPath, Locator{DataDirectory: filepath.Join(home, "dev"), ControlURL: "http://127.0.0.1:10", ObserverToken: "b", GatewayURL: "http://localhost:8318", PID: 8}); err != nil {
+		t.Fatal(err)
+	}
+	read := func(path string) map[string]any {
+		t.Helper()
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var fields map[string]any
+		if err := json.Unmarshal(raw, &fields); err != nil {
+			t.Fatal(err)
+		}
+		return fields
+	}
+	// The default file keeps its fields; the gateway address is the only
+	// addition, and it is optional.
+	fields := read(defaultPath)
+	want := []string{"desktop_pid", "gateway_url", "pid", "schema_version"}
+	if runtime.GOOS == "windows" {
+		want = append(want, "control_token", "control_url")
+	} else {
+		want = append(want, "control_socket")
+	}
+	if len(fields) != len(want) || fields["gateway_url"] != "http://localhost:8317" || fields["pid"] != float64(7) {
+		t.Fatalf("default session %v", fields)
+	}
+	for _, name := range want {
+		if _, ok := fields[name]; !ok {
+			t.Fatalf("default session %v lacks %s", fields, name)
+		}
+	}
+	if dev := read(devPath); dev["gateway_url"] != "http://localhost:8318" || dev["pid"] != float64(8) {
+		t.Fatalf("dev session %v", dev)
+	}
+	if raw, _ := json.Marshal(sessionFile(false, Locator{DataDirectory: "/data"})); strings.Contains(string(raw), "gateway_url") {
+		t.Fatalf("an unknown gateway is written: %s", raw)
+	}
+
+	// Each instance clears only its own file, and only when it owns it.
+	if err := clearSessionFor(devPath, os.Getpid()+1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(devPath); err != nil {
+		t.Fatal("another desktop removed the dev session")
+	}
+	if err := ClearSession(devPath); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(devPath); !os.IsNotExist(err) {
+		t.Fatal("the dev session survived")
+	}
+	if _, err := os.Stat(defaultPath); err != nil {
+		t.Fatal("clearing the dev session removed the default one")
 	}
 }
 

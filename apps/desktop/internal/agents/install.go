@@ -357,8 +357,16 @@ func nonNil[T any](items []T) []T {
 // AstrlinkHome is AstrLink's directory in a home.
 func AstrlinkHome(home string) string { return filepath.Join(home, ".astrlink") }
 
-func sessionPath(home string) string {
-	return filepath.Join(AstrlinkHome(home), "control-session.json")
+// sessionNames are the control session files of the default and the
+// development instance (see internal/control).
+var sessionNames = []string{"control-session.json", "control-session-dev.json"}
+
+func sessionPaths(home string) []string {
+	paths := make([]string, len(sessionNames))
+	for i, name := range sessionNames {
+		paths[i] = filepath.Join(AstrlinkHome(home), name)
+	}
+	return paths
 }
 
 // Status reports what is installed for every tool.
@@ -1545,10 +1553,12 @@ func ClaudeDenyRules(home Home, dataDirectories, rawKeyPins []string) []string {
 			rules = append(rules, "Read("+pattern+")")
 		}
 	}
-	if home.WSL == nil {
-		rules = append(rules, "Read(~/.astrlink/control-session.json)")
-	} else if session, ok := pattern(sessionPath(home.Host)); ok {
-		rules = append(rules, "Read("+session+")")
+	for i, path := range sessionPaths(home.Host) {
+		if home.WSL == nil {
+			rules = append(rules, "Read(~/.astrlink/"+sessionNames[i]+")")
+		} else if session, ok := pattern(path); ok {
+			rules = append(rules, "Read("+session+")")
+		}
 	}
 	return append(rules, "Bash(sqlite3 *)", "Bash(sqlite3*)")
 }
@@ -1725,16 +1735,19 @@ func codexGuardBlock(home Home, dataDirectories, rawKeyPins []string) string {
 		}
 		data += ", its raw key pin " + files + " (" + listed(rawKeyPins) + ")"
 	}
-	session := "~/.astrlink/control-session.json"
-	if home.WSL != nil {
-		session = home.Shown(sessionPath(home.Host))
+	sessions := make([]string, len(sessionNames))
+	for i, path := range sessionPaths(home.Host) {
+		sessions[i] = "`~/.astrlink/" + sessionNames[i] + "`"
+		if home.WSL != nil {
+			sessions[i] = "`" + home.Shown(path) + "`"
+		}
 	}
 	return codexGuardBegin + "\n" +
 		"## AstrLink local data\n" +
 		"\n" +
 		"AstrLink added this section with its agent debugging tools and removes it when they are uninstalled.\n" +
 		"\n" +
-		"- Do not read, copy, search, or open " + data + ", any `astrlink.db*` file, or `" + session + "`, and do not run `sqlite3` on them.\n" +
+		"- Do not read, copy, search, or open " + data + ", any `astrlink.db*` file, or the control session files (" + strings.Join(sessions, ", ") + "), and do not run `sqlite3` on them.\n" +
 		"- The control socket and the session token only carry observer access. Do not use them to change AstrLink settings.\n" +
 		codexGuardEnd
 }

@@ -308,7 +308,7 @@ func (h *Host) Start() {
 	if err != nil {
 		log.Printf("astrlink: unable to resolve the resource directory: %v", err)
 	}
-	h.core = core.New(core.Config{DataDirectory: dirs.Data, ResourceDirectory: resources})
+	h.core = core.New(core.Config{DataDirectory: dirs.Data, ResourceDirectory: resources, Isolated: h.instance.Isolated})
 	values := h.prefs.Values()
 	h.core.Configure(values)
 	h.reconcileAutostart(values)

@@ -28,10 +28,10 @@ type fakeSessions struct {
 	cleared   int
 }
 
-func (f *fakeSessions) publish(dataDirectory, controlURL, observerToken string, pid int) {
+func (f *fakeSessions) publish(locator control.Locator) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.published = append(f.published, controlURL+" "+observerToken)
+	f.published = append(f.published, locator.GatewayURL+" "+locator.ControlURL+" "+locator.ObserverToken)
 }
 
 func (f *fakeSessions) clear() {
@@ -535,7 +535,9 @@ func TestStartHandshakeCallAndGracefulStop(t *testing.T) {
 			t.Fatal("a token reached the arguments")
 		}
 	}
-	if len(sessions.published) != 1 || !strings.HasSuffix(sessions.published[0], " "+lines[2]) {
+	// The session carries the observer token and the client gateway address.
+	if len(sessions.published) != 1 || !strings.HasSuffix(sessions.published[0], " "+lines[2]) ||
+		!strings.HasPrefix(sessions.published[0], "http://127.0.0.1:8317 ") {
 		t.Fatalf("published sessions %q", sessions.published)
 	}
 

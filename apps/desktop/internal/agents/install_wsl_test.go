@@ -120,12 +120,13 @@ func TestWSLRulesReachDesktopFilesThroughTheDriveMounts(t *testing.T) {
 	data := []string{`C:\Users\Ada Lovelace\AppData\Roaming\AstrLink`}
 	rules := ClaudeDenyRules(target, data, nil)
 	if rules[0] != "Read(//mnt/c/Users/Ada Lovelace/AppData/Roaming/AstrLink/**)" ||
-		rules[1] != "Read(//mnt/c/Users/Ada Lovelace/.astrlink/control-session.json)" {
+		rules[1] != "Read(//mnt/c/Users/Ada Lovelace/.astrlink/control-session.json)" ||
+		rules[2] != "Read(//mnt/c/Users/Ada Lovelace/.astrlink/control-session-dev.json)" {
 		t.Fatalf("rules = %v", rules)
 	}
 	block := codexGuardBlock(target, data, nil)
 	if !strings.Contains(block, "`/mnt/c/Users/Ada Lovelace/AppData/Roaming/AstrLink`") ||
-		!strings.Contains(block, "`/mnt/c/Users/Ada Lovelace/.astrlink/control-session.json`") ||
+		!strings.Contains(block, "`/mnt/c/Users/Ada Lovelace/.astrlink/control-session.json`, `/mnt/c/Users/Ada Lovelace/.astrlink/control-session-dev.json`") ||
 		strings.Contains(block, "~/.astrlink") {
 		t.Fatal(block)
 	}

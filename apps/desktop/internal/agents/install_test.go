@@ -216,18 +216,20 @@ func TestClaudePatternsFollowTheDocumentedPathForms(t *testing.T) {
 	data := []string{"/data/astrlink"}
 	rules := ClaudeDenyRules(desktop(), data, nil)
 	if windows {
-		if len(rules) != 3 {
+		if len(rules) != 4 {
 			t.Fatalf("rules = %v", rules)
 		}
 	} else if rules[0] != "Read(//data/astrlink/**)" {
 		t.Fatalf("rules = %v", rules)
 	}
-	for _, rule := range []string{"Read(~/.astrlink/control-session.json)", "Bash(sqlite3 *)", "Bash(sqlite3*)"} {
+	// Both instances' session files: the default one and the development
+	// one beside it.
+	for _, rule := range []string{"Read(~/.astrlink/control-session.json)", "Read(~/.astrlink/control-session-dev.json)", "Bash(sqlite3 *)", "Bash(sqlite3*)"} {
 		if !slices.Contains(rules, rule) {
 			t.Fatalf("rules %v lack %s", rules, rule)
 		}
 	}
-	if got := ClaudeDenyRules(desktop(), nil, nil); len(got) != 3 {
+	if got := ClaudeDenyRules(desktop(), nil, nil); len(got) != 4 {
 		t.Fatalf("rules = %v", got)
 	}
 

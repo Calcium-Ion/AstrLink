@@ -33,6 +33,20 @@ type SessionFile struct {
 	// skipped when another live desktop owns it, so a restart cannot delete
 	// its successor's file.
 	DesktopPID int `json:"desktop_pid,omitempty"`
+	// GatewayURL is the instance's client inference address, which
+	// `astrlink instances` shows. It is not a credential.
+	GatewayURL string `json:"gateway_url,omitempty"`
+}
+
+// Locator is what a published session tells agent tools about one Core.
+type Locator struct {
+	DataDirectory string
+	ControlURL    string
+	// ObserverToken is the observer-role token; the operator token never
+	// reaches a session file.
+	ObserverToken string
+	GatewayURL    string
+	PID           int
 }
 
 // UserHome is the home whose agent tools and client configs AstrLink
@@ -49,9 +63,25 @@ func UserHome() (string, error) {
 	return "", errors.New("unable to resolve the user home directory")
 }
 
-// SessionPath is the control-session.json of home.
-func SessionPath(home string) string {
-	return filepath.Join(home, ".astrlink", "control-session.json")
+const (
+	// SessionFileName is the default instance's session file.
+	SessionFileName = "control-session.json"
+	// DevSessionFileName is the development (isolated) instance's, beside
+	// the default one, so both can run at once.
+	DevSessionFileName = "control-session-dev.json"
+)
+
+// SessionPath is the default instance's control-session.json of home.
+func SessionPath(home string) string { return InstanceSessionPath(home, false) }
+
+// InstanceSessionPath is the session file of the default or the isolated
+// instance in home.
+func InstanceSessionPath(home string, isolated bool) string {
+	name := SessionFileName
+	if isolated {
+		name = DevSessionFileName
+	}
+	return filepath.Join(home, ".astrlink", name)
 }
 
 // ControlSocketPath is the control socket of a data directory.
@@ -59,39 +89,34 @@ func ControlSocketPath(dataDirectory string) string {
 	return filepath.Join(dataDirectory, ControlSocketFileName)
 }
 
-// PublishSession writes the locator agent tools use to reach Core. Only the
-// observer token is accepted here, so the operator token cannot reach the
-// file.
-func PublishSession(home, dataDirectory, controlURL, observerToken string, pid int) error {
-	return writePrivateJSON(SessionPath(home), sessionFile(runtime.GOOS == "windows", dataDirectory, controlURL, observerToken, pid))
+// PublishSession writes the locator agent tools use to reach Core to path
+// (see InstanceSessionPath).
+func PublishSession(path string, locator Locator) error {
+	return writePrivateJSON(path, sessionFile(runtime.GOOS == "windows", locator))
 }
 
-func sessionFile(windows bool, dataDirectory, controlURL, observerToken string, pid int) SessionFile {
-	if windows {
-		return SessionFile{
-			SchemaVersion: SessionSchemaVersion,
-			ControlURL:    controlURL,
-			ControlToken:  observerToken,
-			PID:           pid,
-			DesktopPID:    os.Getpid(),
-		}
-	}
-	return SessionFile{
+func sessionFile(windows bool, locator Locator) SessionFile {
+	session := SessionFile{
 		SchemaVersion: SessionSchemaVersion,
-		ControlSocket: ControlSocketPath(dataDirectory),
-		PID:           pid,
+		ControlSocket: ControlSocketPath(locator.DataDirectory),
+		PID:           locator.PID,
 		DesktopPID:    os.Getpid(),
+		GatewayURL:    locator.GatewayURL,
 	}
+	if windows {
+		session.ControlSocket = ""
+		session.ControlURL, session.ControlToken = locator.ControlURL, locator.ObserverToken
+	}
+	return session
 }
 
-// ClearSession removes the session file unless another desktop process
-// published it. During a development restart the old instance shuts down
-// after the new one has already announced itself; deleting here would leave
-// the agent CLI without a locator until the next full launch.
-func ClearSession(home string) error { return clearSessionFor(home, os.Getpid()) }
+// ClearSession removes the session file at path unless another desktop
+// process published it. During a development restart the old instance shuts
+// down after the new one has already announced itself; deleting here would
+// leave the agent CLI without a locator until the next full launch.
+func ClearSession(path string) error { return clearSessionFor(path, os.Getpid()) }
 
-func clearSessionFor(home string, currentPID int) error {
-	path := SessionPath(home)
+func clearSessionFor(path string, currentPID int) error {
 	if raw, err := os.ReadFile(path); err == nil {
 		var session SessionFile
 		if json.Unmarshal(raw, &session) == nil && session.DesktopPID != 0 && session.DesktopPID != currentPID {

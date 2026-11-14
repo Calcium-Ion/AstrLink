@@ -101,6 +101,9 @@ type Config struct {
 	ResourceDirectory string
 	// Log receives the desktop's own diagnostics; os.Stderr by default.
 	Log func(string)
+	// Isolated publishes the agent tools' session as the development
+	// instance's, beside the default instance's.
+	Isolated bool
 }
 
 // state is everything the manager lock guards.
@@ -157,7 +160,7 @@ func defaultState() state {
 
 // sessionStore publishes the locator agent tools read.
 type sessionStore interface {
-	publish(dataDirectory, controlURL, observerToken string, pid int)
+	publish(locator control.Locator)
 	clear()
 }
 
@@ -204,7 +207,7 @@ func New(config Config) *Manager {
 			return keystore.ResolveForStart(dataDirectory, config.Log)
 		},
 		locate:    func() (string, string, error) { return Locate(config.ResourceDirectory) },
-		sessions:  systemSessions{log: config.Log},
+		sessions:  systemSessions{log: config.Log, isolated: config.Isolated},
 		attachJob: attachJobObject,
 		now:       time.Now,
 	}
@@ -763,7 +766,13 @@ func (m *Manager) handleStdout(generation uint64, line string) {
 	s.health, s.version, s.capabilities = &health, &version, &capabilities
 	s.phase = PhaseReady
 	s.lastError = ""
-	m.sessions.publish(s.dataDirectory, ready.ControlURL, s.observerToken, s.pid)
+	m.sessions.publish(control.Locator{
+		DataDirectory: s.dataDirectory,
+		ControlURL:    ready.ControlURL,
+		ObserverToken: s.observerToken,
+		GatewayURL:    ready.ClientInferenceURL,
+		PID:           s.pid,
+	})
 	time.AfterFunc(recoveryStabilityThreshold, func() {
 		m.lock()
 		defer m.unlock()
@@ -984,14 +993,17 @@ func (m *Manager) PollObservers(ctx context.Context) error {
 	return nil
 }
 
-type systemSessions struct{ log func(string) }
+type systemSessions struct {
+	log      func(string)
+	isolated bool
+}
 
-func (s systemSessions) publish(dataDirectory, controlURL, observerToken string, pid int) {
+func (s systemSessions) publish(locator control.Locator) {
 	home, err := control.UserHome()
-	if err != nil || dataDirectory == "" {
+	if err != nil || locator.DataDirectory == "" {
 		return
 	}
-	if err := control.PublishSession(home, dataDirectory, controlURL, observerToken, pid); err != nil {
+	if err := control.PublishSession(control.InstanceSessionPath(home, s.isolated), locator); err != nil {
 		s.log(fmt.Sprintf("unable to publish AstrLink control session: %v", err))
 	}
 }
@@ -1001,7 +1013,7 @@ func (s systemSessions) clear() {
 	if err != nil {
 		return
 	}
-	if err := control.ClearSession(home); err != nil {
+	if err := control.ClearSession(control.InstanceSessionPath(home, s.isolated)); err != nil {
 		s.log(fmt.Sprintf("unable to clear AstrLink control session: %v", err))
 	}
 }
