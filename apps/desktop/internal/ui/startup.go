@@ -10,7 +10,8 @@ import (
 )
 
 // The main window's opening size: a share of the display's work area at a
-// fixed ratio, never wider than maxStartupWidth.
+// fixed ratio, never wider than maxStartupWidth. A work area too short for
+// that ratio keeps the ratio's height but takes the share of its width.
 const (
 	workAreaFraction = 0.82
 	aspectRatio      = 19.0 / 12.0
@@ -18,10 +19,8 @@ const (
 	// room. The height stays below 89% of the work area (0.82 × 1.08).
 	defaultHeightScale = 1.08
 	// Large and ultrawide displays would otherwise open a window whose extra
-	// width only spreads fixed-size content apart. A 1080p display's height
-	// sets its window below this, at about 1360 × 930 above a taskbar:
-	// lists and editors get the height and the page keeps its proportions.
-	maxStartupWidth = 1440
+	// width only spreads fixed-size content apart.
+	maxStartupWidth = 1200
 	// mainMinWidth and mainMinHeight are the main window's configured
 	// minimum; a small display lowers it.
 	mainMinWidth  = 760
@@ -52,15 +51,19 @@ type startupGeometry struct {
 // work: frame is what the window adds around its page area. It reports
 // false when the work area is too small for any window.
 func computeStartupGeometry(work mygo.Rectangle, frame, minimum mygo.Size, maximumWidth int) (startupGeometry, bool) {
-	width := int(math.Floor(math.Min(math.Min(
-		float64(work.Width)*workAreaFraction,
-		float64(work.Height)*workAreaFraction*aspectRatio),
-		float64(maximumWidth))))
-	height := int(math.Floor(float64(width) / aspectRatio * defaultHeightScale))
-	if width <= frame.Width || height <= frame.Height {
+	width := math.Min(float64(work.Width)*workAreaFraction, float64(maximumWidth))
+	// The height follows the ratio's width. When the work area's height
+	// limits that width (a laptop or a scaled 1080p display), the window
+	// still takes its share of the width: tied to the ratio it opened about
+	// 820 wide on a 1280 × 720 display, which stacked side-by-side panels
+	// and left a fifth of the screen empty on each side.
+	ratioWidth := math.Floor(math.Min(width, float64(work.Height)*workAreaFraction*aspectRatio))
+	height := int(math.Floor(ratioWidth / aspectRatio * defaultHeightScale))
+	opening := int(math.Floor(width))
+	if opening <= frame.Width || height <= frame.Height {
 		return startupGeometry{}, false
 	}
-	content := mygo.Size{Width: width - frame.Width, Height: height - frame.Height}
+	content := mygo.Size{Width: opening - frame.Width, Height: height - frame.Height}
 	return startupGeometry{
 		Content: content,
 		// A fixed minimum must not force a small screen's window past its
@@ -70,7 +73,7 @@ func computeStartupGeometry(work mygo.Rectangle, frame, minimum mygo.Size, maxim
 			Height: min(minimum.Height, content.Height),
 		},
 		Position: mygo.Point{
-			X: work.X + (work.Width-width)/2,
+			X: work.X + (work.Width-opening)/2,
 			Y: work.Y + (work.Height-height)/2,
 		},
 	}, true
