@@ -6,10 +6,9 @@
 
 ## 环境要求
 
-- Go 1.25.1 或更新版本。
+- Go 1.27.3 或更新版本。
 - Bun 1.3.14 或更新版本。
-- Rust stable，至少 1.88。
-- [Tauri 各平台开发依赖](https://v2.tauri.app/start/prerequisites/)。
+- Rust stable，至少 1.88，用于构建两个模型 worker。
 - `make`；运行契约校验还需要 Ruby。
 
 首次构建需要联网下载语言依赖、ONNX
@@ -47,10 +46,10 @@ bun run desktop:dev
 `bun run dev`。纯浏览器预览没有桌面原生接口，需要模拟数据；完整功能请通过
 `desktop:dev` 使用。
 
-macOS 开发版会自动在 Cargo 输出目录生成应用包并从中运行，确保隐藏到菜单栏、重新打开和系统通知始终使用 AstrLink 的名称与图标。`make start`
-使用 `AstrLink Dev.app` 和 `com.astrlink.desktop.dev` 系统身份，`make dev` 使用
-`AstrLink Isolated.app` 和
-`com.astrlink.desktop.isolated`，两者的通知权限都与正式版分开。Rust 重编译和前端热加载保持原来的启动方式。
+在 macOS 上，`make dev` 运行 `apps/desktop/.mygo/dev` 中的
+`AstrLink Dev.app`，系统身份为
+`com.astrlink.desktop.dev`，通知权限与正式版分开；`make start` 构建并运行
+`apps/desktop/build/<平台>/AstrLink.app`。开发版在 Go 代码改动后重新构建并重启，前端改动由开发服务器重新加载。
 
 ## 检查改动
 
@@ -64,7 +63,7 @@ make core-race convo-race contracts-race
 ```
 
 `make check`
-还会构建 sidecar，并执行两个模型 worker 和桌面 Rust 宿主的检查，需要完整的原生构建环境。
+还会构建 sidecar，并执行两个模型 worker 和桌面 Go 宿主（`make desktop-go-check`）的检查，需要完整的原生构建环境。
 
 测试使用模拟上游和小型合成模型，不需要真实 API
 Key。不要把访问令牌、模型权重、应用数据库或生成的安装包加入提交。
@@ -79,8 +78,8 @@ bun install --frozen-lockfile
 bun run desktop:build
 ```
 
-构建产物位于 `apps/desktop/src-tauri/target/release/bundle/`；指定 Rust
-target 时位于相应 target 子目录中。应用签名、公证和正式发布需要另行配置。
+构建产物位于 `apps/desktop/build/<系统>-<架构>/`，例如
+`build/darwin-arm64/`。应用签名、公证和正式发布需要另行配置。
 
 ## GitHub Actions 打包
 
@@ -90,7 +89,7 @@ workflow**，或发布 GitHub Release 即可运行：
 | 流程            | 产物                                                                         |
 | --------------- | ---------------------------------------------------------------------------- |
 | macOS package   | Apple Silicon 和 Intel 的 `.dmg`、保留执行权限的 `.app.tar.gz`、`SHA256SUMS` |
-| Linux package   | x64 `.deb`、`SHA256SUMS`                                                     |
+| Linux package   | x64 `.deb`、`install.sh` 及其安装的 `.tar.gz`、`SHA256SUMS`                  |
 | Windows package | x64 NSIS `.exe`                                                              |
 
 macOS 和 Linux 的安装包仅在前端检查、Core 测试和包验证通过后上传，下载产物保留 14 天。
@@ -111,8 +110,8 @@ Unix 包验证检查架构、运行库与许可证、worker 进程启动，以�
 
 ### 发布版本
 
-1. 在待发布提交中同步版本号：`apps/desktop/package.json`、`apps/desktop/src-tauri/tauri.conf.json`、`apps/desktop/src-tauri/Cargo.toml`
-   和对应的 `Cargo.lock` 包条目。推送包含这些工作流的代码，并确认打包检查通过。
+1. 在待发布提交中同步 `apps/desktop/package.json`
+   的版本号。推送包含这些工作流的代码，并确认打包检查通过。
 2. 打开 GitHub **Releases → Draft a new
    release**，选择该提交或分支，创建版本标签，例如
    `v0.1.0`。标签中的版本应与应用版本一致。
@@ -130,15 +129,15 @@ ID 签名或公证，发布 Release 不会改变这一点。正式签名需要�
 
 ## 代码目录
 
-| 目录                     | 内容                        |
-| ------------------------ | --------------------------- |
-| `apps/desktop`           | React 界面与 Tauri 桌面宿主 |
-| `apps/privacy-worker`    | 本地隐私模型推理            |
-| `apps/classifier-worker` | 本地路由分类模型推理        |
-| `core`                   | Go 网关与诊断 MCP 程序      |
-| `convo`                  | 会话与用户轮次识别库        |
-| `contracts`              | 管理接口及协议能力定义      |
-| `docs/guides`            | 用户指南                    |
+| 目录                     | 内容                     |
+| ------------------------ | ------------------------ |
+| `apps/desktop`           | React 界面与 Go 桌面宿主 |
+| `apps/privacy-worker`    | 本地隐私模型推理         |
+| `apps/classifier-worker` | 本地路由分类模型推理     |
+| `core`                   | Go 网关与诊断 MCP 程序   |
+| `convo`                  | 会话与用户轮次识别库     |
+| `contracts`              | 管理接口及协议能力定义   |
+| `docs/guides`            | 用户指南                 |
 
 桌面界面优先复用 `apps/desktop/src/components`
 中的组件。修改持久化配置或接口时，同步检查契约、兼容性与相关测试。提交说明应描述用户可观察到的变化及验证方式。

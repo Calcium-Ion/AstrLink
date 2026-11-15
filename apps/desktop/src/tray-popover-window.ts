@@ -1,6 +1,6 @@
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { getCurrentWindow } from "./native-host/window";
 
-/** Must match `POPOVER_LABEL` in `src-tauri/src/tray.rs`. */
+/** Must match `PopoverLabel` in `internal/ui/tray.go`. */
 export const TRAY_POPOVER_LABEL = "tray-popover";
 
 /** Emitted by the host with a fresh `TrayState` whenever it changes. */
@@ -15,13 +15,13 @@ export const TRAY_NAVIGATE_EVENT = "tray:navigate";
 
 /**
  * Request records narrowed to the calls behind today's failure count. Must
- * match `NAVIGATION_KINDS` in `src-tauri/src/tray.rs`.
+ * match `navigationKinds` in `internal/ui/tray_model.go`.
  */
 export const TRAY_FAILED_TODAY_PAGE = "failedToday";
 
 /**
  * The safety page opened on its privacy statistics. Must match
- * `NAVIGATION_KINDS` in `src-tauri/src/tray.rs`.
+ * `navigationKinds` in `internal/ui/tray_model.go`.
  */
 export const TRAY_PRIVACY_OVERVIEW_PAGE = "privacyOverview";
 

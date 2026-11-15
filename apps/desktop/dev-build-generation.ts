@@ -57,11 +57,11 @@ export function createBuildGenerationMiddleware(generation: BuildGeneration) {
   };
 }
 
-export function createTauriDevReloadPlugin(
+export function createDevReloadPlugin(
   generation: BuildGeneration,
 ): RsbuildPlugin {
   return {
-    name: "astrlink-tauri-dev-reload",
+    name: "astrlink-dev-reload",
     setup(api) {
       api.onAfterDevCompile(({ isFirstCompile, stats }) => {
         generation.noteCompile({ isFirstCompile, stats });

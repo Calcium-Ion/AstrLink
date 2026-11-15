@@ -10,9 +10,9 @@ const hostMocks = vi.hoisted(() => ({
   unlisten: vi.fn(),
 }));
 
-vi.mock("@tauri-apps/api/core", () => ({ invoke: hostMocks.invoke }));
-vi.mock("@tauri-apps/api/event", () => ({ listen: hostMocks.listen }));
-vi.mock("@tauri-apps/api/window", () => ({
+vi.mock("./native-host/core", () => ({ invoke: hostMocks.invoke }));
+vi.mock("./native-host/event", () => ({ listen: hostMocks.listen }));
+vi.mock("./native-host/window", () => ({
   getCurrentWindow: () => ({
     label: "trajectory-inspector-2",
     isFocused: async () => true,
@@ -228,7 +228,7 @@ describe("TrajectoryInspectorWindow", () => {
     });
     bridgeMocks.listenRawSealingChanged.mockResolvedValue(() => undefined);
     Object.assign(window, {
-      __TAURI_INTERNALS__: {},
+      mygo: {},
       __ASTRLINK_DESKTOP_PLATFORM__: "macos",
     });
     container = document.createElement("div");
@@ -241,7 +241,7 @@ describe("TrajectoryInspectorWindow", () => {
     container.remove();
     localStorage.removeItem(TRAJECTORY_INSPECTOR_TOUR_KEY);
     vi.useRealTimers();
-    delete (window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+    delete (window as { mygo?: unknown }).mygo;
     delete (window as { __ASTRLINK_DESKTOP_PLATFORM__?: string })
       .__ASTRLINK_DESKTOP_PLATFORM__;
   });

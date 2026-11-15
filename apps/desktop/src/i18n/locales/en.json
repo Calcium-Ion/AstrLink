@@ -3224,6 +3224,7 @@
   "host": {
     "tray": {
       "show": "Open AstrLink",
+      "panel": "Open tray panel",
       "settings": "Settings…",
       "quit": "Quit AstrLink",
       "copied": "Copied",

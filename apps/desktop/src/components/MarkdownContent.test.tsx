@@ -11,7 +11,7 @@ const mocks = vi.hoisted(() => ({
   native: false,
   openExternalURL: vi.fn(async (_url: string) => {}),
 }));
-vi.mock("@tauri-apps/api/core", () => ({ isTauri: () => mocks.native }));
+vi.mock("../native-host/core", () => ({ isDesktopHost: () => mocks.native }));
 vi.mock("@/bridge", () => ({ openExternalURL: mocks.openExternalURL }));
 
 const worker = installHighlighterWorker();

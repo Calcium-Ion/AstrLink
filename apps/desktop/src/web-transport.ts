@@ -195,7 +195,7 @@ function validServiceTestId(testId: string): boolean {
   return testId.length > 0 && testId.length <= 128;
 }
 
-/** Mirrors sidecar.rs, raw_access.rs and the host's response envelopes. */
+/** Mirrors `internal/control`, `internal/raw` and the host's response envelopes. */
 const commands: Record<string, Command> = {
   core_status: async () => {
     const [health, version, capabilities] = await Promise.all([

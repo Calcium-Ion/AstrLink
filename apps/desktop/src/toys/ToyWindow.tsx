@@ -1,5 +1,5 @@
 // The desktop pet's window loads the app bundle; its label picks the pet.
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { getCurrentWindow } from "../native-host/window";
 
 import { PetToy } from "./PetToy";
 import { TOY_LABELS, type ToyLabel } from "./toy-config";

@@ -3224,6 +3224,7 @@
   "host": {
     "tray": {
       "show": "打开 AstrLink",
+      "panel": "打开托盘面板",
       "settings": "设置…",
       "quit": "退出 AstrLink",
       "copied": "已复制",

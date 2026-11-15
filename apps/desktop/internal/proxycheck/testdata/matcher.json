@@ -1,0 +1,571 @@
+[
+  {
+    "dst": [
+      "http://127.0.0.1:18317",
+      "https://127.0.0.1:18317",
+      "http://localhost:18317",
+      "ftp://x"
+    ],
+    "http": "127.0.0.1:7890",
+    "want": [
+      {
+        "uri": "http://127.0.0.1:7890/",
+        "authority": "127.0.0.1:7890"
+      },
+      null,
+      {
+        "uri": "http://127.0.0.1:7890/",
+        "authority": "127.0.0.1:7890"
+      },
+      null
+    ]
+  },
+  {
+    "dst": ["http://127.0.0.1:18317"],
+    "http": "http://user:secret@127.0.0.1:7892",
+    "want": [
+      {
+        "uri": "http://127.0.0.1:7892/",
+        "authority": "127.0.0.1:7892",
+        "basic": "Basic dXNlcjpzZWNyZXQ="
+      }
+    ]
+  },
+  {
+    "dst": ["http://127.0.0.1:18317"],
+    "http": "http://user@127.0.0.1:7892",
+    "want": [
+      {
+        "uri": "http://127.0.0.1:7892/",
+        "authority": "127.0.0.1:7892",
+        "basic": "Basic dXNlcjo="
+      }
+    ]
+  },
+  {
+    "dst": ["http://127.0.0.1:18317"],
+    "http": "http://us%20er:p%40ss@127.0.0.1:7892/path?q",
+    "want": [
+      {
+        "uri": "http://127.0.0.1:7892/",
+        "authority": "127.0.0.1:7892",
+        "basic": "Basic dXMgZXI6cEBzcw=="
+      }
+    ]
+  },
+  {
+    "dst": ["http://a"],
+    "http": "user:pw@proxy:3128",
+    "want": [
+      {
+        "uri": "http://proxy:3128/",
+        "authority": "proxy:3128",
+        "basic": "Basic dXNlcjpwdw=="
+      }
+    ]
+  },
+  {
+    "dst": ["http://a"],
+    "http": "HTTP://Proxy.Example:8080",
+    "want": [
+      {
+        "uri": "http://Proxy.Example:8080/",
+        "authority": "Proxy.Example:8080"
+      }
+    ]
+  },
+  {
+    "dst": ["http://a"],
+    "http": "https://proxy:443",
+    "want": [
+      {
+        "uri": "https://proxy:443/",
+        "authority": "proxy:443"
+      }
+    ]
+  },
+  {
+    "dst": ["http://a"],
+    "http": "socks5://u:p@s:1080",
+    "want": [
+      {
+        "uri": "socks5://s:1080/",
+        "authority": "s:1080",
+        "raw": ["u", "p"]
+      }
+    ]
+  },
+  {
+    "dst": ["http://a"],
+    "http": "socks5h://s:1080",
+    "want": [
+      {
+        "uri": "socks5h://s:1080/",
+        "authority": "s:1080"
+      }
+    ]
+  },
+  {
+    "dst": ["http://a"],
+    "http": "SOCKS5://s:1080",
+    "want": [null]
+  },
+  {
+    "dst": ["http://a"],
+    "http": "socks4://s",
+    "want": [
+      {
+        "uri": "socks4://s/",
+        "authority": "s"
+      }
+    ]
+  },
+  {
+    "dst": ["http://a"],
+    "http": "socks://s:1080",
+    "want": [null]
+  },
+  {
+    "dst": ["http://a"],
+    "http": "ftp://f:21",
+    "want": [null]
+  },
+  {
+    "dst": ["http://a"],
+    "http": "http=h:80;https=s:443;socks=k:1080",
+    "want": [null]
+  },
+  {
+    "dst": ["http://a"],
+    "http": "http=127.0.0.1:7890",
+    "want": [
+      {
+        "uri": "http://http=127.0.0.1:7890/",
+        "authority": "http=127.0.0.1:7890"
+      }
+    ]
+  },
+  {
+    "dst": ["http://a"],
+    "http": "127.0.0.1:7890/",
+    "want": [null]
+  },
+  {
+    "dst": ["http://a"],
+    "http": "127.0.0.1",
+    "want": [
+      {
+        "uri": "http://127.0.0.1/",
+        "authority": "127.0.0.1"
+      }
+    ]
+  },
+  {
+    "dst": ["http://a"],
+    "http": "a",
+    "want": [
+      {
+        "uri": "http://a/",
+        "authority": "a"
+      }
+    ]
+  },
+  {
+    "dst": ["http://a"],
+    "http": "/",
+    "want": [null]
+  },
+  {
+    "dst": ["http://a"],
+    "http": "*",
+    "want": [null]
+  },
+  {
+    "dst": ["http://a"],
+    "http": "/proxy",
+    "want": [null]
+  },
+  {
+    "dst": ["http://a"],
+    "http": "http://",
+    "want": [null]
+  },
+  {
+    "dst": ["http://a"],
+    "http": "http://[::1]:8080",
+    "want": [
+      {
+        "uri": "http://[::1]:8080/",
+        "authority": "[::1]:8080"
+      }
+    ]
+  },
+  {
+    "dst": ["http://a"],
+    "http": "[::1]:8080",
+    "want": [
+      {
+        "uri": "http://[::1]:8080/",
+        "authority": "[::1]:8080"
+      }
+    ]
+  },
+  {
+    "dst": ["http://a"],
+    "http": "proxy:abc",
+    "want": [
+      {
+        "uri": "http://proxy:abc/",
+        "authority": "proxy"
+      }
+    ]
+  },
+  {
+    "dst": ["http://a"],
+    "http": "proxy:99999",
+    "want": [
+      {
+        "uri": "http://proxy:99999/",
+        "authority": "proxy"
+      }
+    ]
+  },
+  {
+    "dst": ["http://a"],
+    "http": "proxy:+80",
+    "want": [
+      {
+        "uri": "http://proxy:+80/",
+        "authority": "proxy:80"
+      }
+    ]
+  },
+  {
+    "dst": ["http://a"],
+    "http": "a:b:c",
+    "want": [null]
+  },
+  {
+    "dst": ["http://a"],
+    "http": "http://p@",
+    "want": [null]
+  },
+  {
+    "dst": ["http://a"],
+    "http": "http://@p:1",
+    "want": [
+      {
+        "uri": "http://p:1/",
+        "authority": "p:1",
+        "basic": "Basic Og=="
+      }
+    ]
+  },
+  {
+    "dst": ["http://a"],
+    "http": "http://a@b@c:1",
+    "want": [
+      {
+        "uri": "http://b@c:1/",
+        "authority": "c:1",
+        "basic": "Basic YTo="
+      }
+    ]
+  },
+  {
+    "dst": ["http://a"],
+    "http": "http://p:1/ x",
+    "want": [null]
+  },
+  {
+    "dst": ["http://a"],
+    "http": "http://p:1/%zz",
+    "want": [
+      {
+        "uri": "http://p:1/",
+        "authority": "p:1"
+      }
+    ]
+  },
+  {
+    "dst": ["http://a"],
+    "http": "http://p:1#frag",
+    "want": [
+      {
+        "uri": "http://p:1/",
+        "authority": "p:1"
+      }
+    ]
+  },
+  {
+    "dst": ["http://a"],
+    "http": " http://p:1",
+    "want": [null]
+  },
+  {
+    "dst": ["http://a"],
+    "http": "http://p%41:1",
+    "want": [null]
+  },
+  {
+    "dst": ["http://a"],
+    "http": "proxy.local:8080",
+    "want": [
+      {
+        "uri": "http://proxy.local:8080/",
+        "authority": "proxy.local:8080"
+      }
+    ]
+  },
+  {
+    "dst": ["http://a"],
+    "http": "ab:/x",
+    "want": [null]
+  },
+  {
+    "dst": ["http://a"],
+    "http": "abc://x",
+    "want": [null]
+  },
+  {
+    "dst": ["http://a"],
+    "http": "a.b+c-d://x",
+    "want": [null]
+  },
+  {
+    "all": "http://all:1",
+    "dst": ["http://a", "https://a"],
+    "want": [
+      {
+        "uri": "http://all:1/",
+        "authority": "all:1"
+      },
+      {
+        "uri": "http://all:1/",
+        "authority": "all:1"
+      }
+    ]
+  },
+  {
+    "all": "http://all:1",
+    "dst": ["http://a", "https://a"],
+    "https": "http://s:2",
+    "want": [
+      {
+        "uri": "http://all:1/",
+        "authority": "all:1"
+      },
+      {
+        "uri": "http://s:2/",
+        "authority": "s:2"
+      }
+    ]
+  },
+  {
+    "all": "http://all:1",
+    "dst": ["http://a", "https://a"],
+    "http": "bogus value",
+    "want": [
+      {
+        "uri": "http://all:1/",
+        "authority": "all:1"
+      },
+      {
+        "uri": "http://all:1/",
+        "authority": "all:1"
+      }
+    ]
+  },
+  {
+    "dst": [
+      "http://localhost:18317",
+      "http://127.0.0.1:18317",
+      "http://LOCALHOST:1",
+      "http://sub.localhost:1",
+      "http://notlocalhost"
+    ],
+    "http": "p:1",
+    "https": "q:2",
+    "no": "localhost, 127.*, <local>",
+    "want": [
+      null,
+      {
+        "uri": "http://p:1/",
+        "authority": "p:1"
+      },
+      null,
+      null,
+      {
+        "uri": "http://p:1/",
+        "authority": "p:1"
+      }
+    ]
+  },
+  {
+    "dst": ["http://127.0.0.1:1", "http://[::1]:1", "http://127.0.0.2"],
+    "http": "p:1",
+    "no": "127.0.0.1,::1",
+    "want": [
+      null,
+      null,
+      {
+        "uri": "http://p:1/",
+        "authority": "p:1"
+      }
+    ]
+  },
+  {
+    "dst": [
+      "http://127.9.9.9",
+      "http://192.168.1.42",
+      "http://192.168.2.1",
+      "http://10.2.3.4",
+      "http://[fe80::1]"
+    ],
+    "http": "p:1",
+    "no": "127.0.0.0/8, 192.168.1.0/24, 10.0.0.1/8, fe80::/10",
+    "want": [
+      null,
+      null,
+      {
+        "uri": "http://p:1/",
+        "authority": "p:1"
+      },
+      null,
+      null
+    ]
+  },
+  {
+    "dst": ["http://anything"],
+    "http": "p:1",
+    "no": "*",
+    "want": [null]
+  },
+  {
+    "dst": [
+      "http://example.com",
+      "http://a.example.com",
+      "http://aexample.com"
+    ],
+    "http": "p:1",
+    "no": ".example.com",
+    "want": [
+      null,
+      null,
+      {
+        "uri": "http://p:1/",
+        "authority": "p:1"
+      }
+    ]
+  },
+  {
+    "dst": [
+      "http://example.com",
+      "http://a.example.com",
+      "http://aexample.com",
+      "http://EXAMPLE.COM"
+    ],
+    "http": "p:1",
+    "no": "example.com",
+    "want": [
+      null,
+      null,
+      {
+        "uri": "http://p:1/",
+        "authority": "p:1"
+      },
+      null
+    ]
+  },
+  {
+    "dst": ["http://a.example.com", "http://example.com"],
+    "http": "p:1",
+    "no": "*.example.com",
+    "want": [
+      {
+        "uri": "http://p:1/",
+        "authority": "p:1"
+      },
+      {
+        "uri": "http://p:1/",
+        "authority": "p:1"
+      }
+    ]
+  },
+  {
+    "dst": ["http://localhost:18317"],
+    "http": "p:1",
+    "no": "localhost:18317",
+    "want": [
+      {
+        "uri": "http://p:1/",
+        "authority": "p:1"
+      }
+    ]
+  },
+  {
+    "dst": ["http://1.2.3.4", "http://01.2.3.4"],
+    "http": "p:1",
+    "no": "01.2.3.4",
+    "want": [
+      {
+        "uri": "http://p:1/",
+        "authority": "p:1"
+      },
+      null
+    ]
+  },
+  {
+    "dst": ["http://1.2.3.4"],
+    "http": "p:1",
+    "no": "1.2.3.4/33, 1.2.3.4/",
+    "want": [
+      {
+        "uri": "http://p:1/",
+        "authority": "p:1"
+      }
+    ]
+  },
+  {
+    "dst": ["http://user@host:1", "http://h.", "http://[::ffff:127.0.0.1]"],
+    "http": "p:1",
+    "no": "",
+    "want": [
+      {
+        "uri": "http://p:1/",
+        "authority": "p:1"
+      },
+      {
+        "uri": "http://p:1/",
+        "authority": "p:1"
+      },
+      {
+        "uri": "http://p:1/",
+        "authority": "p:1"
+      }
+    ]
+  },
+  {
+    "dst": ["http://127.0.0.1", "http://[::ffff:127.0.0.1]"],
+    "http": "p:1",
+    "no": "::ffff:127.0.0.1",
+    "want": [
+      {
+        "uri": "http://p:1/",
+        "authority": "p:1"
+      },
+      null
+    ]
+  },
+  {
+    "dst": ["http://y"],
+    "http": "p:1",
+    "no": "x.y",
+    "want": [
+      {
+        "uri": "http://p:1/",
+        "authority": "p:1"
+      }
+    ]
+  }
+]

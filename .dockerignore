@@ -21,9 +21,9 @@ core/internal/console/webui/*
 !core/internal/console/webui/placeholder.html
 apps/desktop/dist/
 apps/desktop/dist-web/
-apps/desktop/src-tauri/binaries/
-apps/desktop/src-tauri/target/
-apps/desktop/src-tauri/target-dmg/
+apps/desktop/build/
+apps/desktop/resources/*-*/
+apps/desktop/.mygo/
 
 # Dependencies, build output and tooling caches.
 **/node_modules/

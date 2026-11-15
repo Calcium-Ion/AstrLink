@@ -1,2 +1,3 @@
-# Skill files ship verbatim through include_str!; keep LF on Windows checkouts.
+# Skill files ship verbatim through go:embed; keep LF on Windows checkouts.
 agent-bundle/** text eol=lf
+apps/desktop/internal/agents/bundle/** text eol=lf

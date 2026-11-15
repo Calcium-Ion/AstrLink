@@ -15,8 +15,8 @@ import urllib.parse
 import urllib.request
 
 
-EXECUTABLES = (
-    "astrlink-desktop",
+# The programs the app starts, under bin/ among its resources.
+PROGRAMS = (
     "astrlink-core",
     "astrlink-cli",
     "astrlink-privacy-worker",
@@ -137,7 +137,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--platform", choices=("macos", "linux"), required=True)
     parser.add_argument("--arch", choices=("arm64", "x86_64"), required=True)
-    parser.add_argument("--root", type=Path, required=True, help="macOS .app or installed Linux filesystem root")
+    parser.add_argument("--root", type=Path, required=True,
+                        help="macOS .app, or the installed Linux app directory (/opt/astrlink)")
     parser.add_argument("--logs", type=Path, required=True)
     args = parser.parse_args()
     root = args.root.resolve()
@@ -146,17 +147,20 @@ def main():
             "Verification must run on the target operating system")
     require(platform.machine() == args.arch, "Verification must run on the target architecture")
 
+    # The layout `mygo build` packages: the resources are Contents/Resources
+    # of the app bundle on macOS and the app's directory on Linux.
     if args.platform == "macos":
-        bin_dir = root / "Contents/MacOS"
-        runtime = root / f"Contents/Frameworks/libonnxruntime.{RUNTIME}.dylib"
-        notices = root / f"Contents/Resources/notices/onnxruntime-{RUNTIME}"
-        coreml_runtime = root / f"Contents/Frameworks/libonnxruntime.{COREML_RUNTIME}.dylib"
-        coreml_notices = root / f"Contents/Resources/notices/onnxruntime-{COREML_RUNTIME}"
+        desktop = root / "Contents/MacOS/AstrLink"
+        resources = root / "Contents/Resources"
+        runtime = resources / f"bin/libonnxruntime.{RUNTIME}.dylib"
+        coreml_runtime = resources / f"bin/libonnxruntime.{COREML_RUNTIME}.dylib"
+        coreml_notices = resources / f"notices/onnxruntime-{COREML_RUNTIME}"
     else:
-        bin_dir = root / "usr/bin"
-        lib_dir = root / "usr/lib"
-        runtime = one(lib_dir.glob(f"*/onnxruntime/libonnxruntime.so.{RUNTIME}"), "ONNX Runtime")
-        notices = one(lib_dir.glob(f"*/notices/onnxruntime-{RUNTIME}"), "ONNX Runtime notices")
+        desktop = root / "astrlink"
+        resources = root
+        runtime = resources / f"onnxruntime/libonnxruntime.so.{RUNTIME}"
+    bin_dir = resources / "bin"
+    notices = resources / f"notices/onnxruntime-{RUNTIME}"
     runtimes = {RUNTIME: (runtime, notices)}
     if args.platform == "macos" and args.arch == "arm64":
         runtimes[COREML_RUNTIME] = (coreml_runtime, coreml_notices)
@@ -164,8 +168,8 @@ def main():
         require(not coreml_runtime.exists() and not coreml_notices.exists(),
                 f"Intel packages must not ship ONNX Runtime {COREML_RUNTIME}")
 
-    executables = {name: bin_dir / name for name in EXECUTABLES}
-    for path in [*executables.values(), *(path for path, _ in runtimes.values())]:
+    executables = {name: bin_dir / name for name in PROGRAMS}
+    for path in [desktop, *executables.values(), *(path for path, _ in runtimes.values())]:
         check_binary(path, args.platform, args.arch, args.logs)
     for version, (_, directory) in runtimes.items():
         for name, digest in NOTICES[version].items():
@@ -173,7 +177,7 @@ def main():
                     f"Packaged ONNX Runtime {version} {name} does not match the pinned notice")
 
     repository = Path(__file__).resolve().parents[3]
-    licenses = notices.parent.parent / "licenses"
+    licenses = resources / "licenses"
     for name in ("LICENSE", "LICENSING.md", "LICENSES/AGPL-3.0.txt"):
         require((licenses / name).read_bytes() == (repository / name).read_bytes(),
                 f"Packaged {name} does not match the repository license file")

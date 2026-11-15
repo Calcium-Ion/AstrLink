@@ -13,7 +13,7 @@ const bridge = vi.hoisted(() => ({
   trayPopoverResize: vi.fn(),
 }));
 vi.mock("./bridge", () => bridge);
-vi.mock("@tauri-apps/api/event", () => ({
+vi.mock("./native-host/event", () => ({
   listen: vi.fn().mockResolvedValue(() => {}),
 }));
 
@@ -91,13 +91,19 @@ describe("TrayPopoverPanel", () => {
     });
     expect(bridge.trayPopoverHide).toHaveBeenCalledTimes(1);
 
+    const escape = new KeyboardEvent("keydown", {
+      key: "Escape",
+      cancelable: true,
+    });
     await act(async () => {
-      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+      window.dispatchEvent(escape);
       panel.parentElement!.dispatchEvent(
         new Event("pointerdown", { bubbles: true }),
       );
     });
     expect(bridge.trayPopoverHide).toHaveBeenCalledTimes(3);
+    // Handled by the page, so the window does not close on it as well.
+    expect(escape.defaultPrevented).toBe(true);
     expect(bridge.trayAction).not.toHaveBeenCalled();
   });
 

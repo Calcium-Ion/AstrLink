@@ -41,6 +41,11 @@ type DialOptions struct {
 	ControlURL   string
 	ControlToken string
 	SessionPath  string
+	// Instance is "default", "dev", or empty to pick the running one.
+	Instance string
+	// Notice receives one line when the instance was picked among several
+	// or the dev instance stood in for the default one.
+	Notice io.Writer
 }
 
 type Client struct {
@@ -95,18 +100,14 @@ func resolveDial(options DialOptions) (resolvedDial, error) {
 	if controlURL := strings.TrimSpace(options.ControlURL); controlURL != "" {
 		return resolvedDial{url: controlURL, token: options.ControlToken}, nil
 	}
-	sessionPath := strings.TrimSpace(options.SessionPath)
-	if sessionPath == "" {
-		var err error
-		sessionPath, err = DefaultSessionPath()
-		if err != nil {
-			return resolvedDial{}, err
-		}
-	}
-	session, err := LoadSessionFile(sessionPath)
+	picked, err := selectInstance(options.SessionPath, options.Instance)
 	if err != nil {
-		return resolvedDial{}, fmt.Errorf("AstrLink control session unavailable (is the desktop gateway running?): %w", err)
+		return resolvedDial{}, err
 	}
+	if picked.notice != "" && options.Notice != nil {
+		_, _ = fmt.Fprintln(options.Notice, picked.notice)
+	}
+	session := picked.session
 	if socket := strings.TrimSpace(session.ControlSocket); socket != "" {
 		return resolvedDial{socket: socket}, nil
 	}

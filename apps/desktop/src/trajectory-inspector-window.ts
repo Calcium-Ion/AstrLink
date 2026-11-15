@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { invoke } from "./native-host/core";
+import { listen, type UnlistenFn } from "./native-host/event";
+import { getCurrentWindow } from "./native-host/window";
 
 import { i18n } from "./i18n";
 import { notify } from "./notify";
@@ -14,7 +14,7 @@ import type { TrajectoryRow } from "./request-trajectory-model";
 import { getDesktopPlatform } from "./window-chrome";
 
 /**
- * Must match `TRAJECTORY_INSPECTOR_LABEL_PREFIX` in `src-tauri/src/lib.rs`.
+ * Must match `InspectorLabelPrefix` in `internal/ui/inspector_registry.go`.
  * Labels are numbered because a pinned inspector freezes on its call and the
  * next click has to land in a window of its own.
  */

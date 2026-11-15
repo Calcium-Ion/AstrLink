@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from "react";
 
-/** Mirrors `CURRENCIES` in `src-tauri/src/currency.rs`. */
+/** Mirrors `Currencies` in `internal/prefs` of the desktop host. */
 export const DISPLAY_CURRENCIES = [
   "USD",
   "CNY",

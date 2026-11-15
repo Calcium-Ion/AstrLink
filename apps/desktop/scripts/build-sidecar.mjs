@@ -118,9 +118,7 @@ const rustVersion = execFileSync("rustc", ["-vV"], { encoding: "utf8" });
 const target = rustVersion.match(/^host:\s+(.+)$/m)?.[1]?.trim();
 
 if (!target) {
-  throw new Error(
-    "Unable to determine the Rust host target for the Tauri sidecar.",
-  );
+  throw new Error("Unable to determine the Rust host target for the workers.");
 }
 
 const executableSuffix = target.includes("windows") ? ".exe" : "";
@@ -141,7 +139,31 @@ if (reuseWindowsWorkers) {
     reuseWindowsWorkers = false;
   }
 }
-const binariesDirectory = path.join(desktopDirectory, "src-tauri", "binaries");
+// Intermediate outputs: the programs under their target names, the pinned
+// ONNX Runtime and the Windows VC++ runtime the installer embeds
+// (installer/windows.nsh).
+const binariesDirectory = path.join(desktopDirectory, "build", "staging");
+// The MyGo app ships resources/<os>-<arch> merged into its resource
+// directory: the programs under bin/, the Linux ONNX Runtime under
+// onnxruntime/ and the license notices under notices/. Each program keeps
+// its plain name, so Core finds its workers beside it.
+const mygoPlatform = {
+  "aarch64-apple-darwin": "darwin-arm64",
+  "x86_64-apple-darwin": "darwin-amd64",
+  "x86_64-unknown-linux-gnu": "linux-amd64",
+  "aarch64-unknown-linux-gnu": "linux-arm64",
+  "x86_64-pc-windows-msvc": "windows-amd64",
+  "aarch64-pc-windows-msvc": "windows-arm64",
+}[target];
+if (!mygoPlatform) {
+  throw new Error(`No MyGo platform directory for the Rust target ${target}.`);
+}
+const resourcesDirectory = path.join(
+  desktopDirectory,
+  "resources",
+  mygoPlatform,
+);
+const resourcesBinDirectory = path.join(resourcesDirectory, "bin");
 const output = path.join(
   binariesDirectory,
   `astrlink-core-${target}${executableSuffix}`,
@@ -158,15 +180,24 @@ const cliOutput = path.join(
   binariesDirectory,
   `astrlink-cli-${target}${executableSuffix}`,
 );
-// Tauri config files are per OS, not per architecture. The bundle scripts
-// merge this generated file (`tauri --config`) so only Apple silicon builds
-// add the Core ML runtime and its notices; it is empty everywhere else.
-const runtimeConfigOutput = path.join(
-  binariesDirectory,
-  "tauri.onnxruntime.conf.json",
-);
-
 mkdirSync(binariesDirectory, { recursive: true });
+mkdirSync(resourcesBinDirectory, { recursive: true });
+
+// stageResource copies a staged file into the MyGo platform resources.
+function stageResource(source, relativePath) {
+  const destination = path.join(resourcesDirectory, relativePath);
+  mkdirSync(path.dirname(destination), { recursive: true });
+  copyFileSync(source, destination);
+  if (relativePath.startsWith("bin/") && !target.includes("windows")) {
+    chmodSync(destination, 0o755);
+  }
+}
+
+// stageProgram copies a built program into bin/ under its plain name.
+function stageProgram(sidecar, name) {
+  stageResource(sidecar, `bin/${name}${executableSuffix}`);
+  console.log(`Staged ${name} for MyGo: ${resourcesBinDirectory}`);
+}
 
 async function stageOnnxRuntimeNotices(version) {
   const cacheDirectory = path.join(
@@ -211,6 +242,7 @@ async function stageOnnxRuntimeNotices(version) {
       cached,
       path.join(binariesDirectory, `onnxruntime-${version}-${notice.name}`),
     );
+    stageResource(cached, `notices/onnxruntime-${version}/${notice.name}`);
   }
   console.log(`Staged pinned ONNX Runtime ${version} license notices.`);
 }
@@ -284,6 +316,8 @@ async function stageMacOSRuntime(
       path.join(directory, "target", "release", libraryName),
     ),
     path.join(binariesDirectory, libraryName),
+    // The workers load it from beside their executable.
+    path.join(resourcesBinDirectory, libraryName),
   ];
   return { runtimeSource, runtimeDestinations, version };
 }
@@ -294,38 +328,6 @@ function stageCoreMLRuntime() {
     coreMLRuntimeAssets,
     coreMLRuntimeLibraryName,
     [workerDirectory],
-  );
-}
-
-function writeRuntimeConfig(coreMLRuntime) {
-  let config = {};
-  if (coreMLRuntime) {
-    // A merged array replaces the configured one, so start from the list
-    // the build would otherwise use: the macOS file's, if it has one.
-    const bundleConfig = (name) =>
-      JSON.parse(
-        readFileSync(path.join(desktopDirectory, "src-tauri", name), "utf8"),
-      ).bundle;
-    const frameworks =
-      bundleConfig("tauri.macos.conf.json")?.macOS?.frameworks ??
-      bundleConfig("tauri.conf.json").macOS.frameworks;
-    config = {
-      bundle: {
-        macOS: {
-          frameworks: [...frameworks, `binaries/${coreMLRuntimeLibraryName}`],
-        },
-        resources: Object.fromEntries(
-          onnxRuntimeNotices[coreMLRuntimeVersion].map((notice) => [
-            `binaries/onnxruntime-${coreMLRuntimeVersion}-${notice.name}`,
-            `notices/onnxruntime-${coreMLRuntimeVersion}/${notice.name}`,
-          ]),
-        ),
-      },
-    };
-  }
-  writeFileSync(runtimeConfigOutput, `${JSON.stringify(config, null, 2)}\n`);
-  console.log(
-    `Wrote Tauri runtime config for ${target}: ${runtimeConfigOutput}`,
   );
 }
 
@@ -399,6 +401,8 @@ async function stageLinuxRuntime() {
       linuxRuntimeLibraryName,
     ),
     path.join(binariesDirectory, linuxRuntimeLibraryName),
+    // The desktop hands Core this path (ASTRLINK_ONNX_RUNTIME_PATH).
+    path.join(resourcesDirectory, "onnxruntime", linuxRuntimeLibraryName),
   ];
   return { runtimeSource, runtimeDestinations };
 }
@@ -502,6 +506,14 @@ if (process.argv.includes("--test-runtime-only")) {
   process.exit(0);
 }
 
+// The licenses the app ships, as the About page lists them.
+for (const [source, destination] of [
+  ["LICENSE", "licenses/LICENSE"],
+  ["LICENSING.md", "licenses/LICENSING.md"],
+  ["LICENSES/AGPL-3.0.txt", "licenses/LICENSES/AGPL-3.0.txt"],
+]) {
+  stageResource(path.join(repositoryRoot, source), destination);
+}
 if (target.includes("windows")) {
   assertWindowsRuntimeVersion();
   await stageOnnxRuntimeNotices(windowsRuntimeVersion);
@@ -514,7 +526,7 @@ if (coreMLRuntimeAssets[target]) {
 await stageWindowsVcRuntime({ target, binariesDirectory });
 
 // Release jobs stamp the tag into package.json before this script runs, so
-// Core reports the same version as the desktop shell.
+// Core reports the same version as the desktop app.
 const { version: appVersion } = JSON.parse(
   readFileSync(path.join(desktopDirectory, "package.json"), "utf8"),
 );
@@ -535,7 +547,8 @@ execFileSync(
   },
 );
 
-console.log(`Staged astrlink-core for Tauri: ${output}`);
+console.log(`Staged astrlink-core for MyGo: ${output}`);
+stageProgram(output, "astrlink-core");
 
 execFileSync(
   "go",
@@ -548,7 +561,8 @@ execFileSync(
 if (!target.includes("windows")) {
   chmodSync(cliOutput, 0o755);
 }
-console.log(`Staged astrlink-cli for Tauri: ${cliOutput}`);
+console.log(`Staged astrlink-cli for MyGo: ${cliOutput}`);
+stageProgram(cliOutput, "astrlink-cli");
 
 const macOSRuntime = await stageMacOSRuntime();
 const coreMLRuntime = await stageCoreMLRuntime();
@@ -582,7 +596,6 @@ for (const runtime of [macOSRuntime, coreMLRuntime]) {
   }
   console.log(`Staged pinned ONNX Runtime ${runtime.version} for macOS.`);
 }
-writeRuntimeConfig(coreMLRuntime);
 
 if (linuxRuntime) {
   for (const destination of linuxRuntime.runtimeDestinations) {
@@ -605,7 +618,8 @@ if (!target.includes("windows")) {
   chmodSync(workerOutput, 0o755);
 }
 
-console.log(`Staged astrlink-privacy-worker for Tauri: ${workerOutput}`);
+console.log(`Staged astrlink-privacy-worker for MyGo: ${workerOutput}`);
+stageProgram(workerOutput, "astrlink-privacy-worker");
 
 if (!reuseWindowsWorkers) {
   execFileSync(
@@ -639,8 +653,9 @@ if (!target.includes("windows")) {
 }
 
 console.log(
-  `Staged astrlink-classifier-worker for Tauri: ${classifierWorkerOutput}`,
+  `Staged astrlink-classifier-worker for MyGo: ${classifierWorkerOutput}`,
 );
+stageProgram(classifierWorkerOutput, "astrlink-classifier-worker");
 
 if (target.includes("windows")) {
   const runtimeName = "DirectML.dll";
@@ -665,5 +680,6 @@ if (target.includes("windows")) {
     throw new Error("Windows workers require the same bundled DirectML.dll.");
   }
   copyFileSync(runtimeSource, path.join(binariesDirectory, runtimeName));
+  stageResource(runtimeSource, `bin/${runtimeName}`);
   console.log(`Staged Windows ONNX Runtime dependency: ${runtimeName}`);
 }

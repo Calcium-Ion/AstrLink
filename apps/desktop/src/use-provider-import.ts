@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { isTauri } from "@tauri-apps/api/core";
+import { isDesktopHost } from "./native-host/core";
 
 import {
   dismissProviderImport,
@@ -86,7 +86,7 @@ export function useProviderImport({
   const refused = useRef<string | null>(null);
 
   useEffect(() => {
-    if (!isTauri()) return;
+    if (!isDesktopHost()) return;
     let cancelled = false;
     let stop: (() => void) | null = null;
     const receive = (notice: ProviderImportNotice | null) => {

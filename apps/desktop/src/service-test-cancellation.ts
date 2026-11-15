@@ -1,4 +1,4 @@
-/** Keep in sync with the Rust constants in sidecar.rs. */
+/** Keep in sync with the constants in `internal/control/api.go`. */
 export const SERVICE_TEST_CANCELLED_ERROR = "service_test_cancelled";
 export const SERVICE_TEST_ALREADY_RUNNING_ERROR =
   "service_test_already_running";

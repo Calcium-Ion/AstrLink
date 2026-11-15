@@ -1,4 +1,4 @@
-import { isTauri } from "@tauri-apps/api/core";
+import { isDesktopHost } from "../native-host/core";
 import type { ComponentProps, MouseEvent } from "react";
 
 import { ArrowUpRight } from "@/components/icons";
@@ -13,7 +13,7 @@ export function openInSystemBrowser(
   event: MouseEvent<HTMLAnchorElement>,
   href: string,
 ) {
-  if (!isTauri()) return;
+  if (!isDesktopHost()) return;
   event.preventDefault();
   void openExternalURL(href).catch(() => {
     notify.error(i18n.t("common.openLinkFailed"));

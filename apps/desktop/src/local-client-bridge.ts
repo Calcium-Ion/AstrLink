@@ -1,5 +1,5 @@
-import { invoke, isTauri } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { invoke, isDesktopHost } from "./native-host/core";
+import { listen } from "./native-host/event";
 import {
   emptyLocalClients,
   parseLocalClients,
@@ -15,7 +15,7 @@ async function call(command: string, args?: Record<string, unknown>) {
   }
 }
 export const getLocalClients = () =>
-  isTauri()
+  isDesktopHost()
     ? call("local_client_status")
     : Promise.resolve(emptyLocalClients());
 export const refreshLocalClients = () => call("refresh_local_clients");
@@ -30,7 +30,7 @@ export const repairLocalClients = (targets: LocalClientTarget[]) =>
 export const listenLocalClients = (
   listener: (snapshot: LocalClientSnapshot) => void,
 ) =>
-  isTauri()
+  isDesktopHost()
     ? listen<unknown>("local-client-status", ({ payload }) => {
         try {
           listener(parseLocalClients(payload));

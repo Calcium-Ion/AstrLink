@@ -13,17 +13,16 @@ const windowMocks = vi.hoisted(() => ({
   minimize: vi.fn(),
   onFocusChanged: vi.fn(),
   onResized: vi.fn(),
-  startResizeDragging: vi.fn(),
   toggleMaximize: vi.fn(),
   unlistenFocus: vi.fn(),
   unlistenResize: vi.fn(),
 }));
 
-vi.mock("@tauri-apps/api/core", () => ({
+vi.mock("./native-host/core", () => ({
   invoke: windowMocks.invoke,
 }));
 
-vi.mock("@tauri-apps/api/window", () => ({
+vi.mock("./native-host/window", () => ({
   getCurrentWindow: () => ({
     close: windowMocks.close,
     isFocused: windowMocks.isFocused,
@@ -32,7 +31,6 @@ vi.mock("@tauri-apps/api/window", () => ({
     minimize: windowMocks.minimize,
     onFocusChanged: windowMocks.onFocusChanged,
     onResized: windowMocks.onResized,
-    startResizeDragging: windowMocks.startResizeDragging,
     toggleMaximize: windowMocks.toggleMaximize,
   }),
 }));
@@ -70,7 +68,6 @@ describe("WindowChrome", () => {
     windowMocks.minimize.mockResolvedValue(undefined);
     windowMocks.onFocusChanged.mockResolvedValue(windowMocks.unlistenFocus);
     windowMocks.onResized.mockResolvedValue(windowMocks.unlistenResize);
-    windowMocks.startResizeDragging.mockResolvedValue(undefined);
     windowMocks.toggleMaximize.mockResolvedValue(undefined);
     container = document.createElement("div");
     document.body.append(container);
@@ -104,24 +101,19 @@ describe("WindowChrome", () => {
     expect(
       container.querySelector('header[aria-label="窗口控制栏"]'),
     ).not.toBeNull();
-    expect(
-      container.querySelector(
-        '[data-slot="window-drag-region"][data-tauri-drag-region]',
-      ),
-    ).not.toBeNull();
+    // MyGo moves the window from the region its CSS marks.
+    const dragRegion = container.querySelector<HTMLElement>(
+      '[data-slot="window-drag-region"]',
+    );
+    expect(dragRegion?.className).toContain("[--app-region:drag]");
     expect(container.querySelector("button")).toBeNull();
     expect(container.querySelector("img")).toBeNull();
     expect(container.textContent).toBe("");
     // The traffic lights take the start of the bar.
     expect(document.documentElement.dataset.windowControls).toBe("start");
-    expect(
-      container.querySelector(
-        '[data-slot="window-drag-region"][data-tauri-drag-region]',
-      ),
-    ).not.toBeNull();
   });
 
-  it("runs Windows controls and border resize actions", async () => {
+  it("runs Windows controls and leaves resizing to the window edges", async () => {
     await act(async () => {
       root.render(<WindowChrome platform="windows" />);
     });
@@ -150,16 +142,11 @@ describe("WindowChrome", () => {
     expect(windowMocks.toggleMaximize).toHaveBeenCalledOnce();
     expect(windowMocks.close).toHaveBeenCalledOnce();
 
-    const southeast = container.querySelector<HTMLDivElement>(
-      '[data-slot="window-resize-handle"][data-direction="southeast"]',
-    );
-    expect(southeast).not.toBeNull();
-    await act(async () => {
-      southeast?.dispatchEvent(
-        new MouseEvent("mousedown", { bubbles: true, button: 0 }),
-      );
-    });
-    expect(windowMocks.startResizeDragging).toHaveBeenCalledWith("SouthEast");
+    // A frameless MyGo window resizes from its own edges; handles of the
+    // page's would take the clicks the window needs there.
+    expect(
+      container.querySelector('[data-slot="window-resize-handle"]'),
+    ).toBeNull();
   });
 
   it("uses the GTK control sides without adding a title", async () => {
@@ -224,7 +211,7 @@ describe("WindowChrome", () => {
     expect(container.querySelector("main")?.childElementCount).toBe(0);
     // Its own element rather than a child of the drag region, so a click on it
     // does not start dragging the window.
-    expect(accessory?.hasAttribute("data-tauri-drag-region")).toBe(false);
+    expect(accessory?.className).toContain("[--app-region:no-drag]");
     expect(
       accessory?.compareDocumentPosition(
         container.querySelector('[data-slot="window-controls"]')!,
@@ -256,9 +243,6 @@ describe("WindowChrome", () => {
     expect(
       control(container, "还原窗口").querySelectorAll("rect, path"),
     ).toHaveLength(2);
-    expect(
-      container.querySelector('[data-slot="window-resize-handle"]'),
-    ).toBeNull();
 
     await act(async () => root.unmount());
     expect(windowMocks.unlistenFocus).toHaveBeenCalledOnce();

@@ -17,8 +17,9 @@ import {
   type ClientIdentities,
   type RoutingSettings,
 } from "./failure-policy-model";
-import { invoke as invokeCommand } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { invoke as invokeCommand } from "./native-host/core";
+import { hasNativeHost } from "./native-host/presence";
+import { listen } from "./native-host/event";
 import {
   parseServiceProxyProbe,
   type ServiceProxyProbeInput,
@@ -226,10 +227,10 @@ import {
 } from "./sync-model";
 
 export function hasNativeBridge(): boolean {
-  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+  return hasNativeHost();
 }
 
-// A Tauri command that returns Err(String) rejects with the bare string, which
+// A host command that fails rejects with the bare string, which
 // every screen's error handler discards in favour of its generic fallback. The
 // diagnosis then reads "无法读取…" no matter whether Core was unreachable or
 // returned a field the interface refused. Carrying the reason across keeps the
@@ -326,7 +327,7 @@ export async function getPreferences(): Promise<SettingsSnapshot> {
   return parseSettingsSnapshot(await invokeDesktopRead("get_preferences"));
 }
 
-/** The currency amounts show in, with today's rate; see `currency.rs`. */
+/** The currency amounts show in, with today's rate; see `internal/currency` of the desktop host. */
 export async function getDisplayCurrency(): Promise<DisplayCurrency> {
   requireNativeBridge();
   return parseDisplayCurrency(await invoke<unknown>("display_currency"));
@@ -681,7 +682,7 @@ export async function fetchCustomModelList(
   input: CustomModelListInput,
 ): Promise<CustomModelListResult> {
   // Route through the existing probe_draft_service_models command rather than
-  // a separate Tauri command. The prober already handles custom kind with any
+  // a separate host command. The prober already handles custom kind with any
   // OpenAI-compatible /v1/models endpoint via ProtocolOpenAIModels.
   const probe = await probeDraftServiceModels({
     ...(input.proxy !== undefined ? { proxy: input.proxy } : {}),

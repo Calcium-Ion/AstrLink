@@ -40,6 +40,8 @@ type command struct {
 	Detail  string
 	Flags   []commandFlag
 	Call    func(ctx context.Context, client *Client, arguments map[string]any) (json.RawMessage, error)
+	// Local answers without the Control API; Call is unused then.
+	Local func(options DialOptions) (json.RawMessage, error)
 }
 
 var listFlags = []commandFlag{
@@ -55,6 +57,12 @@ var listFlags = []commandFlag{
 
 func commandCatalog() []command {
 	return []command{
+		{
+			Name:    "instances",
+			Summary: "List the AstrLink instances and which one the commands use.",
+			Detail:  "List the AstrLink instances on this computer: default (the installed app) and dev (a development build that runs beside it). running says whether its gateway answers, gateway_url is its client inference address, and selected is the instance the other commands use with the same flags; pass --instance dev to the other commands to use the dev instance. Socket paths, tokens, and data directories are never shown.",
+			Local:   listInstances,
+		},
 		{
 			Name:    "sessions",
 			Summary: "List recent request sessions (grouped conversations).",

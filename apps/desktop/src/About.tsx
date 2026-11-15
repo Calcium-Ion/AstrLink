@@ -1,5 +1,5 @@
 import { useEffect, useId, useState } from "react";
-import { isTauri } from "@tauri-apps/api/core";
+import { isDesktopHost } from "./native-host/core";
 import { Panel, PanelHeader } from "@/components/Panel";
 import { DataField, DataRow } from "@/components/DataRow";
 import { Badge } from "@/components/ui/badge";
@@ -65,7 +65,7 @@ export function About({
   const [confirm, setConfirm] = useState(false);
   const [preferencesOpen, setPreferencesOpen] = useState<boolean | null>(null);
   const [now, setNow] = useState(() => Date.now());
-  const native = isTauri();
+  const native = isDesktopHost();
   const working = busy || updateBusy(snapshot);
   const retryWait = updateRetryWait(snapshot, now);
   const retryAt = snapshot.retry_at;

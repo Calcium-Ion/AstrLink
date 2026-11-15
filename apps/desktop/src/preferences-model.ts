@@ -9,7 +9,7 @@ import { isThemePreference, type ThemePreference } from "./theme-model";
 
 export type CloseBehavior = "hide_to_tray" | "quit";
 
-/** Which interfaces the inference port answers; mirrors `InferenceListen` in `preferences.rs`. */
+/** Which interfaces the inference port answers; mirrors `InferenceListen` in `internal/prefs`. */
 export const INFERENCE_LISTENS = ["loopback", "all_interfaces"] as const;
 export type InferenceListen = (typeof INFERENCE_LISTENS)[number];
 
@@ -72,7 +72,7 @@ export interface TrayPreferences {
   pages: TrayPage[];
 }
 
-/** Mirrors `TrayPreferences::default()` in `src-tauri/src/preferences.rs`. */
+/** Mirrors `DefaultTrayPreferences()` in `internal/prefs/preferences.go`. */
 export function defaultTrayPreferences(): TrayPreferences {
   return {
     menubar_text: "none",

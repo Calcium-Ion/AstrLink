@@ -15,18 +15,7 @@ export const appleRetryDelaysMs = [10_000, 30_000, 60_000];
 
 const desktopDirectory = fileURLToPath(new URL("../", import.meta.url));
 const submissionPattern = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
-const config = JSON.parse(
-  readFileSync(
-    path.join(desktopDirectory, "src-tauri/tauri.conf.json"),
-    "utf8",
-  ),
-);
-const macOSConfig = JSON.parse(
-  readFileSync(
-    path.join(desktopDirectory, "src-tauri/tauri.macos.conf.json"),
-    "utf8",
-  ),
-);
+const productName = "AstrLink";
 
 function run(command, args) {
   const result = spawnSync(command, args, {
@@ -72,44 +61,40 @@ export function notarizeMacOS({
       "Set APPLE_TEAM_ID to the expected 10-character developer Team ID.",
     );
   }
-  const app = path.join(bundleDirectory, "macos", `${config.productName}.app`);
+  // `mygo build` writes the app and its disk image side by side.
+  const app = path.join(bundleDirectory, `${productName}.app`);
   if (!existsSync(app)) throw new Error(`Missing app bundle: ${app}`);
-  const images = readdirSync(path.join(bundleDirectory, "dmg")).filter((name) =>
+  const images = readdirSync(bundleDirectory).filter((name) =>
     name.endsWith(".dmg"),
   );
   if (images.length !== 1)
     throw new Error(
       "Expected exactly one DMG; remove stale installers before building.",
     );
-  const dmg = path.join(bundleDirectory, "dmg", images[0]);
-  const binaries = (config.bundle.externalBin ?? []).map((binary) =>
-    path.join(app, "Contents/MacOS", path.basename(binary)),
+  const dmg = path.join(bundleDirectory, images[0]);
+  const listed = (directory, keep = () => true) =>
+    existsSync(directory)
+      ? readdirSync(directory, { withFileTypes: true })
+          .filter((entry) => !entry.name.startsWith(".") && keep(entry))
+          .map((entry) => path.join(directory, entry.name))
+          .sort()
+      : [];
+  const resources = path.join(app, "Contents/Resources");
+  // Core, the CLI and the workers, with the ONNX Runtime libraries they
+  // load (Apple silicon adds the Core ML one), then the widget's WidgetKit
+  // bridge and anything in Frameworks.
+  const helpers = listed(path.join(resources, "bin"), (entry) =>
+    entry.isFile(),
   );
-  // Apple silicon bundles add the Core ML runtime through a generated config
-  // (see build-sidecar.mjs), so check what the bundle holds as well as what
-  // tauri.conf.json lists.
-  const frameworksDirectory = path.join(app, "Contents/Frameworks");
+  const binaries = helpers.filter((file) => !file.endsWith(".dylib"));
   const frameworks = [
-    ...new Set([
-      ...(config.bundle.macOS.frameworks ?? []).map((framework) =>
-        path.basename(framework),
-      ),
-      ...(existsSync(frameworksDirectory)
-        ? readdirSync(frameworksDirectory)
-        : []),
-    ]),
-  ].map((name) => path.join(frameworksDirectory, name));
+    ...helpers.filter((file) => file.endsWith(".dylib")),
+    ...listed(resources, (entry) => entry.name.endsWith(".dylib")),
+    ...listed(path.join(app, "Contents/Frameworks")),
+  ];
   // The desktop widget (build-macos-widget.mjs), plus any other extension
   // the bundle holds.
-  const plugInsDirectory = path.join(app, "Contents/PlugIns");
-  const plugIns = [
-    ...new Set([
-      ...Object.keys(macOSConfig.bundle?.macOS?.files ?? {})
-        .filter((destination) => destination.startsWith("PlugIns/"))
-        .map((destination) => path.basename(destination)),
-      ...(existsSync(plugInsDirectory) ? readdirSync(plugInsDirectory) : []),
-    ]),
-  ].map((name) => path.join(plugInsDirectory, name));
+  const plugIns = listed(path.join(app, "Contents/PlugIns"));
   const executables = [app, ...binaries, ...plugIns];
   console.log(
     "Checking Developer ID signatures, Team ID, timestamps and Hardened Runtime.",
@@ -245,7 +230,8 @@ if (
           type: "string",
           default: path.join(
             desktopDirectory,
-            "src-tauri/target/release/bundle",
+            "build",
+            `darwin-${process.arch === "arm64" ? "arm64" : "amd64"}`,
           ),
         },
         "submission-id": { type: "string" },
