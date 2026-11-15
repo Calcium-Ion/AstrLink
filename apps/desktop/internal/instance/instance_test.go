@@ -3,6 +3,7 @@ package instance
 import (
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"testing"
 )
 
@@ -46,6 +47,14 @@ func TestDirectoriesFollowTauriNaming(t *testing.T) {
 	env := func(vars map[string]string) func(string) string {
 		return func(name string) string { return vars[name] }
 	}
+	// abs makes a slash path absolute on this host, where the XDG variables
+	// are checked.
+	abs := func(p string) string {
+		if runtime.GOOS == "windows" {
+			return "C:" + p
+		}
+		return p
+	}
 	for _, c := range []struct {
 		goos, home string
 		vars       map[string]string
@@ -59,8 +68,8 @@ func TestDirectoriesFollowTauriNaming(t *testing.T) {
 			Data:   "/home/a/.local/share/com.astrlink.desktop",
 			Config: "/home/a/.config/com.astrlink.desktop",
 		}},
-		{"linux", "/home/a", map[string]string{"XDG_DATA_HOME": "/d", "XDG_CONFIG_HOME": "/c"}, Directories{
-			Data: "/d/com.astrlink.desktop", Config: "/c/com.astrlink.desktop",
+		{"linux", "/home/a", map[string]string{"XDG_DATA_HOME": abs("/d"), "XDG_CONFIG_HOME": abs("/c")}, Directories{
+			Data: abs("/d/com.astrlink.desktop"), Config: abs("/c/com.astrlink.desktop"),
 		}},
 		// XDG variables that are not absolute paths are ignored.
 		{"linux", "/home/a", map[string]string{"XDG_DATA_HOME": "rel"}, Directories{

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -119,6 +120,16 @@ type bridgeCase struct {
 }
 
 func raw(literal string) json.RawMessage { return json.RawMessage(literal) }
+
+// localModel is a local model probe for a path absolute on this platform.
+var localModel = func() string {
+	path := "/models/privacy"
+	if runtime.GOOS == "windows" {
+		path = `C:\models\privacy`
+	}
+	body, _ := json.Marshal(map[string]string{"path": path})
+	return string(body)
+}()
 
 func ptr[T any](v T) *T { return &v }
 
@@ -427,8 +438,8 @@ func (b *bridge) cases() []bridgeCase {
 		}, method: post, path: "/control/v1/privacy-models/probe", body: `{"repo_id":"example/privacy-filter","revision":"main"}`,
 			timeout: PrivacyModelMetadataTimeout, limit: normal, reply: probe},
 		{name: "probe_local_privacy_model", call: func(ctx context.Context) (any, error) {
-			return pr.ProbeLocalPrivacyModel(ctx, raw(`{"path":"/models/privacy"}`))
-		}, method: post, path: "/control/v1/privacy-models/local/probe", body: `{"path":"/models/privacy"}`,
+			return pr.ProbeLocalPrivacyModel(ctx, raw(localModel))
+		}, method: post, path: "/control/v1/privacy-models/local/probe", body: localModel,
 			timeout: PrivacyModelMetadataTimeout, limit: normal, reply: probe},
 		{name: "list_privacy_model_installations", call: func(ctx context.Context) (any, error) { return pr.ListPrivacyModelInstallations(ctx) },
 			method: get, path: "/control/v1/privacy-models", timeout: short, limit: normal, reply: `{"items":[` + privacyInstallationJSON + `]}`},

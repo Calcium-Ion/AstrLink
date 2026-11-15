@@ -77,6 +77,7 @@ export function notarizeMacOS({
       ? readdirSync(directory, { withFileTypes: true })
           .filter((entry) => !entry.name.startsWith(".") && keep(entry))
           .map((entry) => path.join(directory, entry.name))
+          .sort()
       : [];
   const resources = path.join(app, "Contents/Resources");
   // Core, the CLI and the workers, with the ONNX Runtime libraries they
