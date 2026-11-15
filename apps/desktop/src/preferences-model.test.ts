@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_RESPONSE_START_TIMEOUT_SECONDS,
   defaultDesktopToys,
+  toysOn,
   defaultTrayPreferences,
   parseSettingsSnapshot,
 } from "./preferences-model";
@@ -86,9 +87,17 @@ describe("preferences IPC contract", () => {
     expect(() => withToys({ egg_shell: "pink" })).toThrow(
       "$.values.desktop_toys.egg_shell",
     );
-    expect(() => withToys({ on: { pet: true, dock: true } })).toThrow(
-      "$.values.desktop_toys.on.dock",
+    expect(() => withToys({ switched: { pet: true, dock: true } })).toThrow(
+      "$.values.desktop_toys.switched.dock",
     );
+    expect(() => withToys({ switched: { pet: "off" } })).toThrow(
+      "$.values.desktop_toys.switched.pet",
+    );
+    // Nothing flipped: the big pet is out. Flipped by hand, she stays as set.
+    expect(toysOn(withToys({}).values.desktop_toys)).toEqual({ pet: true });
+    expect(
+      toysOn(withToys({ switched: { pet: false } }).values.desktop_toys),
+    ).toEqual({ pet: false });
     expect(
       withToys({ pet: { ...toys.pet, character: "codex" } }).values.desktop_toys
         .pet.character,
