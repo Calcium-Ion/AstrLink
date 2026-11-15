@@ -471,9 +471,6 @@ func LoadWithFallbackLocale(configDirectory, dataDirectory string, port uint16, 
 		// Save new-install defaults before Core creates its database, so
 		// subsequent starts keep the same port. Do not migrate old installs.
 		if !hasExistingData {
-			// A new install greets you with the big pet; an old one that
-			// never saved keeps every toy off.
-			s.values.DesktopToys.On.Pet = runtime.GOOS == "darwin"
 			if err := persist(path, s.values); err != nil {
 				s.loadWarning = err.Error()
 			}

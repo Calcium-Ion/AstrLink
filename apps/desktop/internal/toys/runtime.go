@@ -299,7 +299,7 @@ func (r *Runtime) Apply() {
 	}
 	p := r.deps.Prefs()
 	r.emitToys(PrefsEvent, p)
-	if p.On.Any() && available {
+	if p.On().Any() && available {
 		r.startFeed()
 		r.startPoll()
 	}
@@ -345,7 +345,7 @@ func (r *Runtime) reconcile() {
 		home = &h
 	}
 	r.mu.Unlock()
-	on := r.deps.Prefs().On.Pet
+	on := r.deps.Prefs().On().Pet
 	switch {
 	case on && existing == nil:
 		frame := placement(g, home)
@@ -402,7 +402,7 @@ func (r *Runtime) hitsLocked(label string) *hits {
 	return h
 }
 
-func (r *Runtime) wanted() bool { return r.deps.Prefs().On.Any() }
+func (r *Runtime) wanted() bool { return r.deps.Prefs().On().Any() }
 
 func (r *Runtime) startFeed() {
 	r.mu.Lock()
@@ -512,7 +512,7 @@ func (r *Runtime) poll(ticks <-chan time.Time) {
 			r.trackPointer(at, down)
 		}
 		pet := r.window(PetLabel)
-		if pet == nil || !r.deps.Prefs().On.Pet {
+		if pet == nil || !r.deps.Prefs().On().Pet {
 			continue
 		}
 		if count%6 == 0 || (down && count%2 == 0) {

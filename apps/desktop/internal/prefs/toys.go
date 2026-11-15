@@ -43,27 +43,35 @@ func (c *PetCharacter) UnmarshalJSON(data []byte) error {
 	return unmarshalChoice(data, (*string)(c), "pet character", PetAuto, PetClaudeCode, PetCodex, PetDeepseekHarness)
 }
 
-// DesktopToysOn is which desktop toys are out. Missing ones are off; only
-// a new macOS install starts with the big pet out.
-type DesktopToysOn struct {
-	// Pet is one big girl for every conversation, to pat, poke and throw.
-	Pet bool `json:"pet"`
+// DesktopToysSwitched are the toy switches flipped by hand. One never
+// flipped is left out and follows its default, so a new default reaches
+// everyone who never chose.
+type DesktopToysSwitched struct {
+	Pet *bool `json:"pet,omitempty"`
 }
-
-// Any reports whether a toy is out.
-func (o DesktopToysOn) Any() bool { return o.Pet }
 
 // UnmarshalJSON keeps unknown toys of other builds out without failing,
 // like the block it sits in.
-func (o *DesktopToysOn) UnmarshalJSON(data []byte) error {
-	type plain DesktopToysOn
+func (s *DesktopToysSwitched) UnmarshalJSON(data []byte) error {
+	type plain DesktopToysSwitched
 	var v plain
 	if err := json.Unmarshal(data, &v); err != nil {
 		return err
 	}
-	*o = DesktopToysOn(v)
+	*s = DesktopToysSwitched(v)
 	return nil
 }
+
+// DesktopToysOn is which desktop toys are out: each switch as flipped, or
+// its default.
+type DesktopToysOn struct {
+	// Pet is one big girl for every conversation, to pat, poke and throw;
+	// out unless switched off.
+	Pet bool
+}
+
+// Any reports whether a toy is out.
+func (o DesktopToysOn) Any() bool { return o.Pet }
 
 // DesktopToyPet is the big pet floating where she was left.
 type DesktopToyPet struct {
@@ -101,13 +109,25 @@ type DesktopToysPreferences struct {
 	// thought cloud, a snore.
 	Status bool `json:"status"`
 	// Milestone has her celebrate the day's token milestones.
-	Milestone bool          `json:"milestone"`
-	On        DesktopToysOn `json:"on"`
-	Pet       DesktopToyPet `json:"pet"`
+	Milestone bool `json:"milestone"`
+	// Switched holds the switches flipped by hand. Earlier builds saved
+	// every switch under "on", defaults included, so a saved "on" says
+	// nothing about a choice; it is no longer read.
+	Switched DesktopToysSwitched `json:"switched"`
+	Pet      DesktopToyPet       `json:"pet"`
 }
 
-// DefaultDesktopToys are the toy settings of a file that has none: every
-// toy off.
+// On reports which toys are out.
+func (d DesktopToysPreferences) On() DesktopToysOn {
+	pet := true
+	if d.Switched.Pet != nil {
+		pet = *d.Switched.Pet
+	}
+	return DesktopToysOn{Pet: pet}
+}
+
+// DefaultDesktopToys are the toy settings of a file that has none: nothing
+// flipped yet.
 func DefaultDesktopToys() DesktopToysPreferences {
 	return DesktopToysPreferences{Level: ToyNormal, Orb: true, Status: true, Milestone: true, Pet: defaultToyPet()}
 }

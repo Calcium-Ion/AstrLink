@@ -150,7 +150,7 @@ func newFixture(t *testing.T, on bool) *fixture {
 		probe:  &fakeProbe{closed: make(chan struct{})},
 	}}
 	f.prefs = Prefs{DesktopToysPreferences: prefs.DefaultDesktopToys(), Locale: prefs.LocaleEn}
-	f.prefs.On.Pet = on
+	f.prefs.Switched.Pet = &on
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	f.r = newRuntime(ctx, f.sys, Deps{
@@ -170,7 +170,7 @@ func (f *fixture) currentPrefs() Prefs {
 
 func (f *fixture) turn(on bool) {
 	f.mu.Lock()
-	f.prefs.On.Pet = on
+	f.prefs.Switched.Pet = &on
 	f.mu.Unlock()
 }
 
@@ -388,7 +388,7 @@ func TestPrefsReachThePageAsOneObject(t *testing.T) {
 	if err := json.Unmarshal(data, &fields); err != nil {
 		t.Fatal(err)
 	}
-	if string(fields["locale"]) != `"zh-CN"` || string(fields["level"]) != `"normal"` || fields["pet"] == nil || fields["on"] == nil {
+	if string(fields["locale"]) != `"zh-CN"` || string(fields["level"]) != `"normal"` || fields["pet"] == nil || string(fields["switched"]) != "{}" || fields["on"] != nil {
 		t.Fatal(string(data))
 	}
 	if InitializationScript(true) != "window.__ASTRLINK_DESKTOP_TOYS__ = true;" {

@@ -120,11 +120,21 @@ func TestTemporaryNamesAreUniqueAndPortable(t *testing.T) {
 func TestMissingFileUsesSafeDefaultsWithoutClaimingAnError(t *testing.T) {
 	directory := t.TempDir()
 	snapshot := load(directory).Snapshot()
-	expected := Default(DefaultInferencePort)
-	// A new install on macOS starts with the big pet out, and keeps it.
-	expected.DesktopToys.On.Pet = runtime.GOOS == "darwin"
-	if !reflect.DeepEqual(snapshot.Values, expected) || snapshot.LoadWarning != nil {
+	if !reflect.DeepEqual(snapshot.Values, Default(DefaultInferencePort)) || snapshot.LoadWarning != nil {
 		t.Fatalf("snapshot %+v", snapshot)
+	}
+	// A new install has the big pet out without saving her switch.
+	if !snapshot.Values.DesktopToys.On().Pet {
+		t.Fatal("a new install starts with the big pet in")
+	}
+	var saved struct {
+		DesktopToys struct {
+			Switched map[string]any `json:"switched"`
+		} `json:"desktop_toys"`
+	}
+	if b, err := os.ReadFile(filepath.Join(directory, fileName)); err != nil || json.Unmarshal(b, &saved) != nil ||
+		saved.DesktopToys.Switched == nil || len(saved.DesktopToys.Switched) != 0 {
+		t.Fatalf("saved %+v %v", saved, err)
 	}
 	v := snapshot.Values
 	if v.Locale != LocaleEn || v.Theme != ThemeSystem || v.QuotaDisplayMode != QuotaRemaining || !v.UseSystemProxy ||
@@ -176,7 +186,7 @@ func TestExistingInstallWithoutSavedPreferencesKeepsLegacyPort(t *testing.T) {
 	directory := t.TempDir()
 	writeFile(t, filepath.Join(directory, "astrlink.db"), "")
 	snapshot := load(directory).Snapshot()
-	if snapshot.Values.InferencePort != 8317 || snapshot.LoadWarning != nil {
+	if snapshot.Values.InferencePort != 8317 || snapshot.LoadWarning != nil || !snapshot.Values.DesktopToys.On().Pet {
 		t.Fatalf("snapshot %+v", snapshot)
 	}
 	if _, err := os.Stat(filepath.Join(directory, fileName)); err == nil {
@@ -193,7 +203,7 @@ func TestFirstRunAndUnusableFilesStartInTheSystemLanguage(t *testing.T) {
 		t.Fatalf("first run %+v", s)
 	}
 	writeFile(t, filepath.Join(directory, fileName), "{no")
-	if s := loadZh(); s.Values.Locale != LocaleZhCN || s.LoadWarning == nil {
+	if s := loadZh(); s.Values.Locale != LocaleZhCN || s.LoadWarning == nil || !s.Values.DesktopToys.On().Pet {
 		t.Fatalf("unparseable %+v", s)
 	}
 	// An explicit choice outlives other invalid settings in the same file.

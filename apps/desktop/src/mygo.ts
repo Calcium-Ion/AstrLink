@@ -356,15 +356,6 @@ export interface DesktopToyPet {
 }
 
 /**
- * DesktopToysOn is which desktop toys are out. Missing ones are off; only
- * a new macOS install starts with the big pet out.
- */
-export interface DesktopToysOn {
-  /** Pet is one big girl for every conversation, to pat, poke and throw. */
-  pet: boolean;
-}
-
-/**
  * DesktopToysPreferences are the desktop toys outside the main window, for
  * now the big pet, saved apart from the general settings.
  */
@@ -379,8 +370,22 @@ export interface DesktopToysPreferences {
   status: boolean;
   /** Milestone has her celebrate the day's token milestones. */
   milestone: boolean;
-  on: DesktopToysOn;
+  /**
+   * Switched holds the switches flipped by hand. Earlier builds saved
+   * every switch under "on", defaults included, so a saved "on" says
+   * nothing about a choice; it is no longer read.
+   */
+  switched: DesktopToysSwitched;
   pet: DesktopToyPet;
+}
+
+/**
+ * DesktopToysSwitched are the toy switches flipped by hand. One never
+ * flipped is left out and follows its default, so a new default reaches
+ * everyone who never chose.
+ */
+export interface DesktopToysSwitched {
+  pet?: boolean;
 }
 
 /** DiffLine is one line of a diff. */
