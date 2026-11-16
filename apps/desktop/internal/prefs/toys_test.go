@@ -20,12 +20,12 @@ func TestDesktopToysKeepOnlyHandFlippedSwitchesAndSaveOnTheirOwn(t *testing.T) {
 	toys := snapshot.Values.DesktopToys
 	if !reflect.DeepEqual(toys, DefaultDesktopToys()) || !toys.On().Pet || toys.Level != ToyNormal ||
 		!toys.Orb || !toys.Status || !toys.Milestone || !toys.Pet.Grab || !toys.Pet.Reply || !toys.Pet.Failover ||
-		toys.Pet.Size != ToySizeNormal || toys.Pet.Character != PetAuto {
+		!toys.Pet.Rate || toys.Pet.Size != ToySizeNormal || toys.Pet.Character != PetAuto {
 		t.Fatalf("%+v", toys)
 	}
 	var fixed DesktopToysPreferences
 	if err := json.Unmarshal([]byte(`{"pet":{"character":"deepseek_harness"}}`), &fixed); err != nil ||
-		fixed.Pet.Character != PetDeepseekHarness || !fixed.Pet.Grab {
+		fixed.Pet.Character != PetDeepseekHarness || !fixed.Pet.Grab || !fixed.Pet.Rate {
 		t.Fatal(fixed, err)
 	}
 	for _, bad := range []string{`{"pet":{"character":"pi"}}`, `{"pet":{"size":"huge"}}`, `{"pet":{"egg":1}}`, `{"level":"wild"}`} {

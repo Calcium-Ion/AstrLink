@@ -4832,7 +4832,8 @@
       "grab": "可以拎起来扔",
       "bubble": "说话",
       "reply": "写完回复",
-      "failover": "切换线路"
+      "failover": "切换线路",
+      "rate": "Token 速度"
     },
     "acts": {
       "bash": "运行命令 · {{tool}}",

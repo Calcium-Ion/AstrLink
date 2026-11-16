@@ -4832,7 +4832,8 @@
       "grab": "Pick up and throw",
       "bubble": "Speaks up",
       "reply": "Reply written",
-      "failover": "Route switched"
+      "failover": "Route switched",
+      "rate": "Token speed"
     },
     "acts": {
       "bash": "Running a command · {{tool}}",

@@ -50,7 +50,11 @@ const HERE: CrewLayout = {
   spot: () => ({ x: 100, level: 0 }),
 };
 
+/** Output tokens per second over the last minute, every conversation. */
+export const throughput = { rate: 0 };
+
 export function syncPace(reading: CrewReading) {
+  throughput.rate = reading.rate;
   syncCrew(pace, reading, HERE);
 }
 

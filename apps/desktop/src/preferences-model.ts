@@ -130,6 +130,8 @@ export interface DesktopToysPreferences {
     reply: boolean;
     /** A bubble when a call switches route. */
     failover: boolean;
+    /** Tokens per second over her head while a conversation works. */
+    rate: boolean;
   };
 }
 
@@ -157,6 +159,7 @@ export function defaultDesktopToys(): DesktopToysPreferences {
       grab: true,
       reply: true,
       failover: true,
+      rate: true,
     },
   };
 }
@@ -221,6 +224,7 @@ export function parseDesktopToys(
     "grab",
     "reply",
     "failover",
+    "rate",
   ]);
   return toys as unknown as DesktopToysPreferences;
 }

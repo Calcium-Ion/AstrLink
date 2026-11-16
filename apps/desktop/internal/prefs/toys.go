@@ -83,10 +83,13 @@ type DesktopToyPet struct {
 	Reply bool `json:"reply"`
 	// Failover shows a bubble when a call switches route.
 	Failover bool `json:"failover"`
+	// Rate shows the output tokens per second over her head while a
+	// conversation works or tokens still flow.
+	Rate bool `json:"rate"`
 }
 
 func defaultToyPet() DesktopToyPet {
-	return DesktopToyPet{Size: ToySizeNormal, Character: PetAuto, Grab: true, Reply: true, Failover: true}
+	return DesktopToyPet{Size: ToySizeNormal, Character: PetAuto, Grab: true, Reply: true, Failover: true, Rate: true}
 }
 
 func (p *DesktopToyPet) UnmarshalJSON(data []byte) error {

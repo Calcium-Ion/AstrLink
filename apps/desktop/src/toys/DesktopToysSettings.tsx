@@ -284,6 +284,19 @@ export function DesktopToysSettings({
               }))}
               label={t("desktopToys.opts.bubble")}
             />
+            <CheckRow
+              disabled={disabled}
+              id={`${id}-pet-show`}
+              items={[
+                {
+                  key: "rate",
+                  label: t("desktopToys.opts.rate"),
+                  checked: value.pet.rate,
+                  onChange: (rate) => setPet({ rate }),
+                },
+              ]}
+              label={t("desktopToys.show.label")}
+            />
           </div>
         </SettingSceneBody>
       </Panel>
