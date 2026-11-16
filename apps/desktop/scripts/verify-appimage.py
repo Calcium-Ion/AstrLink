@@ -67,7 +67,8 @@ def check_start(appimage, logs, timeout):
         # Containers have no FUSE: the runtime extracts the image instead
         # of mounting it, and sets APPIMAGE and APPDIR the same way.
         "APPIMAGE_EXTRACT_AND_RUN": "1",
-        "ASTRLINK_CI_NO_REMOTE_MODELS": "1",
+        # Not ASTRLINK_CI_NO_REMOTE_MODELS: with it Core refuses to start
+        # the way the app starts it. Starting downloads no model.
         "ASTRLINK_CI_SYNTHETIC_MODELS_ONLY": "1",
     }
     found = {}
