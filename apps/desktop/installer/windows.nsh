@@ -14,6 +14,9 @@
 !define ASTRLINK_LEGACY_UNINSTALL_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\AstrLink"
 !define ASTRLINK_RUN_KEY "Software\Microsoft\Windows\CurrentVersion\Run"
 !define ASTRLINK_APPROVED_KEY "Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run"
+; The desktop shortcut, named after the product by every release.
+!define ASTRLINK_SHORTCUT "AstrLink.lnk"
+Var AstrLinkHadShortcut
 
 ; Return 1 only when the machine has a sufficiently new x64 runtime.
 ; An x86 runtime does not satisfy the x64 workers' dependencies.
@@ -115,6 +118,11 @@ FunctionEnd
     ${If} ${FileExists} "$0"
     ${AndIf} $1 != ""
     ${AndIf} $1 != "$INSTDIR"
+      ; Its uninstaller deletes the desktop shortcut that opens it;
+      ; customInstall makes it again for this install.
+      ${If} ${FileExists} "$DESKTOP\${ASTRLINK_SHORTCUT}"
+        StrCpy $AstrLinkHadShortcut 1
+      ${EndIf}
       ; _?= runs the uninstaller in place, so ExecWait waits for it.
       ExecWait '"$0" /S _?=$1' $2
       ${If} $2 == 0
@@ -141,7 +149,25 @@ FunctionEnd
   Pop $0
 !macroend
 
+; Earlier releases update by running this installer as
+; `/P /UPDATE /R /ARGS <their arguments>` and quitting: they ask for no
+; questions and for the app to start again afterwards. Such an update
+; installs silently and, with /R, opens the app with those arguments.
+Var AstrLinkLegacyUpdate
+
 !macro customInit
+  Push $0
+  Push $1
+  ClearErrors
+  ${GetParameters} $0
+  ${GetOptions} $0 "/UPDATE" $1
+  ${IfNot} ${Errors}
+    StrCpy $AstrLinkLegacyUpdate 1
+    SetSilent silent
+  ${EndIf}
+  ClearErrors
+  Pop $1
+  Pop $0
   !insertmacro AstrLinkInstallVcRuntime
   !insertmacro AstrLinkRemoveLegacyInstall
 !macroend
@@ -150,6 +176,30 @@ FunctionEnd
   ; Make reboot requirements visible to unattended deployment tools as well.
   ${If} ${RebootFlag}
     SetErrorLevel 3010
+  ${EndIf}
+  ${If} $AstrLinkHadShortcut == 1
+  ${AndIfNot} ${FileExists} "$DESKTOP\${ASTRLINK_SHORTCUT}"
+    SetOutPath "$INSTDIR"
+    CreateShortCut "$DESKTOP\${ASTRLINK_SHORTCUT}" "$INSTDIR\${ASTRLINK_EXE}"
+  ${EndIf}
+  ${If} $AstrLinkLegacyUpdate == 1
+    Push $0
+    Push $1
+    ClearErrors
+    ${GetParameters} $0
+    ${GetOptions} $0 "/R" $1
+    ${IfNot} ${Errors}
+      ; A login launch passed --autostart, which the app still reads.
+      ClearErrors
+      ${GetOptions} $0 "/ARGS" $1
+      ${If} ${Errors}
+        StrCpy $1 ""
+      ${EndIf}
+      Exec '"$INSTDIR\${ASTRLINK_EXE}" $1'
+    ${EndIf}
+    ClearErrors
+    Pop $1
+    Pop $0
   ${EndIf}
 !macroend
 
