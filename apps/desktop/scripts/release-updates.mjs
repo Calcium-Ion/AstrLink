@@ -658,6 +658,9 @@ function runGh(args) {
   return execFileSync("gh", args, {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
+    // Every release with its notes, from `releases --paginate`, outgrew
+    // the default 1 MiB.
+    maxBuffer: 256 << 20,
   });
 }
 function uploadAssets(tag, assets, gh) {
