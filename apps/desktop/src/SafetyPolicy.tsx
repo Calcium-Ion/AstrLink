@@ -1495,6 +1495,14 @@ export function SafetyPolicy({
   const [regexPatternDrafts, setRegexPatternDrafts] = useState<string[]>(
     () => record?.policy.custom_regex_rules.map((rule) => rule.pattern) ?? [],
   );
+  // Custom regex rules are edited as a local draft (null = in sync with the
+  // persisted policy). Adding, removing, changing a kind, or editing a
+  // pattern must not PATCH the live policy until the user explicitly saves
+  // them (see #129): a misclick on "Add rule" used to silently change the
+  // live privacy policy.
+  const [customRegexRuleDrafts, setCustomRegexRuleDrafts] = useState<
+    PrivacyRegexRule[] | null
+  >(null);
   const [allowlistDrafts, setAllowlistDrafts] = useState<string[]>(
     () => record?.policy.allowlist_rules.map((rule) => rule.value) ?? [],
   );
@@ -1518,6 +1526,15 @@ export function SafetyPolicy({
   const persistedMinConfidence = record?.policy.min_confidence;
   const persistedCustomRegexRules = record?.policy.custom_regex_rules;
   const persistedAllowlistRules = record?.policy.allowlist_rules;
+  // Effective custom regex rules: the local draft while the user edits, the
+  // persisted policy otherwise.
+  const customRegexRules =
+    customRegexRuleDrafts ?? record?.policy.custom_regex_rules ?? [];
+  const customRegexRulesDirty =
+    record !== null &&
+    customRegexRuleDrafts !== null &&
+    JSON.stringify(customRegexRuleDrafts) !==
+      JSON.stringify(record.policy.custom_regex_rules);
 
   const policyDraftDirtyRef = useRef(false);
   policyDraftDirtyRef.current =
@@ -1531,7 +1548,8 @@ export function SafetyPolicy({
         JSON.stringify(
           record.policy.allowlist_rules.map((rule) => rule.value),
         ) ||
-      allowlistPending);
+      allowlistPending ||
+      customRegexRulesDirty);
 
   useEffect(() => {
     setMinConfidenceDraft(
@@ -1541,13 +1559,17 @@ export function SafetyPolicy({
     );
   }, [persistedMinConfidence]);
 
+  // Never clobber an in-progress rules draft: while one exists, the pattern
+  // drafts belong to it. Clearing the draft (after save or fill-builtin)
+  // re-runs this effect and re-syncs the patterns from the persisted rules.
   useEffect(() => {
+    if (customRegexRuleDrafts !== null) return;
     setRegexPatternDrafts(
       persistedCustomRegexRules === undefined
         ? []
         : persistedCustomRegexRules.map((rule) => rule.pattern),
     );
-  }, [persistedCustomRegexRules]);
+  }, [persistedCustomRegexRules, customRegexRuleDrafts]);
 
   useEffect(() => {
     setAllowlistDrafts(
@@ -2028,7 +2050,7 @@ export function SafetyPolicy({
 
   const changeRegexSource = (source: PrivacyRegexSource) => {
     if (record === null || saving) return;
-    if (source === "custom" && record.policy.custom_regex_rules.length === 0) {
+    if (source === "custom" && customRegexRules.length === 0) {
       void (async () => {
         setFillingBuiltinRules(true);
         setError(null);
@@ -2050,33 +2072,70 @@ export function SafetyPolicy({
   };
 
   const saveCustomRegexRules = (rules: PrivacyRegexRule[]) => {
-    void patchPolicy({ custom_regex_rules: rules });
+    return patchPolicy({ custom_regex_rules: rules });
+  };
+
+  // Writes the rules draft to the live policy. Folds in a pattern edit that
+  // is still focused: blur commits it to the draft, but a click on Save can
+  // reach this handler first.
+  const saveCustomRegexDrafts = async () => {
+    if (record === null || customRegexRuleDrafts === null) return;
+    const rules = customRegexRuleDrafts.map((rule, index) => ({
+      ...rule,
+      pattern: regexPatternDrafts[index] ?? rule.pattern,
+    }));
+    for (const rule of rules) {
+      const length = [...rule.pattern].length;
+      if (length < 1 || length > MAX_PRIVACY_REGEX_PATTERN_CHARS) {
+        setError(
+          t("safety.regexLength", { max: MAX_PRIVACY_REGEX_PATTERN_CHARS }),
+        );
+        setRegexPatternDrafts(
+          customRegexRuleDrafts.map((item) => item.pattern),
+        );
+        return;
+      }
+    }
+    if (
+      JSON.stringify(rules) === JSON.stringify(record.policy.custom_regex_rules)
+    ) {
+      setCustomRegexRuleDrafts(null);
+      return;
+    }
+    if (await saveCustomRegexRules(rules)) {
+      setCustomRegexRuleDrafts(null);
+    }
   };
 
   const addCustomRegexRule = () => {
     if (record === null) return;
-    if (
-      record.policy.custom_regex_rules.length >= MAX_PRIVACY_CUSTOM_REGEX_RULES
-    ) {
+    if (customRegexRules.length >= MAX_PRIVACY_CUSTOM_REGEX_RULES) {
       setError(
         t("safety.tooManyCustom", { max: MAX_PRIVACY_CUSTOM_REGEX_RULES }),
       );
       return;
     }
-    saveCustomRegexRules([
-      ...record.policy.custom_regex_rules,
-      defaultCustomRegexRule(),
+    const rule = defaultCustomRegexRule();
+    setCustomRegexRuleDrafts([...customRegexRules, rule]);
+    setRegexPatternDrafts((current) => [
+      ...customRegexRules.map((item, index) => current[index] ?? item.pattern),
+      rule.pattern,
     ]);
   };
 
   const removeCustomRegexRule = (index: number) => {
     if (record === null) return;
-    const next = record.policy.custom_regex_rules.filter((_, i) => i !== index);
+    const next = customRegexRules.filter((_, i) => i !== index);
     if (record.policy.regex_source === "custom" && next.length === 0) {
       setError(t("safety.needOneCustom"));
       return;
     }
-    saveCustomRegexRules(next);
+    setCustomRegexRuleDrafts(next);
+    setRegexPatternDrafts((current) =>
+      customRegexRules
+        .map((item, i) => current[i] ?? item.pattern)
+        .filter((_, i) => i !== index),
+    );
   };
 
   const changeCustomRegexKind = (
@@ -2084,10 +2143,11 @@ export function SafetyPolicy({
     kind: PrivacyRegexDetectorKind,
   ) => {
     if (record === null) return;
-    const next = record.policy.custom_regex_rules.map((rule, i) =>
-      i === index ? { ...rule, kind } : rule,
+    setCustomRegexRuleDrafts(
+      customRegexRules.map((rule, i) =>
+        i === index ? { ...rule, kind } : rule,
+      ),
     );
-    saveCustomRegexRules(next);
   };
 
   const commitCustomRegexPattern = (index: number) => {
@@ -2098,16 +2158,15 @@ export function SafetyPolicy({
       setError(
         t("safety.regexLength", { max: MAX_PRIVACY_REGEX_PATTERN_CHARS }),
       );
-      setRegexPatternDrafts(
-        record.policy.custom_regex_rules.map((rule) => rule.pattern),
-      );
+      setRegexPatternDrafts(customRegexRules.map((rule) => rule.pattern));
       return;
     }
-    if (draft === record.policy.custom_regex_rules[index]?.pattern) return;
-    const next = record.policy.custom_regex_rules.map((rule, i) =>
-      i === index ? { ...rule, pattern: draft } : rule,
+    if (draft === customRegexRules[index]?.pattern) return;
+    setCustomRegexRuleDrafts(
+      customRegexRules.map((rule, i) =>
+        i === index ? { ...rule, pattern: draft } : rule,
+      ),
     );
-    saveCustomRegexRules(next);
   };
 
   const kindRuleFor = (kind: CanonicalPrivacyKind): PrivacyKindRule =>
@@ -2218,13 +2277,19 @@ export function SafetyPolicy({
     setError(null);
     try {
       const catalog = await getPrivacyRegexBuiltinRules();
-      await patchPolicy(
-        {
-          regex_source: "custom",
-          custom_regex_rules: catalog.rules,
-        },
-        t("safety.filledBuiltin"),
-      );
+      if (
+        await patchPolicy(
+          {
+            regex_source: "custom",
+            custom_regex_rules: catalog.rules,
+          },
+          t("safety.filledBuiltin"),
+        )
+      ) {
+        // Filling builtin rules is an explicit replace of the whole list,
+        // so any in-progress draft is superseded by the persisted rules.
+        setCustomRegexRuleDrafts(null);
+      }
     } catch (fillError) {
       setError(messageOf(fillError, t("safety.fillBuiltinFailed")));
     } finally {
@@ -3575,10 +3640,23 @@ export function SafetyPolicy({
                           >
                             {t("safety.addRule")}
                           </Button>
+                          {customRegexRulesDirty ? (
+                            <Button
+                              disabled={saving || fillingBuiltinRules}
+                              onClick={() => {
+                                void saveCustomRegexDrafts();
+                              }}
+                              size="sm"
+                              type="button"
+                              variant="default"
+                            >
+                              {t("common.save")}
+                            </Button>
+                          ) : null}
                           <Button
                             disabled={saving || fillingBuiltinRules}
                             onClick={() => {
-                              if (policy.custom_regex_rules.length > 0) {
+                              if (customRegexRules.length > 0) {
                                 setConfirmFillBuiltinRules(true);
                               } else {
                                 void fillBuiltinRules();
@@ -3591,17 +3669,17 @@ export function SafetyPolicy({
                             {t("safety.fillBuiltin")}
                           </Button>
                           <span className="text-sm text-muted-foreground">
-                            {policy.custom_regex_rules.length}/
+                            {customRegexRules.length}/
                             {MAX_PRIVACY_CUSTOM_REGEX_RULES}
                           </span>
                         </div>
-                        {policy.custom_regex_rules.length === 0 ? (
+                        {customRegexRules.length === 0 ? (
                           <p className="text-sm text-muted-foreground">
                             {t("safety.noCustomRules")}
                           </p>
                         ) : (
                           <ul className="grid min-w-0 gap-2">
-                            {policy.custom_regex_rules.map((rule, index) => (
+                            {customRegexRules.map((rule, index) => (
                               <li
                                 className="grid min-w-0 gap-2 rounded-md border bg-card p-2.5 @[400px]:grid-cols-[7rem_minmax(0,1fr)_auto] @[400px]:items-start"
                                 key={`regex-rule-${index}`}
@@ -3657,7 +3735,7 @@ export function SafetyPolicy({
                                     } else if (event.key === "Escape") {
                                       event.preventDefault();
                                       setRegexPatternDrafts(
-                                        policy.custom_regex_rules.map(
+                                        customRegexRules.map(
                                           (item) => item.pattern,
                                         ),
                                       );

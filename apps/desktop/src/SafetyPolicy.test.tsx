@@ -3742,4 +3742,98 @@ describe("SafetyPolicy", () => {
     expect(container.textContent).toContain("一键填入内置规则");
     expect(container.textContent).toContain("添加规则");
   });
+
+  it("adds a custom regex rule as an unsaved draft until Save is clicked", async () => {
+    let current = policyRecord({
+      regex_source: "custom",
+      custom_regex_rules: [],
+    });
+    bridgeMocks.getPrivacyPolicy.mockResolvedValueOnce(current);
+    bridgeMocks.updatePrivacyPolicy.mockImplementation(async (_etag, patch) => {
+      current = { ...current, policy: { ...current.policy, ...patch } };
+      return current;
+    });
+    await renderPolicy();
+
+    await act(async () => {
+      button("添加规则").click();
+      await Promise.resolve();
+    });
+    await flush();
+
+    // Adding a rule must not PATCH the live policy or toast a save.
+    expect(bridgeMocks.updatePrivacyPolicy).not.toHaveBeenCalled();
+    expect(notifyMocks.success).not.toHaveBeenCalled();
+    expect(
+      container.querySelector('input[aria-label="规则 1 正则"]'),
+    ).not.toBeNull();
+    expect(container.textContent).toContain("1/64");
+
+    // The draft is only written when the user explicitly saves it.
+    await act(async () => {
+      button("保存").click();
+      await Promise.resolve();
+    });
+    await flush();
+
+    expect(bridgeMocks.updatePrivacyPolicy).toHaveBeenCalledExactlyOnceWith(
+      etag,
+      {
+        custom_regex_rules: [
+          {
+            kind: "email",
+            pattern: `(?i)\\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}\\b`,
+          },
+        ],
+      },
+    );
+    expect(notifyMocks.success).toHaveBeenCalledWith(
+      "安全策略已保存，新请求立即生效。",
+    );
+  });
+
+  it("keeps custom regex kind and pattern edits local until Save is clicked", async () => {
+    const existing = { kind: "email" as const, pattern: `(?i)alice@[a-z.]+` };
+    let current = policyRecord({
+      regex_source: "custom",
+      custom_regex_rules: [existing],
+    });
+    bridgeMocks.getPrivacyPolicy.mockResolvedValueOnce(current);
+    bridgeMocks.updatePrivacyPolicy.mockImplementation(async (_etag, patch) => {
+      current = { ...current, policy: { ...current.policy, ...patch } };
+      return current;
+    });
+    await renderPolicy();
+
+    // Changing the kind and editing the pattern must not PATCH yet.
+    await chooseOption('button[aria-label="规则 1 类型"]', "常见密钥");
+    await settleClosedLayer();
+    const patternInput = container.querySelector<HTMLInputElement>(
+      'input[aria-label="规则 1 正则"]',
+    )!;
+    await setInput('input[aria-label="规则 1 正则"]', `sk-[A-Za-z0-9]+`);
+    await act(async () => patternInput.blur());
+    await flush();
+
+    expect(bridgeMocks.updatePrivacyPolicy).not.toHaveBeenCalled();
+    expect(button("保存")).not.toBeNull();
+
+    await act(async () => {
+      button("保存").click();
+      await Promise.resolve();
+    });
+    await flush();
+
+    expect(bridgeMocks.updatePrivacyPolicy).toHaveBeenCalledExactlyOnceWith(
+      etag,
+      {
+        custom_regex_rules: [
+          { kind: "common_secret", pattern: `sk-[A-Za-z0-9]+` },
+        ],
+      },
+    );
+    expect(notifyMocks.success).toHaveBeenCalledWith(
+      "安全策略已保存，新请求立即生效。",
+    );
+  });
 });
