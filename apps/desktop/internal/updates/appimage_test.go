@@ -1,3 +1,8 @@
+// AppImages exist on Linux only, and these tests check the Unix file modes
+// an update keeps; Windows has no such modes.
+
+//go:build !windows
+
 package updates
 
 import (
