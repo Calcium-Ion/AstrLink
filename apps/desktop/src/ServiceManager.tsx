@@ -55,6 +55,7 @@ import {
   Plus,
   RefreshCw,
   Route,
+  ScanText,
   SlidersHorizontal,
 } from "@/components/icons";
 
@@ -2682,18 +2683,34 @@ export function ServiceManager({
           ) : services.length === 0 ? (
             <EmptyState
               action={
-                <Button
-                  disabled={!isReady || busy}
-                  onClick={() => setKindPickerOpen(true)}
-                  size="sm"
-                  type="button"
-                >
-                  <Plus aria-hidden="true" />
-                  {t("services.add")}
-                </Button>
+                <div className="flex flex-wrap items-center justify-center gap-2.5">
+                  <Button
+                    disabled={!isReady || busy}
+                    onClick={() => setKindPickerOpen(true)}
+                    size="lg"
+                    type="button"
+                  >
+                    <Plus aria-hidden="true" />
+                    {t("services.add")}
+                  </Button>
+                  {onLocalImport ? (
+                    <Button
+                      disabled={!isReady || busy}
+                      onClick={onLocalImport}
+                      size="lg"
+                      type="button"
+                      variant="outline"
+                    >
+                      <ScanText aria-hidden="true" />
+                      {t("localImport.pickerOption")}
+                    </Button>
+                  ) : null}
+                </div>
               }
+              className="flex-1"
               description={t("services.emptyHint")}
               title={t("services.empty")}
+              variant="page"
             />
           ) : !serviceOrder.hasOrder && !serviceOrder.error ? (
             <EmptyState title={t("services.loading")} />
