@@ -41,6 +41,7 @@ function member(over: Partial<CrewMember> = {}): CrewMember {
     waiting: false,
     queue: [],
     done: false,
+    failed: false,
     jump: 0,
     slip: 0,
     spot: null,

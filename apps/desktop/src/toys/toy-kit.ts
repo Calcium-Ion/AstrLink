@@ -30,7 +30,11 @@ export const clamp = (v: number, lo = 0, hi = 1) =>
 
 /** Waving after its reply, for as long as the level says, before it dozes off. */
 export const waving = (m: CrewMember) =>
-  m.act === "wait" && m.arrived && !m.leaving && m.t < motion().wave;
+  m.act === "wait" &&
+  m.arrived &&
+  !m.leaving &&
+  !m.failed &&
+  m.t < motion().wave;
 
 /**
  * The engine's pacing (minimum holds, ×N merges, backlog drops) without its
