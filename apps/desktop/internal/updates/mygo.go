@@ -4,13 +4,10 @@ import (
 	"bytes"
 	"context"
 	"io"
-	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
-	"sync"
 
 	"github.com/egoist/mygo"
 )
@@ -43,13 +40,9 @@ func Arch() string {
 // InstallSupported reports whether the app can replace itself where it is
 // installed, as mygo.Updater.Enabled decides it apart from the build's
 // configuration: an app bundle on macOS, a directory the user can write to
-// elsewhere. An AppImage replaces its file, in a directory the user can
-// write to. The packages a package manager installed, such as a .deb in
-// /opt, cannot.
+// elsewhere. AppImages and the packages a package manager installed, such
+// as a .deb in /opt, cannot.
 func InstallSupported() bool {
-	if file, ok := appImageFile(); ok {
-		return writable(filepath.Dir(file))
-	}
 	exe, err := os.Executable()
 	if err != nil {
 		return false
@@ -67,56 +60,12 @@ func InstallSupported() bool {
 	if os.Getenv("APPIMAGE") != "" {
 		return false
 	}
-	return writable(filepath.Dir(target))
-}
-
-// writable reports whether the user can create files in dir.
-func writable(dir string) bool {
-	probe, err := os.MkdirTemp(dir, ".mygo-update-")
+	probe, err := os.MkdirTemp(filepath.Dir(target), ".mygo-update-")
 	if err != nil {
 		return false
 	}
 	os.Remove(probe)
 	return true
-}
-
-// startDir is the working directory the app started in, where
-// mygo.App.Relaunch starts it again.
-var startDir, _ = os.Getwd()
-
-// relaunchAppImage quits the app and starts the AppImage file with args.
-// mygo.App.Relaunch would start the executable in the AppImage's mount,
-// which goes with this process. The file starts from OnQuit, after the
-// listener that mygo.App.RequestSingleInstanceLock added at launch has
-// released the lock, as Relaunch starts the app: started earlier, the new
-// instance would hand its launch to this one and exit. A canceled quit
-// starts nothing, as with Relaunch.
-func relaunchAppImage(file string, args []string) {
-	var mu sync.Mutex
-	var offQuit, offCanceled func()
-	mu.Lock()
-	offQuit = mygo.App.OnQuit(func() { startAppImage(file, args) })
-	offCanceled = mygo.App.OnQuitCanceled(func() {
-		mu.Lock()
-		defer mu.Unlock()
-		offQuit()
-		offCanceled()
-	})
-	mu.Unlock()
-	mygo.App.Quit()
-}
-
-// startAppImage starts file with args, detached from this process, which
-// is about to exit.
-func startAppImage(file string, args []string) {
-	cmd := exec.Command(file, args...)
-	cmd.Dir = startDir
-	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
-	if err := cmd.Start(); err != nil {
-		log.Printf("astrlink: unable to start the updated AppImage: %v", err)
-		return
-	}
-	_ = cmd.Process.Release()
 }
 
 // MyGo is the app's updater, mygo.Updater, reading the manifest a check

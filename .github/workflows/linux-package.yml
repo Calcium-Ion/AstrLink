@@ -78,15 +78,6 @@ jobs:
           cache-directories: apps/privacy-worker/target/onnxruntime
       - name: Install frontend dependencies
         run: bun install --frozen-lockfile
-      # The AppImage carries this system's GTK 3 and WebKitGTK 4.1, which the
-      # app opens at run time (scripts/build-appimage.mjs); appimagetool
-      # validates its desktop entry.
-      - name: Install AppImage build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev \
-            gsettings-desktop-schemas dpkg-dev pkg-config desktop-file-utils
       - name: Stamp release version
         if: inputs.release_tag != ''
         env:
@@ -107,8 +98,6 @@ jobs:
           # Releases sign the archive and write update-linux-amd64.json.
           MYGO_UPDATER_PRIVATE_KEY: ${{ inputs.release_tag != '' && secrets.MYGO_UPDATER_PRIVATE_KEY || '' }}
         run: bun scripts/mygo.mjs build
-      - name: Build AppImage
-        run: bun scripts/build-appimage.mjs
       - name: Inspect Debian package contents and dependencies
         run: |
           shopt -s nullglob
@@ -133,17 +122,6 @@ jobs:
           mkdir -p "$archive_dir"
           tar -xzf "${archives[0]}" -C "$archive_dir"
           bun ../../scripts/check-no-production-models.mjs --packaged "$archive_dir"
-      - name: Inspect AppImage contents
-        run: |
-          shopt -s nullglob
-          images=(build/linux-amd64/*.AppImage)
-          test "${#images[@]}" -eq 1
-          image="$(realpath "${images[0]}")"
-          appimage_dir="$RUNNER_TEMP/astrlink-appimage"
-          mkdir -p "$appimage_dir"
-          cp "$image" "$appimage_dir/"
-          (cd "$appimage_dir" && "$image" --appimage-extract > /dev/null)
-          bun ../../scripts/check-no-production-models.mjs --packaged "$appimage_dir/squashfs-root"
       - name: Install and verify on Debian 12
         run: |
           mkdir -p "$RUNNER_TEMP/astrlink-smoke" "$RUNNER_TEMP/astrlink-archive-smoke"
@@ -164,31 +142,6 @@ jobs:
               # The archive install.sh installs holds the same app.
               python3 /workspace/apps/desktop/scripts/verify-unix-package.py \
                 --platform linux --arch x86_64 --root /archive --logs /archive-smoke
-            '
-      # Without the Debian package, so WebKitGTK comes from the image; the
-      # libraries every desktop has, which linuxdeploy leaves out, come from
-      # the system.
-      - name: Run the AppImage on Debian 12
-        run: |
-          mkdir -p "$RUNNER_TEMP/astrlink-appimage-smoke"
-          docker run --rm \
-            --volume "$GITHUB_WORKSPACE:/workspace:ro" \
-            --volume "$RUNNER_TEMP/astrlink-appimage:/appimage:ro" \
-            --volume "$RUNNER_TEMP/astrlink-appimage-smoke:/smoke" \
-            --env DEBIAN_FRONTEND=noninteractive \
-            --env ASTRLINK_CI_NO_REMOTE_MODELS=1 \
-            --env ASTRLINK_CI_SYNTHETIC_MODELS_ONLY=1 \
-            debian:12-slim bash -euc '
-              apt-get update
-              apt-get install -y --no-install-recommends python3 binutils ca-certificates \
-                xvfb xauth libegl1 libfontconfig1 libfribidi0 libgbm1 libharfbuzz0b \
-                libwayland-client0
-              images=(/appimage/*.AppImage)
-              python3 /workspace/apps/desktop/scripts/verify-unix-package.py \
-                --platform linux --arch x86_64 \
-                --root /appimage/squashfs-root/usr/lib/astrlink --logs /smoke/app
-              python3 /workspace/apps/desktop/scripts/verify-appimage.py \
-                --appimage "${images[0]}" --appdir /appimage/squashfs-root --logs /smoke
             '
       - name: Stage and verify release files
         if: inputs.release_tag != ''
@@ -214,7 +167,6 @@ jobs:
           path: |
             apps/desktop/build/linux-amd64/*.deb
             apps/desktop/build/linux-amd64/*.tar.gz
-            apps/desktop/build/linux-amd64/*.AppImage
             apps/desktop/build/linux-amd64/install.sh
             apps/desktop/build/SHA256SUMS
           if-no-files-found: error
@@ -227,6 +179,5 @@ jobs:
           path: |
             ${{ runner.temp }}/astrlink-smoke/*
             ${{ runner.temp }}/astrlink-archive-smoke/*
-            ${{ runner.temp }}/astrlink-appimage-smoke/*
           if-no-files-found: ignore
           retention-days: 7
