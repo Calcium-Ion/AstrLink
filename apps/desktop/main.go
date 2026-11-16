@@ -8,11 +8,13 @@
 package main
 
 import (
+	"context"
 	"log"
 
 	"github.com/egoist/mygo"
 
 	"github.com/QuantumNous/astrlink/desktop/internal/host"
+	"github.com/QuantumNous/astrlink/desktop/internal/sigstack"
 )
 
 func main() {
@@ -23,6 +25,9 @@ func main() {
 	registerClientCommands(h)
 	registerAgentCommands(h)
 	registerReleaseCommands(h)
+	// The web view starts with the app; its signal handlers must not run on
+	// goroutine stacks.
+	mygo.App.WhenReady(func() { sigstack.Keep(context.Background()) })
 	mygo.App.WhenReady(h.Start)
 	if err := mygo.App.Run(); err != nil {
 		log.Fatal(err)
