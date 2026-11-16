@@ -7,6 +7,7 @@ import { TextExcerpt } from "@/components/TextExcerpt";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useT } from "./i18n";
+import { privacyKindLabel } from "./privacy-kind";
 import {
   createDryRunFindingResolver,
   dryRunSampleText,
@@ -141,7 +142,7 @@ export function PrivacyDryRunResult({
                   <li className="grid gap-2 p-3" data-testid="dry-run-finding">
                     <div className="flex flex-wrap items-center gap-2">
                       <strong className="text-sm font-medium">
-                        {t(`privacy.${finding.kind}`)}
+                        {privacyKindLabel(finding.kind)}
                       </strong>
                       <Badge variant="secondary">
                         {t(
@@ -219,7 +220,7 @@ export function PrivacyDryRunResult({
         <p>{result.protocol}</p>
         {rows.map(({ finding }, index) => (
           <p key={index} className="break-all">
-            {t(`privacy.${finding.kind}`)} · <code>{finding.path}</code> ·{" "}
+            {privacyKindLabel(finding.kind)} · <code>{finding.path}</code> ·{" "}
             {t("safety.testByteRange", {
               start: finding.start,
               end: finding.end,

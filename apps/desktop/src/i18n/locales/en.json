@@ -1771,7 +1771,8 @@
     "literal": "Exact value",
     "domain_suffix": "Domain suffix",
     "cidr": "IP range",
-    "noHit": "No hits"
+    "noHit": "No hits",
+    "customKind": "Custom type {{id}}"
   },
   "privacyAudit": {
     "title": "Result",
@@ -2315,7 +2316,30 @@
       "fallback": "{{operation}} Refresh to check the current status and try again. If it still fails, share the technical details for troubleshooting.",
       "timeout": "Waiting for the model operation timed out. Refresh to check its current status before trying again."
     },
-    "localImportFailed": "Model import failed. Check the local files and read permissions, then delete this entry and import again."
+    "localImportFailed": "Model import failed. Check the local files and read permissions, then delete this entry and import again.",
+    "addCustomKind": "Add type",
+    "addCustomKindConfirm": "Add",
+    "customKindHint": "Create a type for what a regex rule matches, such as company or agency names. Once the rules are saved, the type gets its own switch and statistics.",
+    "customKindLabel": "Type name",
+    "customKindLabelPlaceholder": "e.g. Company name",
+    "customKindId": "Placeholder name",
+    "customKindIdHint": "Starts with a lowercase letter; lowercase letters, digits, and single underscores. Fixed once saved. Replaced values read {{marker}}.",
+    "customKindIdInvalid": "Use lowercase letters, digits, and single underscores, starting with a letter, up to {{max}} characters.",
+    "customKindIdTaken": "This placeholder name is taken.",
+    "customKindNameTaken": "A type with this name exists.",
+    "customKindLabelLength": "Type names need 1–{{max}} characters.",
+    "customKinds": "Custom types",
+    "customKindName": "Custom type {{index}} name",
+    "customKindIdFixed": "The placeholder name is fixed once saved",
+    "removeCustomKind": "Delete type {{name}}",
+    "customKindInUse": "{{count}} rules still use “{{name}}”. Delete them or give them another type first.",
+    "tooManyCustomKinds": "At most {{max}} custom types.",
+    "customKindLock": "Custom types have no safe stand-in, so they always use marker placeholders.",
+    "customRulesOnlyShort": "Custom rules only",
+    "customRulesOnlyKind": "Only custom regex rules find this type.",
+    "discardChanges": "Discard changes",
+    "unsaved": "Unsaved",
+    "resetKindRulesCustomHint": " Custom types stay and are all turned on."
   },
   "privacyStats": {
     "range": "Range",

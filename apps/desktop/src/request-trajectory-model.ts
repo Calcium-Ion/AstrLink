@@ -3,7 +3,6 @@ import { findMatches } from "./find-model";
 import { formatExactNumber } from "./format-compact-number";
 import { i18n } from "./i18n";
 import {
-  PRIVACY_KIND_ORDER,
   privacyKindLabel,
   sortPrivacyKinds,
   type PrivacyKind,
@@ -489,7 +488,7 @@ export function extractPrivacyHits(text: string): PrivacyHitGroup[] {
       record(kind, match[0]);
     }
   }
-  return PRIVACY_KIND_ORDER.filter((kind) => grouped.has(kind)).map((kind) => {
+  return sortPrivacyKinds([...grouped.keys()]).map((kind) => {
     const placeholders = [...(grouped.get(kind) ?? [])];
     return {
       kind,
@@ -500,7 +499,10 @@ export function extractPrivacyHits(text: string): PrivacyHitGroup[] {
   });
 }
 
-function kindFromPlaceholder(token: string): PrivacyKind {
+/** A custom kind's marker: custom_org is minted as PRIVATE_CUSTOM_ORG. */
+const customTokenKind = /^CUSTOM_[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*$/;
+
+function kindFromPlaceholder(token: string): string {
   const inner = token.slice(1, -1);
   if (inner === "SECRET" || inner.startsWith("SECRET_")) {
     return "common_secret";
@@ -512,6 +514,7 @@ function kindFromPlaceholder(token: string): PrivacyKind {
   for (const [tokenKind, kind] of privacyTokenKinds) {
     if (rest === tokenKind) return kind;
   }
+  if (customTokenKind.test(rest)) return rest.toLowerCase();
   return "unknown";
 }
 

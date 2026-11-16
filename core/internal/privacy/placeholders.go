@@ -370,7 +370,7 @@ func isTokenPlaceholderSpan(text string, start, end int) bool {
 			return true
 		}
 	}
-	return false
+	return customMarkerName(name)
 }
 
 func isReservedInvalidHost(host string) bool {

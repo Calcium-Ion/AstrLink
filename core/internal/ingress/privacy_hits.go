@@ -2,6 +2,7 @@ package ingress
 
 import (
 	"fmt"
+	"slices"
 
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/privacy"
@@ -51,7 +52,7 @@ func privacyHitCounts(redactions []privacy.Redaction) []contract.PrivacyHitCount
 		if _, exists := seen[redaction.Placeholder]; exists {
 			continue
 		}
-		if !contract.CanonicalKind(redaction.Kind).Valid() {
+		if !contract.CanonicalKind(redaction.Kind).Recorded() {
 			continue
 		}
 		seen[redaction.Placeholder] = redaction.Kind
@@ -65,6 +66,17 @@ func privacyHitCounts(redactions []privacy.Redaction) []contract.PrivacyHitCount
 		if count := counts[kind]; count > 0 {
 			hits = append(hits, contract.PrivacyHitCount{Kind: kind, Count: count})
 		}
+	}
+	// Custom kinds follow the built-in ones, by name.
+	custom := make([]contract.CanonicalKind, 0)
+	for kind := range counts {
+		if !kind.Valid() {
+			custom = append(custom, kind)
+		}
+	}
+	slices.Sort(custom)
+	for _, kind := range custom {
+		hits = append(hits, contract.PrivacyHitCount{Kind: kind, Count: counts[kind]})
 	}
 	if len(hits) == 0 {
 		return nil

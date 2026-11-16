@@ -384,13 +384,16 @@ func validMinConfidence(value float64) bool {
 	return !math.IsNaN(value) && !math.IsInf(value, 0) && value >= 0 && value <= 1
 }
 
+// validKind admits the built-in kinds and the shape of a custom kind. Only a
+// custom regex rule emits a custom kind, and the policy that holds the rule
+// declares it.
 func validKind(kind Kind) bool {
 	switch kind {
 	case KindEmail, KindPhone, KindAccount, KindPaymentCard,
 		KindIPAddress, KindURL, KindCommonSecret, KindAddress, KindDate, KindPerson:
 		return true
 	default:
-		return false
+		return contract.IsCustomPrivacyKind(string(kind))
 	}
 }
 

@@ -39,13 +39,54 @@ export const PRIVACY_REGEX_DETECTOR_KINDS: readonly PrivacyRegexDetectorKind[] =
     "common_secret",
   ];
 
+/**
+ * A user-defined kind, declared by a kind rule with a label. Mirrors
+ * core/contract.IsCustomPrivacyKind: the prefix no built-in kind uses, then
+ * lowercase words joined by single underscores.
+ */
+export type CustomPrivacyKind = `custom_${string}`;
+/** Any kind a policy's kind rules and findings may carry. */
+export type PolicyPrivacyKind = CanonicalPrivacyKind | CustomPrivacyKind;
+/** Any kind a custom regex rule may emit. */
+export type PrivacyRegexRuleKind = PrivacyRegexDetectorKind | CustomPrivacyKind;
+
+export const CUSTOM_PRIVACY_KIND_PREFIX = "custom_";
+export const MAX_PRIVACY_CUSTOM_KINDS = 32;
+export const MAX_PRIVACY_CUSTOM_KIND_ID_CHARS = 40;
+export const MAX_PRIVACY_CUSTOM_KIND_LABEL_CHARS = 32;
+const customKindPattern = /^custom_[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/;
+
+export function isCustomPrivacyKind(kind: string): kind is CustomPrivacyKind {
+  return (
+    kind.length <= MAX_PRIVACY_CUSTOM_KIND_ID_CHARS &&
+    customKindPattern.test(kind)
+  );
+}
+
+/** Mirrors core/contract's label rule for a custom kind. */
+export function validCustomPrivacyKindLabel(label: string): boolean {
+  const length = [...label].length;
+  return (
+    length >= 1 &&
+    length <= MAX_PRIVACY_CUSTOM_KIND_LABEL_CHARS &&
+    label.trim() === label &&
+    // eslint-disable-next-line no-control-regex
+    !/[\u0000-\u001f\u007f-\u009f]/.test(label)
+  );
+}
+
+/** The token marker a custom kind's values are replaced with. */
+export function customPrivacyKindMarker(kind: CustomPrivacyKind): string {
+  return `<PRIVATE_${kind.toUpperCase()}_…>`;
+}
+
 export const MAX_PRIVACY_CUSTOM_REGEX_RULES = 64;
 export const MAX_PRIVACY_REGEX_PATTERN_CHARS = 512;
 export const MAX_PRIVACY_ALLOWLIST_RULES = 128;
 export const MAX_PRIVACY_ALLOWLIST_VALUE_CHARS = 256;
 
 export interface PrivacyRegexRule {
-  kind: PrivacyRegexDetectorKind;
+  kind: PrivacyRegexRuleKind;
   pattern: string;
 }
 
@@ -91,11 +132,31 @@ export const PLACEHOLDER_STYLE_LOCKED_KINDS: ReadonlySet<CanonicalPrivacyKind> =
   ]);
 
 export interface PrivacyKindRule {
-  kind: CanonicalPrivacyKind;
+  kind: PolicyPrivacyKind;
   enabled: boolean;
   style: PlaceholderStyle;
   /** Under the warn action, false records the kind without notifying. */
   notify: boolean;
+  /**
+   * The display name of a custom kind; built-in kinds have none. A rule for a
+   * custom kind is also its declaration.
+   */
+  label?: string;
+}
+
+/** A custom kind's rule: always a token, always named. */
+export interface PrivacyCustomKindRule extends PrivacyKindRule {
+  kind: CustomPrivacyKind;
+  style: "token";
+  label: string;
+}
+
+export function customPrivacyKindRules(
+  rules: readonly PrivacyKindRule[],
+): PrivacyCustomKindRule[] {
+  return rules.filter((rule): rule is PrivacyCustomKindRule =>
+    isCustomPrivacyKind(rule.kind),
+  );
 }
 
 export type PrivacyAllowlistType = "literal" | "domain_suffix" | "cidr";
@@ -207,7 +268,7 @@ export type PrivacySuppressionReason =
   | "example_value";
 
 export interface PrivacyDryRunFinding {
-  kind: CanonicalPrivacyKind;
+  kind: PolicyPrivacyKind;
   path: string;
   start: number;
   end: number;
@@ -217,7 +278,7 @@ export interface PrivacyDryRunFinding {
 
 export interface PrivacyDryRunRedaction {
   placeholder: string;
-  kind: CanonicalPrivacyKind;
+  kind: PolicyPrivacyKind;
   value: string;
   style: PlaceholderStyle;
 }
@@ -803,6 +864,18 @@ export function parsePrivacyPolicy(value: unknown, path = "$"): PrivacyPolicy {
       "custom regex rules require at least one rule",
     );
   }
+  const kindRules = Object.hasOwn(policy, "kind_rules")
+    ? parsePrivacyKindRules(policy.kind_rules, `${path}.kind_rules`)
+    : defaultPrivacyKindRules();
+  const declared = new Set<string>(kindRules.map((rule) => rule.kind));
+  customRegexRules.forEach((rule, index) => {
+    if (isCustomPrivacyKind(rule.kind) && !declared.has(rule.kind)) {
+      invalid(
+        `${path}.custom_regex_rules[${index}].kind`,
+        "custom kind is not declared in kind_rules",
+      );
+    }
+  });
   return {
     id,
     name,
@@ -816,9 +889,7 @@ export function parsePrivacyPolicy(value: unknown, path = "$"): PrivacyPolicy {
     ),
     regex_source: regexSource,
     custom_regex_rules: customRegexRules,
-    kind_rules: Object.hasOwn(policy, "kind_rules")
-      ? parsePrivacyKindRules(policy.kind_rules, `${path}.kind_rules`)
-      : defaultPrivacyKindRules(),
+    kind_rules: kindRules,
     allowlist_rules: Object.hasOwn(policy, "allowlist_rules")
       ? parsePrivacyAllowlistRules(
           policy.allowlist_rules,
@@ -873,7 +944,7 @@ export function defaultPrivacyKindRules(): PrivacyKindRule[] {
 export function privacyKindRulesAreDefault(
   rules: readonly PrivacyKindRule[],
 ): boolean {
-  return defaultPrivacyKindRules().every((fallback) => {
+  return resetPrivacyKindRules(rules).every((fallback) => {
     const rule = rules.find((candidate) => candidate.kind === fallback.kind);
     return (
       rule?.enabled === fallback.enabled &&
@@ -881,6 +952,24 @@ export function privacyKindRulesAreDefault(
       rule.notify === fallback.notify
     );
   });
+}
+
+/**
+ * The default switches for every kind the rules hold. Custom kinds stay
+ * declared, switched on and notifying, so a reset never drops a kind that a
+ * custom regex rule still uses.
+ */
+export function resetPrivacyKindRules(
+  rules: readonly PrivacyKindRule[],
+): PrivacyKindRule[] {
+  return [
+    ...defaultPrivacyKindRules(),
+    ...customPrivacyKindRules(rules).map((rule) => ({
+      ...rule,
+      enabled: true,
+      notify: true,
+    })),
+  ];
 }
 
 /** Mirrors the request and response fields of core/contract.DefaultPrivacyPolicy. */
@@ -987,7 +1076,8 @@ function parsePrivacyRegexRule(value: unknown, path: string): PrivacyRegexRule {
   keysAt(object, ["kind", "pattern"], [], path);
   if (
     typeof object.kind !== "string" ||
-    !regexDetectorKinds.has(object.kind as PrivacyRegexDetectorKind)
+    (!regexDetectorKinds.has(object.kind as PrivacyRegexDetectorKind) &&
+      !isCustomPrivacyKind(object.kind))
   ) {
     invalid(`${path}.kind`, "unknown regex detector kind");
   }
@@ -998,7 +1088,7 @@ function parsePrivacyRegexRule(value: unknown, path: string): PrivacyRegexRule {
     MAX_PRIVACY_REGEX_PATTERN_CHARS,
   );
   return {
-    kind: object.kind as PrivacyRegexDetectorKind,
+    kind: object.kind as PrivacyRegexRuleKind,
     pattern,
   };
 }
@@ -1014,13 +1104,26 @@ function parsePrivacyKindRules(
   if (new Set(rules.map((rule) => rule.kind)).size !== rules.length) {
     invalid(path, "duplicate kind rule");
   }
+  const labels = customPrivacyKindRules(rules).map((rule) =>
+    rule.label.toLowerCase(),
+  );
+  if (labels.length > MAX_PRIVACY_CUSTOM_KINDS) {
+    invalid(path, `expected at most ${MAX_PRIVACY_CUSTOM_KINDS} custom kinds`);
+  }
+  if (new Set(labels).size !== labels.length) {
+    invalid(path, "duplicate custom kind label");
+  }
   return rules;
 }
 
 function parsePrivacyKindRule(value: unknown, path: string): PrivacyKindRule {
   const object = objectAt(value, path);
-  keysAt(object, ["kind", "enabled", "style"], ["notify"], path);
-  const kind = canonicalKindAt(object.kind, `${path}.kind`);
+  keysAt(object, ["kind", "enabled", "style"], ["notify", "label"], path);
+  const custom =
+    typeof object.kind === "string" && isCustomPrivacyKind(object.kind);
+  const kind: PolicyPrivacyKind = custom
+    ? (object.kind as CustomPrivacyKind)
+    : canonicalKindAt(object.kind, `${path}.kind`);
   if (
     typeof object.style !== "string" ||
     !placeholderStyles.has(object.style as PlaceholderStyle)
@@ -1028,10 +1131,14 @@ function parsePrivacyKindRule(value: unknown, path: string): PrivacyKindRule {
     invalid(`${path}.style`, "unknown placeholder style");
   }
   const style = object.style as PlaceholderStyle;
-  if (PLACEHOLDER_STYLE_LOCKED_KINDS.has(kind) && style !== "token") {
+  if (
+    (custom ||
+      PLACEHOLDER_STYLE_LOCKED_KINDS.has(kind as CanonicalPrivacyKind)) &&
+    style !== "token"
+  ) {
     invalid(`${path}.style`, "this kind must keep the token placeholder style");
   }
-  return {
+  const rule: PrivacyKindRule = {
     kind,
     enabled: booleanAt(object.enabled, `${path}.enabled`),
     style,
@@ -1040,6 +1147,18 @@ function parsePrivacyKindRule(value: unknown, path: string): PrivacyKindRule {
       ? booleanAt(object.notify, `${path}.notify`)
       : true,
   };
+  if (custom) {
+    if (
+      typeof object.label !== "string" ||
+      !validCustomPrivacyKindLabel(object.label)
+    ) {
+      invalid(`${path}.label`, "custom kinds need a display name");
+    }
+    rule.label = object.label;
+  } else if (Object.hasOwn(object, "label")) {
+    invalid(`${path}.label`, "built-in kinds have no label");
+  }
+  return rule;
 }
 
 function parsePrivacyAllowlistRules(
@@ -1116,7 +1235,8 @@ function parsePrivacyDryRunFinding(
   );
   if (
     typeof finding.kind !== "string" ||
-    !canonicalKinds.has(finding.kind as CanonicalPrivacyKind)
+    (!canonicalKinds.has(finding.kind as CanonicalPrivacyKind) &&
+      !isCustomPrivacyKind(finding.kind))
   ) {
     invalid(`${path}.kind`, "unknown privacy kind");
   }
@@ -1126,7 +1246,7 @@ function parsePrivacyDryRunFinding(
     invalid(path, "end must be greater than start");
   }
   const parsed: PrivacyDryRunFinding = {
-    kind: finding.kind as CanonicalPrivacyKind,
+    kind: finding.kind as PolicyPrivacyKind,
     path: stringAt(finding.path, `${path}.path`, 1, 512),
     start,
     end,
@@ -1203,7 +1323,8 @@ export function parsePrivacyDryRunResult(value: unknown): PrivacyDryRunResult {
       keysAt(redaction, ["placeholder", "kind", "value"], ["style"], path);
       if (
         typeof redaction.kind !== "string" ||
-        !canonicalKinds.has(redaction.kind as CanonicalPrivacyKind)
+        (!canonicalKinds.has(redaction.kind as CanonicalPrivacyKind) &&
+          !isCustomPrivacyKind(redaction.kind))
       ) {
         invalid(`${path}.kind`, "unknown privacy kind");
       }
@@ -1224,7 +1345,7 @@ export function parsePrivacyDryRunResult(value: unknown): PrivacyDryRunResult {
           1,
           128,
         ),
-        kind: redaction.kind as CanonicalPrivacyKind,
+        kind: redaction.kind as PolicyPrivacyKind,
         value: stringAt(
           redaction.value,
           `${path}.value`,

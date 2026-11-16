@@ -3742,4 +3742,349 @@ describe("SafetyPolicy", () => {
     expect(container.textContent).toContain("一键填入内置规则");
     expect(container.textContent).toContain("添加规则");
   });
+
+  // Core answers a PATCH with the merged policy; these tests keep the mock in
+  // step so the page sees what Core would store.
+  function storePatches(
+    initial: PrivacyPolicyRecord,
+  ): () => PrivacyPolicyRecord {
+    let current = initial;
+    bridgeMocks.getPrivacyPolicy.mockImplementation(async () => current);
+    bridgeMocks.updatePrivacyPolicy.mockImplementation(
+      async (_etag: string, patch: Partial<PrivacyPolicyRecord["policy"]>) => {
+        current = { ...current, policy: { ...current.policy, ...patch } };
+        return current;
+      },
+    );
+    return () => current;
+  }
+
+  async function click(target: HTMLButtonElement): Promise<void> {
+    await act(async () => {
+      target.click();
+      await Promise.resolve();
+    });
+    await flush();
+  }
+
+  const emailPattern = `(?i)\\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}\\b`;
+
+  it("adds a custom regex rule as an unsaved draft until Save is clicked", async () => {
+    storePatches(
+      policyRecord({
+        regex_source: "custom",
+        custom_regex_rules: [{ kind: "account", pattern: "ACME-[0-9]+" }],
+      }),
+    );
+    await renderPolicy();
+
+    await click(button("添加规则"));
+
+    // Adding a rule must not PATCH the live policy or report a save.
+    expect(bridgeMocks.updatePrivacyPolicy).not.toHaveBeenCalled();
+    expect(notifyMocks.success).not.toHaveBeenCalled();
+    expect(
+      container.querySelector('input[aria-label="规则 2 正则"]'),
+    ).not.toBeNull();
+    expect(container.textContent).toContain("2/64");
+
+    await click(button("保存"));
+
+    expect(bridgeMocks.updatePrivacyPolicy).toHaveBeenCalledExactlyOnceWith(
+      etag,
+      {
+        custom_regex_rules: [
+          { kind: "account", pattern: "ACME-[0-9]+" },
+          { kind: "email", pattern: emailPattern },
+        ],
+      },
+    );
+    expect(notifyMocks.success).toHaveBeenCalledWith(
+      "安全策略已保存，新请求立即生效。",
+    );
+    expect(() => button("保存")).toThrow();
+  });
+
+  it("keeps custom regex kind and pattern edits local until Save, including a still-focused field", async () => {
+    storePatches(
+      policyRecord({
+        regex_source: "custom",
+        custom_regex_rules: [{ kind: "email", pattern: `(?i)alice@[a-z.]+` }],
+      }),
+    );
+    await renderPolicy();
+
+    await chooseOption('button[aria-label="规则 1 类型"]', "常见密钥");
+    await settleClosedLayer();
+    const patternInput = container.querySelector<HTMLInputElement>(
+      'input[aria-label="规则 1 正则"]',
+    )!;
+    await act(async () => patternInput.focus());
+    await setInput('input[aria-label="规则 1 正则"]', `sk-[A-Za-z0-9]+`);
+    expect(bridgeMocks.updatePrivacyPolicy).not.toHaveBeenCalled();
+
+    // Save while the pattern field still has focus: the typed text counts.
+    expect(document.activeElement).toBe(patternInput);
+    await click(button("保存"));
+
+    expect(bridgeMocks.updatePrivacyPolicy).toHaveBeenCalledExactlyOnceWith(
+      etag,
+      {
+        custom_regex_rules: [
+          { kind: "common_secret", pattern: `sk-[A-Za-z0-9]+` },
+        ],
+      },
+    );
+  });
+
+  it("keeps unsaved regex edits when saving fails and across a refresh", async () => {
+    const saved = policyRecord({
+      regex_source: "custom",
+      custom_regex_rules: [{ kind: "email", pattern: `(?i)alice@[a-z.]+` }],
+    });
+    bridgeMocks.getPrivacyPolicy.mockResolvedValue(saved);
+    bridgeMocks.updatePrivacyPolicy.mockRejectedValueOnce(
+      new Error("Core 拒绝了这次修改。"),
+    );
+    await renderPolicy();
+
+    await setInput('input[aria-label="规则 1 正则"]', `(?i)bob@[a-z.]+`);
+    await click(button("保存"));
+    expect(bridgeMocks.updatePrivacyPolicy).toHaveBeenCalledTimes(1);
+    expect(container.textContent).toContain("Core 拒绝了这次修改。");
+    expect(
+      container.querySelector<HTMLInputElement>(
+        'input[aria-label="规则 1 正则"]',
+      )?.value,
+    ).toBe(`(?i)bob@[a-z.]+`);
+
+    // A refreshed policy from Core does not overwrite the draft either.
+    const refreshedEtag = `"sha256:${"b".repeat(64)}"`;
+    bridgeMocks.getPrivacyPolicy.mockResolvedValue({
+      ...saved,
+      etag: refreshedEtag,
+    });
+    await click(button("刷新"));
+    expect(
+      container.querySelector<HTMLInputElement>(
+        'input[aria-label="规则 1 正则"]',
+      )?.value,
+    ).toBe(`(?i)bob@[a-z.]+`);
+
+    bridgeMocks.updatePrivacyPolicy.mockResolvedValueOnce({
+      ...saved,
+      etag: refreshedEtag,
+      policy: {
+        ...saved.policy,
+        custom_regex_rules: [{ kind: "email", pattern: `(?i)bob@[a-z.]+` }],
+      },
+    });
+    await click(button("保存"));
+    expect(bridgeMocks.updatePrivacyPolicy).toHaveBeenLastCalledWith(
+      refreshedEtag,
+      { custom_regex_rules: [{ kind: "email", pattern: `(?i)bob@[a-z.]+` }] },
+    );
+    expect(() => button("保存")).toThrow();
+  });
+
+  it("discards unsaved regex edits without touching the policy", async () => {
+    storePatches(
+      policyRecord({
+        regex_source: "custom",
+        custom_regex_rules: [{ kind: "email", pattern: `(?i)alice@[a-z.]+` }],
+      }),
+    );
+    await renderPolicy();
+
+    await click(button("添加规则"));
+    await setInput('input[aria-label="规则 1 正则"]', "");
+    await click(button("保存"));
+    // An empty pattern is named here instead of being sent to Core.
+    expect(bridgeMocks.updatePrivacyPolicy).not.toHaveBeenCalled();
+    expect(container.textContent).toContain("正则长度需为 1–512 个字符。");
+
+    await click(button("放弃修改"));
+    expect(bridgeMocks.updatePrivacyPolicy).not.toHaveBeenCalled();
+    expect(
+      container.querySelector<HTMLInputElement>(
+        'input[aria-label="规则 1 正则"]',
+      )?.value,
+    ).toBe(`(?i)alice@[a-z.]+`);
+    expect(container.querySelector('input[aria-label="规则 2 正则"]')).toBe(
+      null,
+    );
+    expect(() => button("保存")).toThrow();
+  });
+
+  it("defines a custom type and saves it together with the rules that use it", async () => {
+    const current = storePatches(
+      policyRecord({
+        regex_source: "custom",
+        custom_regex_rules: [{ kind: "account", pattern: "ACME-[0-9]+" }],
+      }),
+    );
+    await renderPolicy();
+
+    await click(button("添加类型"));
+    const dialog = document.querySelector('[role="dialog"]')!;
+    expect(dialog.textContent).toContain("类型名称");
+    await setInput("#privacy-custom-kind-label", "公司名称");
+    await setInput("#privacy-custom-kind-id", "Company-");
+    expect(dialog.textContent).toContain("只能用小写字母、数字和单个下划线");
+    await setInput("#privacy-custom-kind-id", "company");
+    expect(dialog.textContent).toContain("<PRIVATE_CUSTOM_COMPANY_…>");
+    await click(button("添加"));
+    await settleClosedLayer();
+
+    // The type is part of the draft only.
+    expect(bridgeMocks.updatePrivacyPolicy).not.toHaveBeenCalled();
+    expect(
+      container.querySelector<HTMLInputElement>(
+        'input[aria-label="自定义类型 1 名称"]',
+      )?.value,
+    ).toBe("公司名称");
+    expect(container.textContent).toContain("未保存");
+
+    await chooseOption('button[aria-label="规则 1 类型"]', "公司名称");
+    await settleClosedLayer();
+    await click(button("保存"));
+
+    expect(bridgeMocks.updatePrivacyPolicy).toHaveBeenCalledExactlyOnceWith(
+      etag,
+      {
+        custom_regex_rules: [
+          { kind: "custom_company", pattern: "ACME-[0-9]+" },
+        ],
+        kind_rules: [
+          ...defaultPrivacyKindRules(),
+          {
+            kind: "custom_company",
+            enabled: true,
+            style: "token",
+            notify: true,
+            label: "公司名称",
+          },
+        ],
+      },
+    );
+    expect(container.textContent).not.toContain("未保存");
+
+    // The saved type gets its own switch beside the built-in kinds, and a
+    // switch change keeps its declaration.
+    await openPolicySection("脱敏规则");
+    const row = container.querySelector(
+      '[data-testid="privacy-kind-rule-custom_company"]',
+    );
+    expect(row?.textContent).toContain("公司名称");
+    expect(container.textContent).toContain("已启用 2 / 11");
+    await click(
+      container.querySelector<HTMLButtonElement>(
+        '[role="switch"][aria-label="脱敏公司名称"]',
+      )!,
+    );
+    expect(bridgeMocks.updatePrivacyPolicy).toHaveBeenLastCalledWith(etag, {
+      kind_rules: [
+        ...defaultPrivacyKindRules(),
+        {
+          kind: "custom_company",
+          enabled: false,
+          style: "token",
+          notify: true,
+          label: "公司名称",
+        },
+      ],
+    });
+    expect(current().policy.kind_rules.at(-1)?.enabled).toBe(false);
+  });
+
+  it("renames a custom type and refuses to delete one a rule still uses", async () => {
+    const companyRule = {
+      kind: "custom_company" as const,
+      enabled: false,
+      style: "token" as const,
+      notify: false,
+      label: "公司名称",
+    };
+    storePatches(
+      policyRecord({
+        regex_source: "custom",
+        kind_rules: [...defaultPrivacyKindRules(), companyRule],
+        custom_regex_rules: [
+          { kind: "custom_company", pattern: "ACME-[0-9]+" },
+          { kind: "email", pattern: `(?i)alice@[a-z.]+` },
+        ],
+      }),
+    );
+    await renderPolicy();
+
+    expect(
+      container.querySelector<HTMLButtonElement>(
+        'button[aria-label="规则 1 类型"]',
+      )?.textContent,
+    ).toContain("公司名称");
+    await click(
+      container.querySelector<HTMLButtonElement>(
+        'button[aria-label="删除类型公司名称"]',
+      )!,
+    );
+    expect(container.textContent).toContain(
+      "还有 1 条规则使用「公司名称」。先删除这些规则或改用其他类型。",
+    );
+    expect(
+      container.querySelector('input[aria-label="自定义类型 1 名称"]'),
+    ).not.toBeNull();
+
+    await setInput('input[aria-label="自定义类型 1 名称"]', " 合作公司 ");
+    await click(button("保存"));
+    // Renaming keeps the ID the rules and records use, and the switches.
+    expect(bridgeMocks.updatePrivacyPolicy).toHaveBeenCalledExactlyOnceWith(
+      etag,
+      {
+        kind_rules: [
+          ...defaultPrivacyKindRules(),
+          { ...companyRule, label: "合作公司" },
+        ],
+      },
+    );
+  });
+
+  it("restores kind defaults without dropping custom types", async () => {
+    const companyRule = {
+      kind: "custom_company" as const,
+      enabled: false,
+      style: "token" as const,
+      notify: false,
+      label: "公司名称",
+    };
+    storePatches(
+      policyRecord({
+        regex_source: "custom",
+        kind_rules: [...defaultPrivacyKindRules(), companyRule],
+        custom_regex_rules: [
+          { kind: "custom_company", pattern: "ACME-[0-9]+" },
+        ],
+      }),
+    );
+    await renderPolicy();
+    await openPolicySection("脱敏规则");
+
+    const reset = [
+      ...container.querySelectorAll<HTMLButtonElement>(
+        'button[aria-label="重置此组设置"]',
+      ),
+    ].find((candidate) => !candidate.disabled)!;
+    await click(reset);
+    expect(
+      document.querySelector('[role="alertdialog"]')?.textContent,
+    ).toContain("自定义类型保留，并全部开启。");
+    await click(button("恢复默认"));
+    await settleClosedLayer();
+
+    expect(bridgeMocks.updatePrivacyPolicy).toHaveBeenCalledWith(etag, {
+      kind_rules: [
+        ...defaultPrivacyKindRules(),
+        { ...companyRule, enabled: true, notify: true },
+      ],
+    });
+  });
 });

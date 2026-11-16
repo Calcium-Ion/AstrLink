@@ -6,6 +6,7 @@ import {
   type ServiceTestResult,
 } from "./service-test-model";
 import { parseChannelBindingAudit } from "./channel-binding-model";
+import { rememberCustomPrivacyKindLabels } from "./privacy-kind";
 import {
   parseTerminalChoices,
   type ServiceTerminalRequest,
@@ -1489,12 +1490,22 @@ export async function dismissLocalImport(session: string): Promise<void> {
 
 export async function listPrivacyPolicies(): Promise<PrivacyPolicyPage> {
   requireNativeBridge();
-  return parsePrivacyPolicyPage(await invoke<unknown>("list_privacy_policies"));
+  const page = parsePrivacyPolicyPage(
+    await invoke<unknown>("list_privacy_policies"),
+  );
+  for (const policy of page.items) {
+    rememberCustomPrivacyKindLabels(policy.kind_rules);
+  }
+  return page;
 }
 
 export async function getPrivacyPolicy(): Promise<PrivacyPolicyRecord> {
   requireNativeBridge();
-  return parsePrivacyPolicyRecord(await invoke<unknown>("get_privacy_policy"));
+  const record = parsePrivacyPolicyRecord(
+    await invoke<unknown>("get_privacy_policy"),
+  );
+  rememberCustomPrivacyKindLabels(record.policy.kind_rules);
+  return record;
 }
 
 export async function updatePrivacyPolicy(
@@ -1502,9 +1513,11 @@ export async function updatePrivacyPolicy(
   patch: PrivacyPolicyPatch,
 ): Promise<PrivacyPolicyRecord> {
   requireNativeBridge();
-  return parsePrivacyPolicyRecord(
+  const record = parsePrivacyPolicyRecord(
     await invoke<unknown>("update_privacy_policy", { etag, patch }),
   );
+  rememberCustomPrivacyKindLabels(record.policy.kind_rules);
+  return record;
 }
 
 export async function dryRunPrivacyPolicy(

@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
+	"unicode"
 )
 
 // privacyKinds is every kind a detector may emit. The Regex detector emits
@@ -34,6 +36,20 @@ var placeholderStyleLockedKinds = []string{
 	"private_person",
 	"private_address",
 	"private_date",
+}
+
+// customPrivacyKindPattern is Core's contract.IsCustomPrivacyKind: a prefix
+// no built-in kind uses, then lowercase words joined by single underscores.
+var customPrivacyKindPattern = regexp.MustCompile(`^custom_[a-z][a-z0-9]*(?:_[a-z0-9]+)*$`)
+
+const (
+	maxPrivacyCustomKinds         = 32
+	maxPrivacyCustomKindBytes     = 40
+	maxPrivacyCustomKindLabelRune = 32
+)
+
+func isCustomPrivacyKind(kind string) bool {
+	return len(kind) <= maxPrivacyCustomKindBytes && customPrivacyKindPattern.MatchString(kind)
 }
 
 const (
@@ -357,6 +373,9 @@ func validatePrivacyPolicyValue(policy any) error {
 	if err := validatePrivacyCustomRegexRules(o["custom_regex_rules"]); err != nil {
 		return err
 	}
+	if err := validateDeclaredCustomKinds(o["custom_regex_rules"], o["kind_rules"]); err != nil {
+		return err
+	}
 	rules, _ := asArray(o["custom_regex_rules"])
 	if source, _ := stringField(o, "regex_source"); detector == "regex" && source == "custom" && len(rules) == 0 {
 		return errors.New("privacy policy custom_regex_rules must contain at least one rule when regex_source is custom")
@@ -394,31 +413,52 @@ func validatePrivacyKindRules(value any) error {
 	if !ok {
 		return errors.New("privacy policy kind_rules must be an array")
 	}
-	if len(rules) > len(privacyKinds) {
+	if len(rules) > len(privacyKinds)+maxPrivacyCustomKinds {
 		return errors.New("privacy policy kind_rules must hold at most one rule per kind")
 	}
 	kinds := map[string]bool{}
+	labels := map[string]bool{}
 	for index, rule := range rules {
 		context := fmt.Sprintf("privacy policy kind rule %d", index)
 		o, ok := asObject(rule)
 		if !ok {
 			return fmt.Errorf("%s must be an object", context)
 		}
-		// notify is optional so a Core predating it still parses.
-		if err := allowedKeys(o, []string{"kind", "enabled", "style", "notify"}, []string{"kind", "enabled", "style"}, context); err != nil {
+		// notify is optional so a Core predating it still parses; label
+		// names a custom kind only.
+		if err := allowedKeys(o, []string{"kind", "enabled", "style", "notify", "label"}, []string{"kind", "enabled", "style"}, context); err != nil {
 			return err
 		}
 		kind, ok := stringField(o, "kind")
 		if !ok {
 			return fmt.Errorf("%s kind must be a string", context)
 		}
-		if !slices.Contains(privacyKinds, kind) {
+		custom := isCustomPrivacyKind(kind)
+		if !custom && !slices.Contains(privacyKinds, kind) {
 			return fmt.Errorf("%s kind is unknown", context)
 		}
 		if kinds[kind] {
 			return fmt.Errorf("%s repeats kind %s", context, kind)
 		}
 		kinds[kind] = true
+		label, hasLabel := o["label"]
+		if !custom && hasLabel {
+			return fmt.Errorf("%s label is only for custom kinds", context)
+		}
+		if custom {
+			text, ok := asString(label)
+			if !ok || !validCustomKindLabel(text) {
+				return fmt.Errorf("%s label must contain 1 to %d characters without surrounding spaces", context, maxPrivacyCustomKindLabelRune)
+			}
+			folded := strings.ToLower(text)
+			if labels[folded] {
+				return fmt.Errorf("%s repeats label %s", context, text)
+			}
+			labels[folded] = true
+			if len(labels) > maxPrivacyCustomKinds {
+				return fmt.Errorf("privacy policy kind_rules must declare at most %d custom kinds", maxPrivacyCustomKinds)
+			}
+		}
 		if !isBool(o["enabled"]) {
 			return fmt.Errorf("%s enabled must be a boolean", context)
 		}
@@ -432,8 +472,39 @@ func validatePrivacyKindRules(value any) error {
 		if style != "natural" && style != "token" {
 			return fmt.Errorf("%s style must be natural or token", context)
 		}
-		if slices.Contains(placeholderStyleLockedKinds, kind) && style != "token" {
+		if (custom || slices.Contains(placeholderStyleLockedKinds, kind)) && style != "token" {
 			return fmt.Errorf("%s must keep the token placeholder style", context)
+		}
+	}
+	return nil
+}
+
+func validCustomKindLabel(label string) bool {
+	n := runeCount(label)
+	return n >= 1 && n <= maxPrivacyCustomKindLabelRune &&
+		strings.TrimSpace(label) == label &&
+		strings.IndexFunc(label, unicode.IsControl) < 0
+}
+
+// validateDeclaredCustomKinds rejects a custom regex rule whose kind no kind
+// rule declares, as Core does.
+func validateDeclaredCustomKinds(regexRules, kindRules any) error {
+	rules, _ := asArray(regexRules)
+	declared := map[string]bool{}
+	if list, ok := asArray(kindRules); ok {
+		for _, rule := range list {
+			if o, ok := asObject(rule); ok {
+				if kind, ok := stringField(o, "kind"); ok {
+					declared[kind] = true
+				}
+			}
+		}
+	}
+	for index, rule := range rules {
+		o, _ := asObject(rule)
+		kind, _ := stringField(o, "kind")
+		if isCustomPrivacyKind(kind) && !declared[kind] {
+			return fmt.Errorf("custom regex rule %d names an undeclared custom kind", index)
 		}
 	}
 	return nil
@@ -552,7 +623,9 @@ func validatePrivacyCustomRegexRules(value any) error {
 		switch kind {
 		case "email", "phone", "account", "payment_card", "ip_address", "url", "common_secret":
 		default:
-			return fmt.Errorf("custom regex rule %d kind is not a Regex detector kind", index)
+			if !isCustomPrivacyKind(kind) {
+				return fmt.Errorf("custom regex rule %d kind is not a Regex detector kind", index)
+			}
 		}
 		pattern, ok := stringField(o, "pattern")
 		if !ok {
@@ -744,7 +817,7 @@ func parsePrivacyDryRunResult(body []byte) (json.RawMessage, error) {
 }
 
 func validatePrivacyDryRunKind(kind string) error {
-	if slices.Contains(privacyKinds, kind) {
+	if slices.Contains(privacyKinds, kind) || isCustomPrivacyKind(kind) {
 		return nil
 	}
 	return errors.New("privacy policy dry-run kind is unknown")

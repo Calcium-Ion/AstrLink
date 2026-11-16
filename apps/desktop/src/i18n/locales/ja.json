@@ -1771,7 +1771,8 @@
     "literal": "完全一致の値",
     "domain_suffix": "ドメインサフィックス",
     "cidr": "IP 範囲",
-    "noHit": "該当なし"
+    "noHit": "該当なし",
+    "customKind": "カスタム種類 {{id}}"
   },
   "privacyAudit": {
     "title": "結果",
@@ -2315,7 +2316,30 @@
       "fallback": "{{operation}}更新して現在の状態を確認し、再試行してください。それでも失敗する場合は、調査のために技術詳細を共有してください。",
       "timeout": "モデル操作の待機がタイムアウトしました。再試行の前に、更新して現在の状態を確認してください。"
     },
-    "localImportFailed": "モデルのインポートに失敗しました。ローカルファイルと読み取り権限を確認し、この項目を削除してからもう一度インポートしてください。"
+    "localImportFailed": "モデルのインポートに失敗しました。ローカルファイルと読み取り権限を確認し、この項目を削除してからもう一度インポートしてください。",
+    "addCustomKind": "種類を追加",
+    "addCustomKindConfirm": "追加",
+    "customKindHint": "正規表現ルールが一致する内容に種類を作成します（会社名や機関名など）。ルールを保存すると、種類ごとのスイッチと統計に表示されます。",
+    "customKindLabel": "種類名",
+    "customKindLabelPlaceholder": "例：会社名",
+    "customKindId": "プレースホルダー名",
+    "customKindIdHint": "小文字で始め、小文字・数字・単一のアンダースコアを使えます。保存後は変更できません。置換後は {{marker}} になります。",
+    "customKindIdInvalid": "小文字・数字・単一のアンダースコアのみ、英字で始めて最大 {{max}} 文字です。",
+    "customKindIdTaken": "同じプレースホルダー名があります。",
+    "customKindNameTaken": "同じ名前の種類があります。",
+    "customKindLabelLength": "種類名は 1〜{{max}} 文字にしてください。",
+    "customKinds": "カスタム種類",
+    "customKindName": "カスタム種類 {{index}} の名前",
+    "customKindIdFixed": "プレースホルダー名は保存後に変更できません",
+    "removeCustomKind": "種類「{{name}}」を削除",
+    "customKindInUse": "{{count}} 件のルールが「{{name}}」を使っています。先にそれらのルールを削除するか、別の種類にしてください。",
+    "tooManyCustomKinds": "カスタム種類は最大 {{max}} 個です。",
+    "customKindLock": "カスタム種類には安全な代替値がないため、常にマーカー形式です。",
+    "customRulesOnlyShort": "カスタムルールのみ",
+    "customRulesOnlyKind": "この種類を見つけるのはカスタム正規表現ルールだけです。",
+    "discardChanges": "変更を破棄",
+    "unsaved": "未保存",
+    "resetKindRulesCustomHint": "カスタム種類は残り、すべてオンになります。"
   },
   "privacyStats": {
     "range": "範囲",

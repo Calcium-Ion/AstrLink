@@ -1771,7 +1771,8 @@
     "literal": "精确值",
     "domain_suffix": "域名后缀",
     "cidr": "IP 段",
-    "noHit": "未命中"
+    "noHit": "未命中",
+    "customKind": "自定义类型 {{id}}"
   },
   "privacyAudit": {
     "title": "处理结果",
@@ -2315,7 +2316,30 @@
       "connection": "暂时无法连接本机网关。请确认网关已启动，再刷新重试。",
       "fallback": "{{operation}} 请刷新查看当前状态后重试；若仍失败，可提供技术详情以便排查。"
     },
-    "localImportFailed": "模型导入失败。请检查本地文件和读取权限，再删除此记录并重新导入。"
+    "localImportFailed": "模型导入失败。请检查本地文件和读取权限，再删除此记录并重新导入。",
+    "addCustomKind": "添加类型",
+    "addCustomKindConfirm": "添加",
+    "customKindHint": "为正则规则命中的内容新建一个类型，例如公司或机构名称。保存规则后，这个类型会出现在逐类型开关和统计里。",
+    "customKindLabel": "类型名称",
+    "customKindLabelPlaceholder": "如：公司名称",
+    "customKindId": "占位符名",
+    "customKindIdHint": "小写字母开头，可用小写字母、数字和单个下划线；保存后不能修改。替换后写作 {{marker}}。",
+    "customKindIdInvalid": "只能用小写字母、数字和单个下划线，以字母开头，最多 {{max}} 个字符。",
+    "customKindIdTaken": "已有同名占位符。",
+    "customKindNameTaken": "已有同名类型。",
+    "customKindLabelLength": "类型名称需为 1–{{max}} 个字符。",
+    "customKinds": "自定义类型",
+    "customKindName": "自定义类型 {{index}} 名称",
+    "customKindIdFixed": "占位符名保存后不能修改",
+    "removeCustomKind": "删除类型{{name}}",
+    "customKindInUse": "还有 {{count}} 条规则使用「{{name}}」。先删除这些规则或改用其他类型。",
+    "tooManyCustomKinds": "自定义类型最多 {{max}} 个。",
+    "customKindLock": "自定义类型没有可用的假值，固定用标记占位符。",
+    "customRulesOnlyShort": "仅自定义规则",
+    "customRulesOnlyKind": "只有自定义正则规则会找出这个类型。",
+    "discardChanges": "放弃修改",
+    "unsaved": "未保存",
+    "resetKindRulesCustomHint": "自定义类型保留，并全部开启。"
   },
   "privacyStats": {
     "range": "统计范围",

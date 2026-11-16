@@ -275,7 +275,7 @@ func (summary PrivacyRestoreSummary) Validate() error {
 	}
 	seen := make(map[CanonicalKind]struct{}, len(summary.Hits))
 	for _, hit := range summary.Hits {
-		if !hit.Kind.Valid() {
+		if !hit.Kind.Recorded() {
 			return fmt.Errorf("privacy restore hit kind is invalid")
 		}
 		if hit.Count < 1 {
@@ -380,7 +380,7 @@ func validatePrivacyFindings(findings []PrivacyFinding) error {
 		return fmt.Errorf("privacy_findings must contain at most %d items", MaxPrivacyFindings)
 	}
 	for _, finding := range findings {
-		if !finding.Kind.Valid() {
+		if !finding.Kind.Recorded() {
 			return fmt.Errorf("privacy finding kind is invalid")
 		}
 		if err := validateBoundedText("privacy finding json_path", finding.JSONPath, MaxPrivacyFindingPathRunes, false); err != nil {
@@ -445,7 +445,7 @@ func validatePrivacyIgnored(ignored []PrivacyIgnored) error {
 	}
 	seen := make(map[ignoredKey]struct{}, len(ignored))
 	for _, entry := range ignored {
-		if !entry.Kind.Valid() || !entry.Reason.Valid() {
+		if !entry.Kind.Recorded() || !entry.Reason.Valid() {
 			return fmt.Errorf("privacy ignored kind or reason is invalid")
 		}
 		if entry.Count < 1 {
