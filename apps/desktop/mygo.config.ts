@@ -52,6 +52,17 @@ export default defineConfig(({ command }) => {
           "AstrLink opens a Terminal or iTerm2 window for the API provider you choose.",
       },
       plugIns: !dev && existsSync(widget) ? [{ path: widget }] : undefined,
+      // The disk image's window: the picture, with an arrow from the app
+      // to Applications (patched MyGo, see patches/).
+      dmg: {
+        background: "installer/macos-dmg-background.tiff",
+        width: 660,
+        height: 432,
+        appX: 170,
+        appY: 190,
+        applicationsX: 490,
+        applicationsY: 190,
+      },
       // Notarization runs after the build: scripts/notarize-macos.mjs
       // submits the disk image, staples it and the app, and checks every
       // signature first.

@@ -204,6 +204,10 @@ jobs:
           hdiutil verify "${images[0]}"
           hdiutil attach "${images[0]}" -readonly -nobrowse -mountpoint "$mount_dir"
           trap 'hdiutil detach "$mount_dir"' EXIT
+          # The window's background picture (macos.dmg), which the layout
+          # names by its alias.
+          cmp installer/macos-dmg-background.tiff "$mount_dir/.background/background.tiff"
+          grep -q backgroundImageAlias "$mount_dir/.DS_Store"
           bun ../../scripts/check-no-production-models.mjs --packaged "$mount_dir/AstrLink.app"
           python3 scripts/verify-unix-package.py \
             --platform macos --arch "$PACKAGE_ARCH" \

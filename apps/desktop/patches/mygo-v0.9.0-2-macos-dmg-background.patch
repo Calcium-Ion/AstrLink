@@ -1,0 +1,864 @@
+MyGo v0.9.0: lay out the disk image around a background picture (macos.dmg)
+
+scripts/mygo.mjs applies the patches in file name order, this one after
+1-macos-plugins, with `git apply`, before it builds cmd/mygo. Text before
+the first `diff --git` line is ignored by `git apply`.
+
+Why: the AstrLink disk image showed its own picture behind the app and the
+Applications link, with an arrow and "Drag to Applications to install".
+MyGo 0.9 lays out a plain white window and has no option for a
+background.
+
+What it changes:
+- config: `macos.dmg: { background, width, height, appX, appY,
+  applicationsX, applicationsY }`, validated, typed in
+  packages/cli/index.d.ts and documented in docs/configuration.md. Without
+  it the layout is MyGo's, byte for byte.
+- buildDMG copies the picture into the image's hidden .background folder
+  and, once the image is mounted, writes the window's .DS_Store again with
+  the picture's alias (icvp backgroundImageAlias, backgroundType 2) and
+  bookmark (pBBk), which name the file on the mounted volume.
+- dmgalias.go encodes both as the mac_alias package (dmgbuild) does for
+  Alias.for_file and Bookmark.for_file; the bytes were compared with it on
+  a mounted image. dmgalias_darwin.go reads the volume and file attributes
+  with getattrlist(2).
+- binaryPlist encodes data ([]byte) values.
+- tests: the option's validation, the records a background adds, and
+  (macOS only) a disk image built with a background.
+
+Upstream status: not submitted. Drop this patch once a MyGo release has an
+equivalent option.
+
+diff --git a/cmd/mygo/config.go b/cmd/mygo/config.go
+index 650a050..330cf88 100644
+--- a/cmd/mygo/config.go
++++ b/cmd/mygo/config.go
+@@ -235,6 +235,8 @@ type MacOS struct {
+ 	InfoPlist map[string]any `json:"infoPlist"`
+ 	// DMGTitle is the volume name of the disk image (default: name).
+ 	DMGTitle string `json:"dmgTitle"`
++	// DMG lays out the disk image's window around a background picture.
++	DMG *DMG `json:"dmg"`
+ 	// Notarize submits production disk images to Apple's notary service and
+ 	// staples the ticket. It needs a Developer ID signing identity.
+ 	Notarize *Notarize `json:"notarize"`
+@@ -249,6 +251,24 @@ type PlugIn struct {
+ 	Entitlements string `json:"entitlements"`
+ }
+ 
++// DMG lays out the Finder window of the disk image: its size, a
++// background picture drawn for it and where the app and the Applications
++// link sit on it. Points count from the window content's top-left corner.
++type DMG struct {
++	// Background is the picture, a TIFF or PNG the size of the window; a
++	// TIFF can hold a @2x picture too (tiffutil -cathidpicheck).
++	Background string `json:"background"`
++	// Width and Height are the window content's size in points.
++	Width  int `json:"width"`
++	Height int `json:"height"`
++	// AppX and AppY center the app's icon, ApplicationsX and
++	// ApplicationsY the Applications link.
++	AppX          int `json:"appX"`
++	AppY          int `json:"appY"`
++	ApplicationsX int `json:"applicationsX"`
++	ApplicationsY int `json:"applicationsY"`
++}
++
+ // Notarize holds notarytool credentials stored in the keychain with
+ // `xcrun notarytool store-credentials <profile>`.
+ type Notarize struct {
+@@ -303,6 +323,19 @@ func readConfig(root string) (data []byte, file string, err error) {
+ }
+ 
+ func (c *Config) validate() error {
++	if d := c.MacOS.DMG; d != nil {
++		if ext := strings.ToLower(filepath.Ext(d.Background)); ext != ".tiff" && ext != ".tif" && ext != ".png" {
++			return fmt.Errorf("macos.dmg.background %q is a TIFF or PNG picture", d.Background)
++		}
++		if d.Width <= 0 || d.Height <= 0 {
++			return errors.New("macos.dmg needs the window's width and height in points")
++		}
++		for _, p := range [][2]int{{d.AppX, d.AppY}, {d.ApplicationsX, d.ApplicationsY}} {
++			if p[0] <= 0 || p[1] <= 0 || p[0] >= d.Width || p[1] >= d.Height {
++				return errors.New("macos.dmg places the app and the Applications link inside the window")
++			}
++		}
++	}
+ 	if n := c.MacOS.Notarize; n != nil && n.KeychainProfile == "" {
+ 		return errors.New("macos.notarize needs a keychainProfile (see xcrun notarytool store-credentials)")
+ 	}
+diff --git a/cmd/mygo/dmg.go b/cmd/mygo/dmg.go
+index 66e3273..a48085b 100644
+--- a/cmd/mygo/dmg.go
++++ b/cmd/mygo/dmg.go
+@@ -15,6 +15,10 @@ import (
+ // finderHasCustomIcon is the Finder flag of folders with a custom icon.
+ const finderHasCustomIcon = 0x0400
+ 
++// dmgBackgroundDir is the hidden folder of a disk image that holds the
++// window's background picture.
++const dmgBackgroundDir = ".background"
++
+ // dmgFileName is "<slug>-<version>-<arch>.dmg", as
+ // "my-app-1.2.0-arm64.dmg", or "<slug>-<version>.dmg" for darwin/universal,
+ // which is for every Mac: each architecture's disk image is named apart, so
+@@ -63,9 +67,23 @@ func buildDMG(c *Config, app, dir, goarch string, opts buildOptions) (_ string,
+ 	// Finder hides the .app extension of bundles by default; hiding it with
+ 	// the Finder flag, like create-dmg does, would make the signature fail
+ 	// strict verification.
+-	if err := writeDSStore(filepath.Join(src, ".DS_Store"), appName); err != nil {
++	layout := dmgLayout(c.MacOS.DMG)
++	if err := writeDSStore(filepath.Join(src, ".DS_Store"), appName, layout, nil); err != nil {
+ 		return "", err
+ 	}
++	// The background picture, hidden in .background as Finder's own
++	// layouts keep it. Its alias and bookmark name the file on the
++	// mounted volume, so the layout is written again once it is mounted.
++	var background string
++	if d := c.MacOS.DMG; d != nil {
++		background = filepath.Join(dmgBackgroundDir, "background"+strings.ToLower(filepath.Ext(d.Background)))
++		if err := os.Mkdir(filepath.Join(src, dmgBackgroundDir), 0o755); err != nil {
++			return "", err
++		}
++		if err := copyFile(c.path(d.Background), filepath.Join(src, background), 0o644); err != nil {
++			return "", fmt.Errorf("macos.dmg.background: %w", err)
++		}
++	}
+ 	icon := filepath.Join(app, "Contents", "Resources", bundleIcon)
+ 	hasIcon := fileExists(icon)
+ 	if hasIcon {
+@@ -97,6 +115,15 @@ func buildDMG(c *Config, app, dir, goarch string, opts buildOptions) (_ string,
+ 			return "", err
+ 		}
+ 	}
++	if background != "" {
++		bg, err := dmgFileOf(mnt, background)
++		if err != nil {
++			return "", fmt.Errorf("the disk image's background picture: %w", err)
++		}
++		if err := writeDSStore(filepath.Join(mnt, ".DS_Store"), appName, layout, bg); err != nil {
++			return "", err
++		}
++	}
+ 	// Created by macOS while the image is mounted.
+ 	_ = os.RemoveAll(filepath.Join(mnt, ".fseventsd"))
+ 	_ = os.RemoveAll(filepath.Join(mnt, ".Trashes"))
+diff --git a/cmd/mygo/dmg_test.go b/cmd/mygo/dmg_test.go
+index a92d42b..4628daf 100644
+--- a/cmd/mygo/dmg_test.go
++++ b/cmd/mygo/dmg_test.go
+@@ -29,7 +29,7 @@ func TestDSStoreMatchesDMGBuild(t *testing.T) {
+ 	if err != nil {
+ 		t.Fatal(err)
+ 	}
+-	got, err := dsStore(dmgRecords("Hello MyGo.app"))
++	got, err := dsStore(dmgRecords("Hello MyGo.app", dmgLayout(nil), nil))
+ 	if err != nil {
+ 		t.Fatal(err)
+ 	}
+@@ -259,7 +259,7 @@ func checkDMG(t *testing.T, dmg string, icns []byte) string {
+ 	if got, err := os.ReadFile(filepath.Join(mnt, ".VolumeIcon.icns")); err != nil || !bytes.Equal(got, icns) {
+ 		t.Errorf("the volume icon is not the app's: %v", err)
+ 	}
+-	want, err := dsStore(dmgRecords("DMG Test.app"))
++	want, err := dsStore(dmgRecords("DMG Test.app", dmgLayout(nil), nil))
+ 	if err != nil {
+ 		t.Fatal(err)
+ 	}
+diff --git a/cmd/mygo/dmgalias.go b/cmd/mygo/dmgalias.go
+new file mode 100644
+index 0000000..6b83743
+--- /dev/null
++++ b/cmd/mygo/dmgalias.go
+@@ -0,0 +1,273 @@
++package main
++
++import (
++	"bytes"
++	"encoding/binary"
++	"errors"
++	"math"
++	"slices"
++	"strings"
++	"time"
++	"unicode/utf16"
++)
++
++// This file encodes where a disk image's background picture is, as Finder
++// reads it from the window's .DS_Store: an alias record among the icon view
++// options (backgroundImageAlias in icvp) and a bookmark (pBBk). Both are
++// what the mac_alias Python package, which dmgbuild uses, writes for the
++// same file with Alias.for_file and Bookmark.for_file.
++
++// dmgFile is what the alias and bookmark of a file in a mounted disk image
++// hold.
++type dmgFile struct {
++	volume        string // the volume's name
++	volumeCreated time.Time
++	volumeSize    uint64 // in bytes
++	volumeUUID    string // upper case
++	mount         string // where the volume is mounted
++	// path names the file and the folders it is in from the volume's
++	// root, as ".background", "picture.tiff"; ids are their catalog node
++	// IDs. The file is in a folder.
++	path    []string
++	ids     []uint32
++	created time.Time // the file's creation date
++}
++
++var (
++	macEpoch = time.Date(1904, 1, 1, 0, 0, 0, 0, time.UTC)
++	cfEpoch  = time.Date(2001, 1, 1, 0, 0, 0, 0, time.UTC)
++)
++
++func (f dmgFile) check() error {
++	if len(f.path) < 2 || len(f.ids) != len(f.path) {
++		return errors.New("the background picture is not in a folder of the disk image")
++	}
++	return nil
++}
++
++// alias encodes the file's alias record, version 2.
++func (f dmgFile) alias() []byte {
++	var b bytes.Buffer
++	put := func(vs ...any) {
++		for _, v := range vs {
++			_ = binary.Write(&b, binary.BigEndian, v)
++		}
++	}
++	tag := func(t int16, data []byte) {
++		put(t, int16(len(data)))
++		b.Write(data)
++		if len(data)%2 == 1 {
++			b.WriteByte(0)
++		}
++	}
++	carbon := func(s string) string { return strings.ReplaceAll(s, ":", "/") }
++	unicode := func(t int16, s string) {
++		u := utf16.Encode([]rune(carbon(s)))
++		put(t, int16(2*len(u)+2), int16(len(u)))
++		for _, c := range u {
++			put(c)
++		}
++	}
++	n := len(f.path)
++	name, folder := f.path[n-1], f.path[n-2]
++	volumeDate := f.volumeCreated.Sub(macEpoch).Seconds()
++	fileDate := f.created.Sub(macEpoch).Seconds()
++
++	b.Write([]byte{0, 0, 0, 0}) // no application
++	put(uint16(0), uint16(2))   // the size, set below, and the version
++	put(uint16(0))              // a file
++	b.Write(pascalString(carbon(f.volume), 28))
++	put(uint32(int64(volumeDate)))
++	b.WriteString("H+")
++	put(uint16(0)) // a fixed disk
++	put(f.ids[n-2])
++	b.Write(pascalString(carbon(name), 64))
++	put(f.ids[n-1], uint32(int64(fileDate)))
++	b.Write(make([]byte, 8))             // no creator, no type
++	put(int16(-1), int16(-1), uint32(0)) // levels from and to, volume attributes
++	b.Write(make([]byte, 12))            // file system ID and reserved
++
++	tag(0, []byte(carbon(folder)))
++	put(int16(16), int16(8), uint64(int64(volumeDate*65536)))
++	put(int16(17), int16(8), uint64(int64(fileDate*65536)))
++	var folders []byte
++	for i := n - 2; i >= 0; i-- {
++		folders = binary.BigEndian.AppendUint32(folders, f.ids[i])
++	}
++	tag(1, folders)
++	parts := make([]string, n)
++	for i, p := range f.path {
++		parts[i] = carbon(p)
++	}
++	tag(2, []byte(f.volume+":"+strings.Join(parts, ":\x00")))
++	unicode(14, name)
++	unicode(15, f.volume)
++	tag(18, []byte("/"+strings.Join(f.path, "/")))
++	tag(19, []byte(f.mount))
++	put(int16(-1), int16(0))
++
++	out := b.Bytes()
++	binary.BigEndian.PutUint16(out[4:], uint16(len(out)))
++	return out
++}
++
++// pascalString is s as a Pascal string in size bytes, as Python's struct
++// packs it: a length byte, then at most size-1 bytes, then zeros.
++func pascalString(s string, size int) []byte {
++	b := make([]byte, size)
++	n := min(len(s), size-1)
++	b[0] = byte(n)
++	copy(b[1:], s[:n])
++	return b
++}
++
++// Bookmark items and keys.
++type (
++	bookmarkData []byte
++	bookmarkURL  string
++)
++
++const (
++	bookmarkPath             = 0x1004
++	bookmarkCNIDPath         = 0x1005
++	bookmarkFileProperties   = 0x1010
++	bookmarkFileCreationDate = 0x1040
++	bookmarkVolumePath       = 0x2002
++	bookmarkVolumeURL        = 0x2005
++	bookmarkVolumeName       = 0x2010
++	bookmarkVolumeUUID       = 0x2011
++	bookmarkVolumeSize       = 0x2012
++	bookmarkVolumeCreated    = 0x2013
++	bookmarkVolumeProperties = 0x2020
++	bookmarkVolumeIsRoot     = 0x2030
++	bookmarkContainingFolder = 0xc001
++	bookmarkUserName         = 0xc011
++	bookmarkUID              = 0xc012
++	bookmarkWasFileReference = 0xd001
++	bookmarkCreationOptions  = 0xd010
++)
++
++// bookmark encodes the file's bookmark.
++func (f dmgFile) bookmark() []byte {
++	threeLongs := func(a, b, c uint64) bookmarkData {
++		d := binary.LittleEndian.AppendUint64(nil, a)
++		d = binary.LittleEndian.AppendUint64(d, b)
++		return binary.LittleEndian.AppendUint64(d, c)
++	}
++	const persistentIDs = 0x100000000
++	names := make([]any, len(f.path))
++	for i, p := range f.path {
++		names[i] = p
++	}
++	ids := make([]any, len(f.ids))
++	for i, id := range f.ids {
++		ids[i] = int64(id)
++	}
++	// In the order Bookmark.for_file lists them.
++	toc := []struct {
++		key   uint32
++		value any
++	}{
++		{bookmarkPath, names},
++		{bookmarkCNIDPath, ids},
++		{bookmarkFileCreationDate, f.created},
++		{bookmarkFileProperties, threeLongs(1, 0x0f, 0)}, // a regular file
++		{bookmarkContainingFolder, int64(len(f.path) - 2)},
++		{bookmarkVolumePath, f.mount},
++		{bookmarkVolumeIsRoot, f.mount == "/"},
++		{bookmarkVolumeURL, bookmarkURL("file://" + f.mount)},
++		{bookmarkVolumeName, f.volume},
++		{bookmarkVolumeSize, int64(f.volumeSize)},
++		{bookmarkVolumeCreated, f.volumeCreated},
++		{bookmarkVolumeUUID, strings.ToUpper(f.volumeUUID)},
++		{bookmarkVolumeProperties, threeLongs(0x81|persistentIDs, 0x13ef|persistentIDs, 0)},
++		{bookmarkCreationOptions, int64(512)},
++		{bookmarkWasFileReference, true},
++		{bookmarkUserName, "unknown"},
++		{bookmarkUID, int64(99)},
++	}
++	// Item offsets count from the end of the 48-byte header; the offset of
++	// the table of contents comes first.
++	offset := 4
++	var items []byte
++	type entry struct{ key, offset uint32 }
++	entries := make([]entry, 0, len(toc))
++	for _, e := range toc {
++		entries = append(entries, entry{e.key, uint32(offset)})
++		var enc []byte
++		offset, enc = bookmarkItem(e.value, offset)
++		items = append(items, enc...)
++	}
++	slices.SortFunc(entries, func(a, b entry) int { return int(a.key) - int(b.key) })
++	var data []byte
++	for _, e := range entries {
++		data = binary.LittleEndian.AppendUint32(data, e.key)
++		data = binary.LittleEndian.AppendUint32(data, e.offset)
++		data = binary.LittleEndian.AppendUint32(data, 0)
++	}
++	first := offset
++	le := binary.LittleEndian
++	out := []byte("book")
++	out = le.AppendUint32(out, uint32(offset+20+len(data)+48))
++	out = le.AppendUint32(out, 0x10040000)
++	out = le.AppendUint32(out, 48)
++	out = append(out, make([]byte, 32)...)
++	out = le.AppendUint32(out, uint32(first))
++	out = append(out, items...)
++	out = le.AppendUint32(out, uint32(len(data)-8))
++	out = le.AppendUint32(out, 0xfffffffe)
++	out = le.AppendUint32(out, 1) // the table's ID
++	out = le.AppendUint32(out, 0) // no next table
++	out = le.AppendUint32(out, uint32(len(entries)))
++	return append(out, data...)
++}
++
++// bookmarkItem encodes v at offset and returns the offset after it,
++// padded to 4 bytes.
++func bookmarkItem(v any, offset int) (int, []byte) {
++	le := binary.LittleEndian
++	head := func(n int, kind uint32) []byte {
++		return le.AppendUint32(le.AppendUint32(nil, uint32(n)), kind)
++	}
++	var b []byte
++	switch v := v.(type) {
++	case bool:
++		b = head(0, 0x0500)
++		if v {
++			b = head(0, 0x0501)
++		}
++	case string:
++		b = append(head(len(v), 0x0101), v...)
++	case bookmarkData:
++		b = append(head(len(v), 0x0201), v...)
++	case bookmarkURL:
++		b = append(head(len(v), 0x0901), v...)
++	case int64:
++		if v > -0x80000000 && v < 0x7fffffff {
++			b = le.AppendUint32(head(4, 0x0303), uint32(int32(v)))
++		} else {
++			b = le.AppendUint64(head(8, 0x0304), uint64(v))
++		}
++	case time.Time:
++		b = binary.BigEndian.AppendUint64(head(8, 0x0400), math.Float64bits(v.Sub(cfEpoch).Seconds()))
++	case []any:
++		b = head(4*len(v), 0x0601)
++		at := offset + 8 + 4*len(v)
++		var elems []byte
++		for _, e := range v {
++			b = le.AppendUint32(b, uint32(at))
++			var enc []byte
++			at, enc = bookmarkItem(e, at)
++			elems = append(elems, enc...)
++		}
++		b = append(b, elems...)
++	default:
++		panic("bookmarkItem: unsupported value")
++	}
++	offset += len(b)
++	if pad := (4 - offset%4) % 4; pad > 0 {
++		b = append(b, make([]byte, pad)...)
++		offset += pad
++	}
++	return offset, b
++}
+diff --git a/cmd/mygo/dmgalias_darwin.go b/cmd/mygo/dmgalias_darwin.go
+new file mode 100644
+index 0000000..4172ba6
+--- /dev/null
++++ b/cmd/mygo/dmgalias_darwin.go
+@@ -0,0 +1,117 @@
++package main
++
++import (
++	"encoding/binary"
++	"errors"
++	"fmt"
++	"os"
++	"path/filepath"
++	"strings"
++	"syscall"
++	"time"
++	"unsafe"
++)
++
++// getattrlist attribute bits (sys/attr.h).
++const (
++	attrBitMapCount = 5
++	attrCmnCrtime   = 0x00000200
++	attrCmnFileID   = 0x02000000
++	attrVolInfo     = 0x80000000
++	attrVolSize     = 0x00000004
++	attrVolName     = 0x00002000
++	attrVolUUID     = 0x00040000
++)
++
++// getAttrs calls getattrlist(2) for path with the common attributes cmn
++// and the volume attributes vol, and returns the attributes after the
++// buffer's length.
++func getAttrs(path string, cmn, vol uint32) ([]byte, error) {
++	// struct attrlist: bitmapcount and reserved, then common, volume,
++	// directory, file and fork attributes.
++	list := [6]uint32{attrBitMapCount, cmn, vol, 0, 0, 0}
++	buf := make([]byte, 1024)
++	p, err := syscall.BytePtrFromString(path)
++	if err != nil {
++		return nil, err
++	}
++	if _, _, e := syscall.Syscall6(syscall.SYS_GETATTRLIST,
++		uintptr(unsafe.Pointer(p)), uintptr(unsafe.Pointer(&list)),
++		uintptr(unsafe.Pointer(&buf[0])), uintptr(len(buf)), 0, 0); e != 0 {
++		return nil, &os.PathError{Op: "getattrlist", Path: path, Err: e}
++	}
++	n := binary.LittleEndian.Uint32(buf)
++	if n < 4 || int(n) > len(buf) {
++		return nil, fmt.Errorf("getattrlist %s: bad length %d", path, n)
++	}
++	return buf[4:n], nil
++}
++
++// timespec reads a struct timespec.
++func timespec(b []byte) time.Time {
++	return time.Unix(int64(binary.LittleEndian.Uint64(b)), int64(binary.LittleEndian.Uint64(b[8:]))).UTC()
++}
++
++// fileID returns the catalog node ID of path.
++func fileID(path string) (uint32, error) {
++	b, err := getAttrs(path, attrCmnFileID, 0)
++	if err != nil {
++		return 0, err
++	}
++	return uint32(binary.LittleEndian.Uint64(b)), nil
++}
++
++// dmgFileOf reads what the alias and bookmark of the file at rel, a path
++// in the volume mounted at mnt, hold.
++func dmgFileOf(mnt, rel string) (*dmgFile, error) {
++	// The volume: its creation date, size, name and UUID, in that order
++	// (common attributes first, then volume attributes by bit).
++	b, err := getAttrs(mnt, attrCmnCrtime, attrVolInfo|attrVolSize|attrVolName|attrVolUUID)
++	if err != nil {
++		return nil, err
++	}
++	if len(b) < 16+8+8+16 {
++		return nil, errors.New("getattrlist: short volume attributes")
++	}
++	f := &dmgFile{volumeCreated: timespec(b)}
++	f.volumeSize = binary.LittleEndian.Uint64(b[16:])
++	ref := b[24:]
++	off, size := int32(binary.LittleEndian.Uint32(ref)), binary.LittleEndian.Uint32(ref[4:])
++	if off < 0 || int(off)+int(size) > len(ref) || size == 0 {
++		return nil, errors.New("getattrlist: bad volume name")
++	}
++	f.volume = string(ref[off : off+int32(size)-1])
++	u := b[32 : 32+16]
++	f.volumeUUID = fmt.Sprintf("%X-%X-%X-%X-%X", u[0:4], u[4:6], u[6:8], u[8:10], u[10:16])
++	// Where the system says the volume is mounted: /private/tmp/x for
++	// /tmp/x.
++	var st syscall.Statfs_t
++	if err := syscall.Statfs(mnt, &st); err != nil {
++		return nil, &os.PathError{Op: "statfs", Path: mnt, Err: err}
++	}
++	on := make([]byte, 0, len(st.Mntonname))
++	for _, c := range st.Mntonname {
++		if c == 0 {
++			break
++		}
++		on = append(on, byte(c))
++	}
++	f.mount = string(on)
++
++	path := mnt
++	for _, name := range strings.Split(filepath.ToSlash(filepath.Clean(rel)), "/") {
++		path = filepath.Join(path, name)
++		id, err := fileID(path)
++		if err != nil {
++			return nil, err
++		}
++		f.path = append(f.path, name)
++		f.ids = append(f.ids, id)
++	}
++	b, err = getAttrs(path, attrCmnCrtime, 0)
++	if err != nil {
++		return nil, err
++	}
++	f.created = timespec(b)
++	return f, f.check()
++}
+diff --git a/cmd/mygo/dmgalias_other.go b/cmd/mygo/dmgalias_other.go
+new file mode 100644
+index 0000000..6792ccb
+--- /dev/null
++++ b/cmd/mygo/dmgalias_other.go
+@@ -0,0 +1,10 @@
++//go:build !darwin
++
++package main
++
++import "errors"
++
++// dmgFileOf needs macOS, where disk images are built.
++func dmgFileOf(mnt, rel string) (*dmgFile, error) {
++	return nil, errors.New("disk image backgrounds need macOS")
++}
+diff --git a/cmd/mygo/dmgbackground_test.go b/cmd/mygo/dmgbackground_test.go
+new file mode 100644
+index 0000000..b5865c1
+--- /dev/null
++++ b/cmd/mygo/dmgbackground_test.go
+@@ -0,0 +1,118 @@
++package main
++
++import (
++	"bytes"
++	"encoding/binary"
++	"os"
++	"path/filepath"
++	"runtime"
++	"strings"
++	"testing"
++	"time"
++)
++
++func TestDMGConfig(t *testing.T) {
++	ok := DMG{Background: "bg.tiff", Width: 660, Height: 432, AppX: 170, AppY: 190, ApplicationsX: 490, ApplicationsY: 190}
++	for _, tc := range []struct {
++		name string
++		edit func(*DMG)
++		err  string
++	}{
++		{"valid", func(*DMG) {}, ""},
++		{"png", func(d *DMG) { d.Background = "bg.PNG" }, ""},
++		{"jpeg", func(d *DMG) { d.Background = "bg.jpg" }, "TIFF or PNG"},
++		{"no size", func(d *DMG) { d.Height = 0 }, "width and height"},
++		{"app outside", func(d *DMG) { d.AppX = 700 }, "inside the window"},
++		{"link outside", func(d *DMG) { d.ApplicationsY = 0 }, "inside the window"},
++	} {
++		d := ok
++		tc.edit(&d)
++		c := &Config{Name: "App", MacOS: MacOS{DMG: &d}}
++		c.applyDefaults()
++		err := c.validate()
++		if tc.err == "" && err != nil || tc.err != "" && (err == nil || !strings.Contains(err.Error(), tc.err)) {
++			t.Errorf("%s: err = %v, want %q", tc.name, err, tc.err)
++		}
++	}
++}
++
++// TestDMGRecordsBackground checks the records a background adds: an
++// alias in the icon view options, which Finder reads, and a bookmark.
++func TestDMGRecordsBackground(t *testing.T) {
++	bg := &dmgFile{
++		volume: "App", volumeCreated: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC),
++		volumeSize: 1 << 20, volumeUUID: "D9E30581-4022-3881-B1F1-46F4D8210000",
++		mount: "/Volumes/App", path: []string{".background", "background.tiff"},
++		ids: []uint32{18, 19}, created: time.Date(2026, 1, 2, 3, 4, 6, 0, time.UTC),
++	}
++	layout := DMG{Width: 660, Height: 432, AppX: 170, AppY: 190, ApplicationsX: 490, ApplicationsY: 190}
++	records := dmgRecords("App.app", layout, bg)
++	var icvp, pBBk, bwsp []byte
++	for _, r := range records {
++		switch r.code {
++		case "icvp":
++			icvp = r.value
++		case "pBBk":
++			pBBk = r.value
++		case "bwsp":
++			bwsp = r.value
++		}
++	}
++	alias := bg.alias()
++	if !bytes.Contains(icvp, alias) || !bytes.Contains(icvp, []byte("backgroundImageAlias")) {
++		t.Error("icvp lacks the background's alias")
++	}
++	if int(binary.BigEndian.Uint16(alias[4:])) != len(alias) || !bytes.Contains(alias, []byte("/.background/background.tiff")) {
++		t.Errorf("alias = %x", alias)
++	}
++	if !bytes.HasPrefix(pBBk, []byte("book")) || int(binary.LittleEndian.Uint32(pBBk[4:])) != len(pBBk) {
++		t.Errorf("bookmark = %x", pBBk)
++	}
++	if !bytes.Contains(bwsp, []byte("{660, 432}")) {
++		t.Error("the window is not the layout's size")
++	}
++	if _, err := dsStore(records); err != nil {
++		t.Fatal(err)
++	}
++}
++
++// TestBuildDMGBackground builds a disk image with a background picture
++// and checks that its layout points at the picture in the image.
++func TestBuildDMGBackground(t *testing.T) {
++	c, app, icns := dmgTestApp(t)
++	if err := os.WriteFile(filepath.Join(c.root, "bg.png"), defaultIcon(), 0o644); err != nil {
++		t.Fatal(err)
++	}
++	c.MacOS.DMG = &DMG{Background: "bg.png", Width: 660, Height: 432, AppX: 170, AppY: 190, ApplicationsX: 490, ApplicationsY: 190}
++	if err := c.validate(); err != nil {
++		t.Fatal(err)
++	}
++	dmg, err := buildDMG(c, app, filepath.Dir(app), runtime.GOARCH, buildOptions{sign: "-"})
++	if err != nil {
++		t.Fatal(err)
++	}
++	mnt := attachDMG(t, dmg)
++	if got, err := os.ReadFile(filepath.Join(mnt, ".background", "background.png")); err != nil || !bytes.Equal(got, defaultIcon()) {
++		t.Errorf("the image lacks the background picture: %v", err)
++	}
++	if got, err := os.ReadFile(filepath.Join(mnt, ".VolumeIcon.icns")); err != nil || !bytes.Equal(got, icns) {
++		t.Errorf("the volume icon is not the app's: %v", err)
++	}
++	store, err := os.ReadFile(filepath.Join(mnt, ".DS_Store"))
++	if err != nil {
++		t.Fatal(err)
++	}
++	for _, want := range []string{"backgroundImageAlias", "pBBk", "/.background/background.png", "{660, 432}"} {
++		if !bytes.Contains(store, []byte(want)) && !bytes.Contains(store, utf16BE(want)) {
++			t.Errorf(".DS_Store lacks %q", want)
++		}
++	}
++}
++
++func utf16BE(s string) []byte {
++	var b []byte
++	for _, r := range s {
++		b = binary.BigEndian.AppendUint16(b, uint16(r))
++	}
++	return b
++}
+diff --git a/cmd/mygo/dsstore.go b/cmd/mygo/dsstore.go
+index 8acddd4..18730eb 100644
+--- a/cmd/mygo/dsstore.go
++++ b/cmd/mygo/dsstore.go
+@@ -130,8 +130,9 @@ func dsStore(records []dsRecord) ([]byte, error) {
+ 	return file, nil
+ }
+ 
+-// binaryPlist encodes a flat dictionary of bools, ints, float64s and strings
+-// as a binary property list, laid out like Python's plistlib does it.
++// binaryPlist encodes a flat dictionary of bools, ints, float64s, strings
++// and data ([]byte) as a binary property list, laid out like Python's
++// plistlib does it.
+ func binaryPlist(dict map[string]any) []byte {
+ 	keys := make([]string, 0, len(dict))
+ 	for k := range dict {
+@@ -148,6 +149,11 @@ func binaryPlist(dict map[string]any) []byte {
+ 	objs := []any{dict}
+ 	refs := map[scalar]int{}
+ 	ref := func(v any) int {
++		if b, ok := v.([]byte); ok {
++			// Data is not comparable; it is never shared.
++			objs = append(objs, b)
++			return len(objs) - 1
++		}
+ 		k := scalar{fmt.Sprintf("%T", v), v}
+ 		if i, ok := refs[k]; ok {
+ 			return i
+@@ -237,6 +243,8 @@ func binaryPlist(dict map[string]any) []byte {
+ 					b = binary.BigEndian.AppendUint16(b, c)
+ 				}
+ 			}
++		case []byte:
++			b = append(appendSize(b, 0x40, len(v)), v...)
+ 		default:
+ 			panic(fmt.Sprintf("binaryPlist: unsupported %T", o))
+ 		}
+@@ -266,7 +274,8 @@ func isASCII(s string) bool {
+ }
+ 
+ // Finder window of disk images: the app on the left, a link to
+-// /Applications on the right (the layout create-dmg makes for quickgui).
++// /Applications on the right (the layout create-dmg makes for quickgui),
++// unless macos.dmg lays it out.
+ const (
+ 	dmgWindowX, dmgWindowY          = 200, 400 // bottom-left corner, from the bottom of the screen
+ 	dmgWindowWidth, dmgWindowHeight = 660, 400
+@@ -276,12 +285,25 @@ const (
+ 	dmgApplicationsY                = 185
+ )
+ 
++// dmgLayout is the window of a disk image: macos.dmg's, or MyGo's.
++func dmgLayout(d *DMG) DMG {
++	if d != nil {
++		return *d
++	}
++	return DMG{
++		Width: dmgWindowWidth, Height: dmgWindowHeight,
++		AppX: dmgAppX, AppY: dmgAppY,
++		ApplicationsX: dmgApplicationsX, ApplicationsY: dmgApplicationsY,
++	}
++}
++
+ // dmgRecords lays out the window of a disk image holding app (the bundle's
+-// file name) and an Applications link.
+-func dmgRecords(app string) []dsRecord {
++// file name) and an Applications link, with the background picture bg in
++// the image, or none for nil.
++func dmgRecords(app string, layout DMG, bg *dmgFile) []dsRecord {
+ 	bwsp := map[string]any{
+ 		"ShowStatusBar":         false,
+-		"WindowBounds":          fmt.Sprintf("{{%d, %d}, {%d, %d}}", dmgWindowX, dmgWindowY, dmgWindowWidth, dmgWindowHeight),
++		"WindowBounds":          fmt.Sprintf("{{%d, %d}, {%d, %d}}", dmgWindowX, dmgWindowY, layout.Width, layout.Height),
+ 		"ContainerShowSidebar":  false,
+ 		"PreviewPaneVisibility": false,
+ 		"SidebarWidth":          180,
+@@ -308,19 +330,24 @@ func dmgRecords(app string) []dsRecord {
+ 		"scrollPositionX":      0.0,
+ 		"scrollPositionY":      0.0,
+ 	}
+-	return []dsRecord{
++	records := []dsRecord{
+ 		dsLong(".", "vSrn", 1),
+ 		dsBlob(".", "bwsp", binaryPlist(bwsp)),
+-		dsBlob(".", "icvp", binaryPlist(icvp)),
+ 		{".", "icvl", "type", []byte("icnv")}, // icon view
+-		dsIconLocation(app, dmgAppX, dmgAppY),
+-		dsIconLocation("Applications", dmgApplicationsX, dmgApplicationsY),
++		dsIconLocation(app, layout.AppX, layout.AppY),
++		dsIconLocation("Applications", layout.ApplicationsX, layout.ApplicationsY),
++	}
++	if bg != nil {
++		icvp["backgroundType"] = 2
++		icvp["backgroundImageAlias"] = bg.alias()
++		records = append(records, dsBlob(".", "pBBk", bg.bookmark()))
+ 	}
++	return append(records, dsBlob(".", "icvp", binaryPlist(icvp)))
+ }
+ 
+ // writeDSStore writes the layout of a disk image window to path.
+-func writeDSStore(path, app string) error {
+-	data, err := dsStore(dmgRecords(app))
++func writeDSStore(path, app string, layout DMG, bg *dmgFile) error {
++	data, err := dsStore(dmgRecords(app, layout, bg))
+ 	if err != nil {
+ 		return err
+ 	}
+diff --git a/docs/configuration.md b/docs/configuration.md
+index 38290b5..81e1ab1 100644
+--- a/docs/configuration.md
++++ b/docs/configuration.md
+@@ -124,6 +124,7 @@ Signed [auto-updates](updates.md). `publicKey` and one of `github` and
+ | `plugIns` | | app extensions shipped in `Contents/PlugIns`, such as a WidgetKit widget: `path`, the `.appex`, `.plugin` or `.bundle`, and optionally `entitlements`, a property list to sign it with (default: those it was signed with). They are signed before the app, which is then signed without `--deep` |
+ | `infoPlist` | | keys added to the app's `Info.plist`, replacing MyGo's, e.g. `NSCameraUsageDescription` |
+ | `dmgTitle` | `name` | the volume name of the disk image |
++| `dmg` | | lays out the disk image's window around a background picture: `background`, a TIFF or PNG the size of the window (a TIFF can hold a @2x picture too), the window content's `width` and `height` in points, and the centers of the app's icon (`appX`, `appY`) and of the Applications link (`applicationsX`, `applicationsY`) from its top-left corner |
+ | `notarize` | | notarizes production disk images: `keychainProfile`, the profile of `xcrun notarytool store-credentials`, and optionally `keychain`, the keychain holding it |
+ 
+ See [macOS](distribution.md#macos).
+diff --git a/packages/cli/index.d.ts b/packages/cli/index.d.ts
+index 22f676b..85ce106 100644
+--- a/packages/cli/index.d.ts
++++ b/packages/cli/index.d.ts
+@@ -250,6 +250,8 @@ export interface MacOSConfig {
+   infoPlist?: Record<string, unknown>;
+   /** The volume name of the disk image (default: the name). */
+   dmgTitle?: string;
++  /** Lays out the disk image's window around a background picture. */
++  dmg?: DMGConfig;
+   /** Notarizes production disk images. */
+   notarize?: NotarizeConfig;
+ }
+@@ -262,6 +264,22 @@ export interface PlugInConfig {
+   entitlements?: string;
+ }
+ 
++/** The disk image's window; points count from its content's top-left corner. */
++export interface DMGConfig {
++  /** A TIFF or PNG the size of the window; a TIFF can hold a @2x picture too. Relative to the project. */
++  background: string;
++  /** The window content's width in points. */
++  width: number;
++  /** The window content's height in points. */
++  height: number;
++  /** The center of the app's icon. */
++  appX: number;
++  appY: number;
++  /** The center of the Applications link. */
++  applicationsX: number;
++  applicationsY: number;
++}
++
+ /** Credentials of `xcrun notarytool store-credentials <profile>`. */
+ export interface NotarizeConfig {
+   /** The profile holding the credentials. */
