@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Starts AstrLink from its AppImage (scripts/build-appimage.mjs). The AppImage
+# runtime mounts the image and sets APPDIR, and APPIMAGE, the file that the
+# app's updater replaces.
+set -e
+
+APPDIR="${APPDIR:-$(dirname "$(readlink -f "$0")")}"
+export APPDIR
+
+# GTK's modules, schemas and theme in the image (linuxdeploy-plugin-gtk).
+for hook in "$APPDIR"/apprun-hooks/*.sh; do
+	if [ -f "$hook" ]; then
+		# shellcheck source=/dev/null
+		. "$hook"
+	fi
+done
+
+# The app opens GTK and WebKitGTK by name when it starts; these are the
+# copies in the image.
+export LD_LIBRARY_PATH="$APPDIR/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+
+# The image's WebKitGTK starts its helper processes from ././lib/..., which
+# linuxdeploy-plugin-gtk wrote over its /usr paths: they are relative to usr.
+cd "$APPDIR/usr"
+
+exec "$APPDIR/usr/lib/astrlink/astrlink" "$@"

@@ -1,6 +1,6 @@
 // Package sigstack keeps every signal handler on the signal stack.
 //
-// On Linux the web view's libraries (WebKit's JavaScriptCore, GLib) install
+// On Linux the web view's libraries (GLib, WebKit's JavaScriptCore) install
 // signal handlers without SA_ONSTACK. A signal that lands on a Go thread then
 // runs its handler on the running goroutine's stack, which can be as small as
 // 2 KiB: the kernel's signal frame alone overflows it and the app crashes in
@@ -10,17 +10,21 @@ package sigstack
 
 import (
 	"context"
+	"log"
 	"time"
 )
 
-// every is how often handlers installed since the last pass are fixed; the
-// libraries install theirs while the first web view starts.
+// every is how often handlers installed since the last pass are fixed.
 const every = time.Second
 
-// Keep fixes the handlers now and again every second until ctx ends.
+// Keep makes GLib install its SIGCHLD handler for good, fixes every handler
+// now, and fixes new ones every second until ctx ends.
 func Keep(ctx context.Context) {
 	if !supported {
 		return
+	}
+	if err := holdChildHandler(); err != nil {
+		log.Printf("astrlink: unable to hold GLib's SIGCHLD handler: %v", err)
 	}
 	fix()
 	go func() {

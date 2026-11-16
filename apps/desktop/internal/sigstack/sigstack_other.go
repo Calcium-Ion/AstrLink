@@ -6,3 +6,5 @@ package sigstack
 const supported = false
 
 func fix() {}
+
+func holdChildHandler() error { return nil }

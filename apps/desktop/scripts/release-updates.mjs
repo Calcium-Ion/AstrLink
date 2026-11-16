@@ -3,14 +3,15 @@
 // - MyGo's update files, which `mygo build` writes with
 //   MYGO_UPDATER_PRIVATE_KEY: update-<platform>.json, the signed
 //   <slug>-<version>-<platform>.tar.gz archives and their deltas. The app's
-//   updater (internal/updates) reads them.
+//   updater (internal/updates) reads them. Linux also ships an AppImage
+//   (build-appimage.mjs), which updates itself from
+//   update-<platform>-appimage.json, signed here as MyGo signs archives.
 // - latest.json, the manifest that releases before the MyGo app read,
 //   signed with their Minisign key (TAURI_SIGNING_PRIVATE_KEY). It moves
 //   those installs onto this app: macOS replaces the app bundle with
 //   AstrLink-macOS-<arch>.app.tar.gz, Windows runs the new installer, which
-//   removes the earlier install (installer/windows.nsh). Linux AppImages are
-//   not replaced: they find no package for their platform and link to the
-//   release, whose notes say how to move to the .deb or install.sh.
+//   removes the earlier install (installer/windows.nsh), and an AppImage
+//   replaces its file with the new AppImage.
 import {
   createHash,
   createPrivateKey,
@@ -54,19 +55,18 @@ export const mygoPlatforms = {
   "windows-x86_64": "windows-amd64",
   "linux-x86_64": "linux-amd64",
 };
-/** The targets latest.json lists for earlier releases. */
-export const bridgeTargets = targets.filter(
-  (target) => !target.startsWith("linux-"),
-);
-export const linuxMigrationNotice = `### Linux
-
-AstrLink for Linux now comes as a Debian package and as an archive that
-install.sh installs into ~/.local and keeps up to date. The AppImage is no
-longer published, and an installed AppImage does not update itself to this
-version: install the .deb, or run
-\`curl -fsSL https://github.com/${repository}/releases/latest/download/install.sh | sh\`,
-then delete the AppImage. Settings and data stay where they are.
-`;
+/**
+ * The AppImage of a MyGo platform, null for none: the name the AppImages of
+ * earlier releases had, which their updater replaces itself with.
+ */
+export function appImageName(platform, version) {
+  return platform === "linux-amd64"
+    ? `AstrLink_${version}_amd64.AppImage`
+    : null;
+}
+/** The MyGo manifest an AppImage of the platform updates from. */
+export const appImageManifestName = (platform) =>
+  `update-${platform}-appimage.json`;
 const readJSON = (file) => JSON.parse(readFileSync(file, "utf8"));
 const writeJSON = (file, value) =>
   writeFileSync(file, JSON.stringify(value, null, 2) + "\n");
@@ -283,6 +283,44 @@ export function verifyMyGoSignature(bytes, signature, publicKey) {
   );
 }
 
+/**
+ * The key of MYGO_UPDATER_PRIVATE_KEY: base64 of the 64-byte Ed25519 key
+ * `mygo keygen` writes, its seed then its public key, which must be
+ * MYGO_UPDATER_PUBLIC_KEY.
+ */
+export function mygoSecretKey(encoded, publicKey) {
+  const bytes = Buffer.from(encoded?.trim() ?? "", "base64");
+  requireValue(
+    bytes.length === 64,
+    "MYGO_UPDATER_PRIVATE_KEY is not a MyGo update key",
+  );
+  const privateKey = createPrivateKey({
+    key: Buffer.concat([
+      Buffer.from("302e020100300506032b657004220420", "hex"),
+      bytes.subarray(0, 32),
+    ]),
+    format: "der",
+    type: "pkcs8",
+  });
+  // Go signs with the public half of the key, so it must be the seed's.
+  const derived = createPublicKey(privateKey)
+    .export({ type: "spki", format: "der" })
+    .subarray(-32);
+  requireValue(
+    derived.equals(bytes.subarray(32)) &&
+      derived.equals(Buffer.from(publicKey?.trim() ?? "", "base64")),
+    "MYGO_UPDATER_PRIVATE_KEY does not match MYGO_UPDATER_PUBLIC_KEY",
+  );
+  return privateKey;
+}
+
+/** Signs a file as `mygo build` signs archives: Ed25519 over its SHA-256. */
+export function signMyGoUpdate(bytes, key) {
+  return sign(null, createHash("sha256").update(bytes).digest(), key).toString(
+    "base64",
+  );
+}
+
 export function signingEnvironment(env = process.env) {
   for (const [name, kind] of [
     ["MYGO_UPDATER_PUBLIC_KEY", "variable"],
@@ -302,6 +340,7 @@ export function releaseFiles(names, platform, version) {
       name === archive ||
       (name.startsWith(`${slug}-`) &&
         name.endsWith(`-to-${version}-${platform}.delta`)) ||
+      name === appImageName(platform, version) ||
       name === "install.sh" ||
       name === "install.ps1" ||
       /\.(dmg|deb)$/.test(name) ||
@@ -310,18 +349,14 @@ export function releaseFiles(names, platform, version) {
 }
 
 /**
- * Verify a MyGo manifest of the release against its files and key, and
- * return the names of the files it lists.
+ * Verify the MyGo manifests of the release, update-<platform>.json and an
+ * AppImage's, against their files and key, and return the names of the
+ * files they list.
  */
 export function verifyMyGoUpdate(directory, platform, tag, publicKey) {
   const { version } = releaseVersion(tag);
-  const manifest = readJSON(path.join(directory, `update-${platform}.json`));
-  requireValue(
-    manifest.version === version,
-    `MyGo manifest version mismatch: ${platform}`,
-  );
-  const listed = [manifest, ...(manifest.deltas ?? [])];
-  const names = listed.map((entry) => {
+  // A file of this release, of the size and signature the manifest gives.
+  const verified = (entry) => {
     // MyGo escapes as Go's url.PathEscape does, which keeps a "+".
     const url = new URL(entry.url),
       parts = url.pathname.split("/").map(decodeURIComponent),
@@ -338,15 +373,43 @@ export function verifyMyGoUpdate(directory, platform, tag, publicKey) {
     );
     verifyMyGoSignature(bytes, entry.signature, publicKey);
     return name;
-  });
+  };
+  const manifest = readJSON(path.join(directory, `update-${platform}.json`));
+  requireValue(
+    manifest.version === version,
+    `MyGo manifest version mismatch: ${platform}`,
+  );
+  const names = [manifest, ...(manifest.deltas ?? [])].map(verified);
   requireValue(
     names[0] === `${slug}-${version}-${platform}.tar.gz`,
     `Unexpected MyGo update archive: ${platform}`,
   );
+  const appImage = appImageName(platform, version);
+  if (appImage) {
+    const image = readJSON(
+      path.join(directory, appImageManifestName(platform)),
+    );
+    requireValue(
+      image.version === version,
+      `AppImage manifest version mismatch: ${platform}`,
+    );
+    // The whole AppImage replaces the file, with no deltas.
+    requireValue(
+      verified(image) === appImage && image.deltas === undefined,
+      `Unexpected AppImage update: ${platform}`,
+    );
+    names.push(appImage);
+  }
   return names;
 }
 
-export function stageUpdate(root, target, tag, env = process.env) {
+export function stageUpdate(
+  root,
+  target,
+  tag,
+  env = process.env,
+  now = new Date(),
+) {
   signingEnvironment(env);
   requireValue(targets.includes(target), "Unsupported update target");
   const { version } = releaseVersion(tag);
@@ -361,55 +424,71 @@ export function stageUpdate(root, target, tag, env = process.env) {
   const shipped = releaseFiles(readdirSync(build), platform, version);
   for (const name of shipped)
     cpSync(path.join(build, name), path.join(output, name));
+  const appImage = appImageName(platform, version);
+  if (appImage) {
+    requireValue(shipped.includes(appImage), `Missing ${appImage}`);
+    const bytes = readFileSync(path.join(output, appImage));
+    // As MyGo writes update-<platform>.json; its dates are in seconds.
+    writeJSON(path.join(output, appImageManifestName(platform)), {
+      version,
+      date: now.toISOString().replace(/\.\d+Z$/, "Z"),
+      url: releaseURL(tag, appImage),
+      size: bytes.length,
+      signature: signMyGoUpdate(
+        bytes,
+        mygoSecretKey(
+          env.MYGO_UPDATER_PRIVATE_KEY,
+          env.MYGO_UPDATER_PUBLIC_KEY,
+        ),
+      ),
+    });
+  }
   verifyMyGoUpdate(output, platform, tag, env.MYGO_UPDATER_PUBLIC_KEY);
 
-  let file = null,
-    signature = null,
-    digest = null;
-  if (bridgeTargets.includes(target)) {
-    if (target.startsWith("darwin-")) {
-      const arch = target === "darwin-aarch64" ? "arm64" : "x86_64";
-      // The app as `mygo build` left it, notarized and stapled by
-      // notarize-macos.mjs before this runs.
-      file = path.join(output, `AstrLink-macOS-${arch}.app.tar.gz`);
-      requireValue(
-        existsSync(path.join(build, "AstrLink.app")),
-        "Missing AstrLink.app",
-      );
-      execFileSync("tar", ["-czf", file, "-C", build, "AstrLink.app"], {
-        env: { ...env, COPYFILE_DISABLE: "1" },
-      });
-    } else {
-      const installers = shipped.filter((name) =>
-        name.startsWith(`${slug}-setup-`),
-      );
-      requireValue(
-        installers.length === 1,
-        "Expected exactly one update installer",
-      );
-      file = path.join(output, installers[0]);
-    }
-    const bytes = readFileSync(file);
-    signature = signUpdate(
-      bytes,
-      path.basename(file),
-      minisignSecretKey(
-        env.TAURI_SIGNING_PRIVATE_KEY,
-        env.TAURI_SIGNING_PRIVATE_KEY_PASSWORD ?? "",
-      ),
+  let file;
+  if (target.startsWith("darwin-")) {
+    const arch = target === "darwin-aarch64" ? "arm64" : "x86_64";
+    // The app as `mygo build` left it, notarized and stapled by
+    // notarize-macos.mjs before this runs.
+    file = path.join(output, `AstrLink-macOS-${arch}.app.tar.gz`);
+    requireValue(
+      existsSync(path.join(build, "AstrLink.app")),
+      "Missing AstrLink.app",
     );
-    verifyUpdateSignature(bytes, signature, env.TAURI_UPDATER_PUBLIC_KEY);
-    writeFileSync(`${file}.sig`, signature);
-    digest = sha256(bytes);
+    execFileSync("tar", ["-czf", file, "-C", build, "AstrLink.app"], {
+      env: { ...env, COPYFILE_DISABLE: "1" },
+    });
+  } else if (appImage) {
+    file = path.join(output, appImage);
+  } else {
+    const installers = shipped.filter((name) =>
+      name.startsWith(`${slug}-setup-`),
+    );
+    requireValue(
+      installers.length === 1,
+      "Expected exactly one update installer",
+    );
+    file = path.join(output, installers[0]);
   }
+  const bytes = readFileSync(file);
+  const signature = signUpdate(
+    bytes,
+    path.basename(file),
+    minisignSecretKey(
+      env.TAURI_SIGNING_PRIVATE_KEY,
+      env.TAURI_SIGNING_PRIVATE_KEY_PASSWORD ?? "",
+    ),
+  );
+  verifyUpdateSignature(bytes, signature, env.TAURI_UPDATER_PUBLIC_KEY);
+  writeFileSync(`${file}.sig`, signature);
   writeJSON(path.join(output, `${target}.json`), {
     tag,
     version,
     target,
     platform,
-    file: file && path.basename(file),
+    file: path.basename(file),
     signature,
-    sha256: digest,
+    sha256: sha256(bytes),
   });
 }
 
@@ -422,8 +501,8 @@ function filesIn(directory) {
 }
 
 /**
- * Verify one staged platform: its MyGo update and, for earlier releases,
- * its signed package. Returns the latest.json entry, null for none.
+ * Verify one staged platform: its MyGo updates and the package that moves
+ * earlier releases onto it. Returns the platform's latest.json entry.
  */
 function verifiedPlatform(files, target, tag, version, keys) {
   const fragments = files.filter(
@@ -453,10 +532,6 @@ function verifiedPlatform(files, target, tag, version, keys) {
       assetName(name) === name,
       `GitHub would rename a MyGo update file: ${name}`,
     );
-  if (!bridgeTargets.includes(target)) {
-    requireValue(fragment.file === null, `Unexpected package: ${target}`);
-    return null;
-  }
   requireValue(
     typeof fragment.file === "string" &&
       path.basename(fragment.file) === fragment.file,
@@ -486,7 +561,7 @@ export const assetName = (name) => name.replace(/[^A-Za-z0-9._-]/g, ".");
 function releaseAssets(files) {
   const assets = new Map();
   for (const file of files.filter((file) =>
-    /\.(dmg|deb|exe|tar\.gz|sig|delta)$|(^|[\\/])(update-[^\\/]+\.json|install\.sh|install\.ps1)$/.test(
+    /\.(dmg|deb|exe|AppImage|tar\.gz|sig|delta)$|(^|[\\/])(update-[^\\/]+\.json|install\.sh|install\.ps1)$/.test(
       file,
     ),
   )) {
@@ -528,10 +603,8 @@ export function collectRelease(
   const { version } = releaseVersion(tag),
     files = filesIn(input);
   const platforms = {};
-  for (const target of releaseTargets) {
-    const platform = verifiedPlatform(files, target, tag, version, keys);
-    if (platform) platforms[target] = platform;
-  }
+  for (const target of releaseTargets)
+    platforms[target] = verifiedPlatform(files, target, tag, version, keys);
   // All validation precedes creating the publish directory or touching GitHub.
   const assets = releaseAssets(files);
   const manifest = { version, notes, pub_date: now.toISOString(), platforms };
@@ -557,9 +630,7 @@ export function extendRelease(input, published, output, tag, target, keys) {
     listed = manifest.platforms[target];
   requireValue(
     !listed ||
-      (platform &&
-        listed.signature === platform.signature &&
-        listed.url === platform.url),
+      (listed.signature === platform.signature && listed.url === platform.url),
     `Release already lists a different ${target} package`,
   );
   const sums = new Map();
@@ -578,7 +649,7 @@ export function extendRelease(input, published, output, tag, target, keys) {
       !sums.has(name) || sums.get(name) === sha256(readFileSync(file)),
       `Release already has a different ${name}`,
     );
-  if (platform) manifest.platforms[target] = platform;
+  manifest.platforms[target] = platform;
   writeRelease(output, assets, manifest, sums);
   return manifest;
 }
@@ -653,18 +724,16 @@ export function publishRelease(
   );
   const written = existing?.body?.trim() ? existing.body : undefined;
   const generated = () =>
-    `${
-      JSON.parse(
-        gh([
-          "api",
-          `repos/${repository}/releases/generate-notes`,
-          "-f",
-          `tag_name=${tag}`,
-          "-f",
-          `target_commitish=${env.GITHUB_SHA}`,
-        ]),
-      ).body
-    }\n\n${linuxMigrationNotice}`;
+    JSON.parse(
+      gh([
+        "api",
+        `repos/${repository}/releases/generate-notes`,
+        "-f",
+        `tag_name=${tag}`,
+        "-f",
+        `target_commitish=${env.GITHUB_SHA}`,
+      ]),
+    ).body;
   const notes = written ?? generated();
   collectRelease(input, output, tag, releaseKeys(env), notes);
   const notesFile = path.join(output, "release-notes.txt");
