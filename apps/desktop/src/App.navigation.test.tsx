@@ -2130,7 +2130,10 @@ describe("App workspace navigation", () => {
     // The request sky is hidden by default and reads nothing.
     expect(container.querySelector('[data-slot="request-sky"]')).toBeNull();
     const query = bridgeMocks.getUsageSummary.mock.calls[0]?.[0];
-    expect(bridgeMocks.getUsageSummary).toHaveBeenCalledTimes(1);
+    // Then the last 7 days, which the star trail draws as day rings.
+    expect(
+      bridgeMocks.getUsageSummary.mock.calls.map(([window]) => window.preset),
+    ).toEqual(["1d", "7d"]);
     expect(bridgeMocks.listRequestRecords).not.toHaveBeenCalled();
     expect(query).toMatchObject({ preset: "1d" });
     const from = new Date(query.from as string);
@@ -2148,8 +2151,12 @@ describe("App workspace navigation", () => {
     const base = await bridgeMocks.getUsageSummary.mock.results[0].value;
     const usageSection = () =>
       container.querySelector('[aria-labelledby="usage-heading"]');
+    // The star trail reads the week again after each new summary; this
+    // counts the overview's own 24-hour reads.
     const calls = () => ({
-      usage: bridgeMocks.getUsageSummary.mock.calls.length,
+      usage: bridgeMocks.getUsageSummary.mock.calls.filter(
+        ([window]) => window.preset === "1d",
+      ).length,
       services: bridgeMocks.listServices.mock.calls.length,
       tokens: bridgeMocks.listAccessTokens.mock.calls.length,
     });
