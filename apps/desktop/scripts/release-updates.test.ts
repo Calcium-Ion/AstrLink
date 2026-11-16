@@ -1,10 +1,12 @@
 import { execFileSync } from "node:child_process";
 import {
   createHash,
+  createPublicKey,
   generateKeyPairSync,
   randomBytes,
   scryptSync,
   sign,
+  verify,
 } from "node:crypto";
 import {
   cpSync,
@@ -20,24 +22,27 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  appImageManifestName,
+  appImageName,
   assetName,
   attachRelease,
-  bridgeTargets,
   collectRelease,
   extendRelease,
-  linuxMigrationNotice,
   minisignSecretKey,
   mygoPlatforms,
+  mygoSecretKey,
   newestStable,
   publishRelease,
   releaseTargets,
   releaseVersion,
   scryptParameters,
+  signMyGoUpdate,
   signUpdate,
   signingEnvironment,
   stageUpdate,
   stampVersion,
   targets,
+  verifyMyGoUpdate,
   verifyUpdateSignature,
 } from "./release-updates.mjs";
 
@@ -83,17 +88,26 @@ function minisignKeys(password = "") {
   };
 }
 
+/** A MyGo key pair as `mygo keygen` writes it: the seed and public key. */
+function mygoKeys() {
+  const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+  const pk = rawKey(publicKey, "spki");
+  return {
+    privateKey,
+    publicKey: pk.toString("base64"),
+    secret: Buffer.concat([rawKey(privateKey, "pkcs8"), pk]).toString("base64"),
+  };
+}
+
 /** Both release keys, as Actions passes them to release-updates.mjs. */
 function releaseKeys() {
   const bridge = minisignKeys();
-  const mygo = generateKeyPairSync("ed25519");
+  const mygo = mygoKeys();
   return {
     mygo: mygo.privateKey,
     env: {
-      MYGO_UPDATER_PUBLIC_KEY: rawKey(mygo.publicKey, "spki").toString(
-        "base64",
-      ),
-      MYGO_UPDATER_PRIVATE_KEY: "set",
+      MYGO_UPDATER_PUBLIC_KEY: mygo.publicKey,
+      MYGO_UPDATER_PRIVATE_KEY: mygo.secret,
       TAURI_UPDATER_PUBLIC_KEY: bridge.publicKey,
       TAURI_SIGNING_PRIVATE_KEY: bridge.secret,
     },
@@ -166,6 +180,8 @@ function mygoBuild(root: string, target: Target, keys: Keys, tag = "v1.0.0") {
   } else {
     write(`astrlink_${version}_${arch}.deb`, `package ${arch}`);
     write("install.sh", "install script");
+    // build-appimage.mjs, after `mygo build`.
+    write(`AstrLink_${version}_${arch}.AppImage`, `AppImage ${arch}`);
   }
 }
 
@@ -232,28 +248,33 @@ afterEach(() => {
 });
 
 describe("release updates", () => {
-  it("ships MyGo updates and moves earlier macOS and Windows installs onto them", () => {
+  it("ships MyGo updates and moves earlier installs onto them", () => {
     const keys = releaseKeys(),
       packages = staged(keys, targets as Target[]);
     const files = readdirSync(packages);
     // The app bundle as one archive for earlier macOS releases, the
-    // installer for earlier Windows ones, and no package for AppImages.
+    // installer for earlier Windows ones and the AppImage for AppImages.
     for (const name of [
       "AstrLink-macOS-arm64.app.tar.gz.sig",
       "AstrLink-macOS-x86_64.app.tar.gz.sig",
       "astrlink-setup-1.0.0-amd64.exe.sig",
+      "AstrLink_1.0.0_amd64.AppImage",
+      "AstrLink_1.0.0_amd64.AppImage.sig",
       "update-linux-amd64.json",
+      "update-linux-amd64-appimage.json",
       "astrlink_1.0.0_amd64.deb",
       "astrlink-0.9.0-to-1.0.0-darwin-arm64.delta",
     ])
       expect(files).toContain(name);
     expect(files).not.toContain("AstrLink.exe");
     expect(files).not.toContain("SHA256SUMS");
-    expect(files.some((name) => name.endsWith(".AppImage"))).toBe(false);
+    expect(files.filter((name) => name.includes("appimage"))).toEqual([
+      "update-linux-amd64-appimage.json",
+    ]);
     expect(
       JSON.parse(readFileSync(path.join(packages, "linux-x86_64.json"), "utf8"))
         .file,
-    ).toBeNull();
+    ).toBe("AstrLink_1.0.0_amd64.AppImage");
     expect(
       execFileSync(
         "tar",
@@ -261,6 +282,50 @@ describe("release updates", () => {
         { encoding: "utf8" },
       ),
     ).toContain("AstrLink.app/Contents/Info.plist");
+
+    // The AppImage updates itself from its own MyGo manifest, signed as
+    // MyGo signs archives: Ed25519 over the file's SHA-256.
+    const appImage = readFileSync(
+      path.join(packages, "AstrLink_1.0.0_amd64.AppImage"),
+    );
+    const update = JSON.parse(
+      readFileSync(path.join(packages, appImageManifestName("linux-amd64")), {
+        encoding: "utf8",
+      }),
+    );
+    expect(Object.keys(update)).toEqual([
+      "version",
+      "date",
+      "url",
+      "size",
+      "signature",
+    ]);
+    expect(update).toMatchObject({
+      version: "1.0.0",
+      url: download("v1.0.0", "AstrLink_1.0.0_amd64.AppImage"),
+      size: appImage.length,
+    });
+    expect(update.date).toMatch(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/);
+    expect(
+      verify(
+        null,
+        createHash("sha256").update(appImage).digest(),
+        createPublicKey(keys.mygo),
+        Buffer.from(update.signature, "base64"),
+      ),
+    ).toBe(true);
+    expect(
+      verifyMyGoUpdate(
+        packages,
+        "linux-amd64",
+        "v1.0.0",
+        keys.env.MYGO_UPDATER_PUBLIC_KEY,
+      ),
+    ).toEqual([
+      "astrlink-1.0.0-linux-amd64.tar.gz",
+      "astrlink-0.9.0-to-1.0.0-linux-amd64.delta",
+      "AstrLink_1.0.0_amd64.AppImage",
+    ]);
 
     const release = path.join(directory(), "release");
     const manifest = collectRelease(
@@ -270,15 +335,33 @@ describe("release updates", () => {
       publicKeys(keys),
       "Notes",
     );
-    expect(Object.keys(manifest.platforms)).toEqual(
-      releaseTargets.filter((target) => bridgeTargets.includes(target)),
-    );
+    expect(Object.keys(manifest.platforms)).toEqual(releaseTargets);
     expect(manifest.platforms["windows-x86_64"].url).toBe(
       download("v1.0.0", "astrlink-setup-1.0.0-amd64.exe"),
     );
+    // Earlier AppImages replace themselves with the new one.
+    const linux = manifest.platforms["linux-x86_64"];
+    expect(linux.url).toBe(download("v1.0.0", "AstrLink_1.0.0_amd64.AppImage"));
+    expect(() =>
+      verifyUpdateSignature(
+        appImage,
+        linux.signature,
+        keys.env.TAURI_UPDATER_PUBLIC_KEY,
+      ),
+    ).not.toThrow();
+    expect(Buffer.from(linux.signature, "base64").toString()).toContain(
+      "\tfile:AstrLink_1.0.0_amd64.AppImage\n",
+    );
     const published = readdirSync(release);
-    for (const platform of ["darwin-arm64", "windows-amd64", "linux-amd64"])
-      expect(published).toContain(`update-${platform}.json`);
+    for (const name of [
+      "update-darwin-arm64.json",
+      "update-windows-amd64.json",
+      "update-linux-amd64.json",
+      "update-linux-amd64-appimage.json",
+      "AstrLink_1.0.0_amd64.AppImage",
+      "AstrLink_1.0.0_amd64.AppImage.sig",
+    ])
+      expect(published).toContain(name);
     const sums = readFileSync(path.join(release, "SHA256SUMS"), "utf8");
     for (const name of published.filter((name) => name !== "SHA256SUMS"))
       expect(sums).toContain(
@@ -293,9 +376,7 @@ describe("release updates", () => {
       "darwin-x86_64",
       publicKeys(keys),
     );
-    expect(Object.keys(extended.platforms).sort()).toEqual(
-      [...bridgeTargets].sort(),
-    );
+    expect(Object.keys(extended.platforms).sort()).toEqual([...targets].sort());
   });
 
   it("ships files under the names GitHub gives them", () => {
@@ -378,6 +459,94 @@ describe("release updates", () => {
         TAURI_SIGNING_PRIVATE_KEY: "",
       }),
     ).toThrow("TAURI_SIGNING_PRIVATE_KEY");
+
+    // The AppImage, which the Linux build must hold, is signed with the
+    // MyGo key of the public key.
+    const linux = () => {
+      const dir = directory();
+      writeFileSync(
+        path.join(dir, "package.json"),
+        JSON.stringify({ version: "1.0.0" }),
+      );
+      mygoBuild(dir, "linux-x86_64", keys);
+      return dir;
+    };
+    expect(() =>
+      stageUpdate(linux(), "linux-x86_64", "v1.0.0", {
+        ...keys.env,
+        MYGO_UPDATER_PRIVATE_KEY: releaseKeys().env.MYGO_UPDATER_PRIVATE_KEY,
+      }),
+    ).toThrow("does not match MYGO_UPDATER_PUBLIC_KEY");
+    const missing = linux();
+    rmSync(
+      path.join(missing, "build/linux-amd64/AstrLink_1.0.0_amd64.AppImage"),
+    );
+    expect(() =>
+      stageUpdate(missing, "linux-x86_64", "v1.0.0", keys.env),
+    ).toThrow("Missing AstrLink_1.0.0_amd64.AppImage");
+
+    const packages = staged(keys, ["linux-x86_64"]),
+      manifest = path.join(packages, appImageManifestName("linux-amd64")),
+      written = readFileSync(manifest, "utf8");
+    const tampered = (
+      change: (update: Record<string, unknown>) => void,
+      failure: string,
+    ) => {
+      const update = JSON.parse(written);
+      change(update);
+      writeFileSync(manifest, JSON.stringify(update));
+      expect(() =>
+        verifyMyGoUpdate(
+          packages,
+          "linux-amd64",
+          "v1.0.0",
+          keys.env.MYGO_UPDATER_PUBLIC_KEY,
+        ),
+      ).toThrow(failure);
+    };
+    tampered((update) => {
+      update.version = "0.9.0";
+    }, "AppImage manifest version mismatch");
+    tampered((update) => {
+      update.deltas = [];
+    }, "Unexpected AppImage update");
+    tampered((update) => {
+      update.signature = signMyGoUpdate(Buffer.from("other"), keys.mygo);
+    }, "MyGo update signature mismatch");
+  });
+
+  it("signs AppImage updates as mygo build does, with the key of mygo keygen", () => {
+    expect(appImageName("linux-amd64", "1.0.0-rc.1")).toBe(
+      "AstrLink_1.0.0-rc.1_amd64.AppImage",
+    );
+    expect(appImageName("windows-amd64", "1.0.0")).toBeNull();
+    const keys = mygoKeys(),
+      other = mygoKeys(),
+      bytes = Buffer.from("an AppImage");
+    // Ed25519 is deterministic: the signature Go's ed25519.Sign gives.
+    expect(
+      signMyGoUpdate(bytes, mygoSecretKey(keys.secret, keys.publicKey)),
+    ).toBe(
+      sign(
+        null,
+        createHash("sha256").update(bytes).digest(),
+        keys.privateKey,
+      ).toString("base64"),
+    );
+    expect(() => mygoSecretKey(keys.secret, other.publicKey)).toThrow(
+      "does not match",
+    );
+    // Go signs with the key's public half, which must be its seed's.
+    const mixed = Buffer.concat([
+      Buffer.from(keys.secret, "base64").subarray(0, 32),
+      Buffer.from(other.publicKey, "base64"),
+    ]).toString("base64");
+    expect(() => mygoSecretKey(mixed, other.publicKey)).toThrow(
+      "does not match",
+    );
+    expect(() => mygoSecretKey(keys.publicKey, keys.publicKey)).toThrow(
+      "not a MyGo update key",
+    );
   });
 
   it("validates release tags and identifies preview channels", () => {
@@ -512,6 +681,7 @@ describe("release updates", () => {
       ).toThrow(failure);
     };
     corrupt("last", "astrlink-1.0.0-linux-amd64.tar.gz", "size mismatch");
+    corrupt("last", "AstrLink_1.0.0_amd64.AppImage", "size mismatch");
     corrupt("partial", "AstrLink-macOS-arm64.app.tar.gz", "checksum");
   });
   it("adds a late platform to a published release without replacing a listed package", () => {
@@ -528,6 +698,7 @@ describe("release updates", () => {
     expect(Object.keys(manifest.platforms)).toEqual([
       "darwin-aarch64",
       "windows-x86_64",
+      "linux-x86_64",
       "darwin-x86_64",
     ]);
     expect(manifest.notes).toBe("Notes");
@@ -607,6 +778,7 @@ describe("release updates", () => {
       ]);
       expect(github.uploads()[1].sort()).toEqual([
         "update-darwin-arm64.json",
+        "update-linux-amd64-appimage.json",
         "update-linux-amd64.json",
         "update-windows-amd64.json",
       ]);
@@ -638,7 +810,7 @@ describe("release updates", () => {
     publishRelease(input, output, "v1.0.0", env, fresh.gh);
     const create = fresh.calls.find(([, action]) => action === "create")!;
     expect(create).toContain("--draft");
-    const notes = `Generated notes\n\n${linuxMigrationNotice}`;
+    const notes = "Generated notes";
     expect(
       readFileSync(create[create.indexOf("--notes-file") + 1], "utf8"),
     ).toBe(notes);

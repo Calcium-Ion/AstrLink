@@ -182,6 +182,10 @@ type Config struct {
 	Updater  Updater
 	// Relaunch starts the installed version.
 	Relaunch func()
+	// RelaunchAppImage quits and starts the AppImage file with args, in
+	// place of Relaunch when the app runs from an AppImage; nil quits the
+	// app through mygo (relaunchAppImage).
+	RelaunchAppImage func(file string, args []string)
 	// Transport goes through the system proxy, or straight out.
 	Transport func(useSystemProxy bool) http.RoundTripper
 	Now       func() time.Time
@@ -202,6 +206,9 @@ type Manager struct {
 	cfg   Config
 	key   ed25519.PublicKey
 	cache cache
+	// appImage is the AppImage file the app runs from, "" otherwise: its
+	// update is the release's AppImage, which replaces the file.
+	appImage string
 	// operation is held by the check, download or install that runs.
 	operation chan struct{}
 	// wake asks the scheduler to read its deadline again.
@@ -228,6 +235,9 @@ func NewManager(cfg Config) *Manager {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
+	if cfg.RelaunchAppImage == nil {
+		cfg.RelaunchAppImage = relaunchAppImage
+	}
 	m := &Manager{
 		cfg:       cfg,
 		cache:     cache{dir: cfg.CacheDir},
@@ -237,6 +247,9 @@ func NewManager(cfg Config) *Manager {
 	}
 	if key, err := parsePublicKey(cfg.PublicKey); err == nil {
 		m.key = key
+	}
+	if file, ok := appImageFile(); ok {
+		m.appImage = file
 	}
 	m.generationCtx, m.cancelGeneration = context.WithCancel(context.Background())
 	m.snapshot = UpdateSnapshot{
@@ -523,8 +536,14 @@ func (m *Manager) checkLocked(parent context.Context) UpdateSnapshot {
 	return m.Snapshot()
 }
 
-// manifestName is the manifest of this platform's update.
-func (m *Manager) manifestName() string { return "update-" + m.cfg.Target + ".json" }
+// manifestName is the manifest of this platform's update, or of the
+// AppImage the app runs from.
+func (m *Manager) manifestName() string {
+	if m.appImage != "" {
+		return appImageManifestName(m.cfg.Target)
+	}
+	return "update-" + m.cfg.Target + ".json"
+}
 
 func (m *Manager) checkInner(ctx context.Context, generation uint64) error {
 	values := m.cfg.Preferences()
@@ -625,12 +644,19 @@ func (m *Manager) checkInner(ctx context.Context, generation uint64) error {
 	if err != nil {
 		return err
 	}
-	installer, err := m.cfg.Updater.Check(ctx, body, m.openPackage)
-	if err != nil {
-		return failure("manifest", "%v", err)
-	}
-	if installer == nil {
-		return failure("manifest", "Release and update manifest versions disagree")
+	var installer Installer
+	if m.appImage != "" {
+		// The AppImage is always installed whole.
+		update.Deltas = nil
+		installer = appImageInstaller{target: m.appImage, file: update.firstFile(m.cfg.CurrentVersion), key: m.key, open: m.openPackage}
+	} else {
+		installer, err = m.cfg.Updater.Check(ctx, body, m.openPackage)
+		if err != nil {
+			return failure("manifest", "%v", err)
+		}
+		if installer == nil {
+			return failure("manifest", "Release and update manifest versions disagree")
+		}
 	}
 	file := update.firstFile(m.cfg.CurrentVersion)
 	cached := m.cache.verified(file, m.key) == nil
@@ -918,7 +944,11 @@ func (m *Manager) Install(ctx context.Context) (UpdateSnapshot, error) {
 	}
 	m.cache.clear()
 	// Core stays stopped: the new version starts its own.
-	m.cfg.Relaunch()
+	if m.appImage != "" {
+		m.cfg.RelaunchAppImage(m.appImage, os.Args[1:])
+	} else {
+		m.cfg.Relaunch()
+	}
 	return m.Snapshot(), nil
 }
 
