@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net/url"
 	"os"
 	"reflect"
@@ -714,9 +715,11 @@ func (m *Manager) monitor(generation uint64, events <-chan processEvent) {
 			// consumable while control requests are in flight.
 			go m.handleStdout(generation, event.text)
 		case processError:
+			log.Printf("astrlink: lost astrlink-core: %s", event.text)
 			m.handleProcessError(generation, event.text)
 			return
 		case processTerminated:
+			log.Printf("astrlink: astrlink-core exited: %s", event.text)
 			m.handleTerminated(generation, event.text)
 			return
 		}
@@ -928,6 +931,7 @@ func (m *Manager) failGenerationAndStop(generation uint64, message string) {
 }
 
 func (m *Manager) failGenerationAndStopLocked(generation uint64, message string) {
+	log.Printf("astrlink: stopping astrlink-core: %s", message)
 	s := &m.s
 	s.clearHandshake()
 	m.sessions.clear()
