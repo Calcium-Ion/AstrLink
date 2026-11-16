@@ -21,6 +21,9 @@ import (
 const (
 	requestTimeout          = 15 * time.Second
 	maxControlResponseBytes = 8 << 20
+	// One conversation carries every call it made; an agent that ran all
+	// day made 1,500 calls and about 10 MiB of them.
+	maxSessionResponseBytes = 64 << 20
 	// An audit read carries up to four captured bodies (client and upstream
 	// request and response). JSON escaping and base64 can grow them, so allow
 	// twice the largest capture the audit settings permit.
@@ -133,6 +136,12 @@ func isAuditReadPath(path string) bool {
 	return strings.HasPrefix(path, controlapi.RequestsPath+"/") && strings.HasSuffix(path, "/audit")
 }
 
+// isSessionReadPath reports whether path reads one conversation.
+func isSessionReadPath(path string) bool {
+	id, ok := strings.CutPrefix(path, controlapi.RequestSessionsPath+"/")
+	return ok && id != "" && !strings.Contains(id, "/")
+}
+
 func (client *Client) get(ctx context.Context, path string, query url.Values) (json.RawMessage, error) {
 	return client.do(ctx, http.MethodGet, path, query, nil, nil)
 }
@@ -151,6 +160,8 @@ func (client *Client) do(
 	limit, timeout := int64(maxControlResponseBytes), requestTimeout
 	if isAuditReadPath(path) {
 		limit, timeout = maxAuditResponseBytes, auditReadTimeout
+	} else if isSessionReadPath(path) {
+		limit = maxSessionResponseBytes
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()

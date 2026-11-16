@@ -481,12 +481,40 @@ var labels sync.Map // *mygo.Window → string
 func Register(w *mygo.Window, label string) {
 	labels.Store(w, label)
 	w.OnClosed(func() { labels.Delete(w) })
+	// WebKit ends a page's process when it runs out of memory, and a crash
+	// ends it too; either leaves the window blank until the page loads
+	// again.
+	var revive reviver
+	w.Page().OnRenderProcessGone(func(reason string) {
+		if !revive.allow(time.Now()) {
+			log.Printf("astrlink: the %s window's page stopped again (%s); not reloading it", label, reason)
+			return
+		}
+		log.Printf("astrlink: the %s window's page stopped (%s); reloading it", label, reason)
+		w.Page().Reload()
+	})
 	resized := func() { _ = WindowResized.Emit(w, struct{}{}) }
 	w.OnResize(resized)
 	w.OnMaximize(resized)
 	w.OnUnmaximize(resized)
 	w.OnEnterFullScreen(resized)
 	w.OnLeaveFullScreen(resized)
+}
+
+// reviveGap is how long a page must have run since it was last reloaded
+// after its process stopped before it is reloaded again, so a page that
+// stops as it loads is not reloaded over and over.
+const reviveGap = 30 * time.Second
+
+// reviver decides whether a page whose process stopped is reloaded.
+type reviver struct{ last time.Time }
+
+func (r *reviver) allow(now time.Time) bool {
+	if !r.last.IsZero() && now.Sub(r.last) < reviveGap {
+		return false
+	}
+	r.last = now
+	return true
 }
 
 // Label is a window's label, "" for none.

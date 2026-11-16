@@ -754,6 +754,9 @@
     "starTrailNote": "In the star trail, each ring is a day, with today on the outside. Hours run clockwise from 0 at the top. Each arc is one hour. Brighter arcs had more requests, and the color is the model used most in that hour, as in the model list. The blue line around the edge shows how much of today has passed.",
     "starTrailModelLabel": "Star trail of each model's usage by hour over the last 24 hours",
     "starTrailModelSummary": "{{hours}} arcs with usage across {{models}} rings over the last 24 hours. The busiest was {{busiest}}, with {{count}} tokens.",
+    "dayTrailWeekNote": "Over the last 24 hours, the star trail shows the last 7 days: each ring is a day, today on the outside. Hours run clockwise from 0 at the top. Each arc is one hour; brighter arcs had more requests, and the color is the model used most in that hour. The numbers and lists beside it count the last 24 hours only.",
+    "dayTrailShowModels": "Show a ring per model",
+    "dayTrailShowDays": "Show a ring per day",
     "starTrailModelNote": "Here each ring of the star trail is a model, the most used on the outside and the other models in the gray ring inside. Hours run clockwise from 0 at the top. Each arc is one hour. Brighter arcs used more tokens, and the colors match the model list. The blue line around the edge shows how much of today has passed; arcs past it are the same hours yesterday.",
     "liveCrew": {
       "title": "In progress",

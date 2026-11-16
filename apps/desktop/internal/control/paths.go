@@ -57,6 +57,10 @@ const (
 	// model directory can exceed 2 MiB when every installation carries the
 	// maximum 256-entry label mapping.
 	MaxControlBody = 8 << 20
+	// MaxSessionDetailBody bounds one conversation's detail, which carries
+	// every call: an agent that ran all day made 1,500 calls and about
+	// 10 MiB of them.
+	MaxSessionDetailBody = 64 << 20
 	// MaxAuditContentBody bounds decrypted audit content, which may reach
 	// response_content_max_bytes (64 MiB).
 	MaxAuditContentBody = 96 << 20
@@ -186,5 +190,14 @@ func BodyLimit(path string) int64 {
 	if isRequestAuditReadPath(path) {
 		return MaxAuditContentBody
 	}
+	if isRequestSessionDetailPath(path) {
+		return MaxSessionDetailBody
+	}
 	return MaxControlBody
+}
+
+// isRequestSessionDetailPath reports a read of one conversation.
+func isRequestSessionDetailPath(path string) bool {
+	id, ok := strings.CutPrefix(path, "/control/v1/request-sessions/")
+	return ok && id != "" && !strings.Contains(id, "/")
 }

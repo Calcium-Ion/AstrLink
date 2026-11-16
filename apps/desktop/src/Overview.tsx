@@ -48,7 +48,12 @@ import { Panel, PanelHeader } from "@/components/Panel";
 import { OrderedList } from "@/components/OrderedList";
 import { useOverviewLayout, type OverviewModuleId } from "./overview-layout";
 import { STAR_TRAIL_RANGES } from "./star-trail-model";
-import { UsageStarTrail, UsageStarTrailSkeleton } from "./UsageStarTrail";
+import {
+  readDayTrailMode,
+  saveDayTrailMode,
+  UsageStarTrail,
+  UsageStarTrailSkeleton,
+} from "./UsageStarTrail";
 import { LiveCrew } from "./LiveCrew";
 import { useInitialWindowFit } from "./main-window-fit";
 import { RequestSky } from "./RequestSky";
@@ -239,6 +244,8 @@ export function Overview({
     "desktop",
   );
   const rangeKey = usageRangeKey(usageRange);
+  // A day's star trail draws the week by default; the help can switch it.
+  const [dayTrail, setDayTrail] = useState(readDayTrailMode);
   const [editingLayout, setEditingLayout] = useState(false);
   const layout = useOverviewLayout();
   const footerRef = useRef<HTMLDivElement>(null);
@@ -434,6 +441,7 @@ export function Overview({
                 />
               ) : view === "trail" ? (
                 <UsageStarTrail
+                  dayTrail={dayTrail}
                   metrics={trailMetrics}
                   status={usage.status}
                   summary={summary}
@@ -919,11 +927,32 @@ export function Overview({
                     {t(
                       view !== "trail"
                         ? "overview.heatmapNote"
-                        : usageRange === "1d"
-                          ? "overview.starTrailModelNote"
-                          : "overview.starTrailNote",
+                        : usageRange !== "1d"
+                          ? "overview.starTrailNote"
+                          : dayTrail === "models"
+                            ? "overview.starTrailModelNote"
+                            : "overview.dayTrailWeekNote",
                     )}
                   </p>
+                  {view === "trail" && usageRange === "1d" ? (
+                    <Button
+                      className="mt-2 h-auto justify-start px-0 py-0 text-xs text-text-secondary has-[>svg]:px-0"
+                      onClick={() => {
+                        const next = dayTrail === "days" ? "models" : "days";
+                        setDayTrail(next);
+                        saveDayTrailMode(next);
+                      }}
+                      type="button"
+                      variant="link"
+                    >
+                      {t(
+                        dayTrail === "days"
+                          ? "overview.dayTrailShowModels"
+                          : "overview.dayTrailShowDays",
+                      )}
+                      <ArrowRight className="size-3.5" />
+                    </Button>
+                  ) : null}
                 </HelpPopover>
               ) : null
             }

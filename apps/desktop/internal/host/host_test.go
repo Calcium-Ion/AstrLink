@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/astrlink/desktop/internal/control"
 	"github.com/QuantumNous/astrlink/desktop/internal/core"
@@ -369,5 +370,22 @@ func TestAFirstRunFollowsTheSystemLanguages(t *testing.T) {
 		if got := h.locale(); got != c.want {
 			t.Errorf("%q: locale before the preferences load = %s, want %s", c.languages, got, c.want)
 		}
+	}
+}
+
+func TestReviverReloadsAStoppedPageButNotOneThatStopsAgainAtOnce(t *testing.T) {
+	var r reviver
+	start := time.Date(2026, 11, 16, 8, 19, 15, 0, time.UTC)
+	if !r.allow(start) {
+		t.Fatal("the first stop does not reload the page")
+	}
+	if r.allow(start.Add(reviveGap - time.Second)) {
+		t.Fatal("a page that stops again right after its reload is reloaded again")
+	}
+	if !r.allow(start.Add(reviveGap)) {
+		t.Fatal("a page that ran for a while after its reload is not reloaded")
+	}
+	if r.allow(start.Add(reviveGap + time.Second)) {
+		t.Fatal("the gap does not count from the latest reload")
 	}
 }

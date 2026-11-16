@@ -64,14 +64,18 @@ func TestTimeouts(t *testing.T) {
 	}
 }
 
-func TestBodyLimitRaisesOnlyForAuditContent(t *testing.T) {
+func TestBodyLimitRaisesOnlyForAuditContentAndOneConversation(t *testing.T) {
 	const id = "req_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	for path, want := range map[string]int64{
-		"/control/v1/requests/" + id + "/audit":         MaxAuditContentBody,
-		"/control/v1/requests/" + id + "/audit/context": MaxAuditContentBody,
-		"/control/v1/requests":                          MaxControlBody,
-		"/control/v1/requests/" + id:                    MaxControlBody,
-		"/control/v1/audit-settings":                    MaxControlBody,
+		"/control/v1/requests/" + id + "/audit":                   MaxAuditContentBody,
+		"/control/v1/requests/" + id + "/audit/context":           MaxAuditContentBody,
+		"/control/v1/request-sessions/session_a":                  MaxSessionDetailBody,
+		"/control/v1/requests":                                    MaxControlBody,
+		"/control/v1/requests/" + id:                              MaxControlBody,
+		"/control/v1/request-sessions":                            MaxControlBody,
+		"/control/v1/request-sessions/":                           MaxControlBody,
+		"/control/v1/request-sessions/session_a/channel-bindings": MaxControlBody,
+		"/control/v1/audit-settings":                              MaxControlBody,
 	} {
 		if got := BodyLimit(path); got != want {
 			t.Errorf("BodyLimit(%s) = %d, want %d", path, got, want)

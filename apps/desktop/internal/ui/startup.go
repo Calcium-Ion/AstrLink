@@ -10,14 +10,16 @@ import (
 )
 
 // The main window's opening size: a share of the display's work area at a
-// fixed ratio, never wider than maxStartupWidth. A work area too short for
-// that ratio keeps the ratio's height but takes the share of its width.
+// fixed ratio, its width kept between minStartupWidth and maxStartupWidth.
 const (
 	workAreaFraction = 0.82
 	aspectRatio      = 19.0 / 12.0
 	// Keep the opening width while giving lists and editors more vertical
 	// room. The height stays below 89% of the work area (0.82 × 1.08).
 	defaultHeightScale = 1.08
+	// A narrower window stacks the settings' pictures under their controls.
+	// A work area whose share is narrower still opens at that share.
+	minStartupWidth = 1024
 	// Large and ultrawide displays would otherwise open a window whose extra
 	// width only spreads fixed-size content apart.
 	maxStartupWidth = 1200
@@ -50,16 +52,13 @@ type startupGeometry struct {
 // computeStartupGeometry fits the whole window, its frame included, in
 // work: frame is what the window adds around its page area. It reports
 // false when the work area is too small for any window.
-func computeStartupGeometry(work mygo.Rectangle, frame, minimum mygo.Size, maximumWidth int) (startupGeometry, bool) {
-	width := math.Min(float64(work.Width)*workAreaFraction, float64(maximumWidth))
-	// The height follows the ratio's width. When the work area's height
-	// limits that width (a laptop or a scaled 1080p display), the window
-	// still takes its share of the width: tied to the ratio it opened about
-	// 820 wide on a 1280 × 720 display, which stacked side-by-side panels
-	// and left a fifth of the screen empty on each side.
-	ratioWidth := math.Floor(math.Min(width, float64(work.Height)*workAreaFraction*aspectRatio))
+func computeStartupGeometry(work mygo.Rectangle, frame, minimum mygo.Size, minimumWidth, maximumWidth int) (startupGeometry, bool) {
+	share := math.Min(float64(work.Width)*workAreaFraction, float64(maximumWidth))
+	// The ratio's width, which the work area's height may limit, sets the
+	// height. The width only moves up to the minimum, within the share.
+	ratioWidth := math.Floor(math.Min(share, float64(work.Height)*workAreaFraction*aspectRatio))
 	height := int(math.Floor(ratioWidth / aspectRatio * defaultHeightScale))
-	opening := int(math.Floor(width))
+	opening := int(math.Floor(math.Min(math.Max(ratioWidth, float64(minimumWidth)), share)))
 	if opening <= frame.Width || height <= frame.Height {
 		return startupGeometry{}, false
 	}
@@ -183,7 +182,7 @@ func (s *Startup) FitToDisplay(w *mygo.Window) error {
 	contentWidth, contentHeight := w.ContentSize()
 	frame := mygo.Size{Width: max(bounds.Width-contentWidth, 0), Height: max(bounds.Height-contentHeight, 0)}
 	geometry, ok := computeStartupGeometry(display.WorkArea, frame,
-		mygo.Size{Width: mainMinWidth, Height: mainMinHeight}, maxStartupWidth)
+		mygo.Size{Width: mainMinWidth, Height: mainMinHeight}, minStartupWidth, maxStartupWidth)
 	if !ok {
 		return errors.New("the display's work area is too small for the main window")
 	}

@@ -206,7 +206,7 @@ func (b *bridge) cases() []bridgeCase {
 	s, p, sy, r, ro, a, tk, u, pr := b.services, b.pricing, b.sync, b.records, b.routing, b.audit, b.tokens, b.usage, b.privacy
 	get, post, put, patch, del := http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete
 	const short, list, usage = RequestTimeout, RequestListTimeout, SubscriptionUsageTimeout
-	const normal, audit = MaxControlBody, MaxAuditContentBody
+	const normal, audit, conversation = MaxControlBody, MaxAuditContentBody, MaxSessionDetailBody
 	service := `{"id":"service_a","name":"A"}`
 	routing := `{"default_failure_policy":` + failurePolicyJSON + `,"allow_unmatched_failover":false,"strategy":"retry_first","max_attempts":6}`
 	catalog := catalogJSON(privacyVariantJSON, `"0.2.0"`, "true")
@@ -330,7 +330,7 @@ func (b *bridge) cases() []bridgeCase {
 			return r.GetProjectMemoryEntry(ctx, raw(`{"project":"~/proj","file":"a.md"}`))
 		}, method: get, path: "/control/v1/request-memory/entry?project=~%2Fproj&file=a.md", timeout: list, limit: normal, reply: `{"turns":[]}`},
 		{name: "get_request_session", call: func(ctx context.Context) (any, error) { return r.GetRequestSession(ctx, "session_a") },
-			method: get, path: "/control/v1/request-sessions/session_a", timeout: list, limit: normal, reply: `{"id":"session_a"}`},
+			method: get, path: "/control/v1/request-sessions/session_a", timeout: list, limit: conversation, reply: `{"id":"session_a"}`},
 		{name: "get_session_channel_bindings", call: func(ctx context.Context) (any, error) {
 			return r.GetSessionChannelBindings(ctx, "session_a", ptr(int64(7)))
 		}, method: get, path: "/control/v1/request-sessions/session_a/channel-bindings?before=7", timeout: list, limit: normal, reply: `{"bindings":[]}`},

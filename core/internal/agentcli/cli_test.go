@@ -282,3 +282,27 @@ func TestAuditReadsReturnBodiesLargerThanOtherResponses(t *testing.T) {
 		t.Fatalf("oversized response: code=%d stdout=%d bytes stderr=%q", code, len(stdout), stderr)
 	}
 }
+
+// One conversation carries every call it made, so a long one reads past the
+// limit other responses keep.
+func TestASessionReadReturnsALongConversation(t *testing.T) {
+	padding := strings.Repeat("x", maxControlResponseBytes+1)
+	mux := http.NewServeMux()
+	mux.HandleFunc(controlapi.RequestSessionsPath+"/session_long", func(writer http.ResponseWriter, _ *http.Request) {
+		writeJSON(writer, map[string]any{"id": "session_long", "padding": padding})
+	})
+	mux.HandleFunc(controlapi.RequestSessionsPath, func(writer http.ResponseWriter, _ *http.Request) {
+		writeJSON(writer, map[string]any{"items": []any{}, "padding": padding})
+	})
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+
+	code, stdout, stderr := runCLI(t, server.URL, "session", "session_long")
+	if code != 0 || !strings.Contains(stdout, "session_long") {
+		t.Fatalf("session: code=%d stdout=%d bytes stderr=%q", code, len(stdout), stderr)
+	}
+	code, stdout, stderr = runCLI(t, server.URL, "sessions")
+	if code != 1 || stdout != "" || !strings.Contains(stderr, "larger than 8 MiB") {
+		t.Fatalf("sessions: code=%d stdout=%d bytes stderr=%q", code, len(stdout), stderr)
+	}
+}

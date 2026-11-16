@@ -156,6 +156,13 @@ const surface = isWebEdition ? (
   <App />
 );
 
+// React's development build records a performance measure for every
+// component it renders, and WebKit keeps them all: a window open for hours
+// grows to gigabytes until WebKit ends the page.
+if (process.env.NODE_ENV === "development") {
+  window.setInterval(() => performance.clearMeasures(), 10_000);
+}
+
 createRoot(root).render(
   <StrictMode>
     <I18nextProvider i18n={i18n}>

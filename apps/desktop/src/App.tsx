@@ -369,7 +369,10 @@ export default function App() {
     if (generation === null) return;
     try {
       const next = await getCoreStatus();
-      if (requestGate.isCurrent(generation)) setSnapshot(next);
+      // The status rarely changes between polls; an unchanged one keeps
+      // the app from drawing every page again.
+      if (requestGate.isCurrent(generation))
+        setSnapshot((current) => (sameData(current, next) ? current : next));
     } catch (error) {
       if (requestGate.isCurrent(generation)) {
         setSnapshot((current) =>
