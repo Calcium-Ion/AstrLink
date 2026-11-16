@@ -12,7 +12,7 @@ type ServiceTester interface {
 }
 
 func (handler *Handler) testService(writer http.ResponseWriter, request *http.Request, id contract.ServiceID) {
-	if !requireMediaType(writer, request, "application/json") {
+	if !requireMediaType(writer, request) {
 		return
 	}
 	var input contract.ServiceTestRequest

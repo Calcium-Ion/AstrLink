@@ -362,6 +362,17 @@ openapi.fetch("paths").each do |path, item|
     raise "#{method.upcase} #{path} must declare x-astrlink-role: #{expected} (got #{role.inspect})" unless role == expected
   end
 end
+# Core and its clients pick a request body's media type from the method
+# alone: a JSON merge patch for PATCH, JSON for everything else.
+openapi.fetch("paths").each do |path, item|
+  item.slice("post", "put", "patch", "delete").each do |method, operation|
+    content = operation.dig("requestBody", "content")
+    next if content.nil?
+
+    expected = method == "patch" ? "application/merge-patch+json" : "application/json"
+    raise "#{method.upcase} #{path} request body must be #{expected} (got #{content.keys.join(', ')})" unless content.keys == [expected]
+  end
+end
 %w[
   GET\ /control/v1/services
   POST\ /control/v1/services

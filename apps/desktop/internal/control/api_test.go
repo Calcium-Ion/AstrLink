@@ -501,8 +501,14 @@ func TestForwardedCommandsSendTheirRequestAndConvertRefusals(t *testing.T) {
 			if tc.body == "" && got.body != "" || tc.body != "" && !sameJSON(got.body, tc.body) {
 				t.Errorf("body = %s, want %s", got.body, tc.body)
 			}
-			if tc.body != "" && got.contentType == "" {
-				t.Error("body sent without a content type")
+			// Core takes a merge patch for PATCH and JSON otherwise.
+			if want := "application/json"; tc.body != "" {
+				if got.method == http.MethodPatch {
+					want = "application/merge-patch+json"
+				}
+				if got.contentType != want {
+					t.Errorf("Content-Type = %q, want %q", got.contentType, want)
+				}
 			}
 			if timeout := Timeout(got.method, got.path); timeout != tc.timeout {
 				t.Errorf("timeout = %v, want %v", timeout, tc.timeout)

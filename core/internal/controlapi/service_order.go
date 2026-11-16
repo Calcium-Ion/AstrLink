@@ -20,7 +20,7 @@ func (handler *Handler) serviceOrderResource(w http.ResponseWriter, r *http.Requ
 	case http.MethodGet:
 		record, err = store.GetServiceOrder(r.Context())
 	case http.MethodPut:
-		if !requireMediaType(w, r, "application/json") {
+		if !requireMediaType(w, r) {
 			return
 		}
 		if r.Header.Get("If-Match") == "" {

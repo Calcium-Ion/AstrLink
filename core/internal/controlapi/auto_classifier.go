@@ -61,7 +61,7 @@ func (handler *Handler) autoClassifierLocalProbe(
 		writeError(writer, http.StatusMethodNotAllowed, "method_not_allowed", "only POST is allowed")
 		return
 	}
-	if !requireMediaType(writer, request, "application/json") {
+	if !requireMediaType(writer, request) {
 		return
 	}
 	var input contract.AutoClassifierLocalProbeRequest
@@ -105,7 +105,7 @@ func (handler *Handler) installAutoClassifier(
 	writer http.ResponseWriter,
 	request *http.Request,
 ) {
-	if !requireMediaType(writer, request, "application/json") {
+	if !requireMediaType(writer, request) {
 		return
 	}
 	var input contract.AutoClassifierInstallRequest
@@ -137,7 +137,7 @@ func (handler *Handler) autoClassifierClassifyPreview(
 		writeError(writer, http.StatusMethodNotAllowed, "method_not_allowed", "only POST is allowed")
 		return
 	}
-	if !requireMediaType(writer, request, "application/json") {
+	if !requireMediaType(writer, request) {
 		return
 	}
 	var input contract.AutoClassifierClassifyPreviewRequest

@@ -757,7 +757,7 @@ func (handler *Handler) purgeRequestRecords(writer http.ResponseWriter, request 
 		writeError(writer, http.StatusMethodNotAllowed, "method_not_allowed", "only POST is allowed")
 		return
 	}
-	if !requireMediaType(writer, request, "application/json") {
+	if !requireMediaType(writer, request) {
 		return
 	}
 	var input contract.PurgeRequest

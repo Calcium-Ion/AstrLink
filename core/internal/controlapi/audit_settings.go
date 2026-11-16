@@ -37,7 +37,7 @@ func (handler *Handler) getAuditSettings(writer http.ResponseWriter, request *ht
 }
 
 func (handler *Handler) patchAuditSettings(writer http.ResponseWriter, request *http.Request) {
-	if !requireMediaType(writer, request, "application/merge-patch+json") {
+	if !requireMediaType(writer, request) {
 		return
 	}
 	var raw map[string]json.RawMessage

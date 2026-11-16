@@ -199,7 +199,7 @@ func (handler *Handler) getPolicy(writer http.ResponseWriter, request *http.Requ
 }
 
 func (handler *Handler) patchPolicy(writer http.ResponseWriter, request *http.Request, id contract.PolicyID) {
-	if !requireMediaType(writer, request, "application/merge-patch+json") {
+	if !requireMediaType(writer, request) {
 		return
 	}
 	expectedETag := request.Header.Get("If-Match")
@@ -261,7 +261,7 @@ func (handler *Handler) policyDryRun(writer http.ResponseWriter, request *http.R
 		writeError(writer, http.StatusServiceUnavailable, "safety_engine_unavailable", "local safety engine is unavailable")
 		return
 	}
-	if !requireMediaType(writer, request, "application/json") {
+	if !requireMediaType(writer, request) {
 		return
 	}
 	var input contract.PolicyDryRunRequest

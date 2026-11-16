@@ -1591,7 +1591,7 @@ paths:
       requestBody:
         required: true
         content:
-          application/json:
+          application/merge-patch+json:
             schema:
               $ref: "#/components/schemas/AccessTokenUpdate"
       responses:
@@ -1612,6 +1612,8 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+        "415":
+          description: Content-Type must be application/merge-patch+json.
         "422":
           $ref: "#/components/responses/UnprocessableEntity"
     delete:

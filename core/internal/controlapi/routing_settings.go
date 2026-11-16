@@ -25,7 +25,7 @@ func (handler *Handler) routingSettingsResource(writer http.ResponseWriter, requ
 		}
 		writeJSON(writer, http.StatusOK, routingSettingsView(settings))
 	case http.MethodPatch:
-		if !requireMediaType(writer, request, "application/merge-patch+json") {
+		if !requireMediaType(writer, request) {
 			return
 		}
 		var patch map[string]json.RawMessage

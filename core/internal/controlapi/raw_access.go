@@ -781,7 +781,7 @@ func (handler *Handler) requestRawAccess(writer http.ResponseWriter, request *ht
 	if !ok {
 		return
 	}
-	if !requireMediaType(writer, request, "application/json") {
+	if !requireMediaType(writer, request) {
 		return
 	}
 	var body rawAccessRequestBody
@@ -1064,7 +1064,7 @@ func decodeSecretJSON(
 	request *http.Request,
 	allowed ...string,
 ) (map[string]json.RawMessage, func(), bool) {
-	if !requireMediaType(writer, request, "application/json") {
+	if !requireMediaType(writer, request) {
 		return nil, nil, false
 	}
 	buffer := make([]byte, maxSecretBodyBytes+1)

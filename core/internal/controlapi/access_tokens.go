@@ -150,7 +150,7 @@ func (handler *Handler) listAccessTokens(writer http.ResponseWriter, request *ht
 }
 
 func (handler *Handler) createAccessToken(writer http.ResponseWriter, request *http.Request) {
-	if !requireMediaType(writer, request, "application/json") {
+	if !requireMediaType(writer, request) {
 		return
 	}
 	var input accessTokenCreateRequest
@@ -185,7 +185,8 @@ func (handler *Handler) updateAccessToken(
 	request *http.Request,
 	id contract.AccessTokenID,
 ) {
-	if !requireMediaType(writer, request, "application/json") {
+	// The merge patch names all three fields, so it replaces them.
+	if !requireMediaType(writer, request) {
 		return
 	}
 	var input accessTokenUpdateRequest

@@ -148,13 +148,20 @@ func isJSONNull(raw json.RawMessage) bool {
 	return bytes.Equal(bytes.TrimSpace(raw), []byte("null"))
 }
 
-func requireMediaType(
-	writer http.ResponseWriter,
-	request *http.Request,
-	expected string,
-) bool {
+// bodyMediaType is the one media type a control request body may have: a
+// JSON merge patch (RFC 7396) for PATCH and JSON for every other method.
+// The method decides it, not the handler, because the desktop app and the
+// web console choose it the same way.
+func bodyMediaType(method string) string {
+	if method == http.MethodPatch {
+		return "application/merge-patch+json"
+	}
+	return "application/json"
+}
+
+func requireMediaType(writer http.ResponseWriter, request *http.Request) bool {
 	mediaType, _, err := mime.ParseMediaType(request.Header.Get("Content-Type"))
-	if err != nil || mediaType != expected {
+	if err != nil || mediaType != bodyMediaType(request.Method) {
 		writeError(
 			writer,
 			http.StatusUnsupportedMediaType,

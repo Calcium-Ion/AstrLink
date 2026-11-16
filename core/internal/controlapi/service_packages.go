@@ -52,7 +52,7 @@ func (handler *Handler) updateServicePackage(writer http.ResponseWriter, request
 		writeError(writer, http.StatusNotFound, "not_found", "service package not found")
 		return
 	}
-	if !requireMediaType(writer, request, "application/merge-patch+json") {
+	if !requireMediaType(writer, request) {
 		return
 	}
 	var patch struct {
