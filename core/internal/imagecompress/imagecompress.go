@@ -1,4 +1,6 @@
-// Package imagecompress re-encodes request images as WebP.
+// Package imagecompress re-encodes request images as WebP: lossless with
+// moego's encoder, lossy with deepteams/webp, since moego writes lossless
+// WebP only.
 package imagecompress
 
 import (
@@ -15,7 +17,8 @@ import (
 	"runtime"
 	"sync"
 
-	"github.com/deepteams/webp"
+	"github.com/MoeForge/moego/webp"
+	deepwebp "github.com/deepteams/webp"
 )
 
 const (
@@ -146,23 +149,31 @@ func encode(data []byte, lossy bool, quality int) []byte {
 		}
 	}
 	if lossy {
-		options := webp.DefaultOptions()
-		options.Quality = float32(quality)
-		keep(encodeWebP(img, options))
+		keep(lossyWebP(img, quality))
 	}
 	if exact {
-		options := webp.DefaultOptions()
-		// Exact keeps the color under transparent pixels too, so an upstream
-		// that drops the alpha channel still sees the original image.
-		options.Lossless, options.Exact = true, true
-		keep(encodeWebP(img, options))
+		keep(losslessWebP(img))
 	}
 	return best
 }
 
-func encodeWebP(img image.Image, options *webp.EncoderOptions) []byte {
+func lossyWebP(img image.Image, quality int) []byte {
+	options := deepwebp.DefaultOptions()
+	options.Quality = float32(quality)
 	var encoded bytes.Buffer
-	if webp.Encode(&encoded, img, options) != nil {
+	if deepwebp.Encode(&encoded, img, options) != nil {
+		return nil
+	}
+	return encoded.Bytes()
+}
+
+// losslessWebP keeps the color under transparent pixels too, so an upstream
+// that drops the alpha channel still sees the original image. The default
+// level runs in the request path: BestCompression saves a few percent more
+// at about three times the encode time.
+func losslessWebP(img image.Image) []byte {
+	var encoded bytes.Buffer
+	if webp.Encode(&encoded, img) != nil {
 		return nil
 	}
 	return encoded.Bytes()

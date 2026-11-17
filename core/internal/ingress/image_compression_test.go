@@ -15,10 +15,10 @@ import (
 	"strings"
 	"testing"
 
+	moewebp "github.com/MoeForge/moego/webp"
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/endpoint"
 	"github.com/QuantumNous/astrlink/core/internal/imagecompress"
-	deepwebp "github.com/deepteams/webp"
 	"golang.org/x/image/webp"
 )
 
@@ -296,9 +296,7 @@ func TestImageCompressionSendsTheSameBytesOnEveryAttempt(t *testing.T) {
 func TestGeneratedWebPStillConvertsToPNG(t *testing.T) {
 	source := testScreenshot(64, 48)
 	var encoded bytes.Buffer
-	options := deepwebp.DefaultOptions()
-	options.Lossless, options.Exact = true, true
-	if err := deepwebp.Encode(&encoded, source, options); err != nil {
+	if err := moewebp.Encode(&encoded, source); err != nil {
 		t.Fatal(err)
 	}
 	converted, err := pngImage("data:image/webp;base64," + base64.StdEncoding.EncodeToString(encoded.Bytes()))
