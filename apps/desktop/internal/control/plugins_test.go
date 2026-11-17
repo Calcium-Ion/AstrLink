@@ -344,12 +344,14 @@ func TestAnInstallFromSourceWaitsAndARefusalComesBackWhole(t *testing.T) {
 
 func TestPluginInterfaceCodeIsServedToTheMainWindowOnly(t *testing.T) {
 	for path, want := range map[string]bool{
-		"/notes/client.js":     true,
-		"/notes/client.js.map": true,
-		"/notes/plugin.js":     false,
-		"/../client.js":        false,
-		"/Notes/client.js":     false,
-		"/notes":               false,
+		"/notes/client.js":         true,
+		"/notes/client.js.map":     true,
+		"/ollama_rerank/client.js": true,
+		"/1panel/client.js":        true,
+		"/notes/plugin.js":         false,
+		"/../client.js":            false,
+		"/Notes/client.js":         false,
+		"/notes":                   false,
 	} {
 		if _, _, ok := pluginClientFile(path); ok != want {
 			t.Errorf("%s served = %v", path, ok)

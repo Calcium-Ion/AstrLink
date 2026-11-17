@@ -723,7 +723,8 @@ func pluginClientFile(path string) (key, file string, ok bool) {
 	if !ok || (file != "client.js" && file != "client.js.map") {
 		return "", "", false
 	}
-	if !pluginNameOK(key, '-') {
+	// Any key Core accepts, as new-api plugin keys with underscores.
+	if !pluginKeyOK(key) {
 		return "", "", false
 	}
 	return key, file, true

@@ -360,7 +360,7 @@ export function pluginClientURL(key: string, version: string): string {
 /** The plugin whose interface code a script URL is, if any. */
 export function pluginOfScript(url: string | undefined): string | null {
   const match =
-    /(?:astrlink-plugin:\/\/localhost|astrlink-plugin\.localhost|\/control\/v1\/plugins)\/([a-z][a-z0-9-]{0,31})\/client\.js/.exec(
+    /(?:astrlink-plugin:\/\/localhost|astrlink-plugin\.localhost|\/control\/v1\/plugins)\/([a-z0-9][a-z0-9_-]{0,63})\/client\.js/.exec(
       url ?? "",
     );
   return match ? match[1] : null;

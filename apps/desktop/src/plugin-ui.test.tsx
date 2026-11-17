@@ -251,6 +251,9 @@ describe("plugin interfaces", () => {
     expect(pluginOfScript("/control/v1/plugins/notes/client.js?v=1")).toBe(
       "notes",
     );
+    expect(
+      pluginOfScript("astrlink-plugin://localhost/ollama_rerank/client.js"),
+    ).toBe("ollama_rerank");
     expect(pluginOfScript("https://example.com/app.js")).toBeNull();
   });
 });
