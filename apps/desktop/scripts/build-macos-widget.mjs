@@ -1,15 +1,18 @@
 // Builds and signs the macOS desktop widget (`macos-widget/`) with swiftc
 // alone, so neither CI nor a local build needs Xcode.
 //
-//   bun scripts/build-macos-widget.mjs            build the appex (Tauri's
-//                                                 beforeBundleCommand on macOS)
+//   bun scripts/build-macos-widget.mjs [--arch arm64|x86_64|universal]
+//                                                 build the appex and the
+//                                                 host's WidgetKit bridge
 //   bun scripts/build-macos-widget.mjs --test     run the widget's model tests
 //   bun scripts/build-macos-widget.mjs --render <dir>
 //                                                 draw every size and state
 //
-// The appex lands in src-tauri/target/macos-widget, signed with the app's
-// identity, and tauri.macos.conf.json copies it into Contents/PlugIns before
-// Tauri signs the app around it.
+// The appex lands in build/macos-widget, signed with the app's identity, and
+// `mygo build` copies it into Contents/PlugIns (macos.plugIns) before it
+// signs the app around it. The bridge (macos-widget/HostBridge) lands in
+// resources/darwin-<arch>, which the app opens to ask WidgetKit to redraw.
+// Off macOS the build is skipped: cross-packaged apps have no widget.
 import { spawnSync } from "node:child_process";
 import {
   cpSync,
@@ -24,12 +27,13 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
 const desktop = fileURLToPath(new URL("../", import.meta.url));
-const tauriDirectory = path.join(desktop, "src-tauri");
 const widget = path.join(desktop, "macos-widget");
-const output = path.join(tauriDirectory, "target/macos-widget");
+const output = path.join(desktop, "build/macos-widget");
 const moduleName = "AstrLinkWidgets";
 // WidgetKit's configurable widgets and containerBackground need macOS 14.
 const minimumSystemVersion = "14.0";
+// The app's (macos.minimumSystemVersion in mygo.config.ts).
+const appMinimumSystemVersion = "13.4";
 // The widget's own strings; app copy comes from the snapshot's language.
 const displayNames = {
   en: (product) => `${product} Widgets`,
@@ -83,28 +87,10 @@ function swiftc(sources, target, binary, extraArgs = []) {
   ]);
 }
 
-// JSON Merge Patch, as Tauri applies platform and --config files.
-function merge(base, patch) {
-  if (patch === null || typeof patch !== "object" || Array.isArray(patch))
-    return patch;
-  const merged =
-    base && typeof base === "object" && !Array.isArray(base) ? { ...base } : {};
-  for (const [key, value] of Object.entries(patch)) {
-    if (value === null) delete merged[key];
-    else merged[key] = merge(merged[key], value);
-  }
-  return merged;
-}
-
-/** The app config Tauri is bundling: the base file, the macOS file, then
- * every --config file, which the CLI passes to hooks as TAURI_CONFIG. */
-export function bundleConfig(environment = process.env) {
-  const read = (name) =>
-    JSON.parse(readFileSync(path.join(tauriDirectory, name), "utf8"));
-  let config = merge(read("tauri.conf.json"), read("tauri.macos.conf.json"));
-  if (environment.TAURI_CONFIG)
-    config = merge(config, JSON.parse(environment.TAURI_CONFIG));
-  return config;
+/** The app's packaging configuration, as `mygo build` reads it. */
+export async function bundleConfig() {
+  const { default: config } = await import("../mygo.config.ts");
+  return typeof config === "function" ? config({ command: "build" }) : config;
 }
 
 /** The App Group the app is signed with; the widget reads the same one. */
@@ -123,12 +109,17 @@ export function appGroup(entitlements) {
   return groups[0];
 }
 
-/** swiftc targets for Tauri's target triple. */
-export function architectures(triple = "") {
-  if (triple.startsWith("universal")) return ["arm64", "x86_64"];
-  if (triple.startsWith("aarch64")) return ["arm64"];
-  if (triple.startsWith("x86_64")) return ["x86_64"];
+/** swiftc targets for --arch: arm64, x86_64 (or amd64) or universal. */
+export function architectures(arch = "") {
+  if (arch === "universal") return ["arm64", "x86_64"];
+  if (arch === "arm64") return ["arm64"];
+  if (arch === "x86_64" || arch === "amd64") return ["x86_64"];
   return [process.arch === "arm64" ? "arm64" : "x86_64"];
+}
+
+/** The MyGo resource directory of a swiftc architecture. */
+export function resourcePlatform(arch) {
+  return `darwin-${arch === "arm64" ? "arm64" : "amd64"}`;
 }
 
 function escape(text) {
@@ -267,15 +258,45 @@ export function intentsMetadata(sdkBuild) {
   };
 }
 
-function buildAppex() {
-  const config = bundleConfig();
-  const macOS = config.bundle?.macOS ?? {};
+/** Builds the host's WidgetKit bridge into each architecture's resources. */
+function buildBridge(arches) {
+  const sources = swiftFiles("HostBridge");
+  for (const arch of arches) {
+    const directory = path.join(desktop, "resources", resourcePlatform(arch));
+    mkdirSync(directory, { recursive: true });
+    const library = path.join(directory, "libastrlink_widget_bridge.dylib");
+    run("xcrun", [
+      "swiftc",
+      "-sdk",
+      run("xcrun", ["--sdk", "macosx", "--show-sdk-path"]),
+      // The app's minimum: the host loads it on every supported macOS and
+      // skips WidgetKit where widgets are not available.
+      "-target",
+      `${arch}-apple-macos${appMinimumSystemVersion}`,
+      "-swift-version",
+      "5",
+      "-parse-as-library",
+      "-emit-library",
+      "-module-name",
+      "AstrLinkWidgetBridge",
+      "-O",
+      ...sources,
+      "-o",
+      library,
+    ]);
+    console.log(`Built ${path.relative(desktop, library)}.`);
+  }
+}
+
+async function buildAppex(arches) {
+  const config = await bundleConfig();
+  const macOS = config.macos ?? {};
   if (!macOS.entitlements)
-    throw new Error("bundle.macOS.entitlements must name the app's App Group.");
+    throw new Error("macos.entitlements must name the app's App Group.");
   const group = appGroup(
-    readFileSync(path.resolve(tauriDirectory, macOS.entitlements), "utf8"),
+    readFileSync(path.resolve(desktop, macOS.entitlements), "utf8"),
   );
-  const product = config.productName;
+  const product = config.name;
   const version = config.version;
 
   rmSync(output, { recursive: true, force: true });
@@ -287,22 +308,20 @@ function buildAppex() {
   mkdirSync(path.join(contents, "MacOS"), { recursive: true });
 
   const sources = swiftFiles("Sources", "Main");
-  const slices = architectures(process.env.TAURI_ENV_TARGET_TRIPLE).map(
-    (arch) => {
-      const binary = path.join(build, `${moduleName}-${arch}`);
-      // Extensions start in Foundation's _NSExtensionMain, as Xcode links
-      // them. Started at the Swift main, WidgetKit traps before the system
-      // can list the widget.
-      swiftc(sources, arch, binary, [
-        "-application-extension",
-        "-Xlinker",
-        "-e",
-        "-Xlinker",
-        "_NSExtensionMain",
-      ]);
-      return binary;
-    },
-  );
+  const slices = arches.map((arch) => {
+    const binary = path.join(build, `${moduleName}-${arch}`);
+    // Extensions start in Foundation's _NSExtensionMain, as Xcode links
+    // them. Started at the Swift main, WidgetKit traps before the system
+    // can list the widget.
+    swiftc(sources, arch, binary, [
+      "-application-extension",
+      "-Xlinker",
+      "-e",
+      "-Xlinker",
+      "_NSExtensionMain",
+    ]);
+    return binary;
+  });
   const executable = path.join(contents, "MacOS", moduleName);
   run("lipo", ["-create", ...slices, "-output", executable]);
   // A wrong entry point only shows as a widget missing from the gallery.
@@ -329,7 +348,7 @@ function buildAppex() {
       CFBundlePackageType: "XPC!",
       CFBundleShortVersionString: version,
       CFBundleSupportedPlatforms: ["MacOSX"],
-      CFBundleVersion: macOS.bundleVersion ?? version,
+      CFBundleVersion: version,
       LSMinimumSystemVersion: minimumSystemVersion,
       NSExtension: {
         NSExtensionPointIdentifier: "com.apple.widgetkit-extension",
@@ -371,9 +390,8 @@ function buildAppex() {
       "com.apple.security.application-groups": [group],
     }),
   );
-  // The app's identity: the same variable Tauri signs with, then the config.
-  const identity =
-    process.env.APPLE_SIGNING_IDENTITY || macOS.signingIdentity || "-";
+  // The app's identity: macos.signingIdentity, from APPLE_SIGNING_IDENTITY.
+  const identity = macOS.signingIdentity || "-";
   run("codesign", [
     "--force",
     "--sign",
@@ -425,11 +443,21 @@ if (
   path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
 ) {
   const { values } = parseArgs({
-    options: { test: { type: "boolean" }, render: { type: "string" } },
+    options: {
+      test: { type: "boolean" },
+      render: { type: "string" },
+      arch: { type: "string" },
+    },
   });
-  if (process.platform !== "darwin")
-    throw new Error("The macOS widget builds on macOS only.");
-  if (values.test) runTests();
+  if (process.platform !== "darwin") {
+    if (values.test || values.render)
+      throw new Error("The macOS widget builds on macOS only.");
+    console.log("Skipping the macOS widget: it builds on macOS only.");
+  } else if (values.test) runTests();
   else if (values.render) renderPreviews(values.render);
-  else buildAppex();
+  else {
+    const arches = architectures(values.arch);
+    buildBridge(arches);
+    await buildAppex(arches);
+  }
 }

@@ -17,6 +17,13 @@ vi.mock("./pricing-bridge", async (importOriginal) => ({
   getBillingSummary: billingMocks.getBillingSummary,
 }));
 
+// The star trail reads the week behind a day's numbers itself.
+const usageMocks = vi.hoisted(() => ({ getUsageSummary: vi.fn() }));
+vi.mock("./bridge", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./bridge")>()),
+  getUsageSummary: usageMocks.getUsageSummary,
+}));
+
 // Memo wrappers with the same prop checks count how often the star trail's
 // panel and its disc actually render.
 const trailRenders = vi.hoisted(() => ({ panel: 0, disc: 0 }));
@@ -71,6 +78,7 @@ import type { AccessTokenCatalog } from "./AccessTokenManager";
 import { browserSnapshot, type AppSnapshot } from "./core-model";
 import { Overview, type ServiceCatalog } from "./Overview";
 import { WorkspaceSnapshotProvider } from "./workspace-snapshots";
+import { DAY_TRAIL_MODE_STORAGE_KEY } from "./UsageStarTrail";
 import {
   DEFAULT_HIDDEN_MODULES,
   DEFAULT_OVERVIEW_LAYOUT,
@@ -251,7 +259,11 @@ describe("Overview", () => {
     billingMocks.getBillingSummary.mockRejectedValue(
       new Error("billing unavailable"),
     );
+    usageMocks.getUsageSummary.mockRejectedValue(
+      new Error("usage unavailable"),
+    );
     localStorage.removeItem(OVERVIEW_LAYOUT_STORAGE_KEY);
+    localStorage.removeItem(DAY_TRAIL_MODE_STORAGE_KEY);
     (
       globalThis as typeof globalThis & {
         IS_REACT_ACT_ENVIRONMENT?: boolean;
@@ -270,6 +282,7 @@ describe("Overview", () => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
     localStorage.removeItem(OVERVIEW_LAYOUT_STORAGE_KEY);
+    localStorage.removeItem(DAY_TRAIL_MODE_STORAGE_KEY);
   });
 
   async function renderOverview(
@@ -1601,6 +1614,7 @@ describe("Overview", () => {
   });
 
   it("draws a day as a ring per model and leaves out today's count", async () => {
+    localStorage.setItem(DAY_TRAIL_MODE_STORAGE_KEY, "models");
     const summary = emptyUsageSummary(oneDayWindow);
     const today = summary.by_day.at(-1)!.date;
     const models = [
@@ -1669,6 +1683,102 @@ describe("Overview", () => {
         .click(),
     );
     expect(document.body.textContent).toContain("每一圈是一个模型");
+  });
+
+  it("draws the week behind a day's numbers until a ring per model is picked", async () => {
+    const day = emptyUsageSummary(oneDayWindow);
+    const today = day.by_day.at(-1)!.date;
+    day.totals = { ...emptyUsageTotals(), requests: 3, total_tokens: 300 };
+    day.by_model = [group("gpt-5.5", { requests: 3, total_tokens: 300 })];
+    day.by_hour_model = [
+      {
+        date: today,
+        hour: 9,
+        model: "gpt-5.5",
+        requests: 3,
+        total_tokens: 300,
+      },
+    ];
+    const week = emptyUsageSummary(resolveUsageWindow("7d", now));
+    const days = week.by_day.map((bucket) => bucket.date);
+    week.by_hour_model = [
+      {
+        date: days[0],
+        hour: 22,
+        model: "gpt-5.5",
+        requests: 1,
+        total_tokens: 90,
+      },
+      {
+        date: today,
+        hour: 9,
+        model: "gpt-5.5",
+        requests: 3,
+        total_tokens: 300,
+      },
+    ];
+    week.by_model = [
+      group("claude-opus-5-5", { requests: 9, total_tokens: 900 }),
+      group("gpt-5.5", { requests: 4, total_tokens: 390 }),
+    ];
+    week.by_hour_model.push({
+      date: days[1],
+      hour: 13,
+      model: "claude-opus-5-5",
+      requests: 9,
+      total_tokens: 900,
+    });
+    usageMocks.getUsageSummary.mockResolvedValue(week);
+    await renderOverview({
+      usageRange: "1d",
+      usage: { status: "ready", summary: day, error: null },
+    });
+    const trail = container.querySelector("[data-slot='usage-star-trail']")!;
+    // A ring a day for the week, today outermost; the numbers stay the day's.
+    expect(usageMocks.getUsageSummary).toHaveBeenCalledWith(
+      expect.objectContaining({ preset: "7d" }),
+    );
+    expect(trail.querySelector("[aria-label^='星轨：每天']")).not.toBeNull();
+    const keys = [
+      ...trail.querySelectorAll("[data-slot='star-trail-arc']"),
+    ].flatMap((arc) => arc.getAttribute("data-keys")!.split(" "));
+    expect(keys.sort()).toEqual(
+      [`${days[0]}T22`, `${days[1]}T13`, `${today}T9`].sort(),
+    );
+    // A model only the week used keeps its color, not the muted one.
+    expect(
+      trail
+        .querySelector(`[data-keys~='${days[1]}T13']`)
+        ?.getAttribute("stroke"),
+    ).toBe("var(--model-series-1)");
+    expect(
+      trail.querySelector("[data-slot='metric-group']")?.textContent,
+    ).toContain("3");
+
+    // Nothing on the page switches it; the help does.
+    expect(
+      [...document.querySelectorAll("button")].some((candidate) =>
+        candidate.textContent?.includes("模型"),
+      ),
+    ).toBe(false);
+    await act(async () =>
+      container
+        .querySelector<HTMLButtonElement>('button[aria-label="统计说明"]')!
+        .click(),
+    );
+    expect(document.body.textContent).toContain("每一圈是一天");
+    await act(async () => button("改成每圈一个模型").click());
+    expect(localStorage.getItem(DAY_TRAIL_MODE_STORAGE_KEY)).toBe("models");
+    expect(document.body.textContent).toContain("每一圈是一个模型");
+    expect(button("改成每圈一天")).toBeTruthy();
+    expect(
+      trail.querySelector("[aria-label^='星轨：近 24 小时']"),
+    ).not.toBeNull();
+    expect(
+      trail.querySelector(
+        `[data-slot='star-trail-arc'][data-keys~='${today}T9/0']`,
+      ),
+    ).not.toBeNull();
   });
 
   it("keeps big numbers short and on one line in the star trail's panel", async () => {

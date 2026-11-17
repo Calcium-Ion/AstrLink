@@ -184,7 +184,7 @@
     "safety": "安全性",
     "records": "リクエスト",
     "routing": "ルーティング",
-    "desktopToys": "デスクトップペット",
+    "desktopToys": "ペット",
     "agentTools": "Agent ツール",
     "settings": "設定",
     "gateway": "ゲートウェイ",
@@ -774,6 +774,9 @@
     "starTrailNote": "星の軌跡では、1 周が 1 日で、いちばん外側が今日です。0 時が真上で、時計回りに進みます。弧は 1 時間ごとで、明るいほどリクエストが多く、色はその時間にいちばん使われたモデルです。色はモデル一覧と対応しています。外周の青い線は、今日の経過時間を示します。",
     "starTrailModelLabel": "直近 24 時間のモデル別・時間別の利用の星の軌跡",
     "starTrailModelSummary": "直近 24 時間、{{models}} 周で利用のあった弧は {{hours}} 本です。いちばん多かったのは {{busiest}} の {{count}} トークンです。",
+    "dayTrailWeekNote": "直近 24 時間の星の軌跡は直近 7 日を描きます。1 周が 1 日で、いちばん外側が今日です。0 時が真上で、時計回りに進みます。弧は 1 時間ごとで、明るいほどリクエストが多く、色はその時間にいちばん使われたモデルです。横の数値と一覧は直近 24 時間だけを数えます。",
+    "dayTrailShowModels": "1 周を 1 モデルにする",
+    "dayTrailShowDays": "1 周を 1 日にする",
     "starTrailModelNote": "ここでは星の軌跡の 1 周が 1 つのモデルで、いちばん使われたモデルが外側、内側のグレーの周がほかのモデルです。0 時が真上で、時計回りに進みます。弧は 1 時間ごとで、明るいほどトークンが多く、色はモデル一覧と対応しています。外周の青い線は今日の経過時間を示し、その先の弧は昨日の同じ時間帯の利用です。",
     "liveCrew": {
       "title": "進行中",
@@ -1829,7 +1832,8 @@
     "literal": "完全一致の値",
     "domain_suffix": "ドメインサフィックス",
     "cidr": "IP 範囲",
-    "noHit": "該当なし"
+    "noHit": "該当なし",
+    "customKind": "カスタム種類 {{id}}"
   },
   "privacyAudit": {
     "title": "結果",
@@ -2373,7 +2377,30 @@
       "fallback": "{{operation}}更新して現在の状態を確認し、再試行してください。それでも失敗する場合は、調査のために技術詳細を共有してください。",
       "timeout": "モデル操作の待機がタイムアウトしました。再試行の前に、更新して現在の状態を確認してください。"
     },
-    "localImportFailed": "モデルのインポートに失敗しました。ローカルファイルと読み取り権限を確認し、この項目を削除してからもう一度インポートしてください。"
+    "localImportFailed": "モデルのインポートに失敗しました。ローカルファイルと読み取り権限を確認し、この項目を削除してからもう一度インポートしてください。",
+    "addCustomKind": "種類を追加",
+    "addCustomKindConfirm": "追加",
+    "customKindHint": "正規表現ルールが一致する内容に種類を作成します（会社名や機関名など）。ルールを保存すると、種類ごとのスイッチと統計に表示されます。",
+    "customKindLabel": "種類名",
+    "customKindLabelPlaceholder": "例：会社名",
+    "customKindId": "プレースホルダー名",
+    "customKindIdHint": "小文字で始め、小文字・数字・単一のアンダースコアを使えます。保存後は変更できません。置換後は {{marker}} になります。",
+    "customKindIdInvalid": "小文字・数字・単一のアンダースコアのみ、英字で始めて最大 {{max}} 文字です。",
+    "customKindIdTaken": "同じプレースホルダー名があります。",
+    "customKindNameTaken": "同じ名前の種類があります。",
+    "customKindLabelLength": "種類名は 1〜{{max}} 文字にしてください。",
+    "customKinds": "カスタム種類",
+    "customKindName": "カスタム種類 {{index}} の名前",
+    "customKindIdFixed": "プレースホルダー名は保存後に変更できません",
+    "removeCustomKind": "種類「{{name}}」を削除",
+    "customKindInUse": "{{count}} 件のルールが「{{name}}」を使っています。先にそれらのルールを削除するか、別の種類にしてください。",
+    "tooManyCustomKinds": "カスタム種類は最大 {{max}} 個です。",
+    "customKindLock": "カスタム種類には安全な代替値がないため、常にマーカー形式です。",
+    "customRulesOnlyShort": "カスタムルールのみ",
+    "customRulesOnlyKind": "この種類を見つけるのはカスタム正規表現ルールだけです。",
+    "discardChanges": "変更を破棄",
+    "unsaved": "未保存",
+    "resetKindRulesCustomHint": "カスタム種類は残り、すべてオンになります。"
   },
   "privacyStats": {
     "range": "範囲",
@@ -3283,6 +3310,7 @@
   "host": {
     "tray": {
       "show": "AstrLinkを開く",
+      "panel": "トレイパネルを開く",
       "settings": "設定…",
       "quit": "AstrLinkを終了",
       "copied": "コピーしました",
@@ -6044,7 +6072,8 @@
       "grab": "つまんで投げる",
       "bubble": "吹き出し",
       "reply": "返信の完了",
-      "failover": "経路の切り替え"
+      "failover": "経路の切り替え",
+      "rate": "トークン速度"
     },
     "acts": {
       "bash": "コマンドを実行 · {{tool}}",

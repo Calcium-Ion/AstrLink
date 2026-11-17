@@ -1,4 +1,5 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "./native-host/core";
+import { hasNativeHost } from "./native-host/presence";
 
 export type DesktopPlatform = "browser" | "linux" | "macos" | "windows";
 export type WindowControl = "close" | "maximize" | "minimize";
@@ -18,7 +19,7 @@ const fallbackLinuxLayout = (): WindowControlLayout => ({
 });
 
 export function getDesktopPlatform(): DesktopPlatform {
-  if (typeof window === "undefined" || !("__TAURI_INTERNALS__" in window)) {
+  if (!hasNativeHost()) {
     return "browser";
   }
 

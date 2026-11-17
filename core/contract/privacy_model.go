@@ -155,6 +155,13 @@ func (kind CanonicalKind) Valid() bool {
 	}
 }
 
+// Recorded reports whether a request record may carry the kind: a built-in
+// kind, or a policy's custom kind. Model label mappings use Valid instead,
+// since a local model never emits a custom kind.
+func (kind CanonicalKind) Recorded() bool {
+	return ValidRecordedPrivacyKind(string(kind))
+}
+
 type PrivacyModelVariant struct {
 	ID                string  `json:"id"`
 	Name              string  `json:"name"`

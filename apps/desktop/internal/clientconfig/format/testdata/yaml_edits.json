@@ -1,0 +1,4505 @@
+[
+  {
+    "name": "factory_push_remove",
+    "text": "# Your patch layer for this dsh profile, applied after every bundle layer:\n# a top-level YAML array of loader patch entries (id-targeted config\n# overrides, disables, and insert lists; `!!js` expressions allowed).\n[]\n",
+    "root": "sequence",
+    "ops": [
+      {
+        "parent": [],
+        "value": {
+          "id": "agent-default-model",
+          "config": {
+            "provider": "astrlink-chat",
+            "model": "off"
+          }
+        },
+        "rank": "id_config",
+        "op": "push"
+      },
+      {
+        "path": [0],
+        "op": "remove"
+      }
+    ],
+    "results": [
+      {
+        "text": "# Your patch layer for this dsh profile, applied after every bundle layer:\n# a top-level YAML array of loader patch entries (id-targeted config\n# overrides, disables, and insert lists; `!!js` expressions allowed).\n- id: agent-default-model\n  config:\n    model: \"off\"\n    provider: astrlink-chat\n"
+      },
+      {
+        "text": "# Your patch layer for this dsh profile, applied after every bundle layer:\n# a top-level YAML array of loader patch entries (id-targeted config\n# overrides, disables, and insert lists; `!!js` expressions allowed).\n[]\n"
+      }
+    ]
+  },
+  {
+    "name": "factory_push_two",
+    "text": "# Your patch layer for this dsh profile, applied after every bundle layer:\n# a top-level YAML array of loader patch entries (id-targeted config\n# overrides, disables, and insert lists; `!!js` expressions allowed).\n[]\n",
+    "root": "sequence",
+    "ops": [
+      {
+        "parent": [],
+        "value": {
+          "id": "llm-pi-ai",
+          "config": {
+            "providers": {
+              "astrlink-anthropic": {
+                "displayName": "AstrLink (Anthropic)",
+                "apiKeyEnv": "ASTRLINK_WEB_API_KEY",
+                "api": "anthropic-messages",
+                "baseURL": "http://127.0.0.1:18317",
+                "models": [
+                  {
+                    "id": "claude-opus-5",
+                    "contextWindow": 1000000,
+                    "reasoningEfforts": {
+                      "off": "none",
+                      "low": "low"
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "rank": "id_config",
+        "op": "push"
+      },
+      {
+        "parent": [],
+        "value": {
+          "id": "agent-default-model",
+          "config": {
+            "provider": "astrlink-chat",
+            "model": "off"
+          }
+        },
+        "rank": "id_config",
+        "op": "push"
+      },
+      {
+        "path": [1],
+        "op": "remove"
+      },
+      {
+        "path": [0],
+        "op": "remove"
+      }
+    ],
+    "results": [
+      {
+        "text": "# Your patch layer for this dsh profile, applied after every bundle layer:\n# a top-level YAML array of loader patch entries (id-targeted config\n# overrides, disables, and insert lists; `!!js` expressions allowed).\n- id: llm-pi-ai\n  config:\n    providers:\n      astrlink-anthropic:\n        api: anthropic-messages\n        apiKeyEnv: ASTRLINK_WEB_API_KEY\n        baseURL: http://127.0.0.1:18317\n        displayName: \"AstrLink (Anthropic)\"\n        models:\n          - id: claude-opus-5\n            contextWindow: 1000000\n            reasoningEfforts:\n              low: low\n              \"off\": none\n"
+      },
+      {
+        "text": "# Your patch layer for this dsh profile, applied after every bundle layer:\n# a top-level YAML array of loader patch entries (id-targeted config\n# overrides, disables, and insert lists; `!!js` expressions allowed).\n- id: llm-pi-ai\n  config:\n    providers:\n      astrlink-anthropic:\n        api: anthropic-messages\n        apiKeyEnv: ASTRLINK_WEB_API_KEY\n        baseURL: http://127.0.0.1:18317\n        displayName: \"AstrLink (Anthropic)\"\n        models:\n          - id: claude-opus-5\n            contextWindow: 1000000\n            reasoningEfforts:\n              low: low\n              \"off\": none\n- id: agent-default-model\n  config:\n    model: \"off\"\n    provider: astrlink-chat\n"
+      },
+      {
+        "text": "# Your patch layer for this dsh profile, applied after every bundle layer:\n# a top-level YAML array of loader patch entries (id-targeted config\n# overrides, disables, and insert lists; `!!js` expressions allowed).\n- id: llm-pi-ai\n  config:\n    providers:\n      astrlink-anthropic:\n        api: anthropic-messages\n        apiKeyEnv: ASTRLINK_WEB_API_KEY\n        baseURL: http://127.0.0.1:18317\n        displayName: \"AstrLink (Anthropic)\"\n        models:\n          - id: claude-opus-5\n            contextWindow: 1000000\n            reasoningEfforts:\n              low: low\n              \"off\": none\n"
+      },
+      {
+        "text": "# Your patch layer for this dsh profile, applied after every bundle layer:\n# a top-level YAML array of loader patch entries (id-targeted config\n# overrides, disables, and insert lists; `!!js` expressions allowed).\n[]\n"
+      }
+    ]
+  },
+  {
+    "name": "empty_seq_push",
+    "text": "",
+    "root": "sequence",
+    "ops": [
+      {
+        "parent": [],
+        "value": {
+          "id": "agent-default-model",
+          "config": {
+            "provider": "astrlink-chat",
+            "model": "off"
+          }
+        },
+        "rank": "id_config",
+        "op": "push"
+      }
+    ],
+    "results": [
+      {
+        "text": "- id: agent-default-model\n  config:\n    model: \"off\"\n    provider: astrlink-chat\n"
+      }
+    ]
+  },
+  {
+    "name": "crlf_set_remove",
+    "text": "# mine\r\n- id: tools\r\n  config:\r\n    mode: !!js process.env.MODE\r\n- id: llm-pi-ai\r\n  config:\r\n    providers:\r\n      gw: {api: openai-completions}  # hand-written\r\n",
+    "root": "sequence",
+    "ops": [
+      {
+        "parent": [1, "config", "providers"],
+        "key": "astrlink-anthropic",
+        "value": {
+          "api": "anthropic-messages",
+          "baseURL": "http://127.0.0.1:8317"
+        },
+        "rank": "id_config",
+        "op": "set"
+      },
+      {
+        "path": [1, "config", "providers", "astrlink-anthropic"],
+        "op": "remove"
+      }
+    ],
+    "results": [
+      {
+        "text": "# mine\r\n- id: tools\r\n  config:\r\n    mode: !!js process.env.MODE\r\n- id: llm-pi-ai\r\n  config:\r\n    providers:\r\n      gw: {api: openai-completions}  # hand-written\r\n      astrlink-anthropic:\r\n        api: anthropic-messages\r\n        baseURL: http://127.0.0.1:8317\r\n"
+      },
+      {
+        "text": "# mine\r\n- id: tools\r\n  config:\r\n    mode: !!js process.env.MODE\r\n- id: llm-pi-ai\r\n  config:\r\n    providers:\r\n      gw: {api: openai-completions}  # hand-written\r\n"
+      }
+    ]
+  },
+  {
+    "name": "dotted_keys",
+    "text": "version: 1\n# my keys\nrecords:\n    a: {kind: grant}\n",
+    "root": "mapping",
+    "ops": [
+      {
+        "key": "refs.ASTRLINK_WEB_API_KEY",
+        "value": "astr_x",
+        "op": "set_key"
+      },
+      {
+        "key": "refs.ASTRLINK_WEB_API_KEY",
+        "op": "remove_key"
+      },
+      {
+        "key": "refs.OTHER",
+        "value": "astr_y",
+        "op": "set_key"
+      },
+      {
+        "key": "refs",
+        "op": "remove_key"
+      }
+    ],
+    "results": [
+      {
+        "text": "version: 1\n# my keys\nrecords:\n    a: {kind: grant}\nrefs:\n  ASTRLINK_WEB_API_KEY: astr_x\n"
+      },
+      {
+        "text": "version: 1\n# my keys\nrecords:\n    a: {kind: grant}\nrefs: {}\n"
+      },
+      {
+        "text": "version: 1\n# my keys\nrecords:\n    a: {kind: grant}\nrefs: {OTHER: astr_y}\n"
+      },
+      {
+        "text": "version: 1\n# my keys\nrecords:\n    a: {kind: grant}\n"
+      }
+    ]
+  },
+  {
+    "name": "empty_mapping_dotted",
+    "text": "",
+    "root": "mapping",
+    "ops": [
+      {
+        "key": "refs.NAME",
+        "value": "astr_y",
+        "op": "set_key"
+      }
+    ],
+    "results": [
+      {
+        "text": "refs:\n  NAME: astr_y\n"
+      }
+    ]
+  },
+  {
+    "name": "reject_unclosed",
+    "text": "a: [1\n",
+    "root": "mapping",
+    "ops": [],
+    "results": [
+      {
+        "error": "is not valid YAML",
+        "line": 2
+      }
+    ]
+  },
+  {
+    "name": "reject_root_kind",
+    "text": "{}\n",
+    "root": "sequence",
+    "ops": [],
+    "results": [
+      {
+        "error": "is not a YAML list",
+        "line": null
+      }
+    ]
+  },
+  {
+    "name": "reject_multi",
+    "text": "a: 1\n---\nb: 2\n",
+    "root": "mapping",
+    "ops": [],
+    "results": [
+      {
+        "error": "is not valid YAML",
+        "line": null
+      }
+    ]
+  },
+  {
+    "name": "user_patch_route",
+    "text": "# Your patch layer for this dsh profile, applied after every bundle layer:\n# a top-level YAML array of loader patch entries (id-targeted config\n# overrides, disables, and insert lists; `!!js` expressions allowed).\n\n# 自建网关（手写）\n- id: llm-pi-ai\n  config:\n    providers:\n      gw:                              # 路由 id 创建后不可改名\n        displayName: Gateway\n        apiKeyEnv: GW_API_KEY\n        api: openai-completions\n        baseURL: http://127.0.0.1:9/v1\n        compat: {supportsDeveloperRole: false, maxTokensField: max_tokens}\n        models:\n          - id: deepseek-v4-pro\n            name: DeepSeek V4 Pro\n            input: [text]\n            reasoningEfforts: {\"off\": null, high: high, max: max}\n- id: agent-default-model\n  config:\n    provider: gw\n    model: deepseek-v4-pro\n- id: tools\n  config:\n    mode: !!js process.env.DSH_TOOLS_MODE\n",
+    "root": "sequence",
+    "ops": [
+      {
+        "parent": [0, "config", "providers"],
+        "key": "astrlink-anthropic",
+        "value": {
+          "displayName": "AstrLink (Anthropic)",
+          "apiKeyEnv": "ASTRLINK_WEB_API_KEY",
+          "api": "anthropic-messages",
+          "baseURL": "http://127.0.0.1:18317",
+          "models": [
+            {
+              "id": "claude-opus-5",
+              "contextWindow": 1000000,
+              "reasoningEfforts": {
+                "off": "none",
+                "low": "low"
+              }
+            }
+          ]
+        },
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [1],
+        "key": "config",
+        "value": {
+          "provider": "astrlink-anthropic",
+          "model": "claude-opus-5"
+        },
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [1],
+        "key": "config",
+        "value": {
+          "provider": "gw",
+          "model": "deepseek-v4-pro"
+        },
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "path": [0, "config", "providers", "astrlink-anthropic"],
+        "op": "remove"
+      }
+    ],
+    "results": [
+      {
+        "text": "# Your patch layer for this dsh profile, applied after every bundle layer:\n# a top-level YAML array of loader patch entries (id-targeted config\n# overrides, disables, and insert lists; `!!js` expressions allowed).\n\n# 自建网关（手写）\n- id: llm-pi-ai\n  config:\n    providers:\n      gw:                              # 路由 id 创建后不可改名\n        displayName: Gateway\n        apiKeyEnv: GW_API_KEY\n        api: openai-completions\n        baseURL: http://127.0.0.1:9/v1\n        compat: {supportsDeveloperRole: false, maxTokensField: max_tokens}\n        models:\n          - id: deepseek-v4-pro\n            name: DeepSeek V4 Pro\n            input: [text]\n            reasoningEfforts: {\"off\": null, high: high, max: max}\n      astrlink-anthropic:\n        api: anthropic-messages\n        apiKeyEnv: ASTRLINK_WEB_API_KEY\n        baseURL: http://127.0.0.1:18317\n        displayName: \"AstrLink (Anthropic)\"\n        models:\n          - contextWindow: 1000000\n            id: claude-opus-5\n            reasoningEfforts:\n              low: low\n              \"off\": none\n- id: agent-default-model\n  config:\n    provider: gw\n    model: deepseek-v4-pro\n- id: tools\n  config:\n    mode: !!js process.env.DSH_TOOLS_MODE\n"
+      },
+      {
+        "text": "# Your patch layer for this dsh profile, applied after every bundle layer:\n# a top-level YAML array of loader patch entries (id-targeted config\n# overrides, disables, and insert lists; `!!js` expressions allowed).\n\n# 自建网关（手写）\n- id: llm-pi-ai\n  config:\n    providers:\n      gw:                              # 路由 id 创建后不可改名\n        displayName: Gateway\n        apiKeyEnv: GW_API_KEY\n        api: openai-completions\n        baseURL: http://127.0.0.1:9/v1\n        compat: {supportsDeveloperRole: false, maxTokensField: max_tokens}\n        models:\n          - id: deepseek-v4-pro\n            name: DeepSeek V4 Pro\n            input: [text]\n            reasoningEfforts: {\"off\": null, high: high, max: max}\n      astrlink-anthropic:\n        api: anthropic-messages\n        apiKeyEnv: ASTRLINK_WEB_API_KEY\n        baseURL: http://127.0.0.1:18317\n        displayName: \"AstrLink (Anthropic)\"\n        models:\n          - contextWindow: 1000000\n            id: claude-opus-5\n            reasoningEfforts:\n              low: low\n              \"off\": none\n- id: agent-default-model\n  config:\n    model: claude-opus-5\n    provider: astrlink-anthropic\n- id: tools\n  config:\n    mode: !!js process.env.DSH_TOOLS_MODE\n"
+      },
+      {
+        "text": "# Your patch layer for this dsh profile, applied after every bundle layer:\n# a top-level YAML array of loader patch entries (id-targeted config\n# overrides, disables, and insert lists; `!!js` expressions allowed).\n\n# 自建网关（手写）\n- id: llm-pi-ai\n  config:\n    providers:\n      gw:                              # 路由 id 创建后不可改名\n        displayName: Gateway\n        apiKeyEnv: GW_API_KEY\n        api: openai-completions\n        baseURL: http://127.0.0.1:9/v1\n        compat: {supportsDeveloperRole: false, maxTokensField: max_tokens}\n        models:\n          - id: deepseek-v4-pro\n            name: DeepSeek V4 Pro\n            input: [text]\n            reasoningEfforts: {\"off\": null, high: high, max: max}\n      astrlink-anthropic:\n        api: anthropic-messages\n        apiKeyEnv: ASTRLINK_WEB_API_KEY\n        baseURL: http://127.0.0.1:18317\n        displayName: \"AstrLink (Anthropic)\"\n        models:\n          - contextWindow: 1000000\n            id: claude-opus-5\n            reasoningEfforts:\n              low: low\n              \"off\": none\n- id: agent-default-model\n  config:\n    model: deepseek-v4-pro\n    provider: gw\n- id: tools\n  config:\n    mode: !!js process.env.DSH_TOOLS_MODE\n"
+      },
+      {
+        "text": "# Your patch layer for this dsh profile, applied after every bundle layer:\n# a top-level YAML array of loader patch entries (id-targeted config\n# overrides, disables, and insert lists; `!!js` expressions allowed).\n\n# 自建网关（手写）\n- id: llm-pi-ai\n  config:\n    providers:\n      gw:                              # 路由 id 创建后不可改名\n        displayName: Gateway\n        apiKeyEnv: GW_API_KEY\n        api: openai-completions\n        baseURL: http://127.0.0.1:9/v1\n        compat: {supportsDeveloperRole: false, maxTokensField: max_tokens}\n        models:\n          - id: deepseek-v4-pro\n            name: DeepSeek V4 Pro\n            input: [text]\n            reasoningEfforts: {\"off\": null, high: high, max: max}\n- id: agent-default-model\n  config:\n    model: deepseek-v4-pro\n    provider: gw\n- id: tools\n  config:\n    mode: !!js process.env.DSH_TOOLS_MODE\n"
+      }
+    ]
+  },
+  {
+    "name": "user_creds",
+    "text": "version: 1\n# my keys\nrefs:\n    GW_API_KEY: sk-gw\nrecords:\n    client-connection/browser-session:\n        kind: grant\n",
+    "root": "mapping",
+    "ops": [
+      {
+        "key": "refs.ASTRLINK_WEB_API_KEY",
+        "value": "astr_AAAA",
+        "op": "set_key"
+      },
+      {
+        "key": "refs.ASTRLINK_WEB_API_KEY",
+        "op": "remove_key"
+      }
+    ],
+    "results": [
+      {
+        "text": "version: 1\n# my keys\nrefs:\n    GW_API_KEY: sk-gw\n    ASTRLINK_WEB_API_KEY: astr_AAAA\nrecords:\n    client-connection/browser-session:\n        kind: grant\n"
+      },
+      {
+        "text": "version: 1\n# my keys\nrefs:\n    GW_API_KEY: sk-gw\nrecords:\n    client-connection/browser-session:\n        kind: grant\n"
+      }
+    ]
+  },
+  {
+    "name": "goose_new",
+    "text": "",
+    "root": "mapping",
+    "ops": [
+      {
+        "key": "active_provider",
+        "value": "local_gateway_anthropic",
+        "op": "set_key"
+      },
+      {
+        "key": "providers.local_gateway_anthropic.enabled",
+        "value": true,
+        "op": "set_key_json"
+      },
+      {
+        "key": "providers.local_gateway_anthropic.model",
+        "value": "claude-sonnet-5",
+        "op": "set_key"
+      },
+      {
+        "key": "providers.local_gateway_anthropic.configured",
+        "value": true,
+        "op": "set_key_json"
+      },
+      {
+        "key": "providers.local_gateway_anthropic.enabled",
+        "op": "remove_key"
+      },
+      {
+        "key": "providers.local_gateway_anthropic.model",
+        "op": "remove_key"
+      },
+      {
+        "key": "providers.local_gateway_anthropic.configured",
+        "op": "remove_key"
+      },
+      {
+        "path": ["providers", "local_gateway_anthropic"],
+        "op": "remove"
+      },
+      {
+        "key": "active_provider",
+        "value": "local_gateway",
+        "op": "set_key"
+      },
+      {
+        "key": "providers.local_gateway.enabled",
+        "value": true,
+        "op": "set_key_json"
+      },
+      {
+        "key": "providers.local_gateway.model",
+        "value": "deepseek-v4",
+        "op": "set_key"
+      },
+      {
+        "key": "providers.local_gateway.configured",
+        "value": true,
+        "op": "set_key_json"
+      }
+    ],
+    "results": [
+      {
+        "text": "active_provider: local_gateway_anthropic\n"
+      },
+      {
+        "text": "active_provider: local_gateway_anthropic\nproviders:\n  local_gateway_anthropic:\n    enabled: true\n"
+      },
+      {
+        "text": "active_provider: local_gateway_anthropic\nproviders:\n  local_gateway_anthropic:\n    enabled: true\n    model: claude-sonnet-5\n"
+      },
+      {
+        "text": "active_provider: local_gateway_anthropic\nproviders:\n  local_gateway_anthropic:\n    enabled: true\n    model: claude-sonnet-5\n    configured: true\n"
+      },
+      {
+        "text": "active_provider: local_gateway_anthropic\nproviders:\n  local_gateway_anthropic:\n    model: claude-sonnet-5\n    configured: true\n"
+      },
+      {
+        "text": "active_provider: local_gateway_anthropic\nproviders:\n  local_gateway_anthropic:\n    configured: true\n"
+      },
+      {
+        "text": "active_provider: local_gateway_anthropic\nproviders:\n  local_gateway_anthropic: {}\n"
+      },
+      {
+        "text": "active_provider: local_gateway_anthropic\nproviders: {}\n"
+      },
+      {
+        "text": "active_provider: local_gateway\nproviders: {}\n"
+      },
+      {
+        "text": "active_provider: local_gateway\nproviders: {local_gateway: {enabled: true}}\n"
+      },
+      {
+        "text": "active_provider: local_gateway\nproviders: {local_gateway: {enabled: true, model: deepseek-v4}}\n"
+      },
+      {
+        "text": "active_provider: local_gateway\nproviders: {local_gateway: {enabled: true, model: deepseek-v4, configured: true}}\n"
+      }
+    ]
+  },
+  {
+    "name": "goose_user",
+    "text": "# my goose\nactive_provider: openai\nproviders:\n  openai:\n    enabled: true\n    model: gpt-5\n    configured: true\nextensions:\n  developer:\n    enabled: true\n",
+    "root": "mapping",
+    "ops": [
+      {
+        "key": "active_provider",
+        "value": "local_gateway",
+        "op": "set_key"
+      },
+      {
+        "key": "providers.local_gateway.enabled",
+        "value": true,
+        "op": "set_key_json"
+      },
+      {
+        "key": "providers.local_gateway.model",
+        "value": "deepseek-v4",
+        "op": "set_key"
+      },
+      {
+        "key": "providers.local_gateway.configured",
+        "value": true,
+        "op": "set_key_json"
+      },
+      {
+        "key": "active_provider",
+        "value": "openai",
+        "op": "set_key"
+      },
+      {
+        "path": ["providers", "local_gateway"],
+        "op": "remove"
+      }
+    ],
+    "results": [
+      {
+        "text": "# my goose\nactive_provider: local_gateway\nproviders:\n  openai:\n    enabled: true\n    model: gpt-5\n    configured: true\nextensions:\n  developer:\n    enabled: true\n"
+      },
+      {
+        "text": "# my goose\nactive_provider: local_gateway\nproviders:\n  openai:\n    enabled: true\n    model: gpt-5\n    configured: true\n  local_gateway:\n    enabled: true\nextensions:\n  developer:\n    enabled: true\n"
+      },
+      {
+        "text": "# my goose\nactive_provider: local_gateway\nproviders:\n  openai:\n    enabled: true\n    model: gpt-5\n    configured: true\n  local_gateway:\n    enabled: true\n    model: deepseek-v4\nextensions:\n  developer:\n    enabled: true\n"
+      },
+      {
+        "text": "# my goose\nactive_provider: local_gateway\nproviders:\n  openai:\n    enabled: true\n    model: gpt-5\n    configured: true\n  local_gateway:\n    enabled: true\n    model: deepseek-v4\n    configured: true\nextensions:\n  developer:\n    enabled: true\n"
+      },
+      {
+        "text": "# my goose\nactive_provider: openai\nproviders:\n  openai:\n    enabled: true\n    model: gpt-5\n    configured: true\n  local_gateway:\n    enabled: true\n    model: deepseek-v4\n    configured: true\nextensions:\n  developer:\n    enabled: true\n"
+      },
+      {
+        "text": "# my goose\nactive_provider: openai\nproviders:\n  openai:\n    enabled: true\n    model: gpt-5\n    configured: true\nextensions:\n  developer:\n    enabled: true\n"
+      }
+    ]
+  },
+  {
+    "name": "aider_new",
+    "text": "",
+    "root": "mapping",
+    "ops": [
+      {
+        "key": "openai-api-base",
+        "value": "http://127.0.0.1:18317/v1",
+        "op": "set_key"
+      },
+      {
+        "parent": [],
+        "key": "set-env",
+        "value": ["OPENAI_BASE_URL=http://127.0.0.1:18317/v1"],
+        "rank": "zero",
+        "op": "set"
+      },
+      {
+        "key": "openai-api-key",
+        "value": "astr_AAA",
+        "op": "set_key"
+      },
+      {
+        "key": "model",
+        "value": "openai/deepseek-v4",
+        "op": "set_key"
+      },
+      {
+        "path": ["set-env", 0],
+        "op": "remove"
+      },
+      {
+        "parent": ["set-env"],
+        "value": "OPENAI_BASE_URL=http://127.0.0.1:9000/v1",
+        "rank": "zero",
+        "op": "push"
+      }
+    ],
+    "results": [
+      {
+        "text": "openai-api-base: http://127.0.0.1:18317/v1\n"
+      },
+      {
+        "text": "openai-api-base: http://127.0.0.1:18317/v1\nset-env:\n- OPENAI_BASE_URL=http://127.0.0.1:18317/v1\n"
+      },
+      {
+        "text": "openai-api-base: http://127.0.0.1:18317/v1\nset-env:\n- OPENAI_BASE_URL=http://127.0.0.1:18317/v1\nopenai-api-key: astr_AAA\n"
+      },
+      {
+        "text": "openai-api-base: http://127.0.0.1:18317/v1\nset-env:\n- OPENAI_BASE_URL=http://127.0.0.1:18317/v1\nopenai-api-key: astr_AAA\nmodel: openai/deepseek-v4\n"
+      },
+      {
+        "text": "openai-api-base: http://127.0.0.1:18317/v1\nset-env: []\nopenai-api-key: astr_AAA\nmodel: openai/deepseek-v4\n"
+      },
+      {
+        "text": "openai-api-base: http://127.0.0.1:18317/v1\nset-env: [OPENAI_BASE_URL=http://127.0.0.1:9000/v1]\nopenai-api-key: astr_AAA\nmodel: openai/deepseek-v4\n"
+      }
+    ]
+  },
+  {
+    "name": "aider_user",
+    "text": "# my aider\nmodel: anthropic/claude-sonnet-4-5\nset-env:\n  - OPENAI_BASE_URL=https://api.openai.com/v1\n  - LITELLM_LOG=ERROR\ndark-mode: true\n",
+    "root": "mapping",
+    "ops": [
+      {
+        "key": "model",
+        "value": "openai/deepseek-v4",
+        "op": "set_key"
+      },
+      {
+        "path": ["set-env", 0],
+        "op": "remove"
+      },
+      {
+        "parent": ["set-env"],
+        "value": "OPENAI_BASE_URL=http://127.0.0.1:18317/v1",
+        "rank": "zero",
+        "op": "push"
+      },
+      {
+        "key": "openai-api-key",
+        "value": "astr_AAA",
+        "op": "set_key"
+      },
+      {
+        "key": "openai-api-key",
+        "op": "remove_key"
+      },
+      {
+        "path": ["set-env", 1],
+        "op": "remove"
+      },
+      {
+        "parent": ["set-env"],
+        "value": "OPENAI_BASE_URL=https://api.openai.com/v1",
+        "rank": "zero",
+        "op": "push"
+      },
+      {
+        "key": "model",
+        "value": "anthropic/claude-sonnet-4-5",
+        "op": "set_key"
+      }
+    ],
+    "results": [
+      {
+        "text": "# my aider\nmodel: openai/deepseek-v4\nset-env:\n  - OPENAI_BASE_URL=https://api.openai.com/v1\n  - LITELLM_LOG=ERROR\ndark-mode: true\n"
+      },
+      {
+        "text": "# my aider\nmodel: openai/deepseek-v4\nset-env:\n  - LITELLM_LOG=ERROR\ndark-mode: true\n"
+      },
+      {
+        "text": "# my aider\nmodel: openai/deepseek-v4\nset-env:\n  - LITELLM_LOG=ERROR\n  - OPENAI_BASE_URL=http://127.0.0.1:18317/v1\ndark-mode: true\n"
+      },
+      {
+        "text": "# my aider\nmodel: openai/deepseek-v4\nset-env:\n  - LITELLM_LOG=ERROR\n  - OPENAI_BASE_URL=http://127.0.0.1:18317/v1\ndark-mode: true\nopenai-api-key: astr_AAA\n"
+      },
+      {
+        "text": "# my aider\nmodel: openai/deepseek-v4\nset-env:\n  - LITELLM_LOG=ERROR\n  - OPENAI_BASE_URL=http://127.0.0.1:18317/v1\ndark-mode: true\n"
+      },
+      {
+        "text": "# my aider\nmodel: openai/deepseek-v4\nset-env:\n  - LITELLM_LOG=ERROR\ndark-mode: true\n"
+      },
+      {
+        "text": "# my aider\nmodel: openai/deepseek-v4\nset-env:\n  - LITELLM_LOG=ERROR\n  - OPENAI_BASE_URL=https://api.openai.com/v1\ndark-mode: true\n"
+      },
+      {
+        "text": "# my aider\nmodel: anthropic/claude-sonnet-4-5\nset-env:\n  - LITELLM_LOG=ERROR\n  - OPENAI_BASE_URL=https://api.openai.com/v1\ndark-mode: true\n"
+      }
+    ]
+  },
+  {
+    "name": "minimax_new",
+    "text": "",
+    "root": "mapping",
+    "ops": [
+      {
+        "parent": [],
+        "key": "custom_provider",
+        "value": {
+          "local-chat": {
+            "name": "AstrLink",
+            "kind": "custom",
+            "options": {
+              "baseURL": "http://x/v1",
+              "apiKey": "astr"
+            },
+            "models": {
+              "deepseek-v4": {
+                "name": "deepseek-v4",
+                "enabled": true
+              }
+            }
+          }
+        },
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": ["custom_provider"],
+        "key": "local-responses",
+        "value": {
+          "name": "AstrLink Responses",
+          "models": {
+            "gpt-5.5": {
+              "thinking": {
+                "effortOptions": ["low", "high"]
+              },
+              "limit": {
+                "context": 400000
+              }
+            }
+          }
+        },
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "key": "defaultModel",
+        "value": "custom_provider:local-responses/gpt-5.5",
+        "op": "set_key"
+      }
+    ],
+    "results": [
+      {
+        "text": "custom_provider:\n  local-chat:\n    kind: custom\n    models:\n      deepseek-v4:\n        enabled: true\n        name: deepseek-v4\n    name: AstrLink\n    options:\n      apiKey: astr\n      baseURL: http://x/v1\n"
+      },
+      {
+        "text": "custom_provider:\n  local-chat:\n    kind: custom\n    models:\n      deepseek-v4:\n        enabled: true\n        name: deepseek-v4\n    name: AstrLink\n    options:\n      apiKey: astr\n      baseURL: http://x/v1\n  local-responses:\n    models:\n      gpt-5.5:\n        limit:\n          context: 400000\n        thinking:\n          effortOptions:\n            - low\n            - high\n    name: \"AstrLink Responses\"\n"
+      },
+      {
+        "text": "custom_provider:\n  local-chat:\n    kind: custom\n    models:\n      deepseek-v4:\n        enabled: true\n        name: deepseek-v4\n    name: AstrLink\n    options:\n      apiKey: astr\n      baseURL: http://x/v1\n  local-responses:\n    models:\n      gpt-5.5:\n        limit:\n          context: 400000\n        thinking:\n          effortOptions:\n            - low\n            - high\n    name: \"AstrLink Responses\"\ndefaultModel: custom_provider:local-responses/gpt-5.5\n"
+      }
+    ]
+  },
+  {
+    "name": "minimax_user",
+    "text": "# my mcode\ndefaultModel: minimax/MiniMax-M3\ncustom_provider:\n  my-gateway:\n    name: My Gateway\n    kind: custom\n    api: openai-completions\n    options:\n      baseURL: https://example.invalid/v1\n      apiKey: sk-mine\n    models:\n      glm-5:\n        name: GLM 5\n",
+    "root": "mapping",
+    "ops": [
+      {
+        "key": "defaultModel",
+        "value": "custom_provider:local-chat/deepseek-v4",
+        "op": "set_key"
+      },
+      {
+        "parent": ["custom_provider"],
+        "key": "local-chat",
+        "value": {
+          "name": "AstrLink",
+          "kind": "custom"
+        },
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "path": ["custom_provider", "local-chat"],
+        "op": "remove"
+      },
+      {
+        "key": "defaultModel",
+        "value": "minimax/MiniMax-M3",
+        "op": "set_key"
+      }
+    ],
+    "results": [
+      {
+        "text": "# my mcode\ndefaultModel: custom_provider:local-chat/deepseek-v4\ncustom_provider:\n  my-gateway:\n    name: My Gateway\n    kind: custom\n    api: openai-completions\n    options:\n      baseURL: https://example.invalid/v1\n      apiKey: sk-mine\n    models:\n      glm-5:\n        name: GLM 5\n"
+      },
+      {
+        "text": "# my mcode\ndefaultModel: custom_provider:local-chat/deepseek-v4\ncustom_provider:\n  my-gateway:\n    name: My Gateway\n    kind: custom\n    api: openai-completions\n    options:\n      baseURL: https://example.invalid/v1\n      apiKey: sk-mine\n    models:\n      glm-5:\n        name: GLM 5\n  local-chat:\n    kind: custom\n    name: AstrLink\n"
+      },
+      {
+        "text": "# my mcode\ndefaultModel: custom_provider:local-chat/deepseek-v4\ncustom_provider:\n  my-gateway:\n    name: My Gateway\n    kind: custom\n    api: openai-completions\n    options:\n      baseURL: https://example.invalid/v1\n      apiKey: sk-mine\n    models:\n      glm-5:\n        name: GLM 5\n"
+      },
+      {
+        "text": "# my mcode\ndefaultModel: minimax/MiniMax-M3\ncustom_provider:\n  my-gateway:\n    name: My Gateway\n    kind: custom\n    api: openai-completions\n    options:\n      baseURL: https://example.invalid/v1\n      apiKey: sk-mine\n    models:\n      glm-5:\n        name: GLM 5\n"
+      }
+    ]
+  },
+  {
+    "name": "scalars",
+    "text": "a: 1 # one\nb: 'two'\nc:\n  d: 1\n",
+    "root": "mapping",
+    "ops": [
+      {
+        "parent": [],
+        "key": "a",
+        "value": "yes",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "b",
+        "value": "has space",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "c",
+        "value": "flat",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "c",
+        "value": {
+          "x": {
+            "y": 1
+          }
+        },
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "e",
+        "value": null,
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "f",
+        "value": 1.5,
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "g",
+        "value": [],
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "h",
+        "value": {},
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": ["h"],
+        "key": "i",
+        "value": "j",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": ["g"],
+        "value": "k",
+        "rank": "none",
+        "op": "push"
+      },
+      {
+        "parent": [],
+        "key": "on",
+        "value": "true",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "weird key",
+        "value": "v:",
+        "rank": "none",
+        "op": "set"
+      }
+    ],
+    "results": [
+      {
+        "text": "a: 'yes' # one\nb: 'two'\nc:\n  d: 1\n"
+      },
+      {
+        "text": "a: 'yes' # one\nb: has space\nc:\n  d: 1\n"
+      },
+      {
+        "text": "a: 'yes' # one\nb: has space\nc: flat\n"
+      },
+      {
+        "text": "a: 'yes' # one\nb: has space\nc:\n  x:\n    \"y\": 1\n"
+      },
+      {
+        "text": "a: 'yes' # one\nb: has space\nc:\n  x:\n    \"y\": 1\ne: null\n"
+      },
+      {
+        "text": "a: 'yes' # one\nb: has space\nc:\n  x:\n    \"y\": 1\ne: null\nf: 1.5\n"
+      },
+      {
+        "text": "a: 'yes' # one\nb: has space\nc:\n  x:\n    \"y\": 1\ne: null\nf: 1.5\ng: []\n"
+      },
+      {
+        "text": "a: 'yes' # one\nb: has space\nc:\n  x:\n    \"y\": 1\ne: null\nf: 1.5\ng: []\nh: {}\n"
+      },
+      {
+        "text": "a: 'yes' # one\nb: has space\nc:\n  x:\n    \"y\": 1\ne: null\nf: 1.5\ng: []\nh: {i: j}\n"
+      },
+      {
+        "text": "a: 'yes' # one\nb: has space\nc:\n  x:\n    \"y\": 1\ne: null\nf: 1.5\ng: [k]\nh: {i: j}\n"
+      },
+      {
+        "text": "a: 'yes' # one\nb: has space\nc:\n  x:\n    \"y\": 1\ne: null\nf: 1.5\ng: [k]\nh: {i: j}\n'on': 'true'\n"
+      },
+      {
+        "text": "a: 'yes' # one\nb: has space\nc:\n  x:\n    \"y\": 1\ne: null\nf: 1.5\ng: [k]\nh: {i: j}\n'on': 'true'\nweird key: 'v:'\n"
+      }
+    ]
+  },
+  {
+    "name": "nested_seq",
+    "text": "list:\n  - a\n  - b\nother: 1\n",
+    "root": "mapping",
+    "ops": [
+      {
+        "parent": ["list"],
+        "value": {
+          "id": "x",
+          "config": {
+            "k": "v"
+          }
+        },
+        "rank": "id_config",
+        "op": "push"
+      },
+      {
+        "path": ["list", 0],
+        "op": "remove"
+      },
+      {
+        "path": ["list", 0],
+        "op": "remove"
+      },
+      {
+        "path": ["list", 0],
+        "op": "remove"
+      }
+    ],
+    "results": [
+      {
+        "text": "list:\n  - a\n  - b\n  - id: x\n    config:\n      k: v\nother: 1\n"
+      },
+      {
+        "text": "list:\n  - b\n  - id: x\n    config:\n      k: v\nother: 1\n"
+      },
+      {
+        "text": "list:\n  - id: x\n    config:\n      k: v\nother: 1\n"
+      },
+      {
+        "text": "list: []\nother: 1\n"
+      }
+    ]
+  },
+  {
+    "name": "trailing_comment",
+    "text": "a:\n  b: 1\n  # about b\nc: 2\n# end\n",
+    "root": "mapping",
+    "ops": [
+      {
+        "parent": ["a"],
+        "key": "z",
+        "value": 1,
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "d",
+        "value": 3,
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "path": ["a", "b"],
+        "op": "remove"
+      },
+      {
+        "path": ["c"],
+        "op": "remove"
+      }
+    ],
+    "results": [
+      {
+        "text": "a:\n  b: 1\n  z: 1\n  # about b\nc: 2\n# end\n"
+      },
+      {
+        "text": "a:\n  b: 1\n  z: 1\n  # about b\nc: 2\n# end\nd: 3\n"
+      },
+      {
+        "text": "a:\n  z: 1\n  # about b\nc: 2\n# end\nd: 3\n"
+      },
+      {
+        "text": "a:\n  z: 1\n  # about b\n# end\nd: 3\n"
+      }
+    ]
+  },
+  {
+    "name": "no_final_newline",
+    "text": "a: 1",
+    "root": "mapping",
+    "ops": [
+      {
+        "parent": [],
+        "key": "b",
+        "value": 2,
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "path": ["b"],
+        "op": "remove"
+      }
+    ],
+    "results": [
+      {
+        "text": "a: 1\nb: 2"
+      },
+      {
+        "text": "a: 1"
+      }
+    ]
+  },
+  {
+    "name": "blank_lines",
+    "text": "a: 1\n\nb:\n  c: 1\n\n\nd: 2\n",
+    "root": "mapping",
+    "ops": [
+      {
+        "parent": ["b"],
+        "key": "e",
+        "value": 2,
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "f",
+        "value": {
+          "g": 1
+        },
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "path": ["b", "e"],
+        "op": "remove"
+      },
+      {
+        "path": ["f"],
+        "op": "remove"
+      }
+    ],
+    "results": [
+      {
+        "text": "a: 1\n\nb:\n  c: 1\n  e: 2\n\n\nd: 2\n"
+      },
+      {
+        "text": "a: 1\n\nb:\n  c: 1\n  e: 2\n\n\nd: 2\nf:\n  g: 1\n"
+      },
+      {
+        "text": "a: 1\n\nb:\n  c: 1\n\n\nd: 2\nf:\n  g: 1\n"
+      },
+      {
+        "text": "a: 1\n\nb:\n  c: 1\n\n\nd: 2\n"
+      }
+    ]
+  },
+  {
+    "name": "flow_insert",
+    "text": "m: {a: 1}\ns: [1]\n",
+    "root": "mapping",
+    "ops": [
+      {
+        "parent": ["m"],
+        "key": "b",
+        "value": "x y",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": ["s"],
+        "value": 2,
+        "rank": "none",
+        "op": "push"
+      },
+      {
+        "path": ["m", "a"],
+        "op": "remove"
+      },
+      {
+        "path": ["s", 0],
+        "op": "remove"
+      }
+    ],
+    "results": [
+      {
+        "text": "m: {a: 1, b: x y}\ns: [1]\n"
+      },
+      {
+        "text": "m: {a: 1, b: x y}\ns: [1, 2]\n"
+      },
+      {
+        "text": "m: {b: x y}\ns: [1, 2]\n"
+      },
+      {
+        "text": "m: {b: x y}\ns: [2]\n"
+      }
+    ]
+  },
+  {
+    "name": "comment_only_mapping",
+    "text": "# only\n",
+    "root": "mapping",
+    "ops": [
+      {
+        "key": "a",
+        "value": "b",
+        "op": "set_key"
+      },
+      {
+        "key": "a",
+        "op": "remove_key"
+      }
+    ],
+    "results": [
+      {
+        "text": "# only\na: b\n"
+      },
+      {
+        "text": "# only\n{}\n"
+      }
+    ]
+  },
+  {
+    "name": "doc_marker",
+    "text": "---\na: 1\n",
+    "root": "mapping",
+    "ops": [
+      {
+        "key": "b",
+        "value": "c",
+        "op": "set_key"
+      },
+      {
+        "key": "a",
+        "op": "remove_key"
+      }
+    ],
+    "results": [
+      {
+        "text": "---\na: 1\nb: c\n"
+      },
+      {
+        "text": "---\nb: c\n"
+      }
+    ]
+  },
+  {
+    "name": "indent4_seq_items",
+    "text": "rows:\n    - id: a\n      v: 1\n",
+    "root": "mapping",
+    "ops": [
+      {
+        "parent": ["rows"],
+        "value": {
+          "id": "b",
+          "config": {
+            "x": [1, 2]
+          }
+        },
+        "rank": "id_config",
+        "op": "push"
+      },
+      {
+        "parent": ["rows", 0],
+        "key": "w",
+        "value": {
+          "p": "q"
+        },
+        "rank": "none",
+        "op": "set"
+      }
+    ],
+    "results": [
+      {
+        "text": "rows:\n    - id: a\n      v: 1\n    - id: b\n      config:\n          x:\n              - 1\n              - 2\n"
+      },
+      {
+        "text": "rows:\n    - id: a\n      v: 1\n      w:\n        p: q\n    - id: b\n      config:\n          x:\n              - 1\n              - 2\n"
+      }
+    ]
+  },
+  {
+    "name": "quoting_values",
+    "text": "",
+    "root": "mapping",
+    "ops": [
+      {
+        "parent": [],
+        "key": "k0",
+        "value": "yes",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "k1",
+        "value": "No",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "k2",
+        "value": "has space",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "k3",
+        "value": "flat",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "k4",
+        "value": "true",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "k5",
+        "value": "v:",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "k6",
+        "value": "x y",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "k7",
+        "value": "http://127.0.0.1:18317/v1",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "k8",
+        "value": "custom_provider:local/gpt-5.5",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "k9",
+        "value": "astr_AAAA",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "k10",
+        "value": "-dash",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "k11",
+        "value": "123",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "k12",
+        "value": "1.5",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "k13",
+        "value": "",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "k14",
+        "value": "a#b",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "k15",
+        "value": "a #b",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "k16",
+        "value": "key: v",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "k17",
+        "value": "~",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "k18",
+        "value": "null",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "k19",
+        "value": "@at",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "k20",
+        "value": "`tick",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "k21",
+        "value": "it's",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "k22",
+        "value": "say \"hi\"",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "k23",
+        "value": "trail ",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "k24",
+        "value": " lead",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "k25",
+        "value": "multi\nline",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "k26",
+        "value": "中文",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "k27",
+        "value": "OPENAI_BASE_URL=http://x",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "k28",
+        "value": "*star",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "k29",
+        "value": "&amp",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "k30",
+        "value": "!bang",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "k31",
+        "value": "%pc",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "k32",
+        "value": "{brace",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "k33",
+        "value": "[br",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "k34",
+        "value": ">gt",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "k35",
+        "value": "|pipe",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "k36",
+        "value": "?q",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "k37",
+        "value": "-",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "k38",
+        "value": "a,b",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "k39",
+        "value": "0x1F",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "k40",
+        "value": "0o17",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "k41",
+        "value": ".inf",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "k42",
+        "value": "Off",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "k43",
+        "value": "y",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "k44",
+        "value": "n",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "k45",
+        "value": "1e3",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "k46",
+        "value": "+1",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "k47",
+        "value": "2024-01-01",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "k48",
+        "value": "tab\there",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "k49",
+        "value": "back\\slash",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "k50",
+        "value": "colon:",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "k51",
+        "value": ":lead",
+        "rank": "none",
+        "op": "set"
+      }
+    ],
+    "results": [
+      {
+        "text": "k0: 'yes'\n"
+      },
+      {
+        "text": "k0: 'yes'\nk1: 'No'\n"
+      },
+      {
+        "text": "k0: 'yes'\nk1: 'No'\nk2: has space\n"
+      },
+      {
+        "text": "k0: 'yes'\nk1: 'No'\nk2: has space\nk3: flat\n"
+      },
+      {
+        "text": "k0: 'yes'\nk1: 'No'\nk2: has space\nk3: flat\nk4: 'true'\n"
+      },
+      {
+        "text": "k0: 'yes'\nk1: 'No'\nk2: has space\nk3: flat\nk4: 'true'\nk5: 'v:'\n"
+      },
+      {
+        "text": "k0: 'yes'\nk1: 'No'\nk2: has space\nk3: flat\nk4: 'true'\nk5: 'v:'\nk6: x y\n"
+      },
+      {
+        "text": "k0: 'yes'\nk1: 'No'\nk2: has space\nk3: flat\nk4: 'true'\nk5: 'v:'\nk6: x y\nk7: http://127.0.0.1:18317/v1\n"
+      },
+      {
+        "text": "k0: 'yes'\nk1: 'No'\nk2: has space\nk3: flat\nk4: 'true'\nk5: 'v:'\nk6: x y\nk7: http://127.0.0.1:18317/v1\nk8: custom_provider:local/gpt-5.5\n"
+      },
+      {
+        "text": "k0: 'yes'\nk1: 'No'\nk2: has space\nk3: flat\nk4: 'true'\nk5: 'v:'\nk6: x y\nk7: http://127.0.0.1:18317/v1\nk8: custom_provider:local/gpt-5.5\nk9: astr_AAAA\n"
+      },
+      {
+        "text": "k0: 'yes'\nk1: 'No'\nk2: has space\nk3: flat\nk4: 'true'\nk5: 'v:'\nk6: x y\nk7: http://127.0.0.1:18317/v1\nk8: custom_provider:local/gpt-5.5\nk9: astr_AAAA\nk10: '-dash'\n"
+      },
+      {
+        "text": "k0: 'yes'\nk1: 'No'\nk2: has space\nk3: flat\nk4: 'true'\nk5: 'v:'\nk6: x y\nk7: http://127.0.0.1:18317/v1\nk8: custom_provider:local/gpt-5.5\nk9: astr_AAAA\nk10: '-dash'\nk11: '123'\n"
+      },
+      {
+        "text": "k0: 'yes'\nk1: 'No'\nk2: has space\nk3: flat\nk4: 'true'\nk5: 'v:'\nk6: x y\nk7: http://127.0.0.1:18317/v1\nk8: custom_provider:local/gpt-5.5\nk9: astr_AAAA\nk10: '-dash'\nk11: '123'\nk12: '1.5'\n"
+      },
+      {
+        "text": "k0: 'yes'\nk1: 'No'\nk2: has space\nk3: flat\nk4: 'true'\nk5: 'v:'\nk6: x y\nk7: http://127.0.0.1:18317/v1\nk8: custom_provider:local/gpt-5.5\nk9: astr_AAAA\nk10: '-dash'\nk11: '123'\nk12: '1.5'\nk13: ''\n"
+      },
+      {
+        "text": "k0: 'yes'\nk1: 'No'\nk2: has space\nk3: flat\nk4: 'true'\nk5: 'v:'\nk6: x y\nk7: http://127.0.0.1:18317/v1\nk8: custom_provider:local/gpt-5.5\nk9: astr_AAAA\nk10: '-dash'\nk11: '123'\nk12: '1.5'\nk13: ''\nk14: a#b\n"
+      },
+      {
+        "text": "k0: 'yes'\nk1: 'No'\nk2: has space\nk3: flat\nk4: 'true'\nk5: 'v:'\nk6: x y\nk7: http://127.0.0.1:18317/v1\nk8: custom_provider:local/gpt-5.5\nk9: astr_AAAA\nk10: '-dash'\nk11: '123'\nk12: '1.5'\nk13: ''\nk14: a#b\nk15: 'a #b'\n"
+      },
+      {
+        "text": "k0: 'yes'\nk1: 'No'\nk2: has space\nk3: flat\nk4: 'true'\nk5: 'v:'\nk6: x y\nk7: http://127.0.0.1:18317/v1\nk8: custom_provider:local/gpt-5.5\nk9: astr_AAAA\nk10: '-dash'\nk11: '123'\nk12: '1.5'\nk13: ''\nk14: a#b\nk15: 'a #b'\nk16: 'key: v'\n"
+      },
+      {
+        "text": "k0: 'yes'\nk1: 'No'\nk2: has space\nk3: flat\nk4: 'true'\nk5: 'v:'\nk6: x y\nk7: http://127.0.0.1:18317/v1\nk8: custom_provider:local/gpt-5.5\nk9: astr_AAAA\nk10: '-dash'\nk11: '123'\nk12: '1.5'\nk13: ''\nk14: a#b\nk15: 'a #b'\nk16: 'key: v'\nk17: '~'\n"
+      },
+      {
+        "text": "k0: 'yes'\nk1: 'No'\nk2: has space\nk3: flat\nk4: 'true'\nk5: 'v:'\nk6: x y\nk7: http://127.0.0.1:18317/v1\nk8: custom_provider:local/gpt-5.5\nk9: astr_AAAA\nk10: '-dash'\nk11: '123'\nk12: '1.5'\nk13: ''\nk14: a#b\nk15: 'a #b'\nk16: 'key: v'\nk17: '~'\nk18: 'null'\n"
+      },
+      {
+        "text": "k0: 'yes'\nk1: 'No'\nk2: has space\nk3: flat\nk4: 'true'\nk5: 'v:'\nk6: x y\nk7: http://127.0.0.1:18317/v1\nk8: custom_provider:local/gpt-5.5\nk9: astr_AAAA\nk10: '-dash'\nk11: '123'\nk12: '1.5'\nk13: ''\nk14: a#b\nk15: 'a #b'\nk16: 'key: v'\nk17: '~'\nk18: 'null'\nk19: '@at'\n"
+      },
+      {
+        "text": "k0: 'yes'\nk1: 'No'\nk2: has space\nk3: flat\nk4: 'true'\nk5: 'v:'\nk6: x y\nk7: http://127.0.0.1:18317/v1\nk8: custom_provider:local/gpt-5.5\nk9: astr_AAAA\nk10: '-dash'\nk11: '123'\nk12: '1.5'\nk13: ''\nk14: a#b\nk15: 'a #b'\nk16: 'key: v'\nk17: '~'\nk18: 'null'\nk19: '@at'\nk20: '`tick'\n"
+      },
+      {
+        "text": "k0: 'yes'\nk1: 'No'\nk2: has space\nk3: flat\nk4: 'true'\nk5: 'v:'\nk6: x y\nk7: http://127.0.0.1:18317/v1\nk8: custom_provider:local/gpt-5.5\nk9: astr_AAAA\nk10: '-dash'\nk11: '123'\nk12: '1.5'\nk13: ''\nk14: a#b\nk15: 'a #b'\nk16: 'key: v'\nk17: '~'\nk18: 'null'\nk19: '@at'\nk20: '`tick'\nk21: \"it's\"\n"
+      },
+      {
+        "text": "k0: 'yes'\nk1: 'No'\nk2: has space\nk3: flat\nk4: 'true'\nk5: 'v:'\nk6: x y\nk7: http://127.0.0.1:18317/v1\nk8: custom_provider:local/gpt-5.5\nk9: astr_AAAA\nk10: '-dash'\nk11: '123'\nk12: '1.5'\nk13: ''\nk14: a#b\nk15: 'a #b'\nk16: 'key: v'\nk17: '~'\nk18: 'null'\nk19: '@at'\nk20: '`tick'\nk21: \"it's\"\nk22: 'say \"hi\"'\n"
+      },
+      {
+        "text": "k0: 'yes'\nk1: 'No'\nk2: has space\nk3: flat\nk4: 'true'\nk5: 'v:'\nk6: x y\nk7: http://127.0.0.1:18317/v1\nk8: custom_provider:local/gpt-5.5\nk9: astr_AAAA\nk10: '-dash'\nk11: '123'\nk12: '1.5'\nk13: ''\nk14: a#b\nk15: 'a #b'\nk16: 'key: v'\nk17: '~'\nk18: 'null'\nk19: '@at'\nk20: '`tick'\nk21: \"it's\"\nk22: 'say \"hi\"'\nk23: 'trail '\n"
+      },
+      {
+        "text": "k0: 'yes'\nk1: 'No'\nk2: has space\nk3: flat\nk4: 'true'\nk5: 'v:'\nk6: x y\nk7: http://127.0.0.1:18317/v1\nk8: custom_provider:local/gpt-5.5\nk9: astr_AAAA\nk10: '-dash'\nk11: '123'\nk12: '1.5'\nk13: ''\nk14: a#b\nk15: 'a #b'\nk16: 'key: v'\nk17: '~'\nk18: 'null'\nk19: '@at'\nk20: '`tick'\nk21: \"it's\"\nk22: 'say \"hi\"'\nk23: 'trail '\nk24: ' lead'\n"
+      },
+      {
+        "text": "k0: 'yes'\nk1: 'No'\nk2: has space\nk3: flat\nk4: 'true'\nk5: 'v:'\nk6: x y\nk7: http://127.0.0.1:18317/v1\nk8: custom_provider:local/gpt-5.5\nk9: astr_AAAA\nk10: '-dash'\nk11: '123'\nk12: '1.5'\nk13: ''\nk14: a#b\nk15: 'a #b'\nk16: 'key: v'\nk17: '~'\nk18: 'null'\nk19: '@at'\nk20: '`tick'\nk21: \"it's\"\nk22: 'say \"hi\"'\nk23: 'trail '\nk24: ' lead'\nk25: |-\n  multi\n  line\n"
+      },
+      {
+        "text": "k0: 'yes'\nk1: 'No'\nk2: has space\nk3: flat\nk4: 'true'\nk5: 'v:'\nk6: x y\nk7: http://127.0.0.1:18317/v1\nk8: custom_provider:local/gpt-5.5\nk9: astr_AAAA\nk10: '-dash'\nk11: '123'\nk12: '1.5'\nk13: ''\nk14: a#b\nk15: 'a #b'\nk16: 'key: v'\nk17: '~'\nk18: 'null'\nk19: '@at'\nk20: '`tick'\nk21: \"it's\"\nk22: 'say \"hi\"'\nk23: 'trail '\nk24: ' lead'\nk25: |-\n  multi\n  line\nk26: 中文\n"
+      },
+      {
+        "text": "k0: 'yes'\nk1: 'No'\nk2: has space\nk3: flat\nk4: 'true'\nk5: 'v:'\nk6: x y\nk7: http://127.0.0.1:18317/v1\nk8: custom_provider:local/gpt-5.5\nk9: astr_AAAA\nk10: '-dash'\nk11: '123'\nk12: '1.5'\nk13: ''\nk14: a#b\nk15: 'a #b'\nk16: 'key: v'\nk17: '~'\nk18: 'null'\nk19: '@at'\nk20: '`tick'\nk21: \"it's\"\nk22: 'say \"hi\"'\nk23: 'trail '\nk24: ' lead'\nk25: |-\n  multi\n  line\nk26: 中文\nk27: OPENAI_BASE_URL=http://x\n"
+      },
+      {
+        "text": "k0: 'yes'\nk1: 'No'\nk2: has space\nk3: flat\nk4: 'true'\nk5: 'v:'\nk6: x y\nk7: http://127.0.0.1:18317/v1\nk8: custom_provider:local/gpt-5.5\nk9: astr_AAAA\nk10: '-dash'\nk11: '123'\nk12: '1.5'\nk13: ''\nk14: a#b\nk15: 'a #b'\nk16: 'key: v'\nk17: '~'\nk18: 'null'\nk19: '@at'\nk20: '`tick'\nk21: \"it's\"\nk22: 'say \"hi\"'\nk23: 'trail '\nk24: ' lead'\nk25: |-\n  multi\n  line\nk26: 中文\nk27: OPENAI_BASE_URL=http://x\nk28: '*star'\n"
+      },
+      {
+        "text": "k0: 'yes'\nk1: 'No'\nk2: has space\nk3: flat\nk4: 'true'\nk5: 'v:'\nk6: x y\nk7: http://127.0.0.1:18317/v1\nk8: custom_provider:local/gpt-5.5\nk9: astr_AAAA\nk10: '-dash'\nk11: '123'\nk12: '1.5'\nk13: ''\nk14: a#b\nk15: 'a #b'\nk16: 'key: v'\nk17: '~'\nk18: 'null'\nk19: '@at'\nk20: '`tick'\nk21: \"it's\"\nk22: 'say \"hi\"'\nk23: 'trail '\nk24: ' lead'\nk25: |-\n  multi\n  line\nk26: 中文\nk27: OPENAI_BASE_URL=http://x\nk28: '*star'\nk29: '&amp'\n"
+      },
+      {
+        "text": "k0: 'yes'\nk1: 'No'\nk2: has space\nk3: flat\nk4: 'true'\nk5: 'v:'\nk6: x y\nk7: http://127.0.0.1:18317/v1\nk8: custom_provider:local/gpt-5.5\nk9: astr_AAAA\nk10: '-dash'\nk11: '123'\nk12: '1.5'\nk13: ''\nk14: a#b\nk15: 'a #b'\nk16: 'key: v'\nk17: '~'\nk18: 'null'\nk19: '@at'\nk20: '`tick'\nk21: \"it's\"\nk22: 'say \"hi\"'\nk23: 'trail '\nk24: ' lead'\nk25: |-\n  multi\n  line\nk26: 中文\nk27: OPENAI_BASE_URL=http://x\nk28: '*star'\nk29: '&amp'\nk30: '!bang'\n"
+      },
+      {
+        "text": "k0: 'yes'\nk1: 'No'\nk2: has space\nk3: flat\nk4: 'true'\nk5: 'v:'\nk6: x y\nk7: http://127.0.0.1:18317/v1\nk8: custom_provider:local/gpt-5.5\nk9: astr_AAAA\nk10: '-dash'\nk11: '123'\nk12: '1.5'\nk13: ''\nk14: a#b\nk15: 'a #b'\nk16: 'key: v'\nk17: '~'\nk18: 'null'\nk19: '@at'\nk20: '`tick'\nk21: \"it's\"\nk22: 'say \"hi\"'\nk23: 'trail '\nk24: ' lead'\nk25: |-\n  multi\n  line\nk26: 中文\nk27: OPENAI_BASE_URL=http://x\nk28: '*star'\nk29: '&amp'\nk30: '!bang'\nk31: '%pc'\n"
+      },
+      {
+        "text": "k0: 'yes'\nk1: 'No'\nk2: has space\nk3: flat\nk4: 'true'\nk5: 'v:'\nk6: x y\nk7: http://127.0.0.1:18317/v1\nk8: custom_provider:local/gpt-5.5\nk9: astr_AAAA\nk10: '-dash'\nk11: '123'\nk12: '1.5'\nk13: ''\nk14: a#b\nk15: 'a #b'\nk16: 'key: v'\nk17: '~'\nk18: 'null'\nk19: '@at'\nk20: '`tick'\nk21: \"it's\"\nk22: 'say \"hi\"'\nk23: 'trail '\nk24: ' lead'\nk25: |-\n  multi\n  line\nk26: 中文\nk27: OPENAI_BASE_URL=http://x\nk28: '*star'\nk29: '&amp'\nk30: '!bang'\nk31: '%pc'\nk32: '{brace'\n"
+      },
+      {
+        "text": "k0: 'yes'\nk1: 'No'\nk2: has space\nk3: flat\nk4: 'true'\nk5: 'v:'\nk6: x y\nk7: http://127.0.0.1:18317/v1\nk8: custom_provider:local/gpt-5.5\nk9: astr_AAAA\nk10: '-dash'\nk11: '123'\nk12: '1.5'\nk13: ''\nk14: a#b\nk15: 'a #b'\nk16: 'key: v'\nk17: '~'\nk18: 'null'\nk19: '@at'\nk20: '`tick'\nk21: \"it's\"\nk22: 'say \"hi\"'\nk23: 'trail '\nk24: ' lead'\nk25: |-\n  multi\n  line\nk26: 中文\nk27: OPENAI_BASE_URL=http://x\nk28: '*star'\nk29: '&amp'\nk30: '!bang'\nk31: '%pc'\nk32: '{brace'\nk33: '[br'\n"
+      },
+      {
+        "text": "k0: 'yes'\nk1: 'No'\nk2: has space\nk3: flat\nk4: 'true'\nk5: 'v:'\nk6: x y\nk7: http://127.0.0.1:18317/v1\nk8: custom_provider:local/gpt-5.5\nk9: astr_AAAA\nk10: '-dash'\nk11: '123'\nk12: '1.5'\nk13: ''\nk14: a#b\nk15: 'a #b'\nk16: 'key: v'\nk17: '~'\nk18: 'null'\nk19: '@at'\nk20: '`tick'\nk21: \"it's\"\nk22: 'say \"hi\"'\nk23: 'trail '\nk24: ' lead'\nk25: |-\n  multi\n  line\nk26: 中文\nk27: OPENAI_BASE_URL=http://x\nk28: '*star'\nk29: '&amp'\nk30: '!bang'\nk31: '%pc'\nk32: '{brace'\nk33: '[br'\nk34: '>gt'\n"
+      },
+      {
+        "text": "k0: 'yes'\nk1: 'No'\nk2: has space\nk3: flat\nk4: 'true'\nk5: 'v:'\nk6: x y\nk7: http://127.0.0.1:18317/v1\nk8: custom_provider:local/gpt-5.5\nk9: astr_AAAA\nk10: '-dash'\nk11: '123'\nk12: '1.5'\nk13: ''\nk14: a#b\nk15: 'a #b'\nk16: 'key: v'\nk17: '~'\nk18: 'null'\nk19: '@at'\nk20: '`tick'\nk21: \"it's\"\nk22: 'say \"hi\"'\nk23: 'trail '\nk24: ' lead'\nk25: |-\n  multi\n  line\nk26: 中文\nk27: OPENAI_BASE_URL=http://x\nk28: '*star'\nk29: '&amp'\nk30: '!bang'\nk31: '%pc'\nk32: '{brace'\nk33: '[br'\nk34: '>gt'\nk35: '|pipe'\n"
+      },
+      {
+        "text": "k0: 'yes'\nk1: 'No'\nk2: has space\nk3: flat\nk4: 'true'\nk5: 'v:'\nk6: x y\nk7: http://127.0.0.1:18317/v1\nk8: custom_provider:local/gpt-5.5\nk9: astr_AAAA\nk10: '-dash'\nk11: '123'\nk12: '1.5'\nk13: ''\nk14: a#b\nk15: 'a #b'\nk16: 'key: v'\nk17: '~'\nk18: 'null'\nk19: '@at'\nk20: '`tick'\nk21: \"it's\"\nk22: 'say \"hi\"'\nk23: 'trail '\nk24: ' lead'\nk25: |-\n  multi\n  line\nk26: 中文\nk27: OPENAI_BASE_URL=http://x\nk28: '*star'\nk29: '&amp'\nk30: '!bang'\nk31: '%pc'\nk32: '{brace'\nk33: '[br'\nk34: '>gt'\nk35: '|pipe'\nk36: '?q'\n"
+      },
+      {
+        "text": "k0: 'yes'\nk1: 'No'\nk2: has space\nk3: flat\nk4: 'true'\nk5: 'v:'\nk6: x y\nk7: http://127.0.0.1:18317/v1\nk8: custom_provider:local/gpt-5.5\nk9: astr_AAAA\nk10: '-dash'\nk11: '123'\nk12: '1.5'\nk13: ''\nk14: a#b\nk15: 'a #b'\nk16: 'key: v'\nk17: '~'\nk18: 'null'\nk19: '@at'\nk20: '`tick'\nk21: \"it's\"\nk22: 'say \"hi\"'\nk23: 'trail '\nk24: ' lead'\nk25: |-\n  multi\n  line\nk26: 中文\nk27: OPENAI_BASE_URL=http://x\nk28: '*star'\nk29: '&amp'\nk30: '!bang'\nk31: '%pc'\nk32: '{brace'\nk33: '[br'\nk34: '>gt'\nk35: '|pipe'\nk36: '?q'\nk37: '-'\n"
+      },
+      {
+        "text": "k0: 'yes'\nk1: 'No'\nk2: has space\nk3: flat\nk4: 'true'\nk5: 'v:'\nk6: x y\nk7: http://127.0.0.1:18317/v1\nk8: custom_provider:local/gpt-5.5\nk9: astr_AAAA\nk10: '-dash'\nk11: '123'\nk12: '1.5'\nk13: ''\nk14: a#b\nk15: 'a #b'\nk16: 'key: v'\nk17: '~'\nk18: 'null'\nk19: '@at'\nk20: '`tick'\nk21: \"it's\"\nk22: 'say \"hi\"'\nk23: 'trail '\nk24: ' lead'\nk25: |-\n  multi\n  line\nk26: 中文\nk27: OPENAI_BASE_URL=http://x\nk28: '*star'\nk29: '&amp'\nk30: '!bang'\nk31: '%pc'\nk32: '{brace'\nk33: '[br'\nk34: '>gt'\nk35: '|pipe'\nk36: '?q'\nk37: '-'\nk38: a,b\n"
+      },
+      {
+        "text": "k0: 'yes'\nk1: 'No'\nk2: has space\nk3: flat\nk4: 'true'\nk5: 'v:'\nk6: x y\nk7: http://127.0.0.1:18317/v1\nk8: custom_provider:local/gpt-5.5\nk9: astr_AAAA\nk10: '-dash'\nk11: '123'\nk12: '1.5'\nk13: ''\nk14: a#b\nk15: 'a #b'\nk16: 'key: v'\nk17: '~'\nk18: 'null'\nk19: '@at'\nk20: '`tick'\nk21: \"it's\"\nk22: 'say \"hi\"'\nk23: 'trail '\nk24: ' lead'\nk25: |-\n  multi\n  line\nk26: 中文\nk27: OPENAI_BASE_URL=http://x\nk28: '*star'\nk29: '&amp'\nk30: '!bang'\nk31: '%pc'\nk32: '{brace'\nk33: '[br'\nk34: '>gt'\nk35: '|pipe'\nk36: '?q'\nk37: '-'\nk38: a,b\nk39: '0x1F'\n"
+      },
+      {
+        "text": "k0: 'yes'\nk1: 'No'\nk2: has space\nk3: flat\nk4: 'true'\nk5: 'v:'\nk6: x y\nk7: http://127.0.0.1:18317/v1\nk8: custom_provider:local/gpt-5.5\nk9: astr_AAAA\nk10: '-dash'\nk11: '123'\nk12: '1.5'\nk13: ''\nk14: a#b\nk15: 'a #b'\nk16: 'key: v'\nk17: '~'\nk18: 'null'\nk19: '@at'\nk20: '`tick'\nk21: \"it's\"\nk22: 'say \"hi\"'\nk23: 'trail '\nk24: ' lead'\nk25: |-\n  multi\n  line\nk26: 中文\nk27: OPENAI_BASE_URL=http://x\nk28: '*star'\nk29: '&amp'\nk30: '!bang'\nk31: '%pc'\nk32: '{brace'\nk33: '[br'\nk34: '>gt'\nk35: '|pipe'\nk36: '?q'\nk37: '-'\nk38: a,b\nk39: '0x1F'\nk40: '0o17'\n"
+      },
+      {
+        "text": "k0: 'yes'\nk1: 'No'\nk2: has space\nk3: flat\nk4: 'true'\nk5: 'v:'\nk6: x y\nk7: http://127.0.0.1:18317/v1\nk8: custom_provider:local/gpt-5.5\nk9: astr_AAAA\nk10: '-dash'\nk11: '123'\nk12: '1.5'\nk13: ''\nk14: a#b\nk15: 'a #b'\nk16: 'key: v'\nk17: '~'\nk18: 'null'\nk19: '@at'\nk20: '`tick'\nk21: \"it's\"\nk22: 'say \"hi\"'\nk23: 'trail '\nk24: ' lead'\nk25: |-\n  multi\n  line\nk26: 中文\nk27: OPENAI_BASE_URL=http://x\nk28: '*star'\nk29: '&amp'\nk30: '!bang'\nk31: '%pc'\nk32: '{brace'\nk33: '[br'\nk34: '>gt'\nk35: '|pipe'\nk36: '?q'\nk37: '-'\nk38: a,b\nk39: '0x1F'\nk40: '0o17'\nk41: '.inf'\n"
+      },
+      {
+        "text": "k0: 'yes'\nk1: 'No'\nk2: has space\nk3: flat\nk4: 'true'\nk5: 'v:'\nk6: x y\nk7: http://127.0.0.1:18317/v1\nk8: custom_provider:local/gpt-5.5\nk9: astr_AAAA\nk10: '-dash'\nk11: '123'\nk12: '1.5'\nk13: ''\nk14: a#b\nk15: 'a #b'\nk16: 'key: v'\nk17: '~'\nk18: 'null'\nk19: '@at'\nk20: '`tick'\nk21: \"it's\"\nk22: 'say \"hi\"'\nk23: 'trail '\nk24: ' lead'\nk25: |-\n  multi\n  line\nk26: 中文\nk27: OPENAI_BASE_URL=http://x\nk28: '*star'\nk29: '&amp'\nk30: '!bang'\nk31: '%pc'\nk32: '{brace'\nk33: '[br'\nk34: '>gt'\nk35: '|pipe'\nk36: '?q'\nk37: '-'\nk38: a,b\nk39: '0x1F'\nk40: '0o17'\nk41: '.inf'\nk42: 'Off'\n"
+      },
+      {
+        "text": "k0: 'yes'\nk1: 'No'\nk2: has space\nk3: flat\nk4: 'true'\nk5: 'v:'\nk6: x y\nk7: http://127.0.0.1:18317/v1\nk8: custom_provider:local/gpt-5.5\nk9: astr_AAAA\nk10: '-dash'\nk11: '123'\nk12: '1.5'\nk13: ''\nk14: a#b\nk15: 'a #b'\nk16: 'key: v'\nk17: '~'\nk18: 'null'\nk19: '@at'\nk20: '`tick'\nk21: \"it's\"\nk22: 'say \"hi\"'\nk23: 'trail '\nk24: ' lead'\nk25: |-\n  multi\n  line\nk26: 中文\nk27: OPENAI_BASE_URL=http://x\nk28: '*star'\nk29: '&amp'\nk30: '!bang'\nk31: '%pc'\nk32: '{brace'\nk33: '[br'\nk34: '>gt'\nk35: '|pipe'\nk36: '?q'\nk37: '-'\nk38: a,b\nk39: '0x1F'\nk40: '0o17'\nk41: '.inf'\nk42: 'Off'\nk43: y\n"
+      },
+      {
+        "text": "k0: 'yes'\nk1: 'No'\nk2: has space\nk3: flat\nk4: 'true'\nk5: 'v:'\nk6: x y\nk7: http://127.0.0.1:18317/v1\nk8: custom_provider:local/gpt-5.5\nk9: astr_AAAA\nk10: '-dash'\nk11: '123'\nk12: '1.5'\nk13: ''\nk14: a#b\nk15: 'a #b'\nk16: 'key: v'\nk17: '~'\nk18: 'null'\nk19: '@at'\nk20: '`tick'\nk21: \"it's\"\nk22: 'say \"hi\"'\nk23: 'trail '\nk24: ' lead'\nk25: |-\n  multi\n  line\nk26: 中文\nk27: OPENAI_BASE_URL=http://x\nk28: '*star'\nk29: '&amp'\nk30: '!bang'\nk31: '%pc'\nk32: '{brace'\nk33: '[br'\nk34: '>gt'\nk35: '|pipe'\nk36: '?q'\nk37: '-'\nk38: a,b\nk39: '0x1F'\nk40: '0o17'\nk41: '.inf'\nk42: 'Off'\nk43: y\nk44: n\n"
+      },
+      {
+        "text": "k0: 'yes'\nk1: 'No'\nk2: has space\nk3: flat\nk4: 'true'\nk5: 'v:'\nk6: x y\nk7: http://127.0.0.1:18317/v1\nk8: custom_provider:local/gpt-5.5\nk9: astr_AAAA\nk10: '-dash'\nk11: '123'\nk12: '1.5'\nk13: ''\nk14: a#b\nk15: 'a #b'\nk16: 'key: v'\nk17: '~'\nk18: 'null'\nk19: '@at'\nk20: '`tick'\nk21: \"it's\"\nk22: 'say \"hi\"'\nk23: 'trail '\nk24: ' lead'\nk25: |-\n  multi\n  line\nk26: 中文\nk27: OPENAI_BASE_URL=http://x\nk28: '*star'\nk29: '&amp'\nk30: '!bang'\nk31: '%pc'\nk32: '{brace'\nk33: '[br'\nk34: '>gt'\nk35: '|pipe'\nk36: '?q'\nk37: '-'\nk38: a,b\nk39: '0x1F'\nk40: '0o17'\nk41: '.inf'\nk42: 'Off'\nk43: y\nk44: n\nk45: '1e3'\n"
+      },
+      {
+        "text": "k0: 'yes'\nk1: 'No'\nk2: has space\nk3: flat\nk4: 'true'\nk5: 'v:'\nk6: x y\nk7: http://127.0.0.1:18317/v1\nk8: custom_provider:local/gpt-5.5\nk9: astr_AAAA\nk10: '-dash'\nk11: '123'\nk12: '1.5'\nk13: ''\nk14: a#b\nk15: 'a #b'\nk16: 'key: v'\nk17: '~'\nk18: 'null'\nk19: '@at'\nk20: '`tick'\nk21: \"it's\"\nk22: 'say \"hi\"'\nk23: 'trail '\nk24: ' lead'\nk25: |-\n  multi\n  line\nk26: 中文\nk27: OPENAI_BASE_URL=http://x\nk28: '*star'\nk29: '&amp'\nk30: '!bang'\nk31: '%pc'\nk32: '{brace'\nk33: '[br'\nk34: '>gt'\nk35: '|pipe'\nk36: '?q'\nk37: '-'\nk38: a,b\nk39: '0x1F'\nk40: '0o17'\nk41: '.inf'\nk42: 'Off'\nk43: y\nk44: n\nk45: '1e3'\nk46: '+1'\n"
+      },
+      {
+        "text": "k0: 'yes'\nk1: 'No'\nk2: has space\nk3: flat\nk4: 'true'\nk5: 'v:'\nk6: x y\nk7: http://127.0.0.1:18317/v1\nk8: custom_provider:local/gpt-5.5\nk9: astr_AAAA\nk10: '-dash'\nk11: '123'\nk12: '1.5'\nk13: ''\nk14: a#b\nk15: 'a #b'\nk16: 'key: v'\nk17: '~'\nk18: 'null'\nk19: '@at'\nk20: '`tick'\nk21: \"it's\"\nk22: 'say \"hi\"'\nk23: 'trail '\nk24: ' lead'\nk25: |-\n  multi\n  line\nk26: 中文\nk27: OPENAI_BASE_URL=http://x\nk28: '*star'\nk29: '&amp'\nk30: '!bang'\nk31: '%pc'\nk32: '{brace'\nk33: '[br'\nk34: '>gt'\nk35: '|pipe'\nk36: '?q'\nk37: '-'\nk38: a,b\nk39: '0x1F'\nk40: '0o17'\nk41: '.inf'\nk42: 'Off'\nk43: y\nk44: n\nk45: '1e3'\nk46: '+1'\nk47: 2024-01-01\n"
+      },
+      {
+        "text": "k0: 'yes'\nk1: 'No'\nk2: has space\nk3: flat\nk4: 'true'\nk5: 'v:'\nk6: x y\nk7: http://127.0.0.1:18317/v1\nk8: custom_provider:local/gpt-5.5\nk9: astr_AAAA\nk10: '-dash'\nk11: '123'\nk12: '1.5'\nk13: ''\nk14: a#b\nk15: 'a #b'\nk16: 'key: v'\nk17: '~'\nk18: 'null'\nk19: '@at'\nk20: '`tick'\nk21: \"it's\"\nk22: 'say \"hi\"'\nk23: 'trail '\nk24: ' lead'\nk25: |-\n  multi\n  line\nk26: 中文\nk27: OPENAI_BASE_URL=http://x\nk28: '*star'\nk29: '&amp'\nk30: '!bang'\nk31: '%pc'\nk32: '{brace'\nk33: '[br'\nk34: '>gt'\nk35: '|pipe'\nk36: '?q'\nk37: '-'\nk38: a,b\nk39: '0x1F'\nk40: '0o17'\nk41: '.inf'\nk42: 'Off'\nk43: y\nk44: n\nk45: '1e3'\nk46: '+1'\nk47: 2024-01-01\nk48: tab\there\n"
+      },
+      {
+        "text": "k0: 'yes'\nk1: 'No'\nk2: has space\nk3: flat\nk4: 'true'\nk5: 'v:'\nk6: x y\nk7: http://127.0.0.1:18317/v1\nk8: custom_provider:local/gpt-5.5\nk9: astr_AAAA\nk10: '-dash'\nk11: '123'\nk12: '1.5'\nk13: ''\nk14: a#b\nk15: 'a #b'\nk16: 'key: v'\nk17: '~'\nk18: 'null'\nk19: '@at'\nk20: '`tick'\nk21: \"it's\"\nk22: 'say \"hi\"'\nk23: 'trail '\nk24: ' lead'\nk25: |-\n  multi\n  line\nk26: 中文\nk27: OPENAI_BASE_URL=http://x\nk28: '*star'\nk29: '&amp'\nk30: '!bang'\nk31: '%pc'\nk32: '{brace'\nk33: '[br'\nk34: '>gt'\nk35: '|pipe'\nk36: '?q'\nk37: '-'\nk38: a,b\nk39: '0x1F'\nk40: '0o17'\nk41: '.inf'\nk42: 'Off'\nk43: y\nk44: n\nk45: '1e3'\nk46: '+1'\nk47: 2024-01-01\nk48: tab\there\nk49: back\\slash\n"
+      },
+      {
+        "text": "k0: 'yes'\nk1: 'No'\nk2: has space\nk3: flat\nk4: 'true'\nk5: 'v:'\nk6: x y\nk7: http://127.0.0.1:18317/v1\nk8: custom_provider:local/gpt-5.5\nk9: astr_AAAA\nk10: '-dash'\nk11: '123'\nk12: '1.5'\nk13: ''\nk14: a#b\nk15: 'a #b'\nk16: 'key: v'\nk17: '~'\nk18: 'null'\nk19: '@at'\nk20: '`tick'\nk21: \"it's\"\nk22: 'say \"hi\"'\nk23: 'trail '\nk24: ' lead'\nk25: |-\n  multi\n  line\nk26: 中文\nk27: OPENAI_BASE_URL=http://x\nk28: '*star'\nk29: '&amp'\nk30: '!bang'\nk31: '%pc'\nk32: '{brace'\nk33: '[br'\nk34: '>gt'\nk35: '|pipe'\nk36: '?q'\nk37: '-'\nk38: a,b\nk39: '0x1F'\nk40: '0o17'\nk41: '.inf'\nk42: 'Off'\nk43: y\nk44: n\nk45: '1e3'\nk46: '+1'\nk47: 2024-01-01\nk48: tab\there\nk49: back\\slash\nk50: 'colon:'\n"
+      },
+      {
+        "text": "k0: 'yes'\nk1: 'No'\nk2: has space\nk3: flat\nk4: 'true'\nk5: 'v:'\nk6: x y\nk7: http://127.0.0.1:18317/v1\nk8: custom_provider:local/gpt-5.5\nk9: astr_AAAA\nk10: '-dash'\nk11: '123'\nk12: '1.5'\nk13: ''\nk14: a#b\nk15: 'a #b'\nk16: 'key: v'\nk17: '~'\nk18: 'null'\nk19: '@at'\nk20: '`tick'\nk21: \"it's\"\nk22: 'say \"hi\"'\nk23: 'trail '\nk24: ' lead'\nk25: |-\n  multi\n  line\nk26: 中文\nk27: OPENAI_BASE_URL=http://x\nk28: '*star'\nk29: '&amp'\nk30: '!bang'\nk31: '%pc'\nk32: '{brace'\nk33: '[br'\nk34: '>gt'\nk35: '|pipe'\nk36: '?q'\nk37: '-'\nk38: a,b\nk39: '0x1F'\nk40: '0o17'\nk41: '.inf'\nk42: 'Off'\nk43: y\nk44: n\nk45: '1e3'\nk46: '+1'\nk47: 2024-01-01\nk48: tab\there\nk49: back\\slash\nk50: 'colon:'\nk51: ':lead'\n"
+      }
+    ]
+  },
+  {
+    "name": "quoting_keys",
+    "text": "",
+    "root": "mapping",
+    "ops": [
+      {
+        "parent": [],
+        "key": "yes",
+        "value": "v",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "No",
+        "value": "v",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "has space",
+        "value": "v",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "flat",
+        "value": "v",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "true",
+        "value": "v",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "v:",
+        "value": "v",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "x y",
+        "value": "v",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "http://127.0.0.1:18317/v1",
+        "value": "v",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "custom_provider:local/gpt-5.5",
+        "value": "v",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "astr_AAAA",
+        "value": "v",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "-dash",
+        "value": "v",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "123",
+        "value": "v",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "1.5",
+        "value": "v",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "a#b",
+        "value": "v",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "a #b",
+        "value": "v",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "key: v",
+        "value": "v",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "~",
+        "value": "v",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "null",
+        "value": "v",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "@at",
+        "value": "v",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "`tick",
+        "value": "v",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "it's",
+        "value": "v",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "say \"hi\"",
+        "value": "v",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "trail ",
+        "value": "v",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": " lead",
+        "value": "v",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "multi\nline",
+        "value": "v",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "中文",
+        "value": "v",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "OPENAI_BASE_URL=http://x",
+        "value": "v",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "*star",
+        "value": "v",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "&amp",
+        "value": "v",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "!bang",
+        "value": "v",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "%pc",
+        "value": "v",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "{brace",
+        "value": "v",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "[br",
+        "value": "v",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": ">gt",
+        "value": "v",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "|pipe",
+        "value": "v",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "?q",
+        "value": "v",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "-",
+        "value": "v",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "a,b",
+        "value": "v",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "0x1F",
+        "value": "v",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "0o17",
+        "value": "v",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": ".inf",
+        "value": "v",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "Off",
+        "value": "v",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "y",
+        "value": "v",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "n",
+        "value": "v",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "1e3",
+        "value": "v",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "+1",
+        "value": "v",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "2024-01-01",
+        "value": "v",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "tab\there",
+        "value": "v",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "back\\slash",
+        "value": "v",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "colon:",
+        "value": "v",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": ":lead",
+        "value": "v",
+        "rank": "none",
+        "op": "set"
+      }
+    ],
+    "results": [
+      {
+        "text": "'yes': v\n"
+      },
+      {
+        "text": "'yes': v\n'No': v\n"
+      },
+      {
+        "text": "'yes': v\n'No': v\nhas space: v\n"
+      },
+      {
+        "text": "'yes': v\n'No': v\nhas space: v\nflat: v\n"
+      },
+      {
+        "text": "'yes': v\n'No': v\nhas space: v\nflat: v\n'true': v\n"
+      },
+      {
+        "text": "'yes': v\n'No': v\nhas space: v\nflat: v\n'true': v\n'v:': v\n"
+      },
+      {
+        "text": "'yes': v\n'No': v\nhas space: v\nflat: v\n'true': v\n'v:': v\nx y: v\n"
+      },
+      {
+        "text": "'yes': v\n'No': v\nhas space: v\nflat: v\n'true': v\n'v:': v\nx y: v\nhttp://127.0.0.1:18317/v1: v\n"
+      },
+      {
+        "text": "'yes': v\n'No': v\nhas space: v\nflat: v\n'true': v\n'v:': v\nx y: v\nhttp://127.0.0.1:18317/v1: v\ncustom_provider:local/gpt-5.5: v\n"
+      },
+      {
+        "text": "'yes': v\n'No': v\nhas space: v\nflat: v\n'true': v\n'v:': v\nx y: v\nhttp://127.0.0.1:18317/v1: v\ncustom_provider:local/gpt-5.5: v\nastr_AAAA: v\n"
+      },
+      {
+        "text": "'yes': v\n'No': v\nhas space: v\nflat: v\n'true': v\n'v:': v\nx y: v\nhttp://127.0.0.1:18317/v1: v\ncustom_provider:local/gpt-5.5: v\nastr_AAAA: v\n'-dash': v\n"
+      },
+      {
+        "text": "'yes': v\n'No': v\nhas space: v\nflat: v\n'true': v\n'v:': v\nx y: v\nhttp://127.0.0.1:18317/v1: v\ncustom_provider:local/gpt-5.5: v\nastr_AAAA: v\n'-dash': v\n'123': v\n"
+      },
+      {
+        "text": "'yes': v\n'No': v\nhas space: v\nflat: v\n'true': v\n'v:': v\nx y: v\nhttp://127.0.0.1:18317/v1: v\ncustom_provider:local/gpt-5.5: v\nastr_AAAA: v\n'-dash': v\n'123': v\n'1.5': v\n"
+      },
+      {
+        "text": "'yes': v\n'No': v\nhas space: v\nflat: v\n'true': v\n'v:': v\nx y: v\nhttp://127.0.0.1:18317/v1: v\ncustom_provider:local/gpt-5.5: v\nastr_AAAA: v\n'-dash': v\n'123': v\n'1.5': v\na#b: v\n"
+      },
+      {
+        "text": "'yes': v\n'No': v\nhas space: v\nflat: v\n'true': v\n'v:': v\nx y: v\nhttp://127.0.0.1:18317/v1: v\ncustom_provider:local/gpt-5.5: v\nastr_AAAA: v\n'-dash': v\n'123': v\n'1.5': v\na#b: v\n'a #b': v\n"
+      },
+      {
+        "text": "'yes': v\n'No': v\nhas space: v\nflat: v\n'true': v\n'v:': v\nx y: v\nhttp://127.0.0.1:18317/v1: v\ncustom_provider:local/gpt-5.5: v\nastr_AAAA: v\n'-dash': v\n'123': v\n'1.5': v\na#b: v\n'a #b': v\n'key: v': v\n"
+      },
+      {
+        "text": "'yes': v\n'No': v\nhas space: v\nflat: v\n'true': v\n'v:': v\nx y: v\nhttp://127.0.0.1:18317/v1: v\ncustom_provider:local/gpt-5.5: v\nastr_AAAA: v\n'-dash': v\n'123': v\n'1.5': v\na#b: v\n'a #b': v\n'key: v': v\n'~': v\n"
+      },
+      {
+        "text": "'yes': v\n'No': v\nhas space: v\nflat: v\n'true': v\n'v:': v\nx y: v\nhttp://127.0.0.1:18317/v1: v\ncustom_provider:local/gpt-5.5: v\nastr_AAAA: v\n'-dash': v\n'123': v\n'1.5': v\na#b: v\n'a #b': v\n'key: v': v\n'~': v\n'null': v\n"
+      },
+      {
+        "text": "'yes': v\n'No': v\nhas space: v\nflat: v\n'true': v\n'v:': v\nx y: v\nhttp://127.0.0.1:18317/v1: v\ncustom_provider:local/gpt-5.5: v\nastr_AAAA: v\n'-dash': v\n'123': v\n'1.5': v\na#b: v\n'a #b': v\n'key: v': v\n'~': v\n'null': v\n'@at': v\n"
+      },
+      {
+        "text": "'yes': v\n'No': v\nhas space: v\nflat: v\n'true': v\n'v:': v\nx y: v\nhttp://127.0.0.1:18317/v1: v\ncustom_provider:local/gpt-5.5: v\nastr_AAAA: v\n'-dash': v\n'123': v\n'1.5': v\na#b: v\n'a #b': v\n'key: v': v\n'~': v\n'null': v\n'@at': v\n'`tick': v\n"
+      },
+      {
+        "text": "'yes': v\n'No': v\nhas space: v\nflat: v\n'true': v\n'v:': v\nx y: v\nhttp://127.0.0.1:18317/v1: v\ncustom_provider:local/gpt-5.5: v\nastr_AAAA: v\n'-dash': v\n'123': v\n'1.5': v\na#b: v\n'a #b': v\n'key: v': v\n'~': v\n'null': v\n'@at': v\n'`tick': v\n\"it's\": v\n"
+      },
+      {
+        "text": "'yes': v\n'No': v\nhas space: v\nflat: v\n'true': v\n'v:': v\nx y: v\nhttp://127.0.0.1:18317/v1: v\ncustom_provider:local/gpt-5.5: v\nastr_AAAA: v\n'-dash': v\n'123': v\n'1.5': v\na#b: v\n'a #b': v\n'key: v': v\n'~': v\n'null': v\n'@at': v\n'`tick': v\n\"it's\": v\n'say \"hi\"': v\n"
+      },
+      {
+        "text": "'yes': v\n'No': v\nhas space: v\nflat: v\n'true': v\n'v:': v\nx y: v\nhttp://127.0.0.1:18317/v1: v\ncustom_provider:local/gpt-5.5: v\nastr_AAAA: v\n'-dash': v\n'123': v\n'1.5': v\na#b: v\n'a #b': v\n'key: v': v\n'~': v\n'null': v\n'@at': v\n'`tick': v\n\"it's\": v\n'say \"hi\"': v\n'trail ': v\n"
+      },
+      {
+        "text": "'yes': v\n'No': v\nhas space: v\nflat: v\n'true': v\n'v:': v\nx y: v\nhttp://127.0.0.1:18317/v1: v\ncustom_provider:local/gpt-5.5: v\nastr_AAAA: v\n'-dash': v\n'123': v\n'1.5': v\na#b: v\n'a #b': v\n'key: v': v\n'~': v\n'null': v\n'@at': v\n'`tick': v\n\"it's\": v\n'say \"hi\"': v\n'trail ': v\n' lead': v\n"
+      },
+      {
+        "text": "'yes': v\n'No': v\nhas space: v\nflat: v\n'true': v\n'v:': v\nx y: v\nhttp://127.0.0.1:18317/v1: v\ncustom_provider:local/gpt-5.5: v\nastr_AAAA: v\n'-dash': v\n'123': v\n'1.5': v\na#b: v\n'a #b': v\n'key: v': v\n'~': v\n'null': v\n'@at': v\n'`tick': v\n\"it's\": v\n'say \"hi\"': v\n'trail ': v\n' lead': v\n\"multi\\nline\": v\n"
+      },
+      {
+        "text": "'yes': v\n'No': v\nhas space: v\nflat: v\n'true': v\n'v:': v\nx y: v\nhttp://127.0.0.1:18317/v1: v\ncustom_provider:local/gpt-5.5: v\nastr_AAAA: v\n'-dash': v\n'123': v\n'1.5': v\na#b: v\n'a #b': v\n'key: v': v\n'~': v\n'null': v\n'@at': v\n'`tick': v\n\"it's\": v\n'say \"hi\"': v\n'trail ': v\n' lead': v\n\"multi\\nline\": v\n中文: v\n"
+      },
+      {
+        "text": "'yes': v\n'No': v\nhas space: v\nflat: v\n'true': v\n'v:': v\nx y: v\nhttp://127.0.0.1:18317/v1: v\ncustom_provider:local/gpt-5.5: v\nastr_AAAA: v\n'-dash': v\n'123': v\n'1.5': v\na#b: v\n'a #b': v\n'key: v': v\n'~': v\n'null': v\n'@at': v\n'`tick': v\n\"it's\": v\n'say \"hi\"': v\n'trail ': v\n' lead': v\n\"multi\\nline\": v\n中文: v\nOPENAI_BASE_URL=http://x: v\n"
+      },
+      {
+        "text": "'yes': v\n'No': v\nhas space: v\nflat: v\n'true': v\n'v:': v\nx y: v\nhttp://127.0.0.1:18317/v1: v\ncustom_provider:local/gpt-5.5: v\nastr_AAAA: v\n'-dash': v\n'123': v\n'1.5': v\na#b: v\n'a #b': v\n'key: v': v\n'~': v\n'null': v\n'@at': v\n'`tick': v\n\"it's\": v\n'say \"hi\"': v\n'trail ': v\n' lead': v\n\"multi\\nline\": v\n中文: v\nOPENAI_BASE_URL=http://x: v\n'*star': v\n"
+      },
+      {
+        "text": "'yes': v\n'No': v\nhas space: v\nflat: v\n'true': v\n'v:': v\nx y: v\nhttp://127.0.0.1:18317/v1: v\ncustom_provider:local/gpt-5.5: v\nastr_AAAA: v\n'-dash': v\n'123': v\n'1.5': v\na#b: v\n'a #b': v\n'key: v': v\n'~': v\n'null': v\n'@at': v\n'`tick': v\n\"it's\": v\n'say \"hi\"': v\n'trail ': v\n' lead': v\n\"multi\\nline\": v\n中文: v\nOPENAI_BASE_URL=http://x: v\n'*star': v\n'&amp': v\n"
+      },
+      {
+        "text": "'yes': v\n'No': v\nhas space: v\nflat: v\n'true': v\n'v:': v\nx y: v\nhttp://127.0.0.1:18317/v1: v\ncustom_provider:local/gpt-5.5: v\nastr_AAAA: v\n'-dash': v\n'123': v\n'1.5': v\na#b: v\n'a #b': v\n'key: v': v\n'~': v\n'null': v\n'@at': v\n'`tick': v\n\"it's\": v\n'say \"hi\"': v\n'trail ': v\n' lead': v\n\"multi\\nline\": v\n中文: v\nOPENAI_BASE_URL=http://x: v\n'*star': v\n'&amp': v\n'!bang': v\n"
+      },
+      {
+        "text": "'yes': v\n'No': v\nhas space: v\nflat: v\n'true': v\n'v:': v\nx y: v\nhttp://127.0.0.1:18317/v1: v\ncustom_provider:local/gpt-5.5: v\nastr_AAAA: v\n'-dash': v\n'123': v\n'1.5': v\na#b: v\n'a #b': v\n'key: v': v\n'~': v\n'null': v\n'@at': v\n'`tick': v\n\"it's\": v\n'say \"hi\"': v\n'trail ': v\n' lead': v\n\"multi\\nline\": v\n中文: v\nOPENAI_BASE_URL=http://x: v\n'*star': v\n'&amp': v\n'!bang': v\n'%pc': v\n"
+      },
+      {
+        "text": "'yes': v\n'No': v\nhas space: v\nflat: v\n'true': v\n'v:': v\nx y: v\nhttp://127.0.0.1:18317/v1: v\ncustom_provider:local/gpt-5.5: v\nastr_AAAA: v\n'-dash': v\n'123': v\n'1.5': v\na#b: v\n'a #b': v\n'key: v': v\n'~': v\n'null': v\n'@at': v\n'`tick': v\n\"it's\": v\n'say \"hi\"': v\n'trail ': v\n' lead': v\n\"multi\\nline\": v\n中文: v\nOPENAI_BASE_URL=http://x: v\n'*star': v\n'&amp': v\n'!bang': v\n'%pc': v\n'{brace': v\n"
+      },
+      {
+        "text": "'yes': v\n'No': v\nhas space: v\nflat: v\n'true': v\n'v:': v\nx y: v\nhttp://127.0.0.1:18317/v1: v\ncustom_provider:local/gpt-5.5: v\nastr_AAAA: v\n'-dash': v\n'123': v\n'1.5': v\na#b: v\n'a #b': v\n'key: v': v\n'~': v\n'null': v\n'@at': v\n'`tick': v\n\"it's\": v\n'say \"hi\"': v\n'trail ': v\n' lead': v\n\"multi\\nline\": v\n中文: v\nOPENAI_BASE_URL=http://x: v\n'*star': v\n'&amp': v\n'!bang': v\n'%pc': v\n'{brace': v\n'[br': v\n"
+      },
+      {
+        "text": "'yes': v\n'No': v\nhas space: v\nflat: v\n'true': v\n'v:': v\nx y: v\nhttp://127.0.0.1:18317/v1: v\ncustom_provider:local/gpt-5.5: v\nastr_AAAA: v\n'-dash': v\n'123': v\n'1.5': v\na#b: v\n'a #b': v\n'key: v': v\n'~': v\n'null': v\n'@at': v\n'`tick': v\n\"it's\": v\n'say \"hi\"': v\n'trail ': v\n' lead': v\n\"multi\\nline\": v\n中文: v\nOPENAI_BASE_URL=http://x: v\n'*star': v\n'&amp': v\n'!bang': v\n'%pc': v\n'{brace': v\n'[br': v\n'>gt': v\n"
+      },
+      {
+        "text": "'yes': v\n'No': v\nhas space: v\nflat: v\n'true': v\n'v:': v\nx y: v\nhttp://127.0.0.1:18317/v1: v\ncustom_provider:local/gpt-5.5: v\nastr_AAAA: v\n'-dash': v\n'123': v\n'1.5': v\na#b: v\n'a #b': v\n'key: v': v\n'~': v\n'null': v\n'@at': v\n'`tick': v\n\"it's\": v\n'say \"hi\"': v\n'trail ': v\n' lead': v\n\"multi\\nline\": v\n中文: v\nOPENAI_BASE_URL=http://x: v\n'*star': v\n'&amp': v\n'!bang': v\n'%pc': v\n'{brace': v\n'[br': v\n'>gt': v\n'|pipe': v\n"
+      },
+      {
+        "text": "'yes': v\n'No': v\nhas space: v\nflat: v\n'true': v\n'v:': v\nx y: v\nhttp://127.0.0.1:18317/v1: v\ncustom_provider:local/gpt-5.5: v\nastr_AAAA: v\n'-dash': v\n'123': v\n'1.5': v\na#b: v\n'a #b': v\n'key: v': v\n'~': v\n'null': v\n'@at': v\n'`tick': v\n\"it's\": v\n'say \"hi\"': v\n'trail ': v\n' lead': v\n\"multi\\nline\": v\n中文: v\nOPENAI_BASE_URL=http://x: v\n'*star': v\n'&amp': v\n'!bang': v\n'%pc': v\n'{brace': v\n'[br': v\n'>gt': v\n'|pipe': v\n'?q': v\n"
+      },
+      {
+        "text": "'yes': v\n'No': v\nhas space: v\nflat: v\n'true': v\n'v:': v\nx y: v\nhttp://127.0.0.1:18317/v1: v\ncustom_provider:local/gpt-5.5: v\nastr_AAAA: v\n'-dash': v\n'123': v\n'1.5': v\na#b: v\n'a #b': v\n'key: v': v\n'~': v\n'null': v\n'@at': v\n'`tick': v\n\"it's\": v\n'say \"hi\"': v\n'trail ': v\n' lead': v\n\"multi\\nline\": v\n中文: v\nOPENAI_BASE_URL=http://x: v\n'*star': v\n'&amp': v\n'!bang': v\n'%pc': v\n'{brace': v\n'[br': v\n'>gt': v\n'|pipe': v\n'?q': v\n'-': v\n"
+      },
+      {
+        "text": "'yes': v\n'No': v\nhas space: v\nflat: v\n'true': v\n'v:': v\nx y: v\nhttp://127.0.0.1:18317/v1: v\ncustom_provider:local/gpt-5.5: v\nastr_AAAA: v\n'-dash': v\n'123': v\n'1.5': v\na#b: v\n'a #b': v\n'key: v': v\n'~': v\n'null': v\n'@at': v\n'`tick': v\n\"it's\": v\n'say \"hi\"': v\n'trail ': v\n' lead': v\n\"multi\\nline\": v\n中文: v\nOPENAI_BASE_URL=http://x: v\n'*star': v\n'&amp': v\n'!bang': v\n'%pc': v\n'{brace': v\n'[br': v\n'>gt': v\n'|pipe': v\n'?q': v\n'-': v\na,b: v\n"
+      },
+      {
+        "text": "'yes': v\n'No': v\nhas space: v\nflat: v\n'true': v\n'v:': v\nx y: v\nhttp://127.0.0.1:18317/v1: v\ncustom_provider:local/gpt-5.5: v\nastr_AAAA: v\n'-dash': v\n'123': v\n'1.5': v\na#b: v\n'a #b': v\n'key: v': v\n'~': v\n'null': v\n'@at': v\n'`tick': v\n\"it's\": v\n'say \"hi\"': v\n'trail ': v\n' lead': v\n\"multi\\nline\": v\n中文: v\nOPENAI_BASE_URL=http://x: v\n'*star': v\n'&amp': v\n'!bang': v\n'%pc': v\n'{brace': v\n'[br': v\n'>gt': v\n'|pipe': v\n'?q': v\n'-': v\na,b: v\n'0x1F': v\n"
+      },
+      {
+        "text": "'yes': v\n'No': v\nhas space: v\nflat: v\n'true': v\n'v:': v\nx y: v\nhttp://127.0.0.1:18317/v1: v\ncustom_provider:local/gpt-5.5: v\nastr_AAAA: v\n'-dash': v\n'123': v\n'1.5': v\na#b: v\n'a #b': v\n'key: v': v\n'~': v\n'null': v\n'@at': v\n'`tick': v\n\"it's\": v\n'say \"hi\"': v\n'trail ': v\n' lead': v\n\"multi\\nline\": v\n中文: v\nOPENAI_BASE_URL=http://x: v\n'*star': v\n'&amp': v\n'!bang': v\n'%pc': v\n'{brace': v\n'[br': v\n'>gt': v\n'|pipe': v\n'?q': v\n'-': v\na,b: v\n'0x1F': v\n'0o17': v\n"
+      },
+      {
+        "text": "'yes': v\n'No': v\nhas space: v\nflat: v\n'true': v\n'v:': v\nx y: v\nhttp://127.0.0.1:18317/v1: v\ncustom_provider:local/gpt-5.5: v\nastr_AAAA: v\n'-dash': v\n'123': v\n'1.5': v\na#b: v\n'a #b': v\n'key: v': v\n'~': v\n'null': v\n'@at': v\n'`tick': v\n\"it's\": v\n'say \"hi\"': v\n'trail ': v\n' lead': v\n\"multi\\nline\": v\n中文: v\nOPENAI_BASE_URL=http://x: v\n'*star': v\n'&amp': v\n'!bang': v\n'%pc': v\n'{brace': v\n'[br': v\n'>gt': v\n'|pipe': v\n'?q': v\n'-': v\na,b: v\n'0x1F': v\n'0o17': v\n'.inf': v\n"
+      },
+      {
+        "text": "'yes': v\n'No': v\nhas space: v\nflat: v\n'true': v\n'v:': v\nx y: v\nhttp://127.0.0.1:18317/v1: v\ncustom_provider:local/gpt-5.5: v\nastr_AAAA: v\n'-dash': v\n'123': v\n'1.5': v\na#b: v\n'a #b': v\n'key: v': v\n'~': v\n'null': v\n'@at': v\n'`tick': v\n\"it's\": v\n'say \"hi\"': v\n'trail ': v\n' lead': v\n\"multi\\nline\": v\n中文: v\nOPENAI_BASE_URL=http://x: v\n'*star': v\n'&amp': v\n'!bang': v\n'%pc': v\n'{brace': v\n'[br': v\n'>gt': v\n'|pipe': v\n'?q': v\n'-': v\na,b: v\n'0x1F': v\n'0o17': v\n'.inf': v\n'Off': v\n"
+      },
+      {
+        "text": "'yes': v\n'No': v\nhas space: v\nflat: v\n'true': v\n'v:': v\nx y: v\nhttp://127.0.0.1:18317/v1: v\ncustom_provider:local/gpt-5.5: v\nastr_AAAA: v\n'-dash': v\n'123': v\n'1.5': v\na#b: v\n'a #b': v\n'key: v': v\n'~': v\n'null': v\n'@at': v\n'`tick': v\n\"it's\": v\n'say \"hi\"': v\n'trail ': v\n' lead': v\n\"multi\\nline\": v\n中文: v\nOPENAI_BASE_URL=http://x: v\n'*star': v\n'&amp': v\n'!bang': v\n'%pc': v\n'{brace': v\n'[br': v\n'>gt': v\n'|pipe': v\n'?q': v\n'-': v\na,b: v\n'0x1F': v\n'0o17': v\n'.inf': v\n'Off': v\ny: v\n"
+      },
+      {
+        "text": "'yes': v\n'No': v\nhas space: v\nflat: v\n'true': v\n'v:': v\nx y: v\nhttp://127.0.0.1:18317/v1: v\ncustom_provider:local/gpt-5.5: v\nastr_AAAA: v\n'-dash': v\n'123': v\n'1.5': v\na#b: v\n'a #b': v\n'key: v': v\n'~': v\n'null': v\n'@at': v\n'`tick': v\n\"it's\": v\n'say \"hi\"': v\n'trail ': v\n' lead': v\n\"multi\\nline\": v\n中文: v\nOPENAI_BASE_URL=http://x: v\n'*star': v\n'&amp': v\n'!bang': v\n'%pc': v\n'{brace': v\n'[br': v\n'>gt': v\n'|pipe': v\n'?q': v\n'-': v\na,b: v\n'0x1F': v\n'0o17': v\n'.inf': v\n'Off': v\ny: v\nn: v\n"
+      },
+      {
+        "text": "'yes': v\n'No': v\nhas space: v\nflat: v\n'true': v\n'v:': v\nx y: v\nhttp://127.0.0.1:18317/v1: v\ncustom_provider:local/gpt-5.5: v\nastr_AAAA: v\n'-dash': v\n'123': v\n'1.5': v\na#b: v\n'a #b': v\n'key: v': v\n'~': v\n'null': v\n'@at': v\n'`tick': v\n\"it's\": v\n'say \"hi\"': v\n'trail ': v\n' lead': v\n\"multi\\nline\": v\n中文: v\nOPENAI_BASE_URL=http://x: v\n'*star': v\n'&amp': v\n'!bang': v\n'%pc': v\n'{brace': v\n'[br': v\n'>gt': v\n'|pipe': v\n'?q': v\n'-': v\na,b: v\n'0x1F': v\n'0o17': v\n'.inf': v\n'Off': v\ny: v\nn: v\n'1e3': v\n"
+      },
+      {
+        "text": "'yes': v\n'No': v\nhas space: v\nflat: v\n'true': v\n'v:': v\nx y: v\nhttp://127.0.0.1:18317/v1: v\ncustom_provider:local/gpt-5.5: v\nastr_AAAA: v\n'-dash': v\n'123': v\n'1.5': v\na#b: v\n'a #b': v\n'key: v': v\n'~': v\n'null': v\n'@at': v\n'`tick': v\n\"it's\": v\n'say \"hi\"': v\n'trail ': v\n' lead': v\n\"multi\\nline\": v\n中文: v\nOPENAI_BASE_URL=http://x: v\n'*star': v\n'&amp': v\n'!bang': v\n'%pc': v\n'{brace': v\n'[br': v\n'>gt': v\n'|pipe': v\n'?q': v\n'-': v\na,b: v\n'0x1F': v\n'0o17': v\n'.inf': v\n'Off': v\ny: v\nn: v\n'1e3': v\n'+1': v\n"
+      },
+      {
+        "text": "'yes': v\n'No': v\nhas space: v\nflat: v\n'true': v\n'v:': v\nx y: v\nhttp://127.0.0.1:18317/v1: v\ncustom_provider:local/gpt-5.5: v\nastr_AAAA: v\n'-dash': v\n'123': v\n'1.5': v\na#b: v\n'a #b': v\n'key: v': v\n'~': v\n'null': v\n'@at': v\n'`tick': v\n\"it's\": v\n'say \"hi\"': v\n'trail ': v\n' lead': v\n\"multi\\nline\": v\n中文: v\nOPENAI_BASE_URL=http://x: v\n'*star': v\n'&amp': v\n'!bang': v\n'%pc': v\n'{brace': v\n'[br': v\n'>gt': v\n'|pipe': v\n'?q': v\n'-': v\na,b: v\n'0x1F': v\n'0o17': v\n'.inf': v\n'Off': v\ny: v\nn: v\n'1e3': v\n'+1': v\n2024-01-01: v\n"
+      },
+      {
+        "text": "'yes': v\n'No': v\nhas space: v\nflat: v\n'true': v\n'v:': v\nx y: v\nhttp://127.0.0.1:18317/v1: v\ncustom_provider:local/gpt-5.5: v\nastr_AAAA: v\n'-dash': v\n'123': v\n'1.5': v\na#b: v\n'a #b': v\n'key: v': v\n'~': v\n'null': v\n'@at': v\n'`tick': v\n\"it's\": v\n'say \"hi\"': v\n'trail ': v\n' lead': v\n\"multi\\nline\": v\n中文: v\nOPENAI_BASE_URL=http://x: v\n'*star': v\n'&amp': v\n'!bang': v\n'%pc': v\n'{brace': v\n'[br': v\n'>gt': v\n'|pipe': v\n'?q': v\n'-': v\na,b: v\n'0x1F': v\n'0o17': v\n'.inf': v\n'Off': v\ny: v\nn: v\n'1e3': v\n'+1': v\n2024-01-01: v\ntab\there: v\n"
+      },
+      {
+        "text": "'yes': v\n'No': v\nhas space: v\nflat: v\n'true': v\n'v:': v\nx y: v\nhttp://127.0.0.1:18317/v1: v\ncustom_provider:local/gpt-5.5: v\nastr_AAAA: v\n'-dash': v\n'123': v\n'1.5': v\na#b: v\n'a #b': v\n'key: v': v\n'~': v\n'null': v\n'@at': v\n'`tick': v\n\"it's\": v\n'say \"hi\"': v\n'trail ': v\n' lead': v\n\"multi\\nline\": v\n中文: v\nOPENAI_BASE_URL=http://x: v\n'*star': v\n'&amp': v\n'!bang': v\n'%pc': v\n'{brace': v\n'[br': v\n'>gt': v\n'|pipe': v\n'?q': v\n'-': v\na,b: v\n'0x1F': v\n'0o17': v\n'.inf': v\n'Off': v\ny: v\nn: v\n'1e3': v\n'+1': v\n2024-01-01: v\ntab\there: v\nback\\slash: v\n"
+      },
+      {
+        "text": "'yes': v\n'No': v\nhas space: v\nflat: v\n'true': v\n'v:': v\nx y: v\nhttp://127.0.0.1:18317/v1: v\ncustom_provider:local/gpt-5.5: v\nastr_AAAA: v\n'-dash': v\n'123': v\n'1.5': v\na#b: v\n'a #b': v\n'key: v': v\n'~': v\n'null': v\n'@at': v\n'`tick': v\n\"it's\": v\n'say \"hi\"': v\n'trail ': v\n' lead': v\n\"multi\\nline\": v\n中文: v\nOPENAI_BASE_URL=http://x: v\n'*star': v\n'&amp': v\n'!bang': v\n'%pc': v\n'{brace': v\n'[br': v\n'>gt': v\n'|pipe': v\n'?q': v\n'-': v\na,b: v\n'0x1F': v\n'0o17': v\n'.inf': v\n'Off': v\ny: v\nn: v\n'1e3': v\n'+1': v\n2024-01-01: v\ntab\there: v\nback\\slash: v\n'colon:': v\n"
+      },
+      {
+        "text": "'yes': v\n'No': v\nhas space: v\nflat: v\n'true': v\n'v:': v\nx y: v\nhttp://127.0.0.1:18317/v1: v\ncustom_provider:local/gpt-5.5: v\nastr_AAAA: v\n'-dash': v\n'123': v\n'1.5': v\na#b: v\n'a #b': v\n'key: v': v\n'~': v\n'null': v\n'@at': v\n'`tick': v\n\"it's\": v\n'say \"hi\"': v\n'trail ': v\n' lead': v\n\"multi\\nline\": v\n中文: v\nOPENAI_BASE_URL=http://x: v\n'*star': v\n'&amp': v\n'!bang': v\n'%pc': v\n'{brace': v\n'[br': v\n'>gt': v\n'|pipe': v\n'?q': v\n'-': v\na,b: v\n'0x1F': v\n'0o17': v\n'.inf': v\n'Off': v\ny: v\nn: v\n'1e3': v\n'+1': v\n2024-01-01: v\ntab\there: v\nback\\slash: v\n'colon:': v\n':lead': v\n"
+      }
+    ]
+  },
+  {
+    "name": "quoting_push",
+    "text": "l:\n  - a\n",
+    "root": "mapping",
+    "ops": [
+      {
+        "parent": ["l"],
+        "value": "yes",
+        "rank": "none",
+        "op": "push"
+      },
+      {
+        "parent": ["l"],
+        "value": "No",
+        "rank": "none",
+        "op": "push"
+      },
+      {
+        "parent": ["l"],
+        "value": "has space",
+        "rank": "none",
+        "op": "push"
+      },
+      {
+        "parent": ["l"],
+        "value": "flat",
+        "rank": "none",
+        "op": "push"
+      },
+      {
+        "parent": ["l"],
+        "value": "true",
+        "rank": "none",
+        "op": "push"
+      },
+      {
+        "parent": ["l"],
+        "value": "v:",
+        "rank": "none",
+        "op": "push"
+      },
+      {
+        "parent": ["l"],
+        "value": "x y",
+        "rank": "none",
+        "op": "push"
+      },
+      {
+        "parent": ["l"],
+        "value": "http://127.0.0.1:18317/v1",
+        "rank": "none",
+        "op": "push"
+      },
+      {
+        "parent": ["l"],
+        "value": "custom_provider:local/gpt-5.5",
+        "rank": "none",
+        "op": "push"
+      },
+      {
+        "parent": ["l"],
+        "value": "astr_AAAA",
+        "rank": "none",
+        "op": "push"
+      },
+      {
+        "parent": ["l"],
+        "value": "-dash",
+        "rank": "none",
+        "op": "push"
+      },
+      {
+        "parent": ["l"],
+        "value": "123",
+        "rank": "none",
+        "op": "push"
+      }
+    ],
+    "results": [
+      {
+        "text": "l:\n  - a\n  - 'yes'\n"
+      },
+      {
+        "text": "l:\n  - a\n  - 'yes'\n  - 'No'\n"
+      },
+      {
+        "text": "l:\n  - a\n  - 'yes'\n  - 'No'\n  - has space\n"
+      },
+      {
+        "text": "l:\n  - a\n  - 'yes'\n  - 'No'\n  - has space\n  - flat\n"
+      },
+      {
+        "text": "l:\n  - a\n  - 'yes'\n  - 'No'\n  - has space\n  - flat\n  - 'true'\n"
+      },
+      {
+        "text": "l:\n  - a\n  - 'yes'\n  - 'No'\n  - has space\n  - flat\n  - 'true'\n  - 'v:'\n"
+      },
+      {
+        "text": "l:\n  - a\n  - 'yes'\n  - 'No'\n  - has space\n  - flat\n  - 'true'\n  - 'v:'\n  - x y\n"
+      },
+      {
+        "text": "l:\n  - a\n  - 'yes'\n  - 'No'\n  - has space\n  - flat\n  - 'true'\n  - 'v:'\n  - x y\n  - http://127.0.0.1:18317/v1\n"
+      },
+      {
+        "text": "l:\n  - a\n  - 'yes'\n  - 'No'\n  - has space\n  - flat\n  - 'true'\n  - 'v:'\n  - x y\n  - http://127.0.0.1:18317/v1\n  - custom_provider:local/gpt-5.5\n"
+      },
+      {
+        "text": "l:\n  - a\n  - 'yes'\n  - 'No'\n  - has space\n  - flat\n  - 'true'\n  - 'v:'\n  - x y\n  - http://127.0.0.1:18317/v1\n  - custom_provider:local/gpt-5.5\n  - astr_AAAA\n"
+      },
+      {
+        "text": "l:\n  - a\n  - 'yes'\n  - 'No'\n  - has space\n  - flat\n  - 'true'\n  - 'v:'\n  - x y\n  - http://127.0.0.1:18317/v1\n  - custom_provider:local/gpt-5.5\n  - astr_AAAA\n  - '-dash'\n"
+      },
+      {
+        "text": "l:\n  - a\n  - 'yes'\n  - 'No'\n  - has space\n  - flat\n  - 'true'\n  - 'v:'\n  - x y\n  - http://127.0.0.1:18317/v1\n  - custom_provider:local/gpt-5.5\n  - astr_AAAA\n  - '-dash'\n  - '123'\n"
+      }
+    ]
+  },
+  {
+    "name": "rm_head_comment",
+    "text": "a: 1\n# note\nb: 2\nc: 3\n",
+    "root": "mapping",
+    "ops": [
+      {
+        "path": ["b"],
+        "op": "remove"
+      }
+    ],
+    "results": [
+      {
+        "text": "a: 1\n# note\nc: 3\n"
+      }
+    ]
+  },
+  {
+    "name": "rm_head_comment_last",
+    "text": "a: 1\n# note\nb: 2\n",
+    "root": "mapping",
+    "ops": [
+      {
+        "path": ["b"],
+        "op": "remove"
+      }
+    ],
+    "results": [
+      {
+        "text": "a: 1\n# note\n"
+      }
+    ]
+  },
+  {
+    "name": "rm_first",
+    "text": "# top\na: 1\nb: 2\n",
+    "root": "mapping",
+    "ops": [
+      {
+        "path": ["a"],
+        "op": "remove"
+      }
+    ],
+    "results": [
+      {
+        "text": "# top\nb: 2\n"
+      }
+    ]
+  },
+  {
+    "name": "rm_inline_comment",
+    "text": "a: 1 # one\nb: 2 # two\n",
+    "root": "mapping",
+    "ops": [
+      {
+        "path": ["a"],
+        "op": "remove"
+      },
+      {
+        "path": ["b"],
+        "op": "remove"
+      }
+    ],
+    "results": [
+      {
+        "text": "b: 2 # two\n"
+      },
+      {
+        "text": "{}\n"
+      }
+    ]
+  },
+  {
+    "name": "rm_blank_before",
+    "text": "a: 1\n\nb: 2\n\nc: 3\n",
+    "root": "mapping",
+    "ops": [
+      {
+        "path": ["b"],
+        "op": "remove"
+      },
+      {
+        "path": ["c"],
+        "op": "remove"
+      }
+    ],
+    "results": [
+      {
+        "text": "a: 1\n\nc: 3\n"
+      },
+      {
+        "text": "a: 1\n\n"
+      }
+    ]
+  },
+  {
+    "name": "rm_nested_block",
+    "text": "x:\n  y:\n    z: 1\n  w: 2\nv: 3\n",
+    "root": "mapping",
+    "ops": [
+      {
+        "path": ["x", "y"],
+        "op": "remove"
+      },
+      {
+        "path": ["v"],
+        "op": "remove"
+      }
+    ],
+    "results": [
+      {
+        "text": "x:\n  w: 2\nv: 3\n"
+      },
+      {
+        "text": "x:\n  w: 2\n"
+      }
+    ]
+  },
+  {
+    "name": "rm_seq_items",
+    "text": "- a # c\n- b\n# mid\n- c\n",
+    "root": "sequence",
+    "ops": [
+      {
+        "path": [1],
+        "op": "remove"
+      },
+      {
+        "path": [0],
+        "op": "remove"
+      },
+      {
+        "path": [0],
+        "op": "remove"
+      }
+    ],
+    "results": [
+      {
+        "text": "- a # c\n# mid\n- c\n"
+      },
+      {
+        "text": "# mid\n- c\n"
+      },
+      {
+        "text": "# mid\n[]\n"
+      }
+    ]
+  },
+  {
+    "name": "rm_root_seq_mapping_items",
+    "text": "- id: x\n  config:\n    k: v\n\n- id: y\n",
+    "root": "sequence",
+    "ops": [
+      {
+        "path": [0],
+        "op": "remove"
+      },
+      {
+        "path": [0],
+        "op": "remove"
+      }
+    ],
+    "results": [
+      {
+        "text": "\n- id: y\n"
+      },
+      {
+        "text": "\n[]\n"
+      }
+    ]
+  },
+  {
+    "name": "set_replace",
+    "text": "a: 1 # c\nb:\n  - x\n  - y\nc: {p: 1}\nd: [1, 2]\ne: \"q\"\nf: |\n  lit\ng:\n",
+    "root": "mapping",
+    "ops": [
+      {
+        "parent": [],
+        "key": "a",
+        "value": {
+          "n": 1
+        },
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "b",
+        "value": "s",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "c",
+        "value": {
+          "p": 2,
+          "q": [1]
+        },
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "d",
+        "value": [3],
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "e",
+        "value": "r",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "f",
+        "value": "t",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "g",
+        "value": "h",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "a",
+        "value": [
+          1,
+          {
+            "m": 2
+          }
+        ],
+        "rank": "none",
+        "op": "set"
+      }
+    ],
+    "results": [
+      {
+        "text": "a: # c\n  \"n\": 1\nb:\n  - x\n  - y\nc: {p: 1}\nd: [1, 2]\ne: \"q\"\nf: |\n  lit\ng:\n"
+      },
+      {
+        "text": "a: # c\n  \"n\": 1\nb: s\nc: {p: 1}\nd: [1, 2]\ne: \"q\"\nf: |\n  lit\ng:\n"
+      },
+      {
+        "text": "a: # c\n  \"n\": 1\nb: s\nc:\n  p: 2\n  q:\n    - 1\nd: [1, 2]\ne: \"q\"\nf: |\n  lit\ng:\n"
+      },
+      {
+        "text": "a: # c\n  \"n\": 1\nb: s\nc:\n  p: 2\n  q:\n    - 1\nd:\n  - 3\ne: \"q\"\nf: |\n  lit\ng:\n"
+      },
+      {
+        "text": "a: # c\n  \"n\": 1\nb: s\nc:\n  p: 2\n  q:\n    - 1\nd:\n  - 3\ne: r\nf: |\n  lit\ng:\n"
+      },
+      {
+        "text": "a: # c\n  \"n\": 1\nb: s\nc:\n  p: 2\n  q:\n    - 1\nd:\n  - 3\ne: r\nf: t\ng:\n"
+      },
+      {
+        "text": "a: # c\n  \"n\": 1\nb: s\nc:\n  p: 2\n  q:\n    - 1\nd:\n  - 3\ne: r\nf: t\ng: h\n"
+      },
+      {
+        "text": "a: # c\n  - 1\n  - m: 2\nb: s\nc:\n  p: 2\n  q:\n    - 1\nd:\n  - 3\ne: r\nf: t\ng: h\n"
+      }
+    ]
+  },
+  {
+    "name": "set_nested_new",
+    "text": "p:\n  q: 1\n",
+    "root": "mapping",
+    "ops": [
+      {
+        "parent": ["p"],
+        "key": "r",
+        "value": [1, 2],
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": ["p"],
+        "key": "s",
+        "value": {
+          "t": [
+            {
+              "u": 1,
+              "v": 2
+            }
+          ]
+        },
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": ["p"],
+        "key": "e",
+        "value": {},
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": ["p"],
+        "key": "f",
+        "value": [],
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": ["p"],
+        "key": "g",
+        "value": null,
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": ["p"],
+        "key": "h",
+        "value": true,
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": ["p"],
+        "key": "i",
+        "value": -3,
+        "rank": "none",
+        "op": "set"
+      }
+    ],
+    "results": [
+      {
+        "text": "p:\n  q: 1\n  r:\n    - 1\n    - 2\n"
+      },
+      {
+        "text": "p:\n  q: 1\n  r:\n    - 1\n    - 2\n  s:\n    t:\n      - u: 1\n        v: 2\n"
+      },
+      {
+        "text": "p:\n  q: 1\n  r:\n    - 1\n    - 2\n  s:\n    t:\n      - u: 1\n        v: 2\n  e: {}\n"
+      },
+      {
+        "text": "p:\n  q: 1\n  r:\n    - 1\n    - 2\n  s:\n    t:\n      - u: 1\n        v: 2\n  e: {}\n  f: []\n"
+      },
+      {
+        "text": "p:\n  q: 1\n  r:\n    - 1\n    - 2\n  s:\n    t:\n      - u: 1\n        v: 2\n  e: {}\n  f: []\n  g: null\n"
+      },
+      {
+        "text": "p:\n  q: 1\n  r:\n    - 1\n    - 2\n  s:\n    t:\n      - u: 1\n        v: 2\n  e: {}\n  f: []\n  g: null\n  h: true\n"
+      },
+      {
+        "text": "p:\n  q: 1\n  r:\n    - 1\n    - 2\n  s:\n    t:\n      - u: 1\n        v: 2\n  e: {}\n  f: []\n  g: null\n  h: true\n  i: -3\n"
+      }
+    ]
+  },
+  {
+    "name": "seq_in_seq_push",
+    "text": "- - a\n",
+    "root": "sequence",
+    "ops": [
+      {
+        "parent": [],
+        "value": ["b", "c"],
+        "rank": "none",
+        "op": "push"
+      },
+      {
+        "parent": [0],
+        "value": "d",
+        "rank": "none",
+        "op": "push"
+      }
+    ],
+    "results": [
+      {
+        "text": "- - a\n- - b\n  - c\n"
+      },
+      {
+        "text": "- - a\n  - d\n- - b\n  - c\n"
+      }
+    ]
+  },
+  {
+    "name": "empty_value_key",
+    "text": "a:\nb: 1\n",
+    "root": "mapping",
+    "ops": [
+      {
+        "parent": [],
+        "key": "a",
+        "value": {
+          "x": 1
+        },
+        "rank": "none",
+        "op": "set"
+      }
+    ],
+    "results": [
+      {
+        "text": "a:\n  x: 1\nb: 1\n"
+      }
+    ]
+  },
+  {
+    "name": "null_parent",
+    "text": "- id: llm-pi-ai\n  config:\n",
+    "root": "sequence",
+    "ops": [
+      {
+        "parent": [0],
+        "key": "config",
+        "value": {
+          "providers": {
+            "r": {
+              "a": 1
+            }
+          }
+        },
+        "rank": "none",
+        "op": "set"
+      }
+    ],
+    "results": [
+      {
+        "text": "- id: llm-pi-ai\n  config:\n    providers:\n      r:\n        a: 1\n"
+      }
+    ]
+  },
+  {
+    "name": "crlf_ops",
+    "text": "a: 1\r\nl:\r\n  - x\r\n",
+    "root": "mapping",
+    "ops": [
+      {
+        "parent": [],
+        "key": "b",
+        "value": {
+          "c": 1
+        },
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": ["l"],
+        "value": {
+          "y": 1
+        },
+        "rank": "none",
+        "op": "push"
+      },
+      {
+        "path": ["a"],
+        "op": "remove"
+      },
+      {
+        "path": ["l", 0],
+        "op": "remove"
+      }
+    ],
+    "results": [
+      {
+        "text": "a: 1\r\nl:\r\n  - x\r\nb:\r\n  c: 1\r\n"
+      },
+      {
+        "text": "a: 1\r\nl:\r\n  - x\r\n  - \"y\": 1\r\nb:\r\n  c: 1\r\n"
+      },
+      {
+        "text": "l:\r\n  - x\r\n  - \"y\": 1\r\nb:\r\n  c: 1\r\n"
+      },
+      {
+        "text": "l:\r\n  - \"y\": 1\r\nb:\r\n  c: 1\r\n"
+      }
+    ]
+  },
+  {
+    "name": "crlf_root_push",
+    "text": "# c\r\n[]\r\n",
+    "root": "sequence",
+    "ops": [
+      {
+        "parent": [],
+        "value": {
+          "id": "x"
+        },
+        "rank": "none",
+        "op": "push"
+      },
+      {
+        "path": [0],
+        "op": "remove"
+      }
+    ],
+    "results": [
+      {
+        "text": "# c\r\n- id: x\r\n"
+      },
+      {
+        "text": "# c\r\n[]\r\n"
+      }
+    ]
+  },
+  {
+    "name": "root_list_no_newline",
+    "text": "[]",
+    "root": "sequence",
+    "ops": [
+      {
+        "parent": [],
+        "value": {
+          "id": "x"
+        },
+        "rank": "none",
+        "op": "push"
+      }
+    ],
+    "results": [
+      {
+        "text": "- id: x\n"
+      }
+    ]
+  },
+  {
+    "name": "root_list_comment_after",
+    "text": "[] # empty\n",
+    "root": "sequence",
+    "ops": [
+      {
+        "parent": [],
+        "value": {
+          "id": "x"
+        },
+        "rank": "none",
+        "op": "push"
+      }
+    ],
+    "results": [
+      {
+        "text": "- id: x # empty\n"
+      }
+    ]
+  },
+  {
+    "name": "anchors",
+    "text": "base: &b\n  k: 1\nuse: *b\n",
+    "root": "mapping",
+    "ops": [
+      {
+        "parent": [],
+        "key": "z",
+        "value": 1,
+        "rank": "none",
+        "op": "set"
+      }
+    ],
+    "results": [
+      {
+        "text": "base: &b\n  k: 1\nuse: *b\nz: 1\n"
+      }
+    ]
+  },
+  {
+    "name": "set_same_value",
+    "text": "a: 'x'\nb: \"y\"\n",
+    "root": "mapping",
+    "ops": [
+      {
+        "parent": [],
+        "key": "a",
+        "value": "x",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "b",
+        "value": "y",
+        "rank": "none",
+        "op": "set"
+      }
+    ],
+    "results": [
+      {
+        "text": "a: x\nb: \"y\"\n"
+      },
+      {
+        "text": "a: x\nb: y\n"
+      }
+    ]
+  },
+  {
+    "name": "deep_comment_end",
+    "text": "a:\n  b:\n    c: 1\n    # deep\n# root\n",
+    "root": "mapping",
+    "ops": [
+      {
+        "parent": ["a", "b"],
+        "key": "d",
+        "value": 2,
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": ["a"],
+        "key": "e",
+        "value": 3,
+        "rank": "none",
+        "op": "set"
+      }
+    ],
+    "results": [
+      {
+        "text": "a:\n  b:\n    c: 1\n    d: 2\n    # deep\n# root\n"
+      },
+      {
+        "text": "a:\n  b:\n    c: 1\n    d: 2\n  e: 3\n    # deep\n# root\n"
+      }
+    ]
+  },
+  {
+    "name": "seq_comment_end",
+    "text": "l:\n  - a\n  # after\nm: 1\n",
+    "root": "mapping",
+    "ops": [
+      {
+        "parent": ["l"],
+        "value": "b",
+        "rank": "none",
+        "op": "push"
+      }
+    ],
+    "results": [
+      {
+        "text": "l:\n  - a\n  - b\n  # after\nm: 1\n"
+      }
+    ]
+  },
+  {
+    "name": "root_seq_comment_end",
+    "text": "- a\n# after\n",
+    "root": "sequence",
+    "ops": [
+      {
+        "parent": [],
+        "value": "b",
+        "rank": "none",
+        "op": "push"
+      }
+    ],
+    "results": [
+      {
+        "text": "- a\n# after\n- b\n"
+      }
+    ]
+  },
+  {
+    "name": "key_indent0_seq_new",
+    "text": "a: 1\n",
+    "root": "mapping",
+    "ops": [
+      {
+        "parent": [],
+        "key": "l",
+        "value": [
+          "x",
+          {
+            "y": 1,
+            "z": [2]
+          }
+        ],
+        "rank": "none",
+        "op": "set"
+      }
+    ],
+    "results": [
+      {
+        "text": "a: 1\nl:\n- x\n- \"y\": 1\n  z:\n    - 2\n"
+      }
+    ]
+  },
+  {
+    "name": "u4_replace",
+    "text": "a:\n    b: 1\nc: x\n",
+    "root": "mapping",
+    "ops": [
+      {
+        "parent": [],
+        "key": "c",
+        "value": {
+          "d": {
+            "e": 1
+          },
+          "f": [
+            1,
+            {
+              "g": 2
+            }
+          ]
+        },
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": ["a"],
+        "key": "b",
+        "value": {
+          "h": [3]
+        },
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "n",
+        "value": {
+          "o": {
+            "p": 1
+          }
+        },
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": ["a"],
+        "key": "q",
+        "value": [
+          {
+            "r": 1
+          }
+        ],
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "s",
+        "value": [
+          {
+            "t": {
+              "u": 1
+            }
+          }
+        ],
+        "rank": "none",
+        "op": "set"
+      }
+    ],
+    "results": [
+      {
+        "text": "a:\n    b: 1\nc:\n  d:\n      e: 1\n  f:\n      - 1\n      - g: 2\n"
+      },
+      {
+        "text": "a:\n    b:\n      h:\n        - 3\nc:\n  d:\n      e: 1\n  f:\n      - 1\n      - g: 2\n"
+      },
+      {
+        "text": "a:\n    b:\n      h:\n        - 3\nc:\n  d:\n      e: 1\n  f:\n      - 1\n      - g: 2\nn:\n  o:\n    p: 1\n"
+      },
+      {
+        "text": "a:\n    b:\n      h:\n        - 3\n    q:\n      - r: 1\nc:\n  d:\n      e: 1\n  f:\n      - 1\n      - g: 2\nn:\n  o:\n    p: 1\n"
+      },
+      {
+        "text": "a:\n    b:\n      h:\n        - 3\n    q:\n      - r: 1\nc:\n  d:\n      e: 1\n  f:\n      - 1\n      - g: 2\nn:\n  o:\n    p: 1\ns:\n- t:\n    u: 1\n"
+      }
+    ]
+  },
+  {
+    "name": "root_trailing_blank",
+    "text": "a: 1\n\n",
+    "root": "mapping",
+    "ops": [
+      {
+        "parent": [],
+        "key": "b",
+        "value": 2,
+        "rank": "none",
+        "op": "set"
+      }
+    ],
+    "results": [
+      {
+        "text": "a: 1\n\nb: 2\n"
+      }
+    ]
+  },
+  {
+    "name": "root_trailing_blank2",
+    "text": "a:\n  x: 1\n\n# c\n\n",
+    "root": "mapping",
+    "ops": [
+      {
+        "parent": ["a"],
+        "key": "y",
+        "value": 2,
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "b",
+        "value": 2,
+        "rank": "none",
+        "op": "set"
+      }
+    ],
+    "results": [
+      {
+        "text": "a:\n  x: 1\n  y: 2\n\n# c\n\n"
+      },
+      {
+        "text": "a:\n  x: 1\n  y: 2\n\n# c\n\nb: 2\n"
+      }
+    ]
+  },
+  {
+    "name": "root_trailing_spaces",
+    "text": "a: 1\n  ",
+    "root": "mapping",
+    "ops": [
+      {
+        "parent": [],
+        "key": "b",
+        "value": 2,
+        "rank": "none",
+        "op": "set"
+      }
+    ],
+    "results": [
+      {
+        "text": "a: 1\nb: 2\n  "
+      }
+    ]
+  },
+  {
+    "name": "flow_set_existing",
+    "text": "m: {a: 1, b: 2}\n",
+    "root": "mapping",
+    "ops": [
+      {
+        "parent": ["m"],
+        "key": "a",
+        "value": "x,y",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": ["m"],
+        "key": "b",
+        "value": {
+          "c": [1, "d e"]
+        },
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": ["m"],
+        "key": "z",
+        "value": [],
+        "rank": "none",
+        "op": "set"
+      }
+    ],
+    "results": [
+      {
+        "text": "m: {a: \"x,y\", b: 2}\n"
+      },
+      {
+        "text": "m: {a: \"x,y\", b: {c: [1, \"d e\"]}}\n"
+      },
+      {
+        "text": "m: {a: \"x,y\", b: {c: [1, \"d e\"]}, z: []}\n"
+      }
+    ]
+  },
+  {
+    "name": "rm_block_with_inner_comments",
+    "text": "a:\n  # inner\n  b: 1\n  # tail\nc: 2\n",
+    "root": "mapping",
+    "ops": [
+      {
+        "path": ["a"],
+        "op": "remove"
+      }
+    ],
+    "results": [
+      {
+        "text": "  # tail\nc: 2\n"
+      }
+    ]
+  },
+  {
+    "name": "rm_seq_item_keys",
+    "text": "- id: x\n  b: 1\n  c:\n    d: 2\n- id: y\n",
+    "root": "sequence",
+    "ops": [
+      {
+        "path": [0, "c"],
+        "op": "remove"
+      },
+      {
+        "path": [0, "id"],
+        "op": "remove"
+      },
+      {
+        "path": [0, "b"],
+        "op": "remove"
+      }
+    ],
+    "results": [
+      {
+        "text": "- id: x\n  b: 1\n- id: y\n"
+      },
+      {
+        "text": "- b: 1\n- id: y\n"
+      },
+      {
+        "text": "- {}\n- id: y\n"
+      }
+    ]
+  },
+  {
+    "name": "rm_nested_last_key_comments",
+    "text": "a:\n  # c\n  b: 1\n",
+    "root": "mapping",
+    "ops": [
+      {
+        "path": ["a", "b"],
+        "op": "remove"
+      }
+    ],
+    "results": [
+      {
+        "error": "has YAML AstrLink cannot change without touching the rest of the file"
+      }
+    ]
+  },
+  {
+    "name": "rm_nested_last_key_inline",
+    "text": "x:\n  a:\n    b: 1 # c\n  z: 2\n",
+    "root": "mapping",
+    "ops": [
+      {
+        "path": ["x", "a", "b"],
+        "op": "remove"
+      }
+    ],
+    "results": [
+      {
+        "text": "x:\n  a: {}\n  z: 2\n"
+      }
+    ]
+  },
+  {
+    "name": "set_tagged",
+    "text": "a: !!js x\nb: !!str 1\n",
+    "root": "mapping",
+    "ops": [
+      {
+        "parent": [],
+        "key": "a",
+        "value": "y",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "b",
+        "value": "2",
+        "rank": "none",
+        "op": "set"
+      }
+    ],
+    "results": [
+      {
+        "text": "a: y\nb: !!str 1\n"
+      },
+      {
+        "text": "a: y\nb: '2'\n"
+      }
+    ]
+  },
+  {
+    "name": "set_anchor_value",
+    "text": "a: &x 1\nb: *x\n",
+    "root": "mapping",
+    "ops": [
+      {
+        "parent": [],
+        "key": "b",
+        "value": 3,
+        "rank": "none",
+        "op": "set"
+      }
+    ],
+    "results": [
+      {
+        "text": "a: &x 1\nb: 3\n"
+      }
+    ]
+  },
+  {
+    "name": "set_multiline_key",
+    "text": "",
+    "root": "mapping",
+    "ops": [
+      {
+        "parent": [],
+        "key": "multi\nline",
+        "value": "v",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "k",
+        "value": "multi\nline\n",
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "m",
+        "value": {
+          "x": "two\nlines"
+        },
+        "rank": "none",
+        "op": "set"
+      }
+    ],
+    "results": [
+      {
+        "text": "\"multi\\nline\": v\n"
+      },
+      {
+        "text": "\"multi\\nline\": v\nk: |\n  multi\n  line\n"
+      },
+      {
+        "text": "\"multi\\nline\": v\nk: |\n  multi\n  line\nm:\n  x: \"two\\nlines\"\n"
+      }
+    ]
+  },
+  {
+    "name": "push_scalars_types",
+    "text": "l:\n- a\n",
+    "root": "mapping",
+    "ops": [
+      {
+        "parent": ["l"],
+        "value": 1,
+        "rank": "none",
+        "op": "push"
+      },
+      {
+        "parent": ["l"],
+        "value": null,
+        "rank": "none",
+        "op": "push"
+      },
+      {
+        "parent": ["l"],
+        "value": [1, 2],
+        "rank": "none",
+        "op": "push"
+      },
+      {
+        "parent": ["l"],
+        "value": {},
+        "rank": "none",
+        "op": "push"
+      },
+      {
+        "parent": ["l"],
+        "value": [],
+        "rank": "none",
+        "op": "push"
+      },
+      {
+        "parent": ["l"],
+        "value": true,
+        "rank": "none",
+        "op": "push"
+      }
+    ],
+    "results": [
+      {
+        "text": "l:\n- a\n- 1\n"
+      },
+      {
+        "text": "l:\n- a\n- 1\n- null\n"
+      },
+      {
+        "text": "l:\n- a\n- 1\n- null\n- - 1\n  - 2\n"
+      },
+      {
+        "text": "l:\n- a\n- 1\n- null\n- - 1\n  - 2\n- {}\n"
+      },
+      {
+        "text": "l:\n- a\n- 1\n- null\n- - 1\n  - 2\n- {}\n- []\n"
+      },
+      {
+        "text": "l:\n- a\n- 1\n- null\n- - 1\n  - 2\n- {}\n- []\n- true\n"
+      }
+    ]
+  },
+  {
+    "name": "set_empty_root_list",
+    "text": "",
+    "root": "sequence",
+    "ops": [
+      {
+        "parent": [],
+        "value": "x",
+        "rank": "none",
+        "op": "push"
+      },
+      {
+        "parent": [],
+        "value": "y",
+        "rank": "none",
+        "op": "push"
+      }
+    ],
+    "results": [
+      {
+        "text": "- x\n"
+      },
+      {
+        "text": "- x\n- y\n"
+      }
+    ]
+  },
+  {
+    "name": "set_into_root_seq_text",
+    "text": "# h\n",
+    "root": "sequence",
+    "ops": [
+      {
+        "parent": [],
+        "value": {
+          "id": "a",
+          "config": {
+            "k": "v"
+          }
+        },
+        "rank": "id_config",
+        "op": "push"
+      }
+    ],
+    "results": [
+      {
+        "text": "# h\n- id: a\n  config:\n    k: v\n"
+      }
+    ]
+  },
+  {
+    "name": "nested_flow_in_block_replace",
+    "text": "p:\n  q: {a: 1} # c\n",
+    "root": "mapping",
+    "ops": [
+      {
+        "parent": ["p"],
+        "key": "q",
+        "value": {
+          "a": 2
+        },
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": ["p"],
+        "key": "q",
+        "value": {},
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": ["p"],
+        "key": "q",
+        "value": [],
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": ["p"],
+        "key": "q",
+        "value": ["a"],
+        "rank": "none",
+        "op": "set"
+      }
+    ],
+    "results": [
+      {
+        "text": "p:\n  q: # c\n    a: 2\n"
+      },
+      {
+        "text": "p:\n  q: {} # c\n"
+      },
+      {
+        "text": "p:\n  q: [] # c\n"
+      },
+      {
+        "text": "p:\n  q: # c\n    - a\n"
+      }
+    ]
+  },
+  {
+    "name": "rm_then_empty_nested_flow",
+    "text": "refs: {A: 1, B: 2}\n",
+    "root": "mapping",
+    "ops": [
+      {
+        "key": "refs.A",
+        "op": "remove_key"
+      },
+      {
+        "key": "refs.B",
+        "op": "remove_key"
+      },
+      {
+        "key": "refs.C",
+        "value": "c",
+        "op": "set_key"
+      }
+    ],
+    "results": [
+      {
+        "text": "refs: {B: 2}\n"
+      },
+      {
+        "text": "refs: {}\n"
+      },
+      {
+        "text": "refs: {C: c}\n"
+      }
+    ]
+  },
+  {
+    "name": "dash_indent_mapping_value",
+    "text": "a:\n- x: 1\n  y: 2\n- z\n",
+    "root": "mapping",
+    "ops": [
+      {
+        "parent": ["a"],
+        "value": {
+          "w": 1
+        },
+        "rank": "none",
+        "op": "push"
+      },
+      {
+        "parent": ["a", 0],
+        "key": "v",
+        "value": [1],
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "path": ["a", 0, "x"],
+        "op": "remove"
+      }
+    ],
+    "results": [
+      {
+        "text": "a:\n- x: 1\n  y: 2\n- z\n- w: 1\n"
+      },
+      {
+        "text": "a:\n- x: 1\n  y: 2\n  v:\n    - 1\n- z\n- w: 1\n"
+      },
+      {
+        "text": "a:\n- y: 2\n  v:\n    - 1\n- z\n- w: 1\n"
+      }
+    ]
+  },
+  {
+    "name": "rm_key_block_scalar",
+    "text": "a: |\n  x\n  y\nb: 1\n",
+    "root": "mapping",
+    "ops": [
+      {
+        "path": ["a"],
+        "op": "remove"
+      }
+    ],
+    "results": [
+      {
+        "text": "b: 1\n"
+      }
+    ]
+  },
+  {
+    "name": "rm_root_last_of_root_seq_item",
+    "text": "- a\n",
+    "root": "sequence",
+    "ops": [
+      {
+        "path": [0],
+        "op": "remove"
+      }
+    ],
+    "results": [
+      {
+        "text": "[]\n"
+      }
+    ]
+  },
+  {
+    "name": "set_after_comment_block_end",
+    "text": "a:\n  b: 1\n# c\n",
+    "root": "mapping",
+    "ops": [
+      {
+        "parent": ["a"],
+        "key": "d",
+        "value": 2,
+        "rank": "none",
+        "op": "set"
+      }
+    ],
+    "results": [
+      {
+        "text": "a:\n  b: 1\n  d: 2\n# c\n"
+      }
+    ]
+  },
+  {
+    "name": "set_value_with_trailing_blank",
+    "text": "a:\n  b: 1\n\nc: 2\n",
+    "root": "mapping",
+    "ops": [
+      {
+        "parent": [],
+        "key": "a",
+        "value": "x",
+        "rank": "none",
+        "op": "set"
+      }
+    ],
+    "results": [
+      {
+        "text": "a: x\n\nc: 2\n"
+      }
+    ]
+  },
+  {
+    "name": "set_number_like_json",
+    "text": "",
+    "root": "mapping",
+    "ops": [
+      {
+        "parent": [],
+        "key": "a",
+        "value": {
+          "n": 1.0,
+          "m": 1e21,
+          "o": 0.1,
+          "big": 18446744073709551615
+        },
+        "rank": "none",
+        "op": "set"
+      },
+      {
+        "parent": [],
+        "key": "f",
+        "value": 2.0,
+        "rank": "none",
+        "op": "set"
+      }
+    ],
+    "results": [
+      {
+        "text": "a:\n  big: 18446744073709551615\n  m: 1e21\n  \"n\": 1.0\n  o: 0.1\n"
+      },
+      {
+        "text": "a:\n  big: 18446744073709551615\n  m: 1e21\n  \"n\": 1.0\n  o: 0.1\nf: 2.0\n"
+      }
+    ]
+  },
+  {
+    "name": "root_flow_set",
+    "root": "mapping",
+    "text": "{}\n",
+    "ops": [
+      {
+        "op": "set",
+        "parent": [],
+        "key": "a",
+        "value": "b",
+        "rank": "none"
+      },
+      {
+        "op": "set",
+        "parent": [],
+        "key": "c",
+        "value": {
+          "d": 1
+        },
+        "rank": "none"
+      },
+      {
+        "op": "remove",
+        "path": ["a"]
+      },
+      {
+        "op": "remove",
+        "path": ["c"]
+      }
+    ],
+    "results": [
+      {
+        "text": "{a: b}\n"
+      },
+      {
+        "text": "{a: b, c: {d: 1}}\n"
+      },
+      {
+        "text": "{c: {d: 1}}\n"
+      },
+      {
+        "text": "{}\n"
+      }
+    ]
+  },
+  {
+    "name": "root_flow_comment",
+    "root": "mapping",
+    "text": "# c\n{}\n",
+    "ops": [
+      {
+        "op": "set_key",
+        "key": "x.y",
+        "value": "z"
+      }
+    ],
+    "results": [
+      {
+        "text": "# c\n{x: {\"y\": z}}\n"
+      }
+    ]
+  },
+  {
+    "name": "rm_blank_comment",
+    "root": "mapping",
+    "text": "a: 1\nb: 2\n\n# c\nd: 3\n",
+    "ops": [
+      {
+        "op": "remove",
+        "path": ["b"]
+      }
+    ],
+    "results": [
+      {
+        "text": "a: 1\n\n# c\nd: 3\n"
+      }
+    ]
+  },
+  {
+    "name": "rm_nested_blank",
+    "root": "mapping",
+    "text": "x:\n  y:\n    z: 1\n\n  w: 2\n",
+    "ops": [
+      {
+        "op": "remove",
+        "path": ["x", "y"]
+      }
+    ],
+    "results": [
+      {
+        "text": "x:\n\n  w: 2\n"
+      }
+    ]
+  },
+  {
+    "name": "rm_nested_value_blank",
+    "root": "mapping",
+    "text": "a:\n  b: 1\n\nc: 2\n",
+    "ops": [
+      {
+        "op": "remove",
+        "path": ["a"]
+      }
+    ],
+    "results": [
+      {
+        "text": "\nc: 2\n"
+      }
+    ]
+  },
+  {
+    "name": "rm_comment_blank",
+    "root": "mapping",
+    "text": "a: 1\n# c\n\nb: 2\n",
+    "ops": [
+      {
+        "op": "remove",
+        "path": ["a"]
+      }
+    ],
+    "results": [
+      {
+        "text": "# c\n\nb: 2\n"
+      }
+    ]
+  },
+  {
+    "name": "root_comment_nonl",
+    "root": "mapping",
+    "text": "a: 1\n# c",
+    "ops": [
+      {
+        "op": "set",
+        "parent": [],
+        "key": "b",
+        "value": 2,
+        "rank": "none"
+      }
+    ],
+    "results": [
+      {
+        "text": "a: 1\n# c\nb: 2"
+      }
+    ]
+  },
+  {
+    "name": "flow_spaces",
+    "root": "mapping",
+    "text": "m: { a: 1 }\ns: [ 1 ]\n",
+    "ops": [
+      {
+        "op": "set",
+        "parent": ["m"],
+        "key": "b",
+        "value": 2,
+        "rank": "none"
+      },
+      {
+        "op": "push",
+        "parent": ["s"],
+        "value": 2,
+        "rank": "none"
+      },
+      {
+        "op": "remove",
+        "path": ["m", "a"]
+      },
+      {
+        "op": "remove",
+        "path": ["s", 0]
+      }
+    ],
+    "results": [
+      {
+        "text": "m: { a: 1, b: 2 }\ns: [ 1 ]\n"
+      },
+      {
+        "text": "m: { a: 1, b: 2 }\ns: [ 1, 2 ]\n"
+      },
+      {
+        "text": "m: { b: 2 }\ns: [ 1, 2 ]\n"
+      },
+      {
+        "text": "m: { b: 2 }\ns: [ 2 ]\n"
+      }
+    ]
+  },
+  {
+    "name": "flow_multiline",
+    "root": "mapping",
+    "text": "m: {\n  a: 1\n}\nz: 1\n",
+    "ops": [
+      {
+        "op": "set",
+        "parent": ["m"],
+        "key": "b",
+        "value": 2,
+        "rank": "none"
+      },
+      {
+        "op": "remove",
+        "path": ["m", "a"]
+      }
+    ],
+    "results": [
+      {
+        "text": "m: {\n  a: 1, b: 2\n}\nz: 1\n"
+      },
+      {
+        "text": "m: {\n  b: 2\n}\nz: 1\n"
+      }
+    ]
+  },
+  {
+    "name": "flow_mid",
+    "root": "mapping",
+    "text": "m: {a: 1, b: 2, c: 3}\ns: [1, 2, 3]\n",
+    "ops": [
+      {
+        "op": "remove",
+        "path": ["m", "b"]
+      },
+      {
+        "op": "remove",
+        "path": ["s", 1]
+      },
+      {
+        "op": "remove",
+        "path": ["m", "c"]
+      },
+      {
+        "op": "remove",
+        "path": ["s", 1]
+      }
+    ],
+    "results": [
+      {
+        "text": "m: {a: 1, c: 3}\ns: [1, 2, 3]\n"
+      },
+      {
+        "text": "m: {a: 1, c: 3}\ns: [1, 3]\n"
+      },
+      {
+        "text": "m: {a: 1}\ns: [1, 3]\n"
+      },
+      {
+        "text": "m: {a: 1}\ns: [1]\n"
+      }
+    ]
+  },
+  {
+    "name": "flow_replace_spaces",
+    "root": "mapping",
+    "text": "m: {a: 1 , b: [x]}\n",
+    "ops": [
+      {
+        "op": "set",
+        "parent": ["m"],
+        "key": "a",
+        "value": "q",
+        "rank": "none"
+      },
+      {
+        "op": "set",
+        "parent": ["m"],
+        "key": "b",
+        "value": ["y", "z"],
+        "rank": "none"
+      }
+    ],
+    "results": [
+      {
+        "text": "m: {a: q , b: [x]}\n"
+      },
+      {
+        "text": "m: {a: q , b: [\"y\", z]}\n"
+      }
+    ]
+  },
+  {
+    "name": "nested_seq_last",
+    "root": "mapping",
+    "text": "x:\n  l:\n    - a\n",
+    "ops": [
+      {
+        "op": "remove",
+        "path": ["x", "l", 0]
+      }
+    ],
+    "results": [
+      {
+        "text": "x:\n  l: []\n"
+      }
+    ]
+  },
+  {
+    "name": "replace_compact_seq",
+    "root": "mapping",
+    "text": "l:\n- a\n- b\nz: 1\n",
+    "ops": [
+      {
+        "op": "set",
+        "parent": [],
+        "key": "l",
+        "value": "x",
+        "rank": "none"
+      }
+    ],
+    "results": [
+      {
+        "text": "l: x\nz: 1\n"
+      }
+    ]
+  },
+  {
+    "name": "after_compact_seq",
+    "root": "mapping",
+    "text": "a: 1\nl:\n- x\n",
+    "ops": [
+      {
+        "op": "set",
+        "parent": [],
+        "key": "b",
+        "value": 2,
+        "rank": "none"
+      }
+    ],
+    "results": [
+      {
+        "text": "a: 1\nl:\n- x\nb: 2\n"
+      }
+    ]
+  },
+  {
+    "name": "push_compact_comment",
+    "root": "mapping",
+    "text": "l:\n- a\n# c\nz: 1\n",
+    "ops": [
+      {
+        "op": "push",
+        "parent": ["l"],
+        "value": "b",
+        "rank": "none"
+      }
+    ],
+    "results": [
+      {
+        "text": "l:\n- a\n- b\n# c\nz: 1\n"
+      }
+    ]
+  },
+  {
+    "name": "root_seq_comment_after",
+    "root": "sequence",
+    "text": "- a\n# after\n",
+    "ops": [
+      {
+        "op": "push",
+        "parent": [],
+        "value": "b",
+        "rank": "none"
+      },
+      {
+        "op": "remove",
+        "path": [0]
+      },
+      {
+        "op": "remove",
+        "path": [0]
+      }
+    ],
+    "results": [
+      {
+        "text": "- a\n# after\n- b\n"
+      },
+      {
+        "text": "# after\n- b\n"
+      },
+      {
+        "text": "# after\n[]\n"
+      }
+    ]
+  },
+  {
+    "name": "seq_blank_last",
+    "root": "mapping",
+    "text": "l:\n  - a\n\n  - b\nz: 1\n",
+    "ops": [
+      {
+        "op": "remove",
+        "path": ["l", 1]
+      }
+    ],
+    "results": [
+      {
+        "text": "l:\n  - a\n\nz: 1\n"
+      }
+    ]
+  },
+  {
+    "name": "seq_blank_mid",
+    "root": "mapping",
+    "text": "l:\n  - a\n\n  - b\nz: 1\n",
+    "ops": [
+      {
+        "op": "remove",
+        "path": ["l", 0]
+      }
+    ],
+    "results": [
+      {
+        "text": "l:\n\n  - b\nz: 1\n"
+      }
+    ]
+  },
+  {
+    "name": "rm_flow_multiline_value",
+    "root": "mapping",
+    "text": "a: [1,\n  2]\nb: 1\n",
+    "ops": [
+      {
+        "op": "remove",
+        "path": ["a"]
+      }
+    ],
+    "results": [
+      {
+        "text": "b: 1\n"
+      }
+    ]
+  },
+  {
+    "name": "rm_only_inline_comment",
+    "root": "mapping",
+    "text": "a: 1 # c\n",
+    "ops": [
+      {
+        "op": "remove",
+        "path": ["a"]
+      }
+    ],
+    "results": [
+      {
+        "text": "{}\n"
+      }
+    ]
+  },
+  {
+    "name": "rm_only_top_comment",
+    "root": "mapping",
+    "text": "# top\na: 1\n",
+    "ops": [
+      {
+        "op": "remove",
+        "path": ["a"]
+      }
+    ],
+    "results": [
+      {
+        "text": "# top\n{}\n"
+      }
+    ]
+  },
+  {
+    "name": "replace_multiline_comment",
+    "root": "mapping",
+    "text": "a:\n  b: 1 # x\nc: 2\n",
+    "ops": [
+      {
+        "op": "set",
+        "parent": [],
+        "key": "a",
+        "value": {
+          "z": 1
+        },
+        "rank": "none"
+      }
+    ],
+    "results": [
+      {
+        "text": "a:\n  z: 1\nc: 2\n"
+      }
+    ]
+  },
+  {
+    "name": "replace_keyline_comment_block",
+    "root": "mapping",
+    "text": "a: # k\n  b: 1\nc: 2\n",
+    "ops": [
+      {
+        "op": "set",
+        "parent": [],
+        "key": "a",
+        "value": "x",
+        "rank": "none"
+      }
+    ],
+    "results": [
+      {
+        "text": "a: x # k\nc: 2\n"
+      }
+    ]
+  },
+  {
+    "name": "replace_keyline_comment_block2",
+    "root": "mapping",
+    "text": "a: # k\n  b: 1\nc: 2\n",
+    "ops": [
+      {
+        "op": "set",
+        "parent": [],
+        "key": "a",
+        "value": {
+          "y": 2
+        },
+        "rank": "none"
+      }
+    ],
+    "results": [
+      {
+        "text": "a: # k\n  \"y\": 2\nc: 2\n"
+      }
+    ]
+  },
+  {
+    "name": "insert_after_block_scalar",
+    "root": "mapping",
+    "text": "a: |\n  x\n\nb:\n  c: |\n    y\n",
+    "ops": [
+      {
+        "op": "set",
+        "parent": ["b"],
+        "key": "d",
+        "value": 1,
+        "rank": "none"
+      },
+      {
+        "op": "set",
+        "parent": [],
+        "key": "e",
+        "value": 1,
+        "rank": "none"
+      }
+    ],
+    "results": [
+      {
+        "text": "a: |\n  x\n\nb:\n  c: |\n    y\n  d: 1\n"
+      },
+      {
+        "text": "a: |\n  x\n\nb:\n  c: |\n    y\n  d: 1\ne: 1\n"
+      }
+    ]
+  },
+  {
+    "name": "set_in_seq_item_first",
+    "root": "sequence",
+    "text": "- id: x\n",
+    "ops": [
+      {
+        "op": "set",
+        "parent": [0],
+        "key": "config",
+        "value": {
+          "a": 1
+        },
+        "rank": "none"
+      },
+      {
+        "op": "set",
+        "parent": [0],
+        "key": "z",
+        "value": [1],
+        "rank": "none"
+      }
+    ],
+    "results": [
+      {
+        "text": "- id: x\n  config:\n    a: 1\n"
+      },
+      {
+        "text": "- id: x\n  config:\n    a: 1\n  z:\n    - 1\n"
+      }
+    ]
+  },
+  {
+    "name": "set_value_quoted_multiline",
+    "root": "mapping",
+    "text": "a: \"x\n  y\"\nb: 1\n",
+    "ops": [
+      {
+        "op": "set",
+        "parent": [],
+        "key": "a",
+        "value": "z",
+        "rank": "none"
+      }
+    ],
+    "results": [
+      {
+        "text": "a: z\nb: 1\n"
+      }
+    ]
+  },
+  {
+    "name": "deep_end",
+    "root": "mapping",
+    "text": "a:\n  b:\n    c: 1\n    # deep\n  # mid\n# top\n",
+    "ops": [
+      {
+        "op": "set",
+        "parent": ["a", "b"],
+        "key": "d",
+        "value": 1,
+        "rank": "none"
+      },
+      {
+        "op": "set",
+        "parent": ["a"],
+        "key": "e",
+        "value": 1,
+        "rank": "none"
+      },
+      {
+        "op": "set",
+        "parent": [],
+        "key": "f",
+        "value": 1,
+        "rank": "none"
+      }
+    ],
+    "results": [
+      {
+        "text": "a:\n  b:\n    c: 1\n    d: 1\n    # deep\n  # mid\n# top\n"
+      },
+      {
+        "text": "a:\n  b:\n    c: 1\n    d: 1\n  e: 1\n    # deep\n  # mid\n# top\n"
+      },
+      {
+        "text": "a:\n  b:\n    c: 1\n    d: 1\n  e: 1\n    # deep\n  # mid\n# top\nf: 1\n"
+      }
+    ]
+  },
+  {
+    "name": "root_seq_push_blank",
+    "root": "sequence",
+    "text": "- a\n\n",
+    "ops": [
+      {
+        "op": "push",
+        "parent": [],
+        "value": "b",
+        "rank": "none"
+      }
+    ],
+    "results": [
+      {
+        "text": "- a\n\n- b\n"
+      }
+    ]
+  },
+  {
+    "name": "nested_seq_push_blank",
+    "root": "mapping",
+    "text": "l:\n  - a\n\nz: 1\n",
+    "ops": [
+      {
+        "op": "push",
+        "parent": ["l"],
+        "value": "b",
+        "rank": "none"
+      }
+    ],
+    "results": [
+      {
+        "text": "l:\n  - a\n  - b\n\nz: 1\n"
+      }
+    ]
+  },
+  {
+    "name": "key_anchor",
+    "root": "mapping",
+    "text": "a: &x\n  b: 1\nc: 2\n",
+    "ops": [
+      {
+        "op": "set",
+        "parent": ["a"],
+        "key": "d",
+        "value": 1,
+        "rank": "none"
+      }
+    ],
+    "results": [
+      {
+        "text": "a: &x\n  b: 1\n  d: 1\nc: 2\n"
+      }
+    ]
+  },
+  {
+    "name": "seq_item_scalar_replace",
+    "root": "sequence",
+    "text": "- a\n- b # c\n",
+    "ops": [],
+    "results": []
+  },
+  {
+    "name": "crlf_flow",
+    "root": "mapping",
+    "text": "m: {a: 1}\r\nn: x\r\n",
+    "ops": [
+      {
+        "op": "set",
+        "parent": ["m"],
+        "key": "b",
+        "value": {
+          "c": 1
+        },
+        "rank": "none"
+      },
+      {
+        "op": "set",
+        "parent": [],
+        "key": "n",
+        "value": {
+          "q": [1]
+        },
+        "rank": "none"
+      }
+    ],
+    "results": [
+      {
+        "text": "m: {a: 1, b: {c: 1}}\r\nn: x\r\n"
+      },
+      {
+        "text": "m: {a: 1, b: {c: 1}}\r\nn:\r\n  q:\r\n    - 1\r\n"
+      }
+    ]
+  },
+  {
+    "name": "tab_after_colon",
+    "root": "mapping",
+    "text": "a:\t1\nb: 2\n",
+    "ops": [
+      {
+        "op": "set",
+        "parent": [],
+        "key": "a",
+        "value": 3,
+        "rank": "none"
+      }
+    ],
+    "results": [
+      {
+        "text": "a:\t3\nb: 2\n"
+      }
+    ]
+  },
+  {
+    "name": "set_empty_doc_marker",
+    "root": "mapping",
+    "text": "---\n",
+    "ops": [
+      {
+        "op": "set",
+        "parent": [],
+        "key": "a",
+        "value": 1,
+        "rank": "none"
+      }
+    ],
+    "results": [
+      {
+        "text": "---\na: 1\n"
+      }
+    ]
+  },
+  {
+    "name": "set_empty_doc_end",
+    "root": "mapping",
+    "text": "a: 1\n...\n",
+    "ops": [
+      {
+        "op": "set",
+        "parent": [],
+        "key": "b",
+        "value": 1,
+        "rank": "none"
+      }
+    ],
+    "results": [
+      {
+        "text": "a: 1\nb: 1\n...\n"
+      }
+    ]
+  },
+  {
+    "name": "unicode_keys",
+    "root": "mapping",
+    "text": "名字:\n  子: 1\n",
+    "ops": [
+      {
+        "op": "set",
+        "parent": ["名字"],
+        "key": "新",
+        "value": {
+          "深": "值"
+        },
+        "rank": "none"
+      }
+    ],
+    "results": [
+      {
+        "text": "名字:\n  子: 1\n  新:\n    \"深\": \"值\"\n"
+      }
+    ]
+  }
+]

@@ -6,7 +6,7 @@ import { expect, it, vi } from "vitest";
 
 import { MarkdownContent } from "./MarkdownContent";
 
-vi.mock("@tauri-apps/api/core", () => ({ isTauri: () => false }));
+vi.mock("../native-host/core", () => ({ isDesktopHost: () => false }));
 
 // Its own file, so this is the first reply this module ever mounts. A lazy
 // component suspends on its first mount even once its import has settled,

@@ -20,6 +20,8 @@ env:
   ASTRLINK_CI_SYNTHETIC_MODELS_ONLY: "1"
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: "0"
+  # With the key, mygo.config.ts enables updates and the app's updater.
+  MYGO_UPDATER_PUBLIC_KEY: ${{ vars.MYGO_UPDATER_PUBLIC_KEY }}
   TAURI_UPDATER_PUBLIC_KEY: ${{ vars.TAURI_UPDATER_PUBLIC_KEY }}
 
 jobs:
@@ -35,10 +37,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # The desktop module needs the newest Go; Core and the CLI build with it.
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: core/go.mod
+          go-version-file: apps/desktop/go.mod
           cache-dependency-path: |
+            apps/desktop/go.mod
+            apps/desktop/go.sum
             core/go.mod
             core/go.sum
             convo/go.mod
@@ -81,7 +86,6 @@ jobs:
           # unreachable from later tags and evicts main's entries.
           save-if: false
           workspaces: |
-            apps/desktop/src-tauri
             apps/privacy-worker
             apps/classifier-worker
           cache-directories: apps/privacy-worker/target/onnxruntime
@@ -106,6 +110,7 @@ jobs:
       - name: Validate update signing configuration
         if: inputs.release_tag != ''
         env:
+          MYGO_UPDATER_PRIVATE_KEY: ${{ secrets.MYGO_UPDATER_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         run: bun scripts/release-updates.mjs preflight
       - name: Reject production model artifacts
@@ -117,7 +122,11 @@ jobs:
           ASTRLINK_REUSE_WINDOWS_WORKERS: ${{ steps.workers.outputs.cache-hit == 'true' && '1' || '0' }}
         run: bun run sidecar:build
       - name: Build x64 NSIS installer
-        run: bun run tauri build --ci --target x86_64-pc-windows-msvc --bundles nsis
+        env:
+          # Releases sign the archive and write update-windows-amd64.json.
+          MYGO_UPDATER_PRIVATE_KEY: ${{ inputs.release_tag != '' && secrets.MYGO_UPDATER_PRIVATE_KEY || '' }}
+        # NSIS is downloaded into the user cache when the runner lacks it.
+        run: bun scripts/mygo.mjs build
       - name: Inspect, install and smoke test installer
         env:
           ASTRLINK_CI_NO_REMOTE_MODELS: "0"
@@ -133,13 +142,19 @@ jobs:
             apps/classifier-worker/target/release/astrlink-classifier-worker.exe
             apps/classifier-worker/target/release/DirectML.dll
       - name: Stage candidate files
+        if: inputs.release_tag == ''
         run: |
           New-Item -ItemType Directory -Force -Path package | Out-Null
-          Copy-Item src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe package/ -Force
-      - name: Prepare release installer and update signature
+          foreach ($pattern in @("astrlink-setup-*.exe", "*.tar.gz", "install.ps1")) {
+            Copy-Item "build/windows-amd64/$pattern" package/ -Force
+          }
+          # mygo build writes the checksums of every platform it builds here.
+          Copy-Item build/SHA256SUMS package/ -Force
+      - name: Stage and verify release files
         if: inputs.release_tag != ''
         env:
           RELEASE_TAG: ${{ inputs.release_tag }}
+          MYGO_UPDATER_PRIVATE_KEY: ${{ secrets.MYGO_UPDATER_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: bun scripts/release-updates.mjs stage windows-x86_64 "$env:RELEASE_TAG"

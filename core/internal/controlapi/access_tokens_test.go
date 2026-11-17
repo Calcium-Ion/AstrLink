@@ -156,7 +156,7 @@ func TestAccessTokenControlAPIRequiresAuthenticationAndStrictContracts(t *testin
 	if response.Code != http.StatusUnauthorized || response.Header().Get("WWW-Authenticate") == "" {
 		t.Fatalf("unauthorized status=%d headers=%#v", response.Code, response.Header())
 	}
-	if response.Header().Get("Cache-Control") != "no-store" {
+	if response.Header().Get("Cache-Control") != "no-store, no-transform" {
 		t.Fatalf("unauthorized Cache-Control=%q", response.Header().Get("Cache-Control"))
 	}
 
@@ -172,6 +172,7 @@ func TestAccessTokenControlAPIRequiresAuthenticationAndStrictContracts(t *testin
 		{name: "collection method", method: http.MethodPut, path: AccessTokensPath, status: http.StatusMethodNotAllowed, allow: "GET, POST"},
 		{name: "create media type", method: http.MethodPost, path: AccessTokensPath, contentType: "text/plain", body: `{}`, status: http.StatusUnsupportedMediaType},
 		{name: "create unknown field", method: http.MethodPost, path: AccessTokensPath, contentType: "application/json", body: `{"name":"x","secret":"forbidden"}`, status: http.StatusBadRequest},
+		{name: "update media type", method: http.MethodPatch, path: AccessTokensPath + "/token_primary", contentType: "application/json", body: `{"name":"x","service_scope":"all","service_ids":[]}`, status: http.StatusUnsupportedMediaType},
 		{name: "unexpected query", method: http.MethodGet, path: AccessTokensPath + "?limit=1", status: http.StatusBadRequest},
 		{name: "item method", method: http.MethodGet, path: AccessTokensPath + "/token_primary", status: http.StatusMethodNotAllowed, allow: http.MethodPatch + ", " + http.MethodDelete},
 		{name: "secret method", method: http.MethodDelete, path: AccessTokensPath + "/token_primary/secret", status: http.StatusMethodNotAllowed, allow: http.MethodGet},
@@ -257,7 +258,7 @@ func accessTokenRequest(
 	}
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
-	if response.Header().Get("Cache-Control") != "no-store" {
+	if response.Header().Get("Cache-Control") != "no-store, no-transform" {
 		t.Fatalf("Cache-Control=%q", response.Header().Get("Cache-Control"))
 	}
 	return response
@@ -293,16 +294,16 @@ func TestAccessTokenScopeCreateAndUpdate(t *testing.T) {
 		}
 	}
 
-	response = accessTokenRequest(t, handler, http.MethodPatch, AccessTokensPath+"/token_primary", "application/json", `{"name":"张三","service_scope":"all","service_ids":[]}`)
+	response = accessTokenRequest(t, handler, http.MethodPatch, AccessTokensPath+"/token_primary", "application/merge-patch+json", `{"name":"张三","service_scope":"all","service_ids":[]}`)
 	if response.Code != http.StatusOK || manager.updatedID != "token_primary" || manager.receivedScope[0].Restricted() {
 		t.Fatalf("update: %d %s", response.Code, response.Body)
 	}
-	response = accessTokenRequest(t, handler, http.MethodPatch, AccessTokensPath+"/token_primary", "application/json", `{"name":"张三","service_scope":"selected","service_ids":["service_gone"]}`)
+	response = accessTokenRequest(t, handler, http.MethodPatch, AccessTokensPath+"/token_primary", "application/merge-patch+json", `{"name":"张三","service_scope":"selected","service_ids":["service_gone"]}`)
 	if response.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("update with an unknown provider: %d %s", response.Code, response.Body)
 	}
 	manager.updateErr = storage.ErrNotFound
-	response = accessTokenRequest(t, handler, http.MethodPatch, AccessTokensPath+"/token_missing", "application/json", `{"name":"张三","service_scope":"all","service_ids":[]}`)
+	response = accessTokenRequest(t, handler, http.MethodPatch, AccessTokensPath+"/token_missing", "application/merge-patch+json", `{"name":"张三","service_scope":"all","service_ids":[]}`)
 	if response.Code != http.StatusNotFound {
 		t.Fatalf("update of a missing token: %d %s", response.Code, response.Body)
 	}

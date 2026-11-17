@@ -362,6 +362,17 @@ openapi.fetch("paths").each do |path, item|
     raise "#{method.upcase} #{path} must declare x-astrlink-role: #{expected} (got #{role.inspect})" unless role == expected
   end
 end
+# Core and its clients pick a request body's media type from the method
+# alone: a JSON merge patch for PATCH, JSON for everything else.
+openapi.fetch("paths").each do |path, item|
+  item.slice("post", "put", "patch", "delete").each do |method, operation|
+    content = operation.dig("requestBody", "content")
+    next if content.nil?
+
+    expected = method == "patch" ? "application/merge-patch+json" : "application/json"
+    raise "#{method.upcase} #{path} request body must be #{expected} (got #{content.keys.join(', ')})" unless content.keys == [expected]
+  end
+end
 %w[
   GET\ /control/v1/services
   POST\ /control/v1/services
@@ -492,14 +503,24 @@ raise "fixed policy patch fields drifted: #{policy_patch_fields}" unless policy_
   restore_tool_arguments placeholder_notice
 ]
 raise "PlaceholderStyle wire values drifted" unless openapi.dig("components", "schemas", "PlaceholderStyle", "enum") == %w[natural token]
-raise "PrivacyKind wire values drifted" unless openapi.dig("components", "schemas", "PrivacyKind", "enum") == %w[
+raise "PrivacyKind wire values drifted" unless openapi.dig("components", "schemas", "PrivacyBuiltinKind", "enum") == %w[
   common_secret payment_card account email phone url ip_address
   private_person private_address private_date
 ]
+raise "PrivacyKind must admit built-in and custom kinds" unless openapi.dig("components", "schemas", "PrivacyKind", "anyOf") == [
+  { "$ref" => "#/components/schemas/PrivacyBuiltinKind" },
+  { "$ref" => "#/components/schemas/PrivacyCustomKind" },
+]
+# Core's contract.IsCustomPrivacyKind: a prefix no built-in kind uses, then
+# lowercase words joined by single underscores, at most 40 bytes.
+custom_kind = openapi.dig("components", "schemas", "PrivacyCustomKind")
+raise "PrivacyCustomKind shape drifted" unless custom_kind.fetch("pattern") == "^custom_[a-z][a-z0-9]*(_[a-z0-9]+)*$" &&
+                                               custom_kind.fetch("maxLength") == 40
 policy_kind_rule = openapi.dig("components", "schemas", "PolicyKindRule")
 raise "PolicyKindRule contract drifted" unless policy_kind_rule.fetch("required") == %w[kind enabled style] &&
                                               policy_kind_rule.dig("properties", "style", "$ref") == "#/components/schemas/PlaceholderStyle" &&
-                                              policy_kind_rule.dig("properties", "notify", "default") == true
+                                              policy_kind_rule.dig("properties", "notify", "default") == true &&
+                                              policy_kind_rule.dig("properties", "label", "maxLength") == 32
 raise "PolicyAllowlistRule type values drifted" unless openapi.dig("components", "schemas", "PolicyAllowlistRule", "properties", "type", "enum") == %w[literal domain_suffix cidr]
 # A natural stand-in that is never restored inside a tool argument is acted on by
 # the local agent as if it were real, so the two fields must stay paired.

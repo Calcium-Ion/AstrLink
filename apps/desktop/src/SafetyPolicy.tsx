@@ -81,15 +81,22 @@ import { i18n, useT } from "./i18n";
 import { notify } from "./notify";
 import {
   compareReleaseVersions,
+  CUSTOM_PRIVACY_KIND_PREFIX,
+  customPrivacyKindMarker,
+  customPrivacyKindRules,
   DEFAULT_PRIVACY_RESTORE_SETTINGS,
   defaultPrivacyKindRules,
   isAcceleratedVariantID,
+  isCustomPrivacyKind,
   isCoreMLVariantID,
   isDirectMLVariantID,
   isResourceHeavyVariant,
   localModelActive,
   MAX_PRIVACY_ALLOWLIST_RULES,
   MAX_PRIVACY_ALLOWLIST_VALUE_CHARS,
+  MAX_PRIVACY_CUSTOM_KIND_ID_CHARS,
+  MAX_PRIVACY_CUSTOM_KIND_LABEL_CHARS,
+  MAX_PRIVACY_CUSTOM_KINDS,
   MAX_PRIVACY_CUSTOM_REGEX_RULES,
   MAX_PRIVACY_DRY_RUN_SAMPLE_BYTES,
   MAX_PRIVACY_REGEX_PATTERN_CHARS,
@@ -100,11 +107,15 @@ import {
   PRIVACY_REGEX_DETECTOR_KINDS,
   privacyKindRulesAreDefault,
   privacyRestoreSettingsAreDefault,
+  resetPrivacyKindRules,
   utf8ByteLength,
+  validCustomPrivacyKindLabel,
   validateLocalProbeInput,
   validatePrivacyModelProbeInput,
   type CanonicalPrivacyKind,
+  type CustomPrivacyKind,
   type PlaceholderStyle,
+  type PolicyPrivacyKind,
   type PrivacyAction,
   type PrivacyAllowlistRule,
   type PrivacyAllowlistType,
@@ -118,12 +129,17 @@ import {
   type PrivacyModelPreparation,
   type PrivacyModelProbe,
   type PrivacyModelVariant,
+  type PrivacyPolicy,
   type PrivacyPolicyPatch,
   type PrivacyPolicyRecord,
-  type PrivacyRegexDetectorKind,
   type PrivacyRegexRule,
+  type PrivacyRegexRuleKind,
   type PrivacyRegexSource,
 } from "./privacy-policy-model";
+import {
+  privacyKindLabel,
+  rememberCustomPrivacyKindLabels,
+} from "./privacy-kind";
 import { PageHeader } from "./PageHeader";
 import { PrivacyOverview } from "./PrivacyOverview";
 import { hasPrivacyActivity } from "./privacy-summary-model";
@@ -403,8 +419,10 @@ function regexKindOptions(): ReadonlyArray<{
   );
 }
 
-function canonicalKindLabel(kind: CanonicalPrivacyKind): string {
-  return i18n.t(`privacy.${kind}`);
+function canonicalKindLabel(kind: PolicyPrivacyKind): string {
+  return isCustomPrivacyKind(kind)
+    ? privacyKindLabel(kind)
+    : i18n.t(`privacy.${kind}`);
 }
 
 /** Only produced by the local model, so a Regex policy cannot hit these. */
@@ -423,8 +441,9 @@ function placeholderStyleLabel(style: PlaceholderStyle): string {
  * placeholders is a safety property, not a preference.
  */
 function placeholderStyleLockReason(
-  kind: CanonicalPrivacyKind,
+  kind: PolicyPrivacyKind,
 ): string | undefined {
+  if (isCustomPrivacyKind(kind)) return i18n.t("safety.customKindLock");
   switch (kind) {
     case "common_secret":
       return i18n.t("safety.secretLock");
@@ -484,6 +503,34 @@ function defaultCustomRegexRule(): PrivacyRegexRule {
     kind: "email",
     pattern: `(?i)\\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}\\b`,
   };
+}
+
+/**
+ * The custom regex editor's unsaved state: the rules and the custom kinds
+ * they may name. Nothing in it reaches the policy until the user saves.
+ */
+interface RegexDraft {
+  rules: PrivacyRegexRule[];
+  kinds: CustomKindDraft[];
+}
+
+interface CustomKindDraft {
+  kind: CustomPrivacyKind;
+  label: string;
+}
+
+function savedRegexDraft(policy: PrivacyPolicy): RegexDraft {
+  return {
+    rules: policy.custom_regex_rules,
+    kinds: customPrivacyKindRules(policy.kind_rules).map(({ kind, label }) => ({
+      kind,
+      label,
+    })),
+  };
+}
+
+function regexDraftMatches(draft: RegexDraft, policy: PrivacyPolicy): boolean {
+  return JSON.stringify(draft) === JSON.stringify(savedRegexDraft(policy));
 }
 function messageOf(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
@@ -550,14 +597,18 @@ function summarizeDryRunFindings(result: PrivacyDryRunResultData): string {
   if (result.findings.length === 0) {
     return i18n.t("privacy.noHit");
   }
-  const counts = new Map<CanonicalPrivacyKind, number>();
+  const counts = new Map<PolicyPrivacyKind, number>();
   for (const finding of result.findings) {
     counts.set(finding.kind, (counts.get(finding.kind) ?? 0) + 1);
   }
-  return canonicalKindOptions()
-    .filter((option) => counts.has(option.value))
-    .map((option) => `${option.label} × ${counts.get(option.value)}`)
-    .join(" · ");
+  // Built-in kinds in their order, then custom kinds by name.
+  const custom = [...counts.keys()].filter(isCustomPrivacyKind).sort();
+  return [
+    ...canonicalKindOptions()
+      .filter((option) => counts.has(option.value))
+      .map((option) => `${option.label} × ${counts.get(option.value)}`),
+    ...custom.map((kind) => `${privacyKindLabel(kind)} × ${counts.get(kind)}`),
+  ].join(" · ");
 }
 
 function dryRunLiveSummary(result: PrivacyDryRunResultData): string {
@@ -839,6 +890,126 @@ function LabelMappingDialog({
             {confirmLabel}
           </Button>
         </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/**
+ * Names a new custom kind for the regex editor. The kind joins the unsaved
+ * draft; the policy changes only when the editor is saved. The name the user
+ * types into the marker field becomes the kind's permanent ID.
+ */
+function CustomKindDialog({
+  existing,
+  onCancel,
+  onAdd,
+}: {
+  existing: readonly CustomKindDraft[];
+  onCancel: () => void;
+  onAdd: (kind: CustomKindDraft) => void;
+}) {
+  const t = useT();
+  const [label, setLabel] = useState("");
+  const [name, setName] = useState("");
+  const trimmedLabel = label.trim();
+  const kind = `${CUSTOM_PRIVACY_KIND_PREFIX}${name}`;
+  const nameError =
+    name === ""
+      ? null
+      : !isCustomPrivacyKind(kind)
+        ? t("safety.customKindIdInvalid", {
+            max:
+              MAX_PRIVACY_CUSTOM_KIND_ID_CHARS -
+              CUSTOM_PRIVACY_KIND_PREFIX.length,
+          })
+        : existing.some((item) => item.kind === kind)
+          ? t("safety.customKindIdTaken")
+          : null;
+  const labelError =
+    trimmedLabel !== "" &&
+    existing.some(
+      (item) => item.label.trim().toLowerCase() === trimmedLabel.toLowerCase(),
+    )
+      ? t("safety.customKindNameTaken")
+      : null;
+  const valid =
+    validCustomPrivacyKindLabel(trimmedLabel) &&
+    name !== "" &&
+    nameError === null &&
+    labelError === null;
+  const add = () => {
+    if (valid) onAdd({ kind: kind as CustomPrivacyKind, label: trimmedLabel });
+  };
+  return (
+    <Dialog open onOpenChange={(open) => !open && onCancel()}>
+      <DialogContent className="max-w-md sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>{t("safety.addCustomKind")}</DialogTitle>
+          <DialogDescription>{t("safety.customKindHint")}</DialogDescription>
+        </DialogHeader>
+        <form
+          className="grid gap-3"
+          onSubmit={(event) => {
+            event.preventDefault();
+            add();
+          }}
+        >
+          <Field
+            hint={labelError ?? undefined}
+            htmlFor="privacy-custom-kind-label"
+            label={t("safety.customKindLabel")}
+          >
+            <Input
+              aria-invalid={labelError !== null}
+              autoFocus
+              id="privacy-custom-kind-label"
+              maxLength={MAX_PRIVACY_CUSTOM_KIND_LABEL_CHARS}
+              onChange={(event) => setLabel(event.currentTarget.value)}
+              placeholder={t("safety.customKindLabelPlaceholder")}
+              value={label}
+            />
+          </Field>
+          <Field
+            hint={
+              nameError ??
+              t("safety.customKindIdHint", {
+                marker:
+                  name !== "" && nameError === null
+                    ? customPrivacyKindMarker(kind as CustomPrivacyKind)
+                    : "<PRIVATE_CUSTOM_…>",
+              })
+            }
+            htmlFor="privacy-custom-kind-id"
+            label={t("safety.customKindId")}
+          >
+            <Input
+              aria-invalid={nameError !== null}
+              autoCapitalize="off"
+              autoComplete="off"
+              className="font-mono"
+              id="privacy-custom-kind-id"
+              maxLength={
+                MAX_PRIVACY_CUSTOM_KIND_ID_CHARS -
+                CUSTOM_PRIVACY_KIND_PREFIX.length
+              }
+              onChange={(event) =>
+                setName(event.currentTarget.value.trim().toLowerCase())
+              }
+              placeholder="company"
+              spellCheck={false}
+              value={name}
+            />
+          </Field>
+          <DialogFooter>
+            <Button onClick={onCancel} type="button" variant="outline">
+              {t("common.cancel")}
+            </Button>
+            <Button disabled={!valid} type="submit">
+              {t("safety.addCustomKindConfirm")}
+            </Button>
+          </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
   );
@@ -1492,9 +1663,15 @@ export function SafetyPolicy({
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
   const [confirmFillBuiltinRules, setConfirmFillBuiltinRules] = useState(false);
   const [pendingReset, setPendingReset] = useState<PolicyReset | null>(null);
-  const [regexPatternDrafts, setRegexPatternDrafts] = useState<string[]>(
-    () => record?.policy.custom_regex_rules.map((rule) => rule.pattern) ?? [],
+  // Custom regex rules and custom kinds are edited as one draft (null while
+  // it matches the policy) that only Save writes, so adding or changing a rule
+  // never alters live protection by itself. It is kept per Core session, so
+  // leaving the page and coming back keeps unsaved edits.
+  const [regexDraft, setRegexDraft] = useWorkspaceSnapshot<RegexDraft | null>(
+    `privacy-regex-draft:${coreSessionKey}`,
+    null,
   );
+  const [customKindDialogOpen, setCustomKindDialogOpen] = useState(false);
   const [allowlistDrafts, setAllowlistDrafts] = useState<string[]>(
     () => record?.policy.allowlist_rules.map((rule) => rule.value) ?? [],
   );
@@ -1516,17 +1693,30 @@ export function SafetyPolicy({
   const dryRunWorkspaceRef = useRef<HTMLDivElement>(null);
   const dryRunInputRef = useRef<HTMLTextAreaElement>(null);
   const persistedMinConfidence = record?.policy.min_confidence;
-  const persistedCustomRegexRules = record?.policy.custom_regex_rules;
   const persistedAllowlistRules = record?.policy.allowlist_rules;
+  const persistedKindRules = record?.policy.kind_rules;
+  // Records and statistics elsewhere name a custom kind by its saved label.
+  useMemo(
+    () => rememberCustomPrivacyKindLabels(persistedKindRules ?? []),
+    [persistedKindRules],
+  );
+  const savedCustomKinds = customPrivacyKindRules(persistedKindRules ?? []);
+  const regexEditor: RegexDraft =
+    regexDraft ??
+    (record === null
+      ? { rules: [], kinds: [] }
+      : savedRegexDraft(record.policy));
+  const regexDraftDirty =
+    record !== null &&
+    regexDraft !== null &&
+    !regexDraftMatches(regexDraft, record.policy);
 
+  // The regex draft lives apart from the record, so a refreshed record never
+  // overwrites it; only the fields whose drafts mirror the record hold it back.
   const policyDraftDirtyRef = useRef(false);
   policyDraftDirtyRef.current =
     record !== null &&
     (minConfidenceDraft !== record.policy.min_confidence.toFixed(2) ||
-      JSON.stringify(regexPatternDrafts) !==
-        JSON.stringify(
-          record.policy.custom_regex_rules.map((rule) => rule.pattern),
-        ) ||
       JSON.stringify(allowlistDrafts) !==
         JSON.stringify(
           record.policy.allowlist_rules.map((rule) => rule.value),
@@ -1541,13 +1731,13 @@ export function SafetyPolicy({
     );
   }, [persistedMinConfidence]);
 
+  // A draft that came to match the policy, by an edit or by a save from
+  // elsewhere, has nothing left to save. While a save is in flight the record
+  // shows the draft optimistically, and a failed save must find it intact.
   useEffect(() => {
-    setRegexPatternDrafts(
-      persistedCustomRegexRules === undefined
-        ? []
-        : persistedCustomRegexRules.map((rule) => rule.pattern),
-    );
-  }, [persistedCustomRegexRules]);
+    if (saving || regexDraft === null || record === null) return;
+    if (regexDraftMatches(regexDraft, record.policy)) setRegexDraft(null);
+  }, [record, regexDraft, saving, setRegexDraft]);
 
   useEffect(() => {
     setAllowlistDrafts(
@@ -2049,68 +2239,173 @@ export function SafetyPolicy({
     void patchPolicy({ regex_source: source });
   };
 
-  const saveCustomRegexRules = (rules: PrivacyRegexRule[]) => {
-    void patchPolicy({ custom_regex_rules: rules });
+  // Every edit lands in the draft; one that brings it back to the policy
+  // clears it.
+  const editRegexDraft = (change: (draft: RegexDraft) => RegexDraft) => {
+    if (record === null) return;
+    const next = change(regexDraft ?? savedRegexDraft(record.policy));
+    setRegexDraft(regexDraftMatches(next, record.policy) ? null : next);
   };
 
   const addCustomRegexRule = () => {
     if (record === null) return;
-    if (
-      record.policy.custom_regex_rules.length >= MAX_PRIVACY_CUSTOM_REGEX_RULES
-    ) {
+    if (regexEditor.rules.length >= MAX_PRIVACY_CUSTOM_REGEX_RULES) {
       setError(
         t("safety.tooManyCustom", { max: MAX_PRIVACY_CUSTOM_REGEX_RULES }),
       );
       return;
     }
-    saveCustomRegexRules([
-      ...record.policy.custom_regex_rules,
-      defaultCustomRegexRule(),
-    ]);
+    editRegexDraft((draft) => ({
+      ...draft,
+      rules: [...draft.rules, defaultCustomRegexRule()],
+    }));
   };
 
   const removeCustomRegexRule = (index: number) => {
     if (record === null) return;
-    const next = record.policy.custom_regex_rules.filter((_, i) => i !== index);
-    if (record.policy.regex_source === "custom" && next.length === 0) {
+    if (
+      record.policy.regex_source === "custom" &&
+      regexEditor.rules.length <= 1
+    ) {
       setError(t("safety.needOneCustom"));
       return;
     }
-    saveCustomRegexRules(next);
+    editRegexDraft((draft) => ({
+      ...draft,
+      rules: draft.rules.filter((_, position) => position !== index),
+    }));
   };
 
-  const changeCustomRegexKind = (
-    index: number,
-    kind: PrivacyRegexDetectorKind,
-  ) => {
-    if (record === null) return;
-    const next = record.policy.custom_regex_rules.map((rule, i) =>
-      i === index ? { ...rule, kind } : rule,
-    );
-    saveCustomRegexRules(next);
+  const changeCustomRegexKind = (index: number, kind: PrivacyRegexRuleKind) => {
+    editRegexDraft((draft) => ({
+      ...draft,
+      rules: draft.rules.map((rule, position) =>
+        position === index ? { ...rule, kind } : rule,
+      ),
+    }));
   };
 
-  const commitCustomRegexPattern = (index: number) => {
-    if (record === null) return;
-    const draft = regexPatternDrafts[index] ?? "";
-    const length = [...draft].length;
-    if (length < 1 || length > MAX_PRIVACY_REGEX_PATTERN_CHARS) {
+  const changeCustomRegexPattern = (index: number, pattern: string) => {
+    editRegexDraft((draft) => ({
+      ...draft,
+      rules: draft.rules.map((rule, position) =>
+        position === index ? { ...rule, pattern } : rule,
+      ),
+    }));
+  };
+
+  const addCustomKind = (kind: CustomKindDraft) => {
+    setCustomKindDialogOpen(false);
+    editRegexDraft((draft) => ({ ...draft, kinds: [...draft.kinds, kind] }));
+  };
+
+  const renameCustomKind = (kind: CustomPrivacyKind, label: string) => {
+    editRegexDraft((draft) => ({
+      ...draft,
+      kinds: draft.kinds.map((item) =>
+        item.kind === kind ? { ...item, label } : item,
+      ),
+    }));
+  };
+
+  // A kind a rule still names stays: removing it would leave the rule
+  // detecting values no switch governs, and Core refuses that.
+  const removeCustomKind = (kind: CustomPrivacyKind) => {
+    const users = regexEditor.rules.filter((rule) => rule.kind === kind);
+    if (users.length > 0) {
+      const label =
+        regexEditor.kinds.find((item) => item.kind === kind)?.label ?? kind;
       setError(
-        t("safety.regexLength", { max: MAX_PRIVACY_REGEX_PATTERN_CHARS }),
-      );
-      setRegexPatternDrafts(
-        record.policy.custom_regex_rules.map((rule) => rule.pattern),
+        t("safety.customKindInUse", { name: label, count: users.length }),
       );
       return;
     }
-    if (draft === record.policy.custom_regex_rules[index]?.pattern) return;
-    const next = record.policy.custom_regex_rules.map((rule, i) =>
-      i === index ? { ...rule, pattern: draft } : rule,
-    );
-    saveCustomRegexRules(next);
+    setError(null);
+    editRegexDraft((draft) => ({
+      ...draft,
+      kinds: draft.kinds.filter((item) => item.kind !== kind),
+    }));
   };
 
-  const kindRuleFor = (kind: CanonicalPrivacyKind): PrivacyKindRule =>
+  const discardRegexDraft = () => {
+    setRegexDraft(null);
+    setError(null);
+  };
+
+  // Checks the draft the way Core will, so a mistake is named here instead
+  // of coming back as a rejected save.
+  const regexDraftProblem = (draft: RegexDraft): string | null => {
+    const labels = new Set<string>();
+    for (const item of draft.kinds) {
+      const label = item.label.trim();
+      if (!validCustomPrivacyKindLabel(label)) {
+        return t("safety.customKindLabelLength", {
+          max: MAX_PRIVACY_CUSTOM_KIND_LABEL_CHARS,
+        });
+      }
+      if (labels.has(label.toLowerCase())) {
+        return t("safety.customKindNameTaken");
+      }
+      labels.add(label.toLowerCase());
+    }
+    if (draft.kinds.length > MAX_PRIVACY_CUSTOM_KINDS) {
+      return t("safety.tooManyCustomKinds", { max: MAX_PRIVACY_CUSTOM_KINDS });
+    }
+    for (const rule of draft.rules) {
+      const length = [...rule.pattern].length;
+      if (length < 1 || length > MAX_PRIVACY_REGEX_PATTERN_CHARS) {
+        return t("safety.regexLength", {
+          max: MAX_PRIVACY_REGEX_PATTERN_CHARS,
+        });
+      }
+    }
+    return null;
+  };
+
+  const saveRegexDraft = async () => {
+    if (record === null || regexDraft === null) return;
+    const problem = regexDraftProblem(regexDraft);
+    if (problem !== null) {
+      setError(problem);
+      return;
+    }
+    const saved = savedRegexDraft(record.policy);
+    const kinds = regexDraft.kinds.map((item) => ({
+      ...item,
+      label: item.label.trim(),
+    }));
+    const patch: PrivacyPolicyPatch = {};
+    if (JSON.stringify(regexDraft.rules) !== JSON.stringify(saved.rules)) {
+      patch.custom_regex_rules = regexDraft.rules;
+    }
+    if (JSON.stringify(kinds) !== JSON.stringify(saved.kinds)) {
+      // A kind keeps its switches; a new one starts on and notifying.
+      patch.kind_rules = [
+        ...record.policy.kind_rules.filter(
+          (rule) => !isCustomPrivacyKind(rule.kind),
+        ),
+        ...kinds.map((item) => {
+          const current = savedCustomKinds.find(
+            (rule) => rule.kind === item.kind,
+          );
+          return {
+            kind: item.kind,
+            enabled: current?.enabled ?? true,
+            style: "token" as const,
+            notify: current?.notify ?? true,
+            label: item.label,
+          };
+        }),
+      ];
+    }
+    if (Object.keys(patch).length === 0) {
+      setRegexDraft(null);
+      return;
+    }
+    if (await patchPolicy(patch)) setRegexDraft(null);
+  };
+
+  const kindRuleFor = (kind: PolicyPrivacyKind): PrivacyKindRule =>
     record?.policy.kind_rules.find((rule) => rule.kind === kind) ?? {
       kind,
       enabled: false,
@@ -2123,15 +2418,15 @@ export function SafetyPolicy({
   );
 
   const saveKindRule = (
-    kind: CanonicalPrivacyKind,
+    kind: PolicyPrivacyKind,
     patch: Partial<PrivacyKindRule>,
   ) => {
     if (record === null) return;
-    // The whole list is sent because kind_rules is replaced, not merged.
-    const next = PRIVACY_KINDS.map((candidate) => {
-      const rule = kindRuleFor(candidate);
-      return candidate === kind ? { ...rule, ...patch } : rule;
-    });
+    // The whole list is sent because kind_rules is replaced, not merged;
+    // custom kinds go along so a switch never drops their declaration.
+    const next = [...PRIVACY_KINDS.map(kindRuleFor), ...savedCustomKinds].map(
+      (rule) => (rule.kind === kind ? { ...rule, ...patch } : rule),
+    );
     void patchPolicy({ kind_rules: next });
   };
 
@@ -2218,13 +2513,18 @@ export function SafetyPolicy({
     setError(null);
     try {
       const catalog = await getPrivacyRegexBuiltinRules();
-      await patchPolicy(
-        {
-          regex_source: "custom",
-          custom_regex_rules: catalog.rules,
-        },
-        t("safety.filledBuiltin"),
-      );
+      // Filling replaces the whole list, unsaved edits included.
+      if (
+        await patchPolicy(
+          {
+            regex_source: "custom",
+            custom_regex_rules: catalog.rules,
+          },
+          t("safety.filledBuiltin"),
+        )
+      ) {
+        setRegexDraft(null);
+      }
     } catch (fillError) {
       setError(messageOf(fillError, t("safety.fillBuiltinFailed")));
     } finally {
@@ -2237,7 +2537,9 @@ export function SafetyPolicy({
     setPendingReset(null);
     if (record === null) return;
     if (reset === "kind_rules") {
-      void patchPolicy({ kind_rules: defaultPrivacyKindRules() });
+      void patchPolicy({
+        kind_rules: resetPrivacyKindRules(record.policy.kind_rules),
+      });
     } else if (reset === "restore") {
       void patchPolicy({ ...DEFAULT_PRIVACY_RESTORE_SETTINGS });
     } else if (reset === "allowlist") {
@@ -3576,9 +3878,23 @@ export function SafetyPolicy({
                             {t("safety.addRule")}
                           </Button>
                           <Button
+                            disabled={
+                              saving ||
+                              fillingBuiltinRules ||
+                              regexEditor.kinds.length >=
+                                MAX_PRIVACY_CUSTOM_KINDS
+                            }
+                            onClick={() => setCustomKindDialogOpen(true)}
+                            size="sm"
+                            type="button"
+                            variant="outline"
+                          >
+                            {t("safety.addCustomKind")}
+                          </Button>
+                          <Button
                             disabled={saving || fillingBuiltinRules}
                             onClick={() => {
-                              if (policy.custom_regex_rules.length > 0) {
+                              if (regexEditor.rules.length > 0) {
                                 setConfirmFillBuiltinRules(true);
                               } else {
                                 void fillBuiltinRules();
@@ -3591,29 +3907,125 @@ export function SafetyPolicy({
                             {t("safety.fillBuiltin")}
                           </Button>
                           <span className="text-sm text-muted-foreground">
-                            {policy.custom_regex_rules.length}/
+                            {regexEditor.rules.length}/
                             {MAX_PRIVACY_CUSTOM_REGEX_RULES}
                           </span>
+                          {regexDraftDirty ? (
+                            <span className="ml-auto flex items-center gap-2">
+                              <Button
+                                disabled={saving || fillingBuiltinRules}
+                                onClick={discardRegexDraft}
+                                size="sm"
+                                type="button"
+                                variant="ghost"
+                              >
+                                {t("safety.discardChanges")}
+                              </Button>
+                              <Button
+                                disabled={saving || fillingBuiltinRules}
+                                onClick={() => void saveRegexDraft()}
+                                size="sm"
+                                type="button"
+                              >
+                                {t("common.save")}
+                              </Button>
+                            </span>
+                          ) : null}
                         </div>
-                        {policy.custom_regex_rules.length === 0 ? (
+                        {regexEditor.kinds.length > 0 ? (
+                          <ul
+                            aria-label={t("safety.customKinds")}
+                            className="grid min-w-0 gap-2"
+                          >
+                            {regexEditor.kinds.map((item, index) => {
+                              const saved = savedCustomKinds.some(
+                                (rule) => rule.kind === item.kind,
+                              );
+                              return (
+                                <li
+                                  className="grid min-w-0 gap-2 rounded-md border bg-card p-2.5 @[400px]:grid-cols-[minmax(0,1fr)_auto] @[400px]:items-center"
+                                  key={item.kind}
+                                >
+                                  <span className="grid min-w-0 gap-1">
+                                    <Input
+                                      aria-label={t("safety.customKindName", {
+                                        index: index + 1,
+                                      })}
+                                      className="h-9 min-w-0 text-sm md:text-sm"
+                                      disabled={saving || fillingBuiltinRules}
+                                      maxLength={
+                                        MAX_PRIVACY_CUSTOM_KIND_LABEL_CHARS
+                                      }
+                                      onChange={(event) =>
+                                        renameCustomKind(
+                                          item.kind,
+                                          event.currentTarget.value,
+                                        )
+                                      }
+                                      onKeyDown={(event) => {
+                                        if (event.key === "Enter") {
+                                          event.preventDefault();
+                                          void saveRegexDraft();
+                                        }
+                                      }}
+                                      value={item.label}
+                                    />
+                                    <small className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+                                      <code
+                                        className="truncate font-mono"
+                                        title={t("safety.customKindIdFixed")}
+                                      >
+                                        {customPrivacyKindMarker(item.kind)}
+                                      </code>
+                                      {saved ? null : (
+                                        <Badge
+                                          className="shrink-0"
+                                          variant="outline"
+                                        >
+                                          {t("safety.unsaved")}
+                                        </Badge>
+                                      )}
+                                    </small>
+                                  </span>
+                                  <Button
+                                    aria-label={t("safety.removeCustomKind", {
+                                      name: item.label || item.kind,
+                                    })}
+                                    disabled={saving || fillingBuiltinRules}
+                                    onClick={() => removeCustomKind(item.kind)}
+                                    size="sm"
+                                    type="button"
+                                    variant="ghost"
+                                  >
+                                    {t("common.delete")}
+                                  </Button>
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        ) : null}
+                        {regexEditor.rules.length === 0 ? (
                           <p className="text-sm text-muted-foreground">
                             {t("safety.noCustomRules")}
                           </p>
                         ) : (
                           <ul className="grid min-w-0 gap-2">
-                            {policy.custom_regex_rules.map((rule, index) => (
+                            {regexEditor.rules.map((rule, index) => (
                               <li
                                 className="grid min-w-0 gap-2 rounded-md border bg-card p-2.5 @[400px]:grid-cols-[7rem_minmax(0,1fr)_auto] @[400px]:items-start"
                                 key={`regex-rule-${index}`}
                               >
                                 <Select
                                   disabled={saving || fillingBuiltinRules}
-                                  onValueChange={(value) =>
+                                  onValueChange={(value) => {
+                                    // Radix reports "" while its options
+                                    // change under it; that is no choice.
+                                    if (value === "") return;
                                     changeCustomRegexKind(
                                       index,
-                                      value as PrivacyRegexDetectorKind,
-                                    )
-                                  }
+                                      value as PrivacyRegexRuleKind,
+                                    );
+                                  }}
                                   value={rule.kind}
                                 >
                                   <SelectTrigger
@@ -3622,6 +4034,11 @@ export function SafetyPolicy({
                                     })}
                                     className="h-9 w-full px-3 text-sm"
                                     size="sm"
+                                    title={
+                                      regexEditor.kinds.find(
+                                        (item) => item.kind === rule.kind,
+                                      )?.label
+                                    }
                                   >
                                     <SelectValue />
                                   </SelectTrigger>
@@ -3634,6 +4051,18 @@ export function SafetyPolicy({
                                         {option.label}
                                       </SelectItem>
                                     ))}
+                                    {regexEditor.kinds.map((item) => (
+                                      <SelectItem
+                                        key={item.kind}
+                                        value={item.kind}
+                                      >
+                                        {/* A long name ends in an ellipsis
+                                            in the narrow trigger. */}
+                                        <span className="min-w-0 truncate">
+                                          {item.label.trim() || item.kind}
+                                        </span>
+                                      </SelectItem>
+                                    ))}
                                   </SelectContent>
                                 </Select>
                                 <Input
@@ -3642,31 +4071,20 @@ export function SafetyPolicy({
                                   })}
                                   className="h-9 min-w-0 font-mono text-sm md:text-sm"
                                   disabled={saving || fillingBuiltinRules}
-                                  onBlur={() => commitCustomRegexPattern(index)}
-                                  onChange={(event) => {
-                                    const value = event.currentTarget.value;
-                                    setRegexPatternDrafts((current) => {
-                                      const next = [...current];
-                                      next[index] = value;
-                                      return next;
-                                    });
-                                  }}
+                                  onChange={(event) =>
+                                    changeCustomRegexPattern(
+                                      index,
+                                      event.currentTarget.value,
+                                    )
+                                  }
                                   onKeyDown={(event) => {
                                     if (event.key === "Enter") {
-                                      event.currentTarget.blur();
-                                    } else if (event.key === "Escape") {
                                       event.preventDefault();
-                                      setRegexPatternDrafts(
-                                        policy.custom_regex_rules.map(
-                                          (item) => item.pattern,
-                                        ),
-                                      );
+                                      void saveRegexDraft();
                                     }
                                   }}
                                   placeholder={t("safety.re2Hint")}
-                                  value={
-                                    regexPatternDrafts[index] ?? rule.pattern
-                                  }
+                                  value={rule.pattern}
                                 />
                                 <Button
                                   disabled={saving || fillingBuiltinRules}
@@ -3997,10 +4415,13 @@ export function SafetyPolicy({
                       </HelpPopover>
                       <Badge variant="secondary">
                         {t("safety.enabledTypes", {
-                          count: PRIVACY_KINDS.filter(
-                            (kind) => kindRuleFor(kind).enabled,
-                          ).length,
-                          total: PRIVACY_KINDS.length,
+                          count:
+                            PRIVACY_KINDS.filter(
+                              (kind) => kindRuleFor(kind).enabled,
+                            ).length +
+                            savedCustomKinds.filter((rule) => rule.enabled)
+                              .length,
+                          total: PRIVACY_KINDS.length + savedCustomKinds.length,
                         })}
                       </Badge>
                       <IconButton
@@ -4030,17 +4451,27 @@ export function SafetyPolicy({
                     className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain pr-1"
                     data-tab-scroller
                   >
-                    {PRIVACY_KINDS.map((kind) => {
+                    {[
+                      ...PRIVACY_KINDS,
+                      ...savedCustomKinds.map((rule) => rule.kind),
+                    ].map((kind: PolicyPrivacyKind) => {
                       const rule = kindRuleFor(kind);
+                      const custom = isCustomPrivacyKind(kind);
                       const styleLocked =
                         !kindRulesWarn &&
-                        PLACEHOLDER_STYLE_LOCKED_KINDS.has(kind);
+                        (custom || PLACEHOLDER_STYLE_LOCKED_KINDS.has(kind));
                       const lockReason = styleLocked
                         ? placeholderStyleLockReason(kind)
                         : undefined;
-                      const unreachable =
-                        policy.detector === "regex" &&
-                        localModelOnlyKinds.has(kind);
+                      // A custom kind comes only from custom regex rules.
+                      const unreachable = custom
+                        ? policy.detector !== "regex" ||
+                          policy.regex_source !== "custom"
+                        : policy.detector === "regex" &&
+                          localModelOnlyKinds.has(kind);
+                      const kindLabel = custom
+                        ? (rule.label ?? kind)
+                        : canonicalKindLabel(kind);
                       return (
                         <li
                           className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b py-2.5"
@@ -4049,11 +4480,15 @@ export function SafetyPolicy({
                         >
                           <span className="flex min-w-0 flex-col gap-1">
                             <strong className="text-sm font-medium leading-snug">
-                              {canonicalKindLabel(kind)}
+                              {kindLabel}
                             </strong>
                             {unreachable ? (
                               <small className="text-xs text-muted-foreground">
-                                {t("safety.localOnlyShort")}
+                                {t(
+                                  custom
+                                    ? "safety.customRulesOnlyShort"
+                                    : "safety.localOnlyShort",
+                                )}
                               </small>
                             ) : styleLocked ? (
                               <small
@@ -4072,7 +4507,13 @@ export function SafetyPolicy({
                                 className="sr-only"
                                 id={`privacy-kind-hint-${kind}`}
                               >
-                                {unreachable ? t("safety.localOnlyKind") : null}{" "}
+                                {unreachable
+                                  ? t(
+                                      custom
+                                        ? "safety.customRulesOnlyKind"
+                                        : "safety.localOnlyKind",
+                                    )
+                                  : null}{" "}
                                 {lockReason}
                               </span>
                             ) : null}
@@ -4090,7 +4531,7 @@ export function SafetyPolicy({
                               >
                                 <SelectTrigger
                                   aria-label={t("safety.notifyFor", {
-                                    kind: canonicalKindLabel(kind),
+                                    kind: kindLabel,
                                   })}
                                   aria-describedby={
                                     unreachable
@@ -4125,7 +4566,7 @@ export function SafetyPolicy({
                               >
                                 <SelectTrigger
                                   aria-label={t("safety.styleFor", {
-                                    kind: canonicalKindLabel(kind),
+                                    kind: kindLabel,
                                   })}
                                   aria-describedby={
                                     lockReason || unreachable
@@ -4157,7 +4598,7 @@ export function SafetyPolicy({
                                 kindRulesWarn
                                   ? "safety.detectKind"
                                   : "safety.redactKind",
-                                { kind: canonicalKindLabel(kind) },
+                                { kind: kindLabel },
                               )}
                               checked={rule.enabled}
                               disabled={saving}
@@ -5445,6 +5886,13 @@ export function SafetyPolicy({
           }}
         />
       ) : null}
+      {customKindDialogOpen ? (
+        <CustomKindDialog
+          existing={regexEditor.kinds}
+          onAdd={addCustomKind}
+          onCancel={() => setCustomKindDialogOpen(false)}
+        />
+      ) : null}
       {confirmFillBuiltinRules ? (
         <ConfirmDialog
           confirmLabel={t("safety.overwriteFill")}
@@ -5472,6 +5920,9 @@ export function SafetyPolicy({
                   .map((rule) => canonicalKindLabel(rule.kind))
                   .join(t("safety.listJoin")),
               })}
+              {savedCustomKinds.length > 0
+                ? t("safety.resetKindRulesCustomHint")
+                : null}
             </p>
           ) : pendingReset === "restore" ? (
             <>

@@ -211,6 +211,35 @@ describe("readCrew", () => {
       { id: "bare", model: "" },
     ]);
   });
+
+  it("marks a conversation whose last call failed or was stopped", () => {
+    const ended = (session: string, status: RequestActivityCall["status"]) =>
+      call(session, "09:50", {
+        completed_at: "2026-11-02T08:09:55Z",
+        status,
+        output: output("text"),
+      });
+    const crew = readCrew({
+      now: "2026-11-02T08:10:00Z",
+      calls: [
+        ended("answered", "succeeded"),
+        ended("broke", "failed"),
+        ended("stopped", "cancelled"),
+        ended("blocked", "blocked"),
+        ended("retried", "failed"),
+        call("retried", "09:58"),
+      ],
+    });
+    expect(
+      Object.fromEntries(crew.members.map(({ id, failed }) => [id, failed])),
+    ).toEqual({
+      answered: false,
+      broke: true,
+      stopped: true,
+      blocked: true,
+      retried: false,
+    });
+  });
 });
 
 describe("the crew", () => {
@@ -271,6 +300,17 @@ describe("the crew", () => {
       count: 3,
     });
     expect(crew.members[0].queue).toEqual([]);
+  });
+
+  it("cheers no step whose conversation ended without an answer", () => {
+    const crew = createCrew();
+    syncCrew(crew, reading(member("a", "write")), layout);
+    run(crew, MIN_REST + 4);
+    syncCrew(crew, reading(member("a", "wait", "", { failed: true })), layout);
+    run(crew, MIN_HOLD + 4);
+    expect(crew.members[0]).toMatchObject({ act: "wait", failed: true });
+    expect(crew.members[0].done).toBe(false);
+    expect(doneActs).toEqual([]);
   });
 
   it("walks at a steady pace, and rests where it stands", () => {

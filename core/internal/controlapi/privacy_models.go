@@ -50,7 +50,7 @@ func (handler *Handler) privacyModelLocalProbe(
 		writeError(writer, http.StatusMethodNotAllowed, "method_not_allowed", "only POST is allowed")
 		return
 	}
-	if !requireMediaType(writer, request, "application/json") {
+	if !requireMediaType(writer, request) {
 		return
 	}
 	var input contract.PrivacyModelLocalProbeRequest
@@ -122,7 +122,7 @@ func (handler *Handler) privacyModelProbe(
 		writeError(writer, http.StatusMethodNotAllowed, "method_not_allowed", "only POST is allowed")
 		return
 	}
-	if !requireMediaType(writer, request, "application/json") {
+	if !requireMediaType(writer, request) {
 		return
 	}
 	var input contract.PrivacyModelProbeRequest
@@ -173,7 +173,7 @@ func (handler *Handler) installPrivacyModel(
 	writer http.ResponseWriter,
 	request *http.Request,
 ) {
-	if !requireMediaType(writer, request, "application/json") {
+	if !requireMediaType(writer, request) {
 		return
 	}
 	var input contract.PrivacyModelInstallRequest

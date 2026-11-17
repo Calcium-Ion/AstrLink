@@ -69,7 +69,7 @@ WHERE parent_request_id IS NULL AND started_at >= ? AND started_at < ?
 				return result, fmt.Errorf("%w: privacy ignored", storage.ErrInvalidRecord)
 			}
 			for _, entry := range entries {
-				if !entry.Kind.Valid() || !entry.Reason.Valid() || entry.Count < 1 {
+				if !entry.Kind.Recorded() || !entry.Reason.Valid() || entry.Count < 1 {
 					return result, fmt.Errorf("%w: privacy ignored", storage.ErrInvalidRecord)
 				}
 				switch entry.Reason {
@@ -112,7 +112,7 @@ WHERE parent_request_id IS NULL AND started_at >= ? AND started_at < ?
 			continue
 		}
 		for _, finding := range findings {
-			if !finding.Kind.Valid() || finding.Count < 1 {
+			if !finding.Kind.Recorded() || finding.Count < 1 {
 				return result, fmt.Errorf("%w: privacy finding", storage.ErrInvalidRecord)
 			}
 			kinds[string(finding.Kind)] += int64(finding.Count)
@@ -136,12 +136,22 @@ WHERE parent_request_id IS NULL AND started_at >= ? AND started_at < ?
 	for kind, count := range kinds {
 		result.ByKind = append(result.ByKind, storage.PrivacyKindCount{Kind: kind, Count: count})
 	}
+	// Custom kinds rank after the built-in ones on a tie, by name.
+	rank := func(kind string) int {
+		if index := slices.Index(order, kind); index >= 0 {
+			return index
+		}
+		return len(order)
+	}
 	sort.Slice(result.ByKind, func(i, j int) bool {
 		a, b := result.ByKind[i], result.ByKind[j]
 		if a.Count != b.Count {
 			return a.Count > b.Count
 		}
-		return slices.Index(order, a.Kind) < slices.Index(order, b.Kind)
+		if rankA, rankB := rank(a.Kind), rank(b.Kind); rankA != rankB {
+			return rankA < rankB
+		}
+		return a.Kind < b.Kind
 	})
 	return result, nil
 }

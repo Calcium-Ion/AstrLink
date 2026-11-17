@@ -1,0 +1,4 @@
+# Patches apply byte for byte to the LF sources of the module they patch,
+# so they keep LF on Windows checkouts too, and their context lines keep
+# the whitespace of the file they patch.
+*.patch text eol=lf -whitespace

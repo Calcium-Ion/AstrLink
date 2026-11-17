@@ -1,0 +1,421 @@
+MyGo v0.9.0: ship app extensions in Contents/PlugIns (macos.plugIns)
+
+scripts/mygo.mjs fetches github.com/egoist/mygo@v0.9.0 from the Go module
+proxy, applies this patch with `git apply` and builds cmd/mygo into the
+user cache; the desktop packaging scripts run that CLI. Text before the
+first `diff --git` line is ignored by `git apply`.
+
+Why: the macOS desktop widget is a WidgetKit extension (.appex) that must
+sit in Contents/PlugIns, signed with its own entitlements (App Sandbox and
+the shared App Group) before the app is signed around it. MyGo 0.9 copies
+resources into Contents/Resources only, and signs the app with
+`codesign --force --deep`, which would sign any extension again with the
+app's entitlements and drop its sandbox.
+
+What it changes:
+- config: `macos.plugIns: [{ path, entitlements? }]` (.appex, .plugin or
+  .bundle; unique bundle names), typed in packages/cli/index.d.ts and
+  documented in docs/configuration.md.
+- writeBundle copies each plug-in into Contents/PlugIns (any build host,
+  so cross-packaged bundles carry it too).
+- signNestedCode signs Contents/Frameworks code and then each plug-in,
+  with its entitlements file or `--preserve-metadata=entitlements`.
+- codesign drops `--deep` for the app when plug-ins are configured;
+  without plug-ins the arguments are unchanged.
+- `mygo dev` re-signs when a plug-in's entitlements change and watches the
+  plug-in bundles.
+- tests: config validation, the copy into PlugIns, and (macOS only) the
+  extension keeping its own entitlements after the app is signed.
+
+Upstream status: not submitted. Drop this patch once a MyGo release has an
+equivalent option.
+
+diff --git a/cmd/mygo/bundle.go b/cmd/mygo/bundle.go
+index 1d572b7..6ec9c88 100644
+--- a/cmd/mygo/bundle.go
++++ b/cmd/mygo/bundle.go
+@@ -57,6 +57,9 @@ func writeBundle(c *Config, dir, bin string, icns []byte, car *assetCatalog, res
+ 	if err := copyResources(res, filepath.Join(contents, "Resources")); err != nil {
+ 		return "", err
+ 	}
++	if err := copyPlugIns(c, contents); err != nil {
++		return "", err
++	}
+ 	if err := installNative(c, app); err != nil {
+ 		return "", err
+ 	}
+@@ -76,6 +79,25 @@ func writeBundle(c *Config, dir, bin string, icns []byte, car *assetCatalog, res
+ 	return app, nil
+ }
+ 
++// copyPlugIns copies the extensions of macos.plugIns into the PlugIns of
++// the bundle's contents.
++func copyPlugIns(c *Config, contents string) error {
++	for _, p := range c.MacOS.PlugIns {
++		src := c.path(p.Path)
++		if !isBundle(src) {
++			return fmt.Errorf("%s: macos.plugIns: %s is not a bundle with an Info.plist", c.configName(), p.Path)
++		}
++		dir := filepath.Join(contents, "PlugIns")
++		if err := os.MkdirAll(dir, 0o755); err != nil {
++			return err
++		}
++		if err := copyResource(src, filepath.Join(dir, filepath.Base(src))); err != nil {
++			return fmt.Errorf("%s: macos.plugIns: %w", c.configName(), err)
++		}
++	}
++	return nil
++}
++
+ // bundleExecutable returns the path of the executable inside a bundle.
+ func bundleExecutable(app string) string {
+ 	name := filepath.Base(app)
+@@ -415,7 +437,13 @@ func codesign(c *Config, path, identity string, production bool) error {
+ 	if entitlements != "" && c.native != nil && len(c.native.entitlements) > 0 {
+ 		defer os.Remove(entitlements)
+ 	}
+-	out, err := exec.Command("codesign", codesignArgs(path, identity, entitlements, production)...).CombinedOutput()
++	args := codesignArgs(path, identity, entitlements, production)
++	if len(c.MacOS.PlugIns) > 0 {
++		// --deep would sign the extensions again, with the app's
++		// entitlements; signNestedCode signed them and Frameworks.
++		args = slices.DeleteFunc(args, func(a string) bool { return a == "--deep" })
++	}
++	out, err := exec.Command("codesign", args...).CombinedOutput()
+ 	if err != nil {
+ 		return fmt.Errorf("codesign %s: %v\n%s", filepath.Base(path), err, out)
+ 	}
+diff --git a/cmd/mygo/config.go b/cmd/mygo/config.go
+index dfeb6e2..650a050 100644
+--- a/cmd/mygo/config.go
++++ b/cmd/mygo/config.go
+@@ -221,6 +221,13 @@ type MacOS struct {
+ 	// for a helper that needs com.apple.security.cs.allow-jit under the
+ 	// hardened runtime. Other code keeps the entitlements it is signed with.
+ 	HelperEntitlements map[string]string `json:"helperEntitlements"`
++	// PlugIns lists app extensions to ship in Contents/PlugIns, such as a
++	// WidgetKit widget (.appex). Each is copied whole and signed before
++	// the app, keeping the entitlements it was signed with unless it names
++	// a property list of others. The app is then signed without --deep, so
++	// codesign does not sign the extensions again with the app's
++	// entitlements.
++	PlugIns []PlugIn `json:"plugIns"`
+ 	// InfoPlist holds extra keys for the Info.plist of the bundle, which
+ 	// replace MyGo's own, e.g. usage descriptions for apps whose pages use
+ 	// the camera or the microphone:
+@@ -233,6 +240,15 @@ type MacOS struct {
+ 	Notarize *Notarize `json:"notarize"`
+ }
+ 
++// PlugIn is an app extension the bundle ships in Contents/PlugIns.
++type PlugIn struct {
++	// Path is the extension's bundle, e.g. "build/Widgets.appex".
++	Path string `json:"path"`
++	// Entitlements is a property list of entitlements to sign the
++	// extension with (default: those it was signed with).
++	Entitlements string `json:"entitlements"`
++}
++
+ // Notarize holds notarytool credentials stored in the keychain with
+ // `xcrun notarytool store-credentials <profile>`.
+ type Notarize struct {
+@@ -311,6 +327,19 @@ func (c *Config) validate() error {
+ 			return fmt.Errorf("macos.helperEntitlements maps the path of code among the resources to a property list of entitlements, not %q to %q", name, file)
+ 		}
+ 	}
++	plugIns := map[string]bool{}
++	for i, p := range c.MacOS.PlugIns {
++		name := filepath.Base(p.Path)
++		switch strings.ToLower(filepath.Ext(p.Path)) {
++		case ".appex", ".plugin", ".bundle":
++		default:
++			return fmt.Errorf("macos.plugIns[%d].path %q is not an app extension or plug-in bundle (.appex, .plugin or .bundle)", i, p.Path)
++		}
++		if plugIns[name] {
++			return fmt.Errorf("macos.plugIns[%d]: another plug-in is named %s too", i, name)
++		}
++		plugIns[name] = true
++	}
+ 	if c.Windows.Certificate != "" && c.Windows.SignCommand != "" {
+ 		return errors.New("windows.certificate and windows.signCommand exclude each other")
+ 	}
+diff --git a/cmd/mygo/config_test.go b/cmd/mygo/config_test.go
+index aa3125a..027464d 100644
+--- a/cmd/mygo/config_test.go
++++ b/cmd/mygo/config_test.go
+@@ -140,6 +140,7 @@ func TestConfigTypes(t *testing.T) {
+ 		"S3Config":        reflect.TypeFor[S3](),
+ 		"MacOSConfig":     reflect.TypeFor[MacOS](),
+ 		"NotarizeConfig":  reflect.TypeFor[Notarize](),
++		"PlugInConfig":    reflect.TypeFor[PlugIn](),
+ 		"WindowsConfig":   reflect.TypeFor[Windows](),
+ 		"LinuxConfig":     reflect.TypeFor[Linux](),
+ 		"LinuxDepends":    reflect.TypeFor[linuxDepends](),
+diff --git a/cmd/mygo/dev.go b/cmd/mygo/dev.go
+index 65121f4..2043904 100644
+--- a/cmd/mygo/dev.go
++++ b/cmd/mygo/dev.go
+@@ -705,6 +705,9 @@ func hashEntitlements(w io.Writer, c *Config) error {
+ 	for name, file := range c.MacOS.HelperEntitlements {
+ 		files["helper:"+name] = file
+ 	}
++	for _, p := range c.MacOS.PlugIns {
++		files["plugin:"+p.Path] = p.Entitlements
++	}
+ 	for _, name := range slices.Sorted(maps.Keys(files)) {
+ 		if files[name] == "" {
+ 			continue
+diff --git a/cmd/mygo/plugins_test.go b/cmd/mygo/plugins_test.go
+new file mode 100644
+index 0000000..3606c3a
+--- /dev/null
++++ b/cmd/mygo/plugins_test.go
+@@ -0,0 +1,134 @@
++package main
++
++import (
++	"encoding/json"
++	"os"
++	"os/exec"
++	"path/filepath"
++	"runtime"
++	"strings"
++	"testing"
++)
++
++func plugInConfig(t *testing.T, root string, plugIns any) (*Config, error) {
++	t.Helper()
++	data, err := json.Marshal(map[string]any{"name": "App", "identifier": "com.example.app", "macos": map[string]any{"plugIns": plugIns}})
++	if err != nil {
++		t.Fatal(err)
++	}
++	writeFiles(t, root, map[string]string{jsonConfig: string(data)})
++	return loadConfig(root)
++}
++
++func TestPlugInsMustBeNamedExtensionBundles(t *testing.T) {
++	for _, tc := range []struct {
++		plugIns any
++		err     string
++	}{
++		{[]map[string]string{{"path": "build/Widgets.appex"}}, ""},
++		{[]map[string]string{{"path": "build/Widgets.appex", "entitlements": "widgets.plist"}, {"path": "Other.plugin"}}, ""},
++		{[]map[string]string{{"path": "build/Widgets.app"}}, "is not an app extension"},
++		{[]map[string]string{{"path": ""}}, "is not an app extension"},
++		{[]map[string]string{{"path": "a/Widgets.appex"}, {"path": "b/Widgets.appex"}}, "another plug-in is named Widgets.appex"},
++	} {
++		_, err := plugInConfig(t, t.TempDir(), tc.plugIns)
++		if tc.err == "" && err != nil || tc.err != "" && (err == nil || !strings.Contains(err.Error(), tc.err)) {
++			t.Errorf("%v: %v", tc.plugIns, err)
++		}
++	}
++}
++
++func TestBundleCopiesPlugInsIntoPlugIns(t *testing.T) {
++	root := t.TempDir()
++	writeFiles(t, root, map[string]string{
++		"app": "executable",
++		"build/Widgets.appex/Contents/Info.plist":       "<plist/>",
++		"build/Widgets.appex/Contents/MacOS/Widgets":    "extension",
++		"build/Widgets.appex/Contents/Resources/a.json": "{}",
++		"build/Empty.appex/Contents/MacOS/Empty":        "no Info.plist",
++	})
++	c, err := plugInConfig(t, root, []map[string]string{{"path": "build/Widgets.appex"}})
++	if err != nil {
++		t.Fatal(err)
++	}
++	app, err := writeBundle(c, t.TempDir(), filepath.Join(root, "app"), nil, nil, nil)
++	if err != nil {
++		t.Fatal(err)
++	}
++	for _, name := range []string{"Contents/Info.plist", "Contents/MacOS/Widgets", "Contents/Resources/a.json"} {
++		got, err := os.ReadFile(filepath.Join(app, "Contents", "PlugIns", "Widgets.appex", filepath.FromSlash(name)))
++		want, _ := os.ReadFile(filepath.Join(root, "build", "Widgets.appex", filepath.FromSlash(name)))
++		if err != nil || string(got) != string(want) {
++			t.Errorf("%s = %q, %v", name, got, err)
++		}
++	}
++
++	if c, err = plugInConfig(t, root, []map[string]string{{"path": "build/Empty.appex"}}); err != nil {
++		t.Fatal(err)
++	}
++	writeFiles(t, root, map[string]string{"app": "executable"})
++	if _, err := writeBundle(c, t.TempDir(), filepath.Join(root, "app"), nil, nil, nil); err == nil || !strings.Contains(err.Error(), "not a bundle with an Info.plist") {
++		t.Errorf("a plug-in without an Info.plist: %v", err)
++	}
++}
++
++// TestSignPlugIns signs an app's extension with its own entitlements
++// before the app, which keeps them.
++func TestSignPlugIns(t *testing.T) {
++	if _, err := exec.LookPath("codesign"); err != nil || runtime.GOOS != "darwin" {
++		t.Skip("needs codesign")
++	}
++	exe, err := os.Executable()
++	if err != nil {
++		t.Fatal(err)
++	}
++	root := t.TempDir()
++	plist := func(key string) string {
++		return `<?xml version="1.0" encoding="UTF-8"?>
++<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
++<plist version="1.0"><dict><key>` + key + `</key><true/></dict></plist>
++`
++	}
++	writeFiles(t, root, map[string]string{
++		"build/Widgets.appex/Contents/Info.plist": string(infoPlist(&Config{Name: "Widgets", Identifier: "com.example.app.widgets"}, "Widgets", "", "")),
++		"app.plist":     plist("com.apple.security.cs.disable-library-validation"),
++		"widgets.plist": plist("com.apple.security.app-sandbox"),
++	})
++	for _, path := range []string{"app", "build/Widgets.appex/Contents/MacOS/Widgets"} {
++		dst := filepath.Join(root, filepath.FromSlash(path))
++		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
++			t.Fatal(err)
++		}
++		if err := copyFile(exe, dst, 0o755); err != nil {
++			t.Fatal(err)
++		}
++	}
++	c, err := plugInConfig(t, root, []map[string]string{{"path": "build/Widgets.appex", "entitlements": "widgets.plist"}})
++	if err != nil {
++		t.Fatal(err)
++	}
++	c.MacOS.Entitlements = "app.plist"
++	app, err := writeBundle(c, t.TempDir(), filepath.Join(root, "app"), nil, nil, nil)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if err := codesign(c, app, "-", false); err != nil {
++		t.Fatal(err)
++	}
++	if out, err := exec.Command("codesign", "--verify", "--deep", "--strict", app).CombinedOutput(); err != nil {
++		t.Fatalf("the app does not verify: %v\n%s", err, out)
++	}
++	entitlements := func(path string) string {
++		out, err := exec.Command("codesign", "--display", "--entitlements", "-", "--xml", path).CombinedOutput()
++		if err != nil {
++			t.Fatalf("codesign --display %s: %v\n%s", path, err, out)
++		}
++		return string(out)
++	}
++	if out := entitlements(filepath.Join(app, "Contents", "PlugIns", "Widgets.appex")); !strings.Contains(out, "app-sandbox") || strings.Contains(out, "disable-library-validation") {
++		t.Errorf("the extension was not signed with its own entitlements:\n%s", out)
++	}
++	if out := entitlements(app); !strings.Contains(out, "disable-library-validation") {
++		t.Errorf("the app lost its entitlements:\n%s", out)
++	}
++}
+diff --git a/cmd/mygo/resources.go b/cmd/mygo/resources.go
+index 61b76e9..d9e9017 100644
+--- a/cmd/mygo/resources.go
++++ b/cmd/mygo/resources.go
+@@ -904,6 +904,47 @@ func signNestedCode(c *Config, app, identity string, production bool) error {
+ 		}
+ 		signed = append(signed, n)
+ 	}
++	return signPlugIns(c, app, identity, production)
++}
++
++// signPlugIns signs the extensions of macos.plugIns in Contents/PlugIns,
++// with their own entitlements, and the code in Contents/Frameworks, which
++// the app's signature then seals without --deep.
++func signPlugIns(c *Config, app, identity string, production bool) error {
++	if len(c.MacOS.PlugIns) == 0 {
++		return nil
++	}
++	sign := func(path, entitlements string) error {
++		args := nestedCodesignArgs(identity, entitlements, production)
++		if out, err := exec.Command("codesign", append(args, path)...).CombinedOutput(); err != nil {
++			return fmt.Errorf("codesign %s: %v\n%s", filepath.Base(path), err, out)
++		}
++		return nil
++	}
++	frameworks := filepath.Join(app, "Contents", "Frameworks")
++	entries, err := os.ReadDir(frameworks)
++	if err != nil && !errors.Is(err, fs.ErrNotExist) {
++		return err
++	}
++	for _, e := range entries {
++		path := filepath.Join(frameworks, e.Name())
++		if ok, _ := machO(path); !ok && !isBundle(path) {
++			continue
++		}
++		if err := sign(path, ""); err != nil {
++			return err
++		}
++	}
++	for _, p := range c.MacOS.PlugIns {
++		entitlements := ""
++		if p.Entitlements != "" {
++			entitlements = c.path(p.Entitlements)
++		}
++		path := filepath.Join(app, "Contents", "PlugIns", filepath.Base(p.Path))
++		if err := sign(path, entitlements); err != nil {
++			return err
++		}
++	}
+ 	return nil
+ }
+ 
+diff --git a/cmd/mygo/watch.go b/cmd/mygo/watch.go
+index c4bf866..5dcbc7b 100644
+--- a/cmd/mygo/watch.go
++++ b/cmd/mygo/watch.go
+@@ -87,6 +87,12 @@ func listBuildInputs(c *Config) (*buildInputs, error) {
+ 	for _, f := range c.MacOS.HelperEntitlements {
+ 		in.files = append(in.files, c.path(f))
+ 	}
++	for _, p := range c.MacOS.PlugIns {
++		in.trees = append(in.trees, c.path(p.Path))
++		if p.Entitlements != "" {
++			in.files = append(in.files, c.path(p.Entitlements))
++		}
++	}
+ 	for _, p := range c.Resources {
+ 		in.trees = append(in.trees, c.path(p))
+ 	}
+diff --git a/docs/configuration.md b/docs/configuration.md
+index 2c36cd8..38290b5 100644
+--- a/docs/configuration.md
++++ b/docs/configuration.md
+@@ -121,6 +121,7 @@ Signed [auto-updates](updates.md). `publicKey` and one of `github` and
+ | `entitlements` | | a property list of entitlements to sign the app with |
+ | `provisioningProfile` | | a profile embedded as `Contents/embedded.provisionprofile` before signing; must match the app's identifier, entitlements and signing identity; cannot be used with ad-hoc signing. See [provisioning profiles](distribution.md#provisioning-profiles) |
+ | `helperEntitlements` | | property lists of entitlements for code among the resources, by its path there, e.g. `{ "bin/server": "server.entitlements.plist" }`; other code keeps the entitlements it is signed with. See [helper executables](distribution.md#helper-executables) |
++| `plugIns` | | app extensions shipped in `Contents/PlugIns`, such as a WidgetKit widget: `path`, the `.appex`, `.plugin` or `.bundle`, and optionally `entitlements`, a property list to sign it with (default: those it was signed with). They are signed before the app, which is then signed without `--deep` |
+ | `infoPlist` | | keys added to the app's `Info.plist`, replacing MyGo's, e.g. `NSCameraUsageDescription` |
+ | `dmgTitle` | `name` | the volume name of the disk image |
+ | `notarize` | | notarizes production disk images: `keychainProfile`, the profile of `xcrun notarytool store-credentials`, and optionally `keychain`, the keychain holding it |
+diff --git a/packages/cli/index.d.ts b/packages/cli/index.d.ts
+index 14a6248..22f676b 100644
+--- a/packages/cli/index.d.ts
++++ b/packages/cli/index.d.ts
+@@ -239,6 +239,13 @@ export interface MacOSConfig {
+    * Other code keeps the entitlements it is signed with.
+    */
+   helperEntitlements?: Record<string, string>;
++  /**
++   * App extensions shipped in `Contents/PlugIns`, such as a WidgetKit widget
++   * (`.appex`). Each is signed before the app, with its own entitlements;
++   * the app is then signed without `--deep`, which would sign them again
++   * with the app's.
++   */
++  plugIns?: PlugInConfig[];
+   /** Keys added to the app's Info.plist, replacing MyGo's, e.g. `NSCameraUsageDescription`. */
+   infoPlist?: Record<string, unknown>;
+   /** The volume name of the disk image (default: the name). */
+@@ -247,6 +254,14 @@ export interface MacOSConfig {
+   notarize?: NotarizeConfig;
+ }
+ 
++/** An app extension the app ships in `Contents/PlugIns`. */
++export interface PlugInConfig {
++  /** The extension's bundle, e.g. `build/Widgets.appex`. Paths are relative to the project. */
++  path: string;
++  /** A property list of entitlements to sign it with (default: those it was signed with). */
++  entitlements?: string;
++}
++
+ /** Credentials of `xcrun notarytool store-credentials <profile>`. */
+ export interface NotarizeConfig {
+   /** The profile holding the credentials. */

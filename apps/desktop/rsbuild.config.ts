@@ -5,14 +5,15 @@ import tailwindcss from "@tailwindcss/postcss";
 import {
   BuildGeneration,
   createBuildGenerationMiddleware,
-  createTauriDevReloadPlugin,
+  createDevReloadPlugin,
 } from "./dev-build-generation";
 
-const host = process.env.TAURI_DEV_HOST || "127.0.0.1";
+// devUrl in mygo.config.ts.
+const host = "127.0.0.1";
 const buildGeneration = new BuildGeneration();
 
 export default defineConfig(({ env }) => ({
-  plugins: [pluginReact(), createTauriDevReloadPlugin(buildGeneration)],
+  plugins: [pluginReact(), createDevReloadPlugin(buildGeneration)],
   source: {
     define: {
       "process.env.PUBLIC_ASTRLINK_EDITION": JSON.stringify(
@@ -50,8 +51,9 @@ export default defineConfig(({ env }) => ({
     },
   },
   dev: {
-    // WKWebView Fast Refresh often applies without repainting. The debug Rust
-    // host polls /__astrlink_build and calls webview.reload() instead.
+    // WKWebView Fast Refresh often applies without repainting. The debug host
+    // (internal/devreload) polls /__astrlink_build and reloads the pages
+    // instead.
     hmr: false,
     liveReload: false,
     client: {
@@ -66,7 +68,8 @@ export default defineConfig(({ env }) => ({
     },
     rspack: {
       watchOptions: {
-        ignored: ["**/src-tauri/**"],
+        // `mygo dev` and `mygo build` output.
+        ignored: ["**/build/**", "**/.mygo/**"],
       },
     },
   },

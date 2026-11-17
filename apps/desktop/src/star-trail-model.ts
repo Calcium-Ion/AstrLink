@@ -31,14 +31,46 @@ export interface StarTrailLegend {
   rest: StarTrailModelRow | null;
 }
 
+/** The models a legend names: the top ones by tokens that have a name. */
+function namedModels(byModel: readonly UsageGroup[], limit: number) {
+  return byModel
+    .filter((group) => group.total_tokens > 0 || group.requests > 0)
+    .sort(compareUsage)
+    .filter((group) => group.id !== null)
+    .slice(0, limit);
+}
+
+/**
+ * One color per model across several model lists drawn together, such as a
+ * week's disc beside a day's list: each list's named models in turn, so a
+ * model keeps one color in both. See `modelSeriesColors`.
+ */
+export function starTrailPalette(
+  lists: readonly (readonly UsageGroup[])[],
+  limit = STAR_TRAIL_MODEL_LIMIT,
+): ReadonlyMap<string, string> {
+  const models = [
+    ...new Set(
+      lists.flatMap((byModel) =>
+        namedModels(byModel, limit).map((group) => group.id!),
+      ),
+    ),
+  ];
+  const colors = modelSeriesColors(models);
+  return new Map(models.map((model, index) => [model, colors[index]]));
+}
+
 /**
  * The top models by tokens, each in the color its arcs use, and one muted
  * row for every other model. Calls without a model always fold into the rest.
- * Families on the disc never share a color; see `modelSeriesColors`.
+ * Families on the disc never share a color; see `modelSeriesColors`. A
+ * palette from `starTrailPalette` gives the colors when another list is
+ * drawn beside this one.
  */
 export function starTrailLegend(
   byModel: readonly UsageGroup[],
   limit = STAR_TRAIL_MODEL_LIMIT,
+  palette = starTrailPalette([byModel], limit),
 ): StarTrailLegend {
   const used = byModel
     .filter((group) => group.total_tokens > 0 || group.requests > 0)
@@ -73,9 +105,10 @@ export function starTrailLegend(
     color,
     folded: count,
   });
-  const colors = modelSeriesColors(named.map((group) => group.id!));
   return {
-    rows: named.map((group, index) => row(group, index, colors[index], 0)),
+    rows: named.map((group, index) =>
+      row(group, index, palette.get(group.id!) ?? MUTED_SERIES_COLOR, 0),
+    ),
     rest: rest
       ? row(rest, named.length, MUTED_SERIES_COLOR, folded.length)
       : null,

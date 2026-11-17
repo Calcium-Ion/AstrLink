@@ -10,6 +10,7 @@ import {
   starTrail,
   starTrailByModel,
   starTrailLegend,
+  starTrailPalette,
   wholePercents,
 } from "./star-trail-model";
 import {
@@ -128,6 +129,28 @@ describe("star trail model", () => {
     const percents = [...legend.rows, legend.rest!].map((row) => row.percent);
     expect(percents.reduce((sum, value) => sum + value, 0)).toBe(100);
     expect(starTrailLegend([group("gpt-5.5", 10)]).rest).toBeNull();
+  });
+
+  // The week behind a day's numbers can name models the day's list does
+  // not, and the day can be empty; its hours took the muted color.
+  it("gives a model one color in a week's disc and a day's list", () => {
+    const week = [group("claude-opus-5-5", 900), group("gpt-5.5", 100)];
+    const day = [group("gpt-5.5", 40)];
+    const palette = starTrailPalette([week, day]);
+    expect(starTrailLegend(day, undefined, palette).rows[0].color).toBe(
+      "var(--model-series-2)",
+    );
+    const disc = starTrailLegend(week, undefined, palette);
+    expect(disc.rows.map((row) => row.color)).toEqual([
+      "var(--model-series-1)",
+      "var(--model-series-2)",
+    ]);
+    // An empty day still draws the week in color.
+    const quiet = starTrailPalette([week, []]);
+    expect(starTrailLegend(week, undefined, quiet).rows[0].color).toBe(
+      "var(--model-series-1)",
+    );
+    expect(starTrailLegend([], undefined, quiet).rows).toEqual([]);
   });
 
   it("lights each hour in its top model's legend color, by requests against the busiest hour", () => {

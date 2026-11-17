@@ -509,8 +509,24 @@ func replacementFor(kind Kind) string {
 	case KindPerson:
 		return "<PRIVATE_PERSON>"
 	default:
+		// A custom kind names itself, so each one keeps a marker of its own:
+		// custom_org becomes <PRIVATE_CUSTOM_ORG>.
+		if contract.IsCustomPrivacyKind(string(kind)) {
+			return "<PRIVATE_" + strings.ToUpper(string(kind)) + ">"
+		}
 		return "<PRIVATE>"
 	}
+}
+
+// customMarkerName reports whether name, the text inside a token marker
+// without its suffix, is the marker of some custom kind.
+func customMarkerName(name string) bool {
+	const prefix = "PRIVATE_"
+	upper := strings.ToUpper(contract.CustomPrivacyKindPrefix)
+	if !strings.HasPrefix(name, prefix+upper) || strings.ToUpper(name) != name {
+		return false
+	}
+	return contract.IsCustomPrivacyKind(strings.ToLower(name[len(prefix):]))
 }
 
 func kindPriority(kind Kind) int {
@@ -536,6 +552,8 @@ func kindPriority(kind Kind) int {
 	case KindPerson:
 		return 70
 	default:
+		// A custom kind yields to every built-in one where their spans
+		// overlap, so a credential inside a custom match stays a secret.
 		return 0
 	}
 }

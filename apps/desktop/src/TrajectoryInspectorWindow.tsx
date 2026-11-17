@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { UnlistenFn } from "@tauri-apps/api/event";
+import type { UnlistenFn } from "./native-host/event";
 
 import { FoldHorizontal, Pin, UnfoldHorizontal } from "@/components/icons";
 import { Button } from "@/components/ui/button";

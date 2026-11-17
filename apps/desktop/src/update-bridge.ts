@@ -1,5 +1,5 @@
-import { isTauri, invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { isDesktopHost, invoke } from "./native-host/core";
+import { listen } from "./native-host/event";
 import {
   browserUpdateSnapshot,
   parseUpdateSnapshot,
@@ -18,7 +18,7 @@ async function call(
   }
 }
 export const getAppUpdateStatus = () =>
-  isTauri()
+  isDesktopHost()
     ? call("app_update_status")
     : Promise.resolve(browserUpdateSnapshot());
 export const checkAppUpdate = () => call("check_app_update");
@@ -29,7 +29,7 @@ export const saveUpdatePreferences = (input: UpdatePreferences) =>
 export const listenAppUpdates = (
   listener: (snapshot: UpdateSnapshot) => void,
 ) =>
-  isTauri()
+  isDesktopHost()
     ? listen<unknown>("app-update-status", ({ payload }) => {
         try {
           listener(parseUpdateSnapshot(payload));

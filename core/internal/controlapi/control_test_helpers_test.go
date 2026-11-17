@@ -42,7 +42,7 @@ func controlRequest(
 	}
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
-	if response.Header().Get("Cache-Control") != "no-store" {
+	if response.Header().Get("Cache-Control") != "no-store, no-transform" {
 		t.Fatalf("Cache-Control = %q", response.Header().Get("Cache-Control"))
 	}
 	return response
@@ -93,4 +93,32 @@ func approvedRequest(
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 	return response
+}
+
+func TestRequestBodiesTakeTheMediaTypeTheirMethodNames(t *testing.T) {
+	for _, test := range []struct {
+		method, contentType string
+		ok                  bool
+	}{
+		{http.MethodPatch, "application/merge-patch+json", true},
+		{http.MethodPatch, "application/merge-patch+json; charset=utf-8", true},
+		{http.MethodPatch, "application/json", false},
+		{http.MethodPost, "application/json", true},
+		{http.MethodPost, "application/merge-patch+json", false},
+		{http.MethodPut, "application/json", true},
+		{http.MethodPut, "text/plain", false},
+		{http.MethodPost, "", false},
+	} {
+		request := httptest.NewRequest(test.method, "/control/v1/x", strings.NewReader("{}"))
+		if test.contentType != "" {
+			request.Header.Set("Content-Type", test.contentType)
+		}
+		response := httptest.NewRecorder()
+		if got := requireMediaType(response, request); got != test.ok {
+			t.Errorf("%s %q: accepted=%v, want %v", test.method, test.contentType, got, test.ok)
+		}
+		if !test.ok && response.Code != http.StatusUnsupportedMediaType {
+			t.Errorf("%s %q: status=%d, want 415", test.method, test.contentType, response.Code)
+		}
+	}
 }

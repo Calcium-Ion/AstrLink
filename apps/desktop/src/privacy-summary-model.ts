@@ -1,5 +1,4 @@
-import { i18n } from "./i18n";
-import { PRIVACY_KINDS } from "./privacy-policy-model";
+import { privacyKindLabel } from "./privacy-kind";
 import {
   hourlyUsageWindow,
   usageWindowDayKeys,
@@ -86,12 +85,11 @@ const totalKeys = [
 /** Core names ten kinds; the bound leaves room for newer ones. */
 const MAX_KINDS = 64;
 
-const knownKinds = new Set<string>(PRIVACY_KINDS);
-
-/** A kind's name; a kind newer than this build reads as itself. */
-function kindLabel(kind: string): string {
-  return knownKinds.has(kind) ? i18n.t(`privacy.${kind}`) : kind;
-}
+/**
+ * A kind's name; a custom kind reads as its display name, and a kind newer
+ * than this build reads as itself.
+ */
+const kindLabel = privacyKindLabel;
 
 export function emptyPrivacyTotals(): PrivacyTotals {
   return Object.fromEntries(

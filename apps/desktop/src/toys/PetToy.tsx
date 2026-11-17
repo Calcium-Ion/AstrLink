@@ -4,8 +4,6 @@
 // progress is an orb beside her. The host lets the mouse through everywhere
 // but her, her bubble and her menu, tells the page where the mouse is, and
 // how long you have been away.
-import { isTauri } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
@@ -18,6 +16,8 @@ import {
 } from "@/components/ui/dropdown-menu";
 
 import { trayAction } from "../bridge";
+import { listen } from "../native-host/event";
+import { hasNativeHost } from "../native-host/presence";
 import { useT } from "../i18n";
 import {
   ORB_SCALE,
@@ -427,7 +427,7 @@ export function PetToy() {
             screen: (move) => started.carried(move),
           }),
         );
-        if (isTauri())
+        if (hasNativeHost())
           keep(
             await listen<Pointer | null>(POINTER_EVENT, ({ payload }) =>
               started.point(payload),

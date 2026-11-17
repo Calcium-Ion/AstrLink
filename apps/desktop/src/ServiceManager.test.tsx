@@ -422,6 +422,37 @@ describe("ServiceManager", () => {
     };
   }
 
+  it("offers adding and importing from this computer when no provider exists", async () => {
+    const onLocalImport = vi.fn();
+    await act(async () =>
+      root.render(
+        <ServiceManager
+          catalogError={null}
+          catalogStatus="ready"
+          isReady
+          onDirtyChange={() => {}}
+          onLocalImport={onLocalImport}
+          onRefresh={() => {}}
+          onServiceRemoved={() => {}}
+          onServiceSaved={() => {}}
+          onViewChange={() => {}}
+          protocols={[]}
+          services={[]}
+          view={{ kind: "list" }}
+        />,
+      ),
+    );
+    const empty = container.querySelector('[data-slot="empty-state"]')!;
+    expect(empty.querySelector("h2")?.textContent).toBe("尚未添加 API 提供商");
+    const actions = [...empty.querySelectorAll("button")];
+    expect(actions.map((action) => action.textContent)).toEqual([
+      "添加 API 提供商",
+      "从本机导入",
+    ]);
+    await act(async () => actions[1].click());
+    expect(onLocalImport).toHaveBeenCalledTimes(1);
+  });
+
   it("opens a terminal for one provider from its menu once the gateway runs", async () => {
     bridgeMocks.listTerminalApps.mockResolvedValue([
       { id: "terminal", name: "Terminal" },

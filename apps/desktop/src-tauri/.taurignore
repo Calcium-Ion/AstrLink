@@ -1,2 +1,0 @@
-# sidecar:build rewrites these on every `make dev`. Watching them restarts the app.
-/binaries/**

@@ -17,7 +17,7 @@ import {
   type Kit,
 } from "./pet-kit";
 import { cfg, motion } from "./toy-config";
-import { DPR, pace, waving, type Board } from "./toy-kit";
+import { DPR, pace, throughput, waving, type Board } from "./toy-kit";
 import { HIDDEN } from "./toy-words";
 
 /** How much of the screen the canvases cover around her, in points. */
@@ -173,24 +173,31 @@ export interface PaintCache {
   painted: Painted | null;
 }
 
-/** What the chip over her head says for the busiest conversation. */
-function statusOf(
-  brain: PetBrain,
+/** How far apart the stacked chips over her head sit. */
+const CHIP_GAP = 26;
+
+/**
+ * The chips over her head, top first: the busiest conversation's tool, then
+ * the tokens per second, up while a conversation works or tokens still flow.
+ */
+export function statusOf(
   act: string | undefined,
   lead: CrewMember | null,
-): string {
-  if (!cfg.prefs.status || !act || act === "wait" || act === "think" || !lead)
-    return "";
-  if (act === "write") {
-    const rate = Math.round(
-      brain
-        .members()
-        .filter((m) => m.act === "write" && !waving(m))
-        .reduce((s, m) => s + m.rate, 0),
-    );
-    return rate > 0 ? `${rate} tok/s` : "";
-  }
-  return lead.count > 1 ? `${lead.tool} ×${lead.count}` : lead.tool;
+  working: boolean,
+): string[] {
+  const chips: string[] = [];
+  if (
+    cfg.prefs.status &&
+    lead?.tool &&
+    act &&
+    act !== "wait" &&
+    act !== "think" &&
+    act !== "write"
+  )
+    chips.push(lead.count > 1 ? `${lead.tool} ×${lead.count}` : lead.tool);
+  const rate = Math.round(throughput.rate);
+  if (cfg.prefs.pet.rate && (rate > 0 || working)) chips.push(`${rate} tok/s`);
+  return chips;
 }
 
 /** The orbs as the crew renderer draws them: working ones glow, waiting ones dim. */
@@ -273,7 +280,7 @@ export interface Painted {
   top: number;
   /** Her soles, as drawn this frame. */
   bottom: number;
-  /** Where the status chip over her head sits. */
+  /** Where the top status chip over her head sits. */
   chipY: number;
 }
 
@@ -326,7 +333,12 @@ export function paint(
   const top = brain.top(foot) - figure.lift;
   const half = brain.half();
   const chipY = top - 16 - gearRise(stage);
-  const label = statusOf(brain, act, lead);
+  const chips = statusOf(
+    act,
+    lead,
+    brain.members().some((m) => m.act !== "wait" && m.act !== "leave"),
+  );
+  const chipTop = chipY - CHIP_GAP * Math.max(0, chips.length - 1);
   const orbs = orbViews(brain);
   // Most of the time she changes a few times a second: draw only then.
   // Sparks, hearts, a snore and the like move every frame.
@@ -344,7 +356,7 @@ export function paint(
     Math.round(foot - figure.lift),
     face,
     figure.sig,
-    label,
+    chips,
     act === "think" && cfg.prefs.status ? Math.floor(brain.t * 3) % 4 : -1,
     brain.pout > 0,
     orbs.map((v) => [
@@ -362,25 +374,21 @@ export function paint(
   begin(b, box, dt);
   const near = figure.draw(pen, brain.x, foot - figure.lift);
   brain.nearHand = { x: near[0], y: near[1] };
+  // Each chip keeps itself inside the canvas by its own measure, so they
+  // are placed in the box's own px.
+  if (chips.length > 0) {
+    const g = b.g.getTransform();
+    b.g.setTransform(1, 0, 0, 1, 0, 0);
+    const tint = tintOf(p, lead?.client ?? brain.client).o;
+    chips.forEach((chip, i) =>
+      pen.chip(chip, brain.x - box.x, chipTop + CHIP_GAP * i - box.y, tint),
+    );
+    b.g.setTransform(g);
+  }
   // What she has on her mind, over her head.
   if (cfg.prefs.status) {
     if (act === "think")
       cloud(pen, brain.x + face * (half + 14), top + 4, brain.t, face);
-    else if (lead) {
-      // The chip keeps itself inside the canvas by its own measure, so it
-      // is placed in the box's own px.
-      if (label) {
-        const g = b.g.getTransform();
-        b.g.setTransform(1, 0, 0, 1, 0, 0);
-        pen.chip(
-          label,
-          brain.x - box.x,
-          chipY - box.y,
-          tintOf(p, lead.client).o,
-        );
-        b.g.setTransform(g);
-      }
-    }
     if (brain.sleeping)
       for (let n = 0; n < 3; n += 1) {
         const ph = (pen.T * 0.45 + n / 3) % 1;
@@ -438,6 +446,6 @@ export function paint(
   drawPixels(pen, b.fx);
   begin(ob, box, dt);
   ob.draw(orbs, () => undefined, HIDDEN);
-  cache.painted = { box, top, bottom: foot - figure.lift, chipY };
+  cache.painted = { box, top, bottom: foot - figure.lift, chipY: chipTop };
   return cache.painted;
 }

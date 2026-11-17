@@ -18,6 +18,7 @@ import {
   PET_CHARACTERS,
   TOY_LEVELS,
   TOY_SIZES,
+  toysOn,
   type DesktopToysPreferences,
   type PetCharacter,
   type ToySize,
@@ -231,10 +232,10 @@ export function DesktopToysSettings({
           actions={
             <Switch
               aria-label={name}
-              checked={value.on.pet}
+              checked={toysOn(value).pet}
               disabled={disabled}
               onCheckedChange={(pet) =>
-                onChange({ ...value, on: { ...value.on, pet } })
+                onChange({ ...value, switched: { ...value.switched, pet } })
               }
             />
           }
@@ -282,6 +283,19 @@ export function DesktopToysSettings({
                 onChange: (on) => setPet({ [event]: on }),
               }))}
               label={t("desktopToys.opts.bubble")}
+            />
+            <CheckRow
+              disabled={disabled}
+              id={`${id}-pet-show`}
+              items={[
+                {
+                  key: "rate",
+                  label: t("desktopToys.opts.rate"),
+                  checked: value.pet.rate,
+                  onChange: (rate) => setPet({ rate }),
+                },
+              ]}
+              label={t("desktopToys.show.label")}
             />
           </div>
         </SettingSceneBody>

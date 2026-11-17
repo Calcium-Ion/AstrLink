@@ -16,7 +16,7 @@ import {
 
 /**
  * What the tray popover renders. Mirrors `TrayStateSnapshot` in
- * `src-tauri/src/tray.rs`; the host is the single source of truth for both
+ * `internal/ui/tray_model.go`; the host is the single source of truth for both
  * the popover and the settings preview.
  */
 export interface TrayCoreView {
@@ -108,7 +108,7 @@ export interface TraySubscription {
   windows: TrayWindow[];
 }
 
-/** Plan-backed kinds the host lists; mirrors `SUBSCRIPTION_KINDS` in `tray.rs`. */
+/** Plan-backed kinds the host lists; mirrors `subscriptionKinds` in `internal/ui/tray_model.go`. */
 const subscriptionKinds = new Set<ServiceKind>([
   ...subscriptionServiceKinds,
   "kimi_coding",
@@ -117,7 +117,7 @@ const subscriptionKinds = new Set<ServiceKind>([
   "opencode_go",
 ]);
 
-/** Today's privacy counts; mirrors `PrivacyDigest` in `tray.rs`. */
+/** Today's privacy counts; mirrors `PrivacyDigest` in `internal/ui/tray_model.go`. */
 export interface TrayPrivacy {
   /** The policy switch right now; null when the host could not read it. */
   enabled: boolean | null;

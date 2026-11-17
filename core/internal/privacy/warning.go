@@ -5,9 +5,12 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"io"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/QuantumNous/astrlink/core/contract"
 )
 
 // WarningSummary contains only stable detector categories and occurrence
@@ -53,6 +56,17 @@ func warningKindCounts(findings []Finding) []WarningKindCount {
 		if count := counts[kind]; count > 0 {
 			result = append(result, WarningKindCount{Kind: kind, Count: count})
 		}
+	}
+	// Custom kinds follow the built-in ones, by name.
+	custom := make([]Kind, 0)
+	for kind := range counts {
+		if contract.IsCustomPrivacyKind(string(kind)) {
+			custom = append(custom, kind)
+		}
+	}
+	slices.Sort(custom)
+	for _, kind := range custom {
+		result = append(result, WarningKindCount{Kind: kind, Count: counts[kind]})
 	}
 	return result
 }

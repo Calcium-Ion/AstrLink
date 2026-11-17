@@ -302,7 +302,7 @@ func (handler *Handler) listServices(writer http.ResponseWriter, request *http.R
 }
 
 func (handler *Handler) createService(writer http.ResponseWriter, request *http.Request) {
-	if !requireMediaType(writer, request, "application/json") {
+	if !requireMediaType(writer, request) {
 		return
 	}
 	var input serviceCreateRequest
@@ -456,7 +456,7 @@ func (handler *Handler) getService(writer http.ResponseWriter, request *http.Req
 }
 
 func (handler *Handler) patchService(writer http.ResponseWriter, request *http.Request, id contract.ServiceID) {
-	if !requireMediaType(writer, request, "application/merge-patch+json") {
+	if !requireMediaType(writer, request) {
 		return
 	}
 	expectedETag := request.Header.Get("If-Match")
@@ -621,7 +621,7 @@ func (handler *Handler) serviceAuthorization(writer http.ResponseWriter, request
 		}
 		writeJSON(writer, http.StatusAccepted, session)
 	case http.MethodPut:
-		if !requireMediaType(writer, request, "application/json") {
+		if !requireMediaType(writer, request) {
 			return
 		}
 		var input struct {
@@ -680,7 +680,7 @@ func decodeAuthorizationFlow(
 	if len(raw) == 0 {
 		return defaultFlow, true
 	}
-	if !requireMediaType(writer, request, "application/json") {
+	if !requireMediaType(writer, request) {
 		return "", false
 	}
 	if bytes.Equal(raw, []byte("null")) {
@@ -778,7 +778,7 @@ func (handler *Handler) probeServiceModels(writer http.ResponseWriter, request *
 	}
 	protocol := contract.ProtocolOpenAIModels
 	if request.Body != nil && request.ContentLength != 0 {
-		if !requireMediaType(writer, request, "application/json") {
+		if !requireMediaType(writer, request) {
 			return
 		}
 		var input serviceModelProbeRequest
@@ -815,7 +815,7 @@ func (handler *Handler) probeDraftServiceModels(writer http.ResponseWriter, requ
 		writeError(writer, http.StatusServiceUnavailable, "model_probe_unavailable", "model discovery is unavailable")
 		return
 	}
-	if !requireMediaType(writer, request, "application/json") {
+	if !requireMediaType(writer, request) {
 		return
 	}
 	var input draftServiceModelProbeRequest

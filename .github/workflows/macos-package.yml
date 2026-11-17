@@ -30,6 +30,8 @@ env:
   ASTRLINK_CI_SYNTHETIC_MODELS_ONLY: "1"
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: "0"
+  # With the key, mygo.config.ts enables updates and the app's updater.
+  MYGO_UPDATER_PUBLIC_KEY: ${{ vars.MYGO_UPDATER_PUBLIC_KEY }}
   TAURI_UPDATER_PUBLIC_KEY: ${{ vars.TAURI_UPDATER_PUBLIC_KEY }}
   MACOSX_DEPLOYMENT_TARGET: "13.4"
 
@@ -39,7 +41,10 @@ jobs:
     runs-on: ${{ inputs.arch == 'x86_64' && 'macos-15-intel' || 'macos-15' }}
     timeout-minutes: 90
     env:
+      # mygo.config.ts signs the app, and build-macos-widget the widget, with it.
       APPLE_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
+      # The directory `mygo build` writes: build/darwin-arm64 or darwin-amd64.
+      MYGO_PLATFORM: ${{ inputs.arch == 'x86_64' && 'darwin-amd64' || 'darwin-arm64' }}
       APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
       APPLE_NOTARY_PROFILE: astrlink-notary
     defaults:
@@ -97,10 +102,13 @@ jobs:
             --keychain "$APPLE_NOTARY_KEYCHAIN" --key "$api_key_path" \
             --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER"
           echo "Developer ID private key and Apple notarization API credentials verified."
+      # The desktop module needs the newest Go; Core and the CLI build with it.
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: core/go.mod
+          go-version-file: apps/desktop/go.mod
           cache-dependency-path: |
+            apps/desktop/go.mod
+            apps/desktop/go.sum
             core/go.mod
             core/go.sum
             convo/go.mod
@@ -129,7 +137,6 @@ jobs:
           # unreachable from later tags and evicts main's entries.
           save-if: false
           workspaces: |
-            apps/desktop/src-tauri
             apps/privacy-worker
             apps/classifier-worker
           cache-directories: apps/privacy-worker/target/onnxruntime
@@ -147,37 +154,31 @@ jobs:
       - name: Validate update signing configuration
         if: inputs.release_tag != ''
         env:
+          MYGO_UPDATER_PRIVATE_KEY: ${{ secrets.MYGO_UPDATER_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         run: bun scripts/release-updates.mjs preflight
       - name: Reject production model artifacts
         run: bun ../../scripts/check-no-production-models.mjs
       - name: Stage Core and worker sidecars
         run: bun run sidecar:build
-      - name: Build release app
-        # sidecar:build writes the runtime config; on Apple silicon it adds the
-        # Core ML ONNX Runtime and its notices to the bundle.
-        run: bun run tauri build --ci --no-bundle --config src-tauri/binaries/tauri.onnxruntime.conf.json
-      - name: Bundle Developer ID signed app and DMG
+      - name: Build and sign the desktop widget
+        # `mygo build` ships it in Contents/PlugIns and signs the app around it.
         env:
-          # With CI=true Tauri skips the Finder script that applies the DMG
-          # background and icon positions.
-          TAURI_BUNDLER_DMG_IGNORE_CI: "true"
+          PACKAGE_ARCH: ${{ inputs.arch }}
+        run: bun scripts/build-macos-widget.mjs --arch "$PACKAGE_ARCH"
+      - name: Build Developer ID signed app and DMG
+        env:
+          # Releases sign the update archive and write update-<platform>.json.
+          MYGO_UPDATER_PRIVATE_KEY: ${{ inputs.release_tag != '' && secrets.MYGO_UPDATER_PRIVATE_KEY || '' }}
         run: |
-          # hdiutil and Finder sometimes fail on hosted runners and leave the
-          # writable image attached. Retry only the bundle phase; --verbose
-          # prints the bundle_dmg.sh output that Tauri otherwise hides.
-          bundle_dir="$PWD/src-tauri/target/release/bundle"
+          # hdiutil sometimes fails on hosted runners even after MyGo's own
+          # retries; build again from the start.
           for attempt in 1 2 3; do
-            if bun run tauri bundle --ci --verbose --bundles app,dmg \
-              --config src-tauri/binaries/tauri.onnxruntime.conf.json; then
+            if bun scripts/mygo.mjs build; then
+              test -d "build/$MYGO_PLATFORM/AstrLink.app/Contents/PlugIns/AstrLinkWidgets.appex"
               exit 0
             fi
-            echo "::warning::macOS bundling failed on attempt $attempt"
-            hdiutil info | awk -v dir="$bundle_dir/" '
-              /^image-path/ { keep = index($0, dir) > 0 }
-              keep && /^\/dev\/disk[0-9]+[[:space:]]/ { print $1; keep = 0 }
-            ' | xargs -n 1 hdiutil detach -force || true
-            rm -f "$bundle_dir"/macos/rw.*.dmg
+            echo "::warning::macOS packaging failed on attempt $attempt"
             sleep 10
           done
           exit 1
@@ -190,39 +191,47 @@ jobs:
           echo "block return out quick proto udp from any to any port 443" | sudo pfctl -f -
           sudo pfctl -E
       - name: Notarize, staple and verify app and DMG
-        run: bun run macos:notarize
+        run: bun run macos:notarize --bundle-dir "build/$MYGO_PLATFORM"
       - name: Mount DMG and verify packaged application
         env:
           PACKAGE_ARCH: ${{ inputs.arch }}
         run: |
           shopt -s nullglob
-          images=(src-tauri/target/release/bundle/dmg/*.dmg)
+          images=("build/$MYGO_PLATFORM"/*.dmg)
           test "${#images[@]}" -eq 1
           mount_dir="$RUNNER_TEMP/astrlink-dmg"
           mkdir -p "$mount_dir"
           hdiutil verify "${images[0]}"
           hdiutil attach "${images[0]}" -readonly -nobrowse -mountpoint "$mount_dir"
           trap 'hdiutil detach "$mount_dir"' EXIT
+          # The window's background picture (macos.dmg), which the layout
+          # names by its alias.
+          cmp installer/macos-dmg-background.tiff "$mount_dir/.background/background.tiff"
+          grep -q backgroundImageAlias "$mount_dir/.DS_Store"
           bun ../../scripts/check-no-production-models.mjs --packaged "$mount_dir/AstrLink.app"
           python3 scripts/verify-unix-package.py \
             --platform macos --arch "$PACKAGE_ARCH" \
             --root "$mount_dir/AstrLink.app" \
             --logs "$RUNNER_TEMP/astrlink-smoke"
       - name: Prepare downloads and checksums
+        if: inputs.release_tag == ''
         env:
           PACKAGE_ARCH: ${{ inputs.arch }}
         run: |
           mkdir -p package
-          cp src-tauri/target/release/bundle/dmg/*.dmg package/
+          cp "build/$MYGO_PLATFORM"/*.dmg package/
           tar -czf "package/AstrLink-macOS-$PACKAGE_ARCH.app.tar.gz" \
-            -C src-tauri/target/release/bundle/macos AstrLink.app
+            -C "build/$MYGO_PLATFORM" AstrLink.app
           cd package
           shasum -a 256 ./*.dmg ./*.tar.gz > SHA256SUMS
-      - name: Sign and verify notarized update archive
+      - name: Stage and verify release files
+        # The notarized app and DMG, MyGo's signed update, and the app
+        # bundle archive earlier releases update to, signed with their key.
         if: inputs.release_tag != ''
         env:
           RELEASE_TAG: ${{ inputs.release_tag }}
           PACKAGE_ARCH: ${{ inputs.arch }}
+          MYGO_UPDATER_PRIVATE_KEY: ${{ secrets.MYGO_UPDATER_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
@@ -249,7 +258,7 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: macOS-${{ inputs.arch }}-notarization
-          path: apps/desktop/src-tauri/target/release/bundle/notarization/*
+          path: apps/desktop/build/${{ env.MYGO_PLATFORM }}/notarization/*
           if-no-files-found: ignore
           retention-days: 7
       - name: Remove temporary signing keychain

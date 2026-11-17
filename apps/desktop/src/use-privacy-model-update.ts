@@ -1,5 +1,5 @@
-import { isTauri, invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { isDesktopHost, invoke } from "./native-host/core";
+import { listen } from "./native-host/event";
 import { useEffect, useState } from "react";
 
 /**
@@ -43,7 +43,7 @@ export function parsePrivacyModelUpdate(
 export function usePrivacyModelUpdate(): PrivacyModelUpdate | null {
   const [update, setUpdate] = useState<PrivacyModelUpdate | null>(null);
   useEffect(() => {
-    if (!isTauri()) return;
+    if (!isDesktopHost()) return;
     let cancelled = false;
     let unlisten: (() => void) | undefined;
     const accept = (value: unknown) => {

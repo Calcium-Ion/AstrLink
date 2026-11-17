@@ -1,8 +1,0 @@
-/target/
-/gen/schemas/
-/binaries/astrlink-core-*
-/binaries/astrlink-privacy-worker-*
-/binaries/astrlink-classifier-worker-*
-/binaries/astrlink-cli-*
-# Left behind by builds from before the CLI replaced the MCP bridge.
-/binaries/astrlink-mcp-*

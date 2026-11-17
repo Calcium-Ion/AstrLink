@@ -20,6 +20,8 @@ env:
   ASTRLINK_CI_SYNTHETIC_MODELS_ONLY: "1"
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: "0"
+  # With the key, mygo.config.ts enables updates and install.sh updates the app.
+  MYGO_UPDATER_PUBLIC_KEY: ${{ vars.MYGO_UPDATER_PUBLIC_KEY }}
   TAURI_UPDATER_PUBLIC_KEY: ${{ vars.TAURI_UPDATER_PUBLIC_KEY }}
 
 jobs:
@@ -36,16 +38,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Install native build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
-            librsvg2-dev patchelf build-essential libfuse2
+      # The desktop module needs the newest Go; Core and the CLI build with it.
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: core/go.mod
+          go-version-file: apps/desktop/go.mod
           cache-dependency-path: |
+            apps/desktop/go.mod
+            apps/desktop/go.sum
             core/go.mod
             core/go.sum
             convo/go.mod
@@ -74,12 +73,20 @@ jobs:
           # unreachable from later tags and evicts main's entries.
           save-if: false
           workspaces: |
-            apps/desktop/src-tauri
             apps/privacy-worker
             apps/classifier-worker
           cache-directories: apps/privacy-worker/target/onnxruntime
       - name: Install frontend dependencies
         run: bun install --frozen-lockfile
+      # The AppImage carries this system's GTK 3 and WebKitGTK 4.1, which the
+      # app opens at run time (scripts/build-appimage.mjs); appimagetool
+      # validates its desktop entry.
+      - name: Install AppImage build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev \
+            gsettings-desktop-schemas dpkg-dev pkg-config desktop-file-utils
       - name: Stamp release version
         if: inputs.release_tag != ''
         env:
@@ -88,39 +95,28 @@ jobs:
       - name: Validate update signing configuration
         if: inputs.release_tag != ''
         env:
+          MYGO_UPDATER_PRIVATE_KEY: ${{ secrets.MYGO_UPDATER_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         run: bun scripts/release-updates.mjs preflight
       - name: Reject production model artifacts
         run: bun ../../scripts/check-no-production-models.mjs
       - name: Stage Core and worker sidecars
         run: bun run sidecar:build
-      - name: Build Debian package and AppImage
-        run: bun run tauri build --ci --bundles deb,appimage
-      - name: Extract and verify AppImage
-        run: |
-          image=$(realpath src-tauri/target/release/bundle/appimage/*.AppImage)
-          scan_dir="$RUNNER_TEMP/astrlink-appimage-scan"
-          mkdir -p "$scan_dir"
-          (cd "$scan_dir" && "$image" --appimage-extract > /dev/null)
-          bun ../../scripts/check-no-production-models.mjs --packaged "$scan_dir/squashfs-root"
-          mkdir -p "$RUNNER_TEMP/astrlink-appimage-smoke"
-          docker run --rm \
-            --volume "$GITHUB_WORKSPACE:/workspace:ro" \
-            --volume "$scan_dir/squashfs-root:/appimage:ro" \
-            --volume "$RUNNER_TEMP/astrlink-appimage-smoke:/smoke" \
-            --env DEBIAN_FRONTEND=noninteractive \
-            debian:12-slim bash -euc '
-              apt-get update
-              apt-get install -y --no-install-recommends python3 binutils ca-certificates \
-                /workspace/apps/desktop/src-tauri/target/release/bundle/deb/*.deb
-              python3 /workspace/apps/desktop/scripts/verify-unix-package.py \
-                --platform linux --arch x86_64 --root /appimage --logs /smoke
-            '
+      - name: Build Debian package and archive
+        env:
+          # Releases sign the archive and write update-linux-amd64.json.
+          MYGO_UPDATER_PRIVATE_KEY: ${{ inputs.release_tag != '' && secrets.MYGO_UPDATER_PRIVATE_KEY || '' }}
+        run: bun scripts/mygo.mjs build
+      - name: Build AppImage
+        run: bun scripts/build-appimage.mjs
       - name: Inspect Debian package contents and dependencies
         run: |
           shopt -s nullglob
-          packages=(src-tauri/target/release/bundle/deb/*.deb)
+          packages=(build/linux-amd64/*.deb)
+          archives=(build/linux-amd64/astrlink-*-linux-amd64.tar.gz)
           test "${#packages[@]}" -eq 1
+          test "${#archives[@]}" -eq 1
+          test -f build/linux-amd64/install.sh
           test "$(dpkg-deb --field "${packages[0]}" Architecture)" = amd64
           dependencies="$(dpkg-deb --field "${packages[0]}" Depends)"
           for dependency in 'libc6 (>= 2.36)' 'libstdc++6 (>= 12)' 'libgcc-s1'; do
@@ -133,40 +129,94 @@ jobs:
           mkdir -p "$scan_dir"
           dpkg-deb -x "${packages[0]}" "$scan_dir"
           bun ../../scripts/check-no-production-models.mjs --packaged "$scan_dir"
+          archive_dir="$RUNNER_TEMP/astrlink-archive-scan"
+          mkdir -p "$archive_dir"
+          tar -xzf "${archives[0]}" -C "$archive_dir"
+          bun ../../scripts/check-no-production-models.mjs --packaged "$archive_dir"
+      - name: Inspect AppImage contents
+        run: |
+          shopt -s nullglob
+          images=(build/linux-amd64/*.AppImage)
+          test "${#images[@]}" -eq 1
+          image="$(realpath "${images[0]}")"
+          appimage_dir="$RUNNER_TEMP/astrlink-appimage"
+          mkdir -p "$appimage_dir"
+          cp "$image" "$appimage_dir/"
+          (cd "$appimage_dir" && "$image" --appimage-extract > /dev/null)
+          bun ../../scripts/check-no-production-models.mjs --packaged "$appimage_dir/squashfs-root"
       - name: Install and verify on Debian 12
         run: |
-          mkdir -p "$RUNNER_TEMP/astrlink-smoke"
+          mkdir -p "$RUNNER_TEMP/astrlink-smoke" "$RUNNER_TEMP/astrlink-archive-smoke"
           docker run --rm \
             --volume "$GITHUB_WORKSPACE:/workspace:ro" \
+            --volume "$RUNNER_TEMP/astrlink-archive-scan:/archive:ro" \
             --volume "$RUNNER_TEMP/astrlink-smoke:/smoke" \
+            --volume "$RUNNER_TEMP/astrlink-archive-smoke:/archive-smoke" \
             --env DEBIAN_FRONTEND=noninteractive \
             --env ASTRLINK_CI_NO_REMOTE_MODELS=1 \
             --env ASTRLINK_CI_SYNTHETIC_MODELS_ONLY=1 \
             debian:12-slim bash -euc '
               apt-get update
               apt-get install -y --no-install-recommends python3 binutils ca-certificates \
-                /workspace/apps/desktop/src-tauri/target/release/bundle/deb/*.deb
+                /workspace/apps/desktop/build/linux-amd64/*.deb
               python3 /workspace/apps/desktop/scripts/verify-unix-package.py \
-                --platform linux --arch x86_64 --root / --logs /smoke
+                --platform linux --arch x86_64 --root /opt/astrlink --logs /smoke
+              # The archive install.sh installs holds the same app.
+              python3 /workspace/apps/desktop/scripts/verify-unix-package.py \
+                --platform linux --arch x86_64 --root /archive --logs /archive-smoke
             '
-      - name: Prepare downloads and checksums
+      # Without the Debian package, so WebKitGTK comes from the image; the
+      # libraries every desktop has, which linuxdeploy leaves out, come from
+      # the system.
+      - name: Run the AppImage on Debian 12
         run: |
-          mkdir -p package
-          cp src-tauri/target/release/bundle/deb/*.deb src-tauri/target/release/bundle/appimage/*.AppImage package/
-          cd package
-          sha256sum ./*.deb ./*.AppImage > SHA256SUMS
-      - name: Sign and verify AppImage update
+          mkdir -p "$RUNNER_TEMP/astrlink-appimage-smoke"
+          docker run --rm \
+            --volume "$GITHUB_WORKSPACE:/workspace:ro" \
+            --volume "$RUNNER_TEMP/astrlink-appimage:/appimage:ro" \
+            --volume "$RUNNER_TEMP/astrlink-appimage-smoke:/smoke" \
+            --env DEBIAN_FRONTEND=noninteractive \
+            --env ASTRLINK_CI_NO_REMOTE_MODELS=1 \
+            --env ASTRLINK_CI_SYNTHETIC_MODELS_ONLY=1 \
+            debian:12-slim bash -euc '
+              apt-get update
+              apt-get install -y --no-install-recommends python3 binutils ca-certificates \
+                xvfb xauth libegl1 libfontconfig1 libfribidi0 libgbm1 libharfbuzz0b \
+                libwayland-client0
+              images=(/appimage/*.AppImage)
+              python3 /workspace/apps/desktop/scripts/verify-unix-package.py \
+                --platform linux --arch x86_64 \
+                --root /appimage/squashfs-root/usr/lib/astrlink --logs /smoke/app
+              python3 /workspace/apps/desktop/scripts/verify-appimage.py \
+                --appimage "${images[0]}" --appdir /appimage/squashfs-root --logs /smoke
+            '
+      - name: Stage and verify release files
         if: inputs.release_tag != ''
         env:
           RELEASE_TAG: ${{ inputs.release_tag }}
+          MYGO_UPDATER_PRIVATE_KEY: ${{ secrets.MYGO_UPDATER_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: bun scripts/release-updates.mjs stage linux-x86_64 "$RELEASE_TAG"
-      - name: Upload checked Linux package
+      - name: Upload checked Linux release files
+        if: inputs.release_tag != ''
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: AstrLink-Linux-x86_64
           path: apps/desktop/package/*
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload checked Linux package
+        if: inputs.release_tag == ''
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: AstrLink-Linux-x86_64
+          path: |
+            apps/desktop/build/linux-amd64/*.deb
+            apps/desktop/build/linux-amd64/*.tar.gz
+            apps/desktop/build/linux-amd64/*.AppImage
+            apps/desktop/build/linux-amd64/install.sh
+            apps/desktop/build/SHA256SUMS
           if-no-files-found: error
           retention-days: 14
       - name: Upload startup diagnostics
@@ -174,6 +224,9 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: Linux-x86_64-smoke-diagnostics
-          path: ${{ runner.temp }}/astrlink-smoke/*
+          path: |
+            ${{ runner.temp }}/astrlink-smoke/*
+            ${{ runner.temp }}/astrlink-archive-smoke/*
+            ${{ runner.temp }}/astrlink-appimage-smoke/*
           if-no-files-found: ignore
           retention-days: 7

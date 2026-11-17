@@ -2,10 +2,13 @@ package remote
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -320,5 +323,149 @@ func TestDecodeLockRejectsIncomplete(t *testing.T) {
 	}
 	if _, err := decodeLock([]byte(`not json`)); err == nil {
 		t.Fatal("malformed lock was accepted")
+	}
+}
+
+// The object path is absolute and encodes every segment the way Signature
+// Version 4 does, so the path that is sent is the path that is signed.
+func TestS3ObjectPathIsTheSignedPath(t *testing.T) {
+	cases := []struct {
+		endpoint   string
+		addressing string
+		want       string
+	}{
+		{"https://s3.example", "path", "/bucket/" + packageName},
+		{"s3.example", "suffix", "/" + packageName},
+		{"https://s3.example/team a/b+c//d$@", "path", "/bucket/team%20a/b%2Bc/d%24%40/" + packageName},
+		{"https://s3.example/%E6%96%87", "path", "/bucket/%E6%96%87/" + packageName},
+	}
+	for _, testCase := range cases {
+		store, err := newS3(Config{
+			Kind: "s3", Endpoint: testCase.endpoint, Path: "bucket", Addressing: testCase.addressing,
+			AccessKey: "key", SecretKey: "secret",
+		}, nil, nil)
+		if err != nil {
+			t.Fatalf("new s3 %q: %v", testCase.endpoint, err)
+		}
+		if got := store.objectPath(packageName); got != testCase.want {
+			t.Fatalf("object path for %q = %q, want %q", testCase.endpoint, got, testCase.want)
+		}
+	}
+	// A folder typed after the bucket stays a folder.
+	store, err := newS3(Config{
+		Kind: "s3", Endpoint: "https://s3.example", Path: "bucket/team/",
+		AccessKey: "key", SecretKey: "secret",
+	}, nil, nil)
+	if err != nil {
+		t.Fatalf("new s3: %v", err)
+	}
+	if got := store.objectPath(packageName); got != "/bucket/team/"+packageName {
+		t.Fatalf("object path = %q", got)
+	}
+}
+
+// A dot segment would be resolved by the server or a proxy before it checks
+// the signature, so the endpoint refuses one.
+func TestS3RejectsDotSegmentsInTheEndpointPath(t *testing.T) {
+	for _, location := range []struct{ endpoint, bucket string }{
+		{"https://s3.example/a/../b", "bucket"},
+		{"https://s3.example/./a", "bucket"},
+		{"https://s3.example", "bucket/../other"},
+	} {
+		if _, err := newS3(Config{
+			Kind: "s3", Endpoint: location.endpoint, Path: location.bucket,
+			AccessKey: "key", SecretKey: "secret",
+		}, nil, nil); err == nil {
+			t.Fatalf("%q with bucket %q was accepted", location.endpoint, location.bucket)
+		}
+	}
+}
+
+// A server that verifies the signature the way AWS SigV4 defines it accepts
+// every request, including one under a prefix with characters that need
+// encoding, and receives If-Match as a quoted entity tag.
+func TestS3SignatureIsAcceptedByASpecCompliantServer(t *testing.T) {
+	const accessKey = "AKIDEXAMPLE"
+	const secretKey = "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY"
+	const region = "us-east-1"
+	var paths []string
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		// The server decodes the path and encodes each segment again, as AWS
+		// does, rather than trusting the client's encoding.
+		segments := strings.Split(request.URL.Path, "/")
+		for index, segment := range segments {
+			segments[index] = strings.ReplaceAll(url.QueryEscape(segment), "+", "%20")
+		}
+		canonicalPath := strings.Join(segments, "/")
+		paths = append(paths, canonicalPath)
+		authorization := request.Header.Get("Authorization")
+		signedHeaders := authorization[strings.Index(authorization, "SignedHeaders=")+len("SignedHeaders="):]
+		signedHeaders = signedHeaders[:strings.Index(signedHeaders, ",")]
+		var canonicalHeaders strings.Builder
+		for _, name := range strings.Split(signedHeaders, ";") {
+			value := request.Header.Get(name)
+			if name == "host" {
+				value = request.Host
+			}
+			canonicalHeaders.WriteString(name + ":" + value + "\n")
+		}
+		amzDate := request.Header.Get("X-Amz-Date")
+		payloadHash := request.Header.Get("X-Amz-Content-Sha256")
+		canonicalRequest := strings.Join([]string{
+			request.Method,
+			canonicalPath,
+			request.URL.RawQuery,
+			canonicalHeaders.String(),
+			signedHeaders,
+			payloadHash,
+		}, "\n")
+		scope := amzDate[:8] + "/" + region + "/s3/aws4_request"
+		requestHash := sha256.Sum256([]byte(canonicalRequest))
+		stringToSign := strings.Join([]string{
+			"AWS4-HMAC-SHA256",
+			amzDate,
+			scope,
+			hex.EncodeToString(requestHash[:]),
+		}, "\n")
+		key := hmacSHA256([]byte("AWS4"+secretKey), amzDate[:8])
+		key = hmacSHA256(key, region)
+		key = hmacSHA256(key, "s3")
+		key = hmacSHA256(key, "aws4_request")
+		expected := hex.EncodeToString(hmacSHA256(key, stringToSign))
+		if !strings.HasSuffix(authorization, "Signature="+expected) {
+			writer.WriteHeader(http.StatusForbidden)
+			return
+		}
+		if request.Method == http.MethodPut {
+			if ifMatch := request.Header.Get("If-Match"); ifMatch != `"v1"` {
+				writer.WriteHeader(http.StatusPreconditionFailed)
+				return
+			}
+			writer.Header().Set("ETag", `"v2"`)
+			writer.WriteHeader(http.StatusOK)
+			return
+		}
+		writer.WriteHeader(http.StatusNotFound)
+	}))
+	t.Cleanup(server.Close)
+
+	for _, endpoint := range []string{server.URL, server.URL + "/team a/b+c$@"} {
+		store, err := newS3(Config{
+			Kind: "s3", Endpoint: endpoint, Path: "bucket", Region: region,
+			AccessKey: accessKey, SecretKey: secretKey,
+		}, server.Client(), time.Now)
+		if err != nil {
+			t.Fatalf("new s3: %v", err)
+		}
+		if _, _, exists, err := store.Read(context.Background()); err != nil || exists {
+			t.Fatalf("read under %q = %v, %v; a server that signs the way AWS SigV4 defines it refused the request", endpoint, exists, err)
+		}
+		// An ETag an earlier version stored from a weak response still matches.
+		if etag, err := store.Write(context.Background(), []byte("package"), `W/"v1`); err != nil || etag != "v2" {
+			t.Fatalf("write under %q = %q, %v", endpoint, etag, err)
+		}
+	}
+	if want := "/bucket/team%20a/b%2Bc%24%40/" + packageName; paths[len(paths)-1] != want {
+		t.Fatalf("server saw %q, want %q", paths[len(paths)-1], want)
 	}
 }

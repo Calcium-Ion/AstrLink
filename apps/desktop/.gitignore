@@ -1,10 +1,7 @@
 dist/
 node_modules/
-src-tauri/target/
-src-tauri/binaries/astrlink-core-*
-src-tauri/binaries/astrlink-privacy-worker-*
-src-tauri/binaries/astrlink-classifier-worker-*
-src-tauri/binaries/astrlink-cli-*
-# Left behind by builds from before the CLI replaced the MCP bridge.
-src-tauri/binaries/astrlink-mcp-*
 
+# MyGo: the programs build-sidecar stages, and mygo build and dev output.
+resources/*-*/
+build/
+.mygo/

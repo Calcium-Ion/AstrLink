@@ -6,8 +6,11 @@ $installDir = Join-Path $env:RUNNER_TEMP "astrlink-installed"
 Remove-Item $bundleDir, $smokeDir, $installDir -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $bundleDir, $smokeDir, $installDir | Out-Null
 
-$installer = Get-ChildItem "src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe" | Select-Object -First 1
-if (-not $installer) { throw "No Windows NSIS installer was produced" }
+# What `mygo build` writes for Windows x64: the installer and, with updates,
+# the archive the app updates from.
+$installers = @(Get-ChildItem "build/windows-amd64/astrlink-setup-*-amd64.exe")
+if ($installers.Count -ne 1) { throw "Expected one Windows NSIS installer, found $($installers.Count)" }
+$installer = $installers[0]
 Write-Host "Installer SHA-256: $((Get-FileHash $installer.FullName -Algorithm SHA256).Hash.ToLowerInvariant())"
 
 & 7z x $installer.FullName "-o$bundleDir" -y | Out-Null
@@ -20,13 +23,20 @@ foreach ($archive in $archives) {
   if ($LASTEXITCODE -ne 0) { throw "Unable to inspect embedded archive" }
 }
 
+foreach ($archive in @(Get-ChildItem "build/windows-amd64/astrlink-*-windows-amd64.tar.gz")) {
+  $inner = Join-Path $bundleDir "update-archive"
+  New-Item -ItemType Directory -Force -Path $inner | Out-Null
+  & tar -xzf $archive.FullName -C $inner
+  if ($LASTEXITCODE -ne 0) { throw "Unable to inspect update archive" }
+}
+
 & bun ../../scripts/check-no-production-models.mjs --packaged $bundleDir
 if ($LASTEXITCODE -ne 0) { throw "Production model artifact found" }
 $vc = Get-Content "scripts/windows-vc-runtime.json" -Raw | ConvertFrom-Json
 $redists = @(Get-ChildItem $bundleDir -Recurse -Filter "vc_redist.x64.exe")
 if ($redists.Count -ne 1) { throw "Expected one bundled VC runtime" }
 if ((Get-FileHash $redists[0].FullName -Algorithm SHA256).Hash.ToLowerInvariant() -ne $vc.sha256) { throw "Bundled VC runtime hash mismatch" }
-$directml = @(Get-ChildItem $bundleDir -Recurse -Filter "DirectML.dll")
+$directml = @(Get-ChildItem $bundleDir -Recurse -Filter "DirectML.dll" | Where-Object { $_.FullName -notlike "*\update-archive\*" })
 if ($directml.Count -ne 1) { throw "Expected one bundled DirectML.dll" }
 
 $install = Start-Process -FilePath $installer.FullName -ArgumentList @("/S", "/D=$installDir") -PassThru
@@ -43,7 +53,7 @@ foreach ($name in @("LICENSE", "LICENSING.md", "LICENSES/AGPL-3.0.txt")) {
     throw "Packaged $name does not match the repository license file"
   }
 }
-$names = @("astrlink-desktop.exe", "astrlink-core.exe", "astrlink-cli.exe", "astrlink-privacy-worker.exe", "astrlink-classifier-worker.exe", "DirectML.dll")
+$names = @("AstrLink.exe", "astrlink-core.exe", "astrlink-cli.exe", "astrlink-privacy-worker.exe", "astrlink-classifier-worker.exe", "DirectML.dll")
 $files = @{}
 foreach ($name in $names) {
   $matches = @(Get-ChildItem $installDir -Recurse -File -Filter $name)
@@ -51,7 +61,7 @@ foreach ($name in $names) {
   $files[$name] = $matches[0].FullName
 }
 
-foreach ($name in @("astrlink-desktop.exe", "astrlink-core.exe", "astrlink-cli.exe", "astrlink-privacy-worker.exe", "astrlink-classifier-worker.exe")) {
+foreach ($name in @("AstrLink.exe", "astrlink-core.exe", "astrlink-cli.exe", "astrlink-privacy-worker.exe", "astrlink-classifier-worker.exe")) {
   $bytes = [IO.File]::ReadAllBytes($files[$name])
   if ($bytes.Length -lt 64 -or $bytes[0] -ne 0x4D -or $bytes[1] -ne 0x5A) { throw "$name is not PE" }
   $offset = [BitConverter]::ToInt32($bytes, 0x3C)
@@ -77,9 +87,9 @@ function Start-WorkerSmoke([string]$path) {
 Start-WorkerSmoke $files["astrlink-privacy-worker.exe"]
 Start-WorkerSmoke $files["astrlink-classifier-worker.exe"]
 
-$desktopStdout = Join-Path $smokeDir "astrlink-desktop.stdout.log"
-$desktopStderr = Join-Path $smokeDir "astrlink-desktop.stderr.log"
-$desktop = Start-Process -FilePath $files["astrlink-desktop.exe"] -WorkingDirectory (Split-Path $files["astrlink-desktop.exe"]) -RedirectStandardOutput $desktopStdout -RedirectStandardError $desktopStderr -PassThru
+$desktopStdout = Join-Path $smokeDir "AstrLink.stdout.log"
+$desktopStderr = Join-Path $smokeDir "AstrLink.stderr.log"
+$desktop = Start-Process -FilePath $files["AstrLink.exe"] -WorkingDirectory (Split-Path $files["AstrLink.exe"]) -RedirectStandardOutput $desktopStdout -RedirectStandardError $desktopStderr -PassThru
 try {
   $ready = $false
   for ($attempt = 0; $attempt -lt 30; $attempt++) {
@@ -88,7 +98,7 @@ try {
       $response = Invoke-WebRequest -Uri "http://127.0.0.1:18317/v1/models" -NoProxy -SkipHttpErrorCheck -TimeoutSec 2
       if ($response.StatusCode -in @(200, 401, 403)) { $ready = $true; break }
     } catch { }
-    if ($desktop.HasExited) { throw "astrlink-desktop exited during startup" }
+    if ($desktop.HasExited) { throw "AstrLink.exe exited during startup" }
   }
   if (-not $ready) { throw "desktop did not expose /v1/models" }
 } finally {

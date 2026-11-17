@@ -6,6 +6,8 @@ import (
 	"math"
 	"net"
 	"regexp"
+	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -50,6 +52,13 @@ const (
 	MaxPolicyRegexPatternRunes = 512
 	MaxPolicyAllowlistRules    = 128
 	MaxPolicyAllowlistRunes    = 256
+
+	// MaxPolicyCustomKinds bounds the user-defined kinds one policy declares.
+	MaxPolicyCustomKinds = 32
+	// MaxPolicyCustomKindBytes bounds a custom kind ID, prefix included.
+	MaxPolicyCustomKindBytes = 40
+	// MaxPolicyCustomKindLabelRunes bounds a custom kind's display name.
+	MaxPolicyCustomKindLabelRunes = 32
 )
 
 // PlaceholderStyle selects the wire shape of a redaction placeholder.
@@ -84,6 +93,11 @@ func (style PlaceholderStyle) Effective() PlaceholderStyle {
 
 // PolicyKindRule is the per-kind detection switch, placeholder shape, and
 // warning notification.
+//
+// A rule whose kind is a custom kind (see IsCustomPrivacyKind) also declares
+// that kind: Label is its display name, and custom regex rules may name the
+// kind only while such a rule exists. The kind is the stable identity that
+// findings, placeholders, and records carry, so renaming changes Label only.
 type PolicyKindRule struct {
 	Kind    string           `json:"kind"`
 	Enabled bool             `json:"enabled"`
@@ -93,6 +107,10 @@ type PolicyKindRule struct {
 	// findings recorded; only the notification is left out. A rule written
 	// before the field existed notifies.
 	Notify bool `json:"notify"`
+	// Label is the display name of a custom kind. Built-in kinds have none:
+	// the interface names them itself. It is omitted when empty so a policy
+	// without custom kinds keeps the shape earlier versions read.
+	Label string `json:"label,omitempty"`
 }
 
 func (rule *PolicyKindRule) UnmarshalJSON(data []byte) error {
@@ -131,6 +149,38 @@ func ValidPrivacyKind(kind string) bool {
 	return false
 }
 
+// CustomPrivacyKindPrefix starts every user-defined kind. No built-in kind
+// starts with it, so a custom kind can never shadow one.
+const CustomPrivacyKindPrefix = "custom_"
+
+// customPrivacyKindPattern keeps a custom kind to lowercase ASCII words joined
+// by single underscores. Its upper-case form becomes part of a token marker,
+// <PRIVATE_CUSTOM_ORG_hex>, so it must stay a plain identifier the restorer
+// and a model both spell one way.
+var customPrivacyKindPattern = regexp.MustCompile(`^custom_[a-z][a-z0-9]*(?:_[a-z0-9]+)*$`)
+
+// IsCustomPrivacyKind reports whether kind has the shape of a user-defined
+// kind. Whether a policy declares it is a separate question; see
+// PolicyKindRule.
+func IsCustomPrivacyKind(kind string) bool {
+	return len(kind) <= MaxPolicyCustomKindBytes && customPrivacyKindPattern.MatchString(kind)
+}
+
+// ValidRecordedPrivacyKind reports whether kind may appear in a finding, a
+// placeholder count, or a statistic: a built-in kind or a custom one. A record
+// outlives the declaration of its custom kind, so this checks shape only.
+func ValidRecordedPrivacyKind(kind string) bool {
+	return ValidPrivacyKind(kind) || IsCustomPrivacyKind(kind)
+}
+
+func validCustomKindLabel(label string) bool {
+	runes := utf8.RuneCountInString(label)
+	return runes >= 1 && runes <= MaxPolicyCustomKindLabelRunes &&
+		utf8.ValidString(label) &&
+		strings.TrimSpace(label) == label &&
+		strings.IndexFunc(label, unicode.IsControl) < 0
+}
+
 // PlaceholderStyleLocked reports kinds whose placeholder shape is a safety
 // property rather than a preference, and therefore is not configurable.
 //
@@ -148,13 +198,15 @@ func ValidPrivacyKind(kind string) bool {
 // rewrite back to the original. An opaque marker leaves nothing to rewrite.
 // Natural style stays for email, url, and ip_address, whose syntax admits a
 // single spelling.
+//
+// A custom kind has no reserved namespace either, so it is always a token.
 func PlaceholderStyleLocked(kind string) bool {
 	switch kind {
 	case "common_secret", "private_person", "private_address", "private_date",
 		"phone", "payment_card", "account":
 		return true
 	default:
-		return false
+		return IsCustomPrivacyKind(kind)
 	}
 }
 
@@ -178,7 +230,19 @@ func DefaultPrivacyKindRules() []PolicyKindRule {
 }
 
 func (rule PolicyKindRule) Validate() error {
-	if !ValidPrivacyKind(rule.Kind) {
+	switch {
+	case ValidPrivacyKind(rule.Kind):
+		if rule.Label != "" {
+			return fmt.Errorf("built-in kind %q cannot have a label", rule.Kind)
+		}
+	case IsCustomPrivacyKind(rule.Kind):
+		if !validCustomKindLabel(rule.Label) {
+			return fmt.Errorf(
+				"custom kind %q needs a label of 1 to %d characters without surrounding spaces",
+				rule.Kind, MaxPolicyCustomKindLabelRunes,
+			)
+		}
+	default:
 		return fmt.Errorf("unknown kind %q", rule.Kind)
 	}
 	if !rule.Style.Valid() {
@@ -310,8 +374,10 @@ func ValidRegexDetectorKind(kind string) bool {
 	return false
 }
 
+// Validate checks the rule on its own. A custom kind passes here; whether the
+// policy declares it is checked by Policy.Validate.
 func (rule PolicyRegexRule) Validate() error {
-	if !ValidRegexDetectorKind(rule.Kind) {
+	if !ValidRegexDetectorKind(rule.Kind) && !IsCustomPrivacyKind(rule.Kind) {
 		return fmt.Errorf("unknown regex rule kind %q", rule.Kind)
 	}
 	runes := utf8.RuneCountInString(rule.Pattern)
@@ -347,12 +413,17 @@ func NormalizePrivacyPolicyDefaults(policy *Policy) {
 // normalizeKindRules keeps every supplied style verbatim so that Validate can
 // still reject a locked kind whose style was tampered with. Only omissions are
 // filled: an absent kind takes its default rule, an absent style takes the
-// default style for that kind.
+// default style for that kind. Custom kinds follow the built-in ones in the
+// order supplied; a custom kind is only ever declared by its own rule, so none
+// is filled in.
 func normalizeKindRules(rules []PolicyKindRule) []PolicyKindRule {
 	supplied := make(map[string]PolicyKindRule, len(rules))
 	unknown := make([]PolicyKindRule, 0)
 	for _, rule := range rules {
 		if !ValidPrivacyKind(rule.Kind) {
+			if IsCustomPrivacyKind(rule.Kind) && rule.Style == "" {
+				rule.Style = PlaceholderStyleToken
+			}
 			unknown = append(unknown, rule)
 			continue
 		}
@@ -472,15 +543,8 @@ func (policy Policy) Validate() error {
 	if policy.RegexSource != "" && !policy.RegexSource.Valid() {
 		return fmt.Errorf("unknown regex_source %q", policy.RegexSource)
 	}
-	if len(policy.CustomRegexRules) > MaxPolicyCustomRegexRules {
-		return fmt.Errorf("custom_regex_rules must contain at most %d rules", MaxPolicyCustomRegexRules)
-	}
-	for index, rule := range policy.CustomRegexRules {
-		if err := rule.Validate(); err != nil {
-			return fmt.Errorf("custom_regex_rules[%d]: %w", index, err)
-		}
-	}
 	seenKinds := make(map[string]struct{}, len(policy.KindRules))
+	seenLabels := make(map[string]struct{})
 	for index, rule := range policy.KindRules {
 		if err := rule.Validate(); err != nil {
 			return fmt.Errorf("kind_rules[%d]: %w", index, err)
@@ -489,6 +553,31 @@ func (policy Policy) Validate() error {
 			return fmt.Errorf("kind_rules[%d]: duplicate kind %q", index, rule.Kind)
 		}
 		seenKinds[rule.Kind] = struct{}{}
+		if rule.Label == "" {
+			continue
+		}
+		if len(seenLabels) == MaxPolicyCustomKinds {
+			return fmt.Errorf("kind_rules must declare at most %d custom kinds", MaxPolicyCustomKinds)
+		}
+		// Two kinds sharing a name could not be told apart in statistics.
+		folded := strings.ToLower(rule.Label)
+		if _, exists := seenLabels[folded]; exists {
+			return fmt.Errorf("kind_rules[%d]: duplicate label %q", index, rule.Label)
+		}
+		seenLabels[folded] = struct{}{}
+	}
+	if len(policy.CustomRegexRules) > MaxPolicyCustomRegexRules {
+		return fmt.Errorf("custom_regex_rules must contain at most %d rules", MaxPolicyCustomRegexRules)
+	}
+	for index, rule := range policy.CustomRegexRules {
+		if err := rule.Validate(); err != nil {
+			return fmt.Errorf("custom_regex_rules[%d]: %w", index, err)
+		}
+		// A rule naming an undeclared custom kind would detect values no
+		// switch governs, so deleting a kind requires changing its rules.
+		if _, declared := seenKinds[rule.Kind]; IsCustomPrivacyKind(rule.Kind) && !declared {
+			return fmt.Errorf("custom_regex_rules[%d]: custom kind %q is not declared in kind_rules", index, rule.Kind)
+		}
 	}
 	if len(policy.AllowlistRules) > MaxPolicyAllowlistRules {
 		return fmt.Errorf("allowlist_rules must contain at most %d rules", MaxPolicyAllowlistRules)

@@ -37,6 +37,7 @@ function member(over: Partial<CrewMember> = {}): CrewMember {
     waiting: false,
     queue: [],
     done: false,
+    failed: false,
     jump: 0,
     slip: 0,
     spot: null,
@@ -307,6 +308,16 @@ describe("what happens in the conversations", () => {
     expect(kinds(brain)).toEqual(["reply"]);
     expect(brain.memo.replies).toBe(1);
     expect(actOf(brain, undefined)).toBe("greet");
+  });
+
+  it("does not wave or count a reply for a conversation that failed", () => {
+    const { brain, list, run } = setup([member()]);
+    run(0.5);
+    list.now = [member({ act: "wait", t: 0, failed: true })];
+    run(0.1);
+    expect(brain.wave).toBe(0);
+    expect(kinds(brain)).toEqual([]);
+    expect(brain.memo.replies).toBe(0);
   });
 
   it("counts a reply without calling when her reply bubble is off", () => {

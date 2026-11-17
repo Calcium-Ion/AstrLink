@@ -3,8 +3,8 @@ import { ConsoleEntry } from "./ConsoleEntry";
 import { StrictMode, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { I18nextProvider } from "react-i18next";
-import { isTauri } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { isDesktopHost } from "./native-host/core";
+import { listen } from "./native-host/event";
 
 // Self-hosted: the desktop app has no guaranteed network at launch.
 // Latin and digits render in Plex; CJK falls back to the system face.
@@ -77,7 +77,7 @@ initializeScrollbarGutter();
 async function loadPreferences(): Promise<void> {
   let themeUpdated = false;
   let quotaDisplayUpdated = false;
-  if (isTauri()) {
+  if (isDesktopHost()) {
     await listen(QUOTA_DISPLAY_EVENT, ({ payload }) => {
       if (isQuotaDisplayMode(payload)) {
         quotaDisplayUpdated = true;
@@ -159,6 +159,13 @@ const surface = isWebEdition ? (
 ) : (
   <App />
 );
+
+// React's development build records a performance measure for every
+// component it renders, and WebKit keeps them all: a window open for hours
+// grows to gigabytes until WebKit ends the page.
+if (process.env.NODE_ENV === "development") {
+  window.setInterval(() => performance.clearMeasures(), 10_000);
+}
 
 createRoot(root).render(
   <StrictMode>

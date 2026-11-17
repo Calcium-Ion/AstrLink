@@ -3,8 +3,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Pen } from "../live-crew-draw";
 import { seededRandom, type CrewMember } from "../live-crew-model";
 import { PetBrain } from "./pet-brain";
-import { boxAt, paint, type PaintCache } from "./pet-draw";
-import type { Board } from "./toy-kit";
+import { defaultDesktopToys } from "../preferences-model";
+import { boxAt, paint, statusOf, type PaintCache } from "./pet-draw";
+import { cfg } from "./toy-config";
+import { throughput, type Board } from "./toy-kit";
 
 /** A board that records what reaches it instead of drawing. */
 function fakeBoard() {
@@ -41,6 +43,7 @@ function member(over: Partial<CrewMember> = {}): CrewMember {
     waiting: false,
     queue: [],
     done: false,
+    failed: false,
     jump: 0,
     slip: 0,
     spot: null,
@@ -65,6 +68,8 @@ function member(over: Partial<CrewMember> = {}): CrewMember {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  throughput.rate = 0;
+  cfg.prefs = defaultDesktopToys();
 });
 
 describe("drawing the big pet", () => {
@@ -106,5 +111,38 @@ describe("drawing the big pet", () => {
     paint(brain, pet, orbs, 0.1, cache);
     paint(brain, pet, orbs, 0.1, cache);
     expect(pet.clear).toHaveBeenCalledTimes(4);
+  });
+});
+
+describe("the chips over her head", () => {
+  it("stacks the tool over the tokens per second", () => {
+    throughput.rate = 41.6;
+    const lead = member({ act: "read", tool: "Read", count: 2 });
+    expect(statusOf("read", lead, true)).toEqual(["Read ×2", "42 tok/s"]);
+  });
+
+  it("keeps the tokens per second up whatever she is doing", () => {
+    throughput.rate = 42;
+    cfg.prefs = { ...defaultDesktopToys(), status: false };
+    const lead = member({ act: "read", tool: "Read" });
+    expect(statusOf("read", lead, true)).toEqual(["42 tok/s"]);
+    expect(statusOf("think", lead, true)).toEqual(["42 tok/s"]);
+    expect(statusOf("wait", member(), false)).toEqual(["42 tok/s"]);
+    expect(statusOf(undefined, null, false)).toEqual(["42 tok/s"]);
+  });
+
+  it("shows 0 tok/s while a conversation works", () => {
+    const lead = member({ act: "write" });
+    expect(statusOf("write", lead, true)).toEqual(["0 tok/s"]);
+    expect(statusOf("wait", member(), false)).toEqual([]);
+  });
+
+  it("hides the tokens per second when its switch is off", () => {
+    throughput.rate = 42;
+    const toys = defaultDesktopToys();
+    cfg.prefs = { ...toys, pet: { ...toys.pet, rate: false } };
+    const lead = member({ act: "read", tool: "Read" });
+    expect(statusOf("read", lead, true)).toEqual(["Read"]);
+    expect(statusOf("write", lead, true)).toEqual([]);
   });
 });

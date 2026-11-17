@@ -164,6 +164,11 @@ export interface CrewMemberReading {
   failovers: string[];
   /** When the conversation's first listed call started. */
   since: number;
+  /**
+   * Its last call ended in an error, a block or the client stopping it, so
+   * the conversation got no answer; absent means it answered.
+   */
+  failed?: boolean;
 }
 
 export interface CrewReading {
@@ -175,6 +180,21 @@ export interface CrewReading {
 
 const callKey = (call: RequestActivityCall) =>
   `${call.session_id}@${call.started_at}`;
+
+const ANSWERED = new Set<RequestActivityCall["status"]>([
+  "pending",
+  "succeeded",
+]);
+
+/** Whether a conversation's last call ended without an answer. */
+function endedFailed(calls: readonly RequestActivityCall[]) {
+  const latest = calls.at(-1);
+  return Boolean(
+    latest &&
+      calls.every((call) => call.completed_at !== null) &&
+      !ANSWERED.has(latest.status),
+  );
+}
 
 /** A conversation's action from its own calls, as its lane says it. */
 function ownAction(calls: readonly RequestActivityCall[]) {
@@ -257,6 +277,7 @@ export function readCrew(activity: RequestActivity): CrewReading {
         .filter((call) => call.failed_service_id)
         .map(callKey),
       since: Date.parse(tree.calls[0].started_at),
+      failed: endedFailed(own),
     });
   }
   members.sort(
@@ -418,6 +439,8 @@ export interface CrewMember extends CrewWalker {
   queue: CrewStep[];
   /** The step on screen ended; celebrate once it has been shown. */
   done: boolean;
+  /** Its conversation's last call ended without an answer: no wave, no cheer. */
+  failed: boolean;
   /** Celebration jump, 1 → 0. */
   jump: number;
   /** Failover slip, seconds left. */
@@ -705,6 +728,7 @@ function joinMember(
     waiting: true,
     queue: [],
     done: false,
+    failed: Boolean(reading.failed),
     jump: 0,
     slip: 0,
     spot: null,
@@ -725,6 +749,7 @@ function enqueue(member: CrewMember, reading: CrewMemberReading) {
     const ended = member.reading;
     if (
       member.lastKey &&
+      !reading.failed &&
       ended !== "think" &&
       ended !== "wait" &&
       ended !== reading.act
@@ -851,6 +876,7 @@ export function syncCrew(crew: Crew, reading: CrewReading, layout: CrewLayout) {
       member.u = spriteOf(next.client).u;
     }
     member.model = next.model;
+    member.failed = Boolean(next.failed);
     enqueue(member, next);
     // Resting when it first shows up: it comes in and rests by the door.
     if (!member.spot && member.act === "wait" && member.queue.length === 0) {

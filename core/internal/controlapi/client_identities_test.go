@@ -33,7 +33,7 @@ func TestClientIdentitiesReportLearnedAndBuiltinVersions(t *testing.T) {
 	}
 
 	response := get(ClientIdentitiesPath)
-	if response.Code != http.StatusOK || response.Header().Get("Cache-Control") != "no-store" {
+	if response.Code != http.StatusOK || response.Header().Get("Cache-Control") != "no-store, no-transform" {
 		t.Fatalf("status=%d headers=%v body=%s", response.Code, response.Header(), response.Body.String())
 	}
 	var body contract.ClientIdentities

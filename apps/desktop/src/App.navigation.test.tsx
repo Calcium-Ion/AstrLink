@@ -139,7 +139,14 @@ vi.mock("sonner", async (importOriginal) => {
 vi.mock("./bridge", () => bridgeMocks);
 
 const eventMocks = vi.hoisted(() => ({ listen: vi.fn() }));
-vi.mock("@tauri-apps/api/event", () => ({ listen: eventMocks.listen }));
+vi.mock("./native-host/event", () => ({ listen: eventMocks.listen }));
+
+// The desktop platform reads as set: the pages that depend on it show,
+// while the host's commands and events stay mocked.
+const presence = vi.hoisted(() => ({ native: false }));
+vi.mock("./native-host/presence", () => ({
+  hasNativeHost: () => presence.native,
+}));
 
 const modelUpdate = vi.hoisted(() => ({
   current: null as
@@ -452,7 +459,7 @@ describe("tray navigation targets", () => {
     // The pets page exists only where the pets do.
     expect(trayNavigationTarget("desktopToys")).toBeNull();
     window.__ASTRLINK_DESKTOP_PLATFORM__ = "windows";
-    Object.assign(window, { __TAURI_INTERNALS__: {} });
+    presence.native = true;
     // A Wayland session has no pets either.
     expect(trayNavigationTarget("desktopToys")).toBeNull();
     window.__ASTRLINK_DESKTOP_TOYS__ = true;
@@ -463,7 +470,7 @@ describe("tray navigation targets", () => {
     } finally {
       delete window.__ASTRLINK_DESKTOP_PLATFORM__;
       delete window.__ASTRLINK_DESKTOP_TOYS__;
-      delete (window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+      presence.native = false;
     }
     expect(trayNavigationTarget("privacyOverview")).toEqual({
       kind: "safety",
@@ -811,7 +818,7 @@ describe("App workspace navigation", () => {
 
     window.__ASTRLINK_DESKTOP_PLATFORM__ = "linux";
     window.__ASTRLINK_DESKTOP_TOYS__ = true;
-    Object.assign(window, { __TAURI_INTERNALS__: {} });
+    presence.native = true;
     try {
       bridgeMocks.getPreferences.mockReturnValue(new Promise(() => {}));
       await renderApp();
@@ -827,7 +834,7 @@ describe("App workspace navigation", () => {
     } finally {
       delete window.__ASTRLINK_DESKTOP_PLATFORM__;
       delete window.__ASTRLINK_DESKTOP_TOYS__;
-      delete (window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+      presence.native = false;
     }
   });
 
@@ -2133,7 +2140,10 @@ describe("App workspace navigation", () => {
     // The request sky is hidden by default and reads nothing.
     expect(container.querySelector('[data-slot="request-sky"]')).toBeNull();
     const query = bridgeMocks.getUsageSummary.mock.calls[0]?.[0];
-    expect(bridgeMocks.getUsageSummary).toHaveBeenCalledTimes(1);
+    // Then the last 7 days, which the star trail draws as day rings.
+    expect(
+      bridgeMocks.getUsageSummary.mock.calls.map(([window]) => window.preset),
+    ).toEqual(["1d", "7d"]);
     expect(bridgeMocks.listRequestRecords).not.toHaveBeenCalled();
     expect(query).toMatchObject({ preset: "1d" });
     const from = new Date(query.from as string);
@@ -2151,8 +2161,12 @@ describe("App workspace navigation", () => {
     const base = await bridgeMocks.getUsageSummary.mock.results[0].value;
     const usageSection = () =>
       container.querySelector('[aria-labelledby="usage-heading"]');
+    // The star trail reads the week again after each new summary; this
+    // counts the overview's own 24-hour reads.
     const calls = () => ({
-      usage: bridgeMocks.getUsageSummary.mock.calls.length,
+      usage: bridgeMocks.getUsageSummary.mock.calls.filter(
+        ([window]) => window.preset === "1d",
+      ).length,
       services: bridgeMocks.listServices.mock.calls.length,
       tokens: bridgeMocks.listAccessTokens.mock.calls.length,
     });

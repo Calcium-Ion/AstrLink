@@ -347,7 +347,7 @@ func (handler *Handler) postRawLock(writer http.ResponseWriter, request *http.Re
 	}
 	if request.ContentLength != 0 {
 		var body struct{}
-		if !requireMediaType(writer, request, "application/json") || !decodeControlJSON(writer, request, &body) {
+		if !requireMediaType(writer, request) || !decodeControlJSON(writer, request, &body) {
 			return
 		}
 	}

@@ -45,7 +45,7 @@ func widenPrivacyConfidence(current *contract.PrivacyConfidence, confidence floa
 func mergePrivacyFindings(existing []contract.PrivacyFinding, findings []privacy.Finding, threshold *float64) []contract.PrivacyFinding {
 	for _, finding := range findings {
 		kind := contract.CanonicalKind(finding.Kind)
-		if !kind.Valid() {
+		if !kind.Recorded() {
 			continue
 		}
 		path := privacyFindingPath(finding.Path)
@@ -79,7 +79,7 @@ func mergePrivacyIgnored(existing []contract.PrivacyIgnored, suppressed []privac
 	for _, finding := range suppressed {
 		kind := contract.CanonicalKind(finding.Kind)
 		reason := contract.PrivacyIgnoreReason(finding.Suppression)
-		if !kind.Valid() || !reason.Valid() {
+		if !kind.Recorded() || !reason.Valid() {
 			continue
 		}
 		merged := false

@@ -9,11 +9,11 @@ const tauri = vi.hoisted(() => ({
   listen: vi.fn(),
   unlisten: vi.fn(),
 }));
-vi.mock("@tauri-apps/api/core", () => ({
-  isTauri: () => true,
+vi.mock("./native-host/core", () => ({
+  isDesktopHost: () => true,
   invoke: tauri.invoke,
 }));
-vi.mock("@tauri-apps/api/event", () => ({ listen: tauri.listen }));
+vi.mock("./native-host/event", () => ({ listen: tauri.listen }));
 
 import {
   parsePrivacyModelUpdate,

@@ -1,4 +1,11 @@
-import { memo, useId, useMemo, type ReactNode } from "react";
+import {
+  memo,
+  useEffect,
+  useId,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 
 import { ClientTypeIcon, clientTypeName } from "@/components/ClientTypeIcon";
 import { EmptyState } from "@/components/EmptyState";
@@ -13,12 +20,14 @@ import {
   formatCompactNumber,
   formatExactNumber,
 } from "./format-compact-number";
+import { getUsageSummary } from "./bridge";
 import { currentLocale, useT } from "./i18n";
 import {
   clientShares,
   starTrail,
   starTrailByModel,
   starTrailLegend,
+  starTrailPalette,
   type StarTrail,
   type StarTrailArc,
   type StarTrailLegend,
@@ -27,12 +36,63 @@ import {
 import {
   hourlyUsageWindow,
   localDayKey,
+  resolveUsageWindow,
   modelUsageLabel,
   type UsageStatus,
   type UsageSummary,
 } from "./usage-range";
 
 const HOUR_LABELS = ["0", "6", "12", "18"] as const;
+
+/**
+ * What the disc draws over the last 24 hours: the week up to today as a ring
+ * per day, or the day as a ring per model.
+ */
+export type DayTrailMode = "days" | "models";
+
+export const DAY_TRAIL_MODE_STORAGE_KEY = "astrlink.overview.day-trail.v1";
+
+export function readDayTrailMode(): DayTrailMode {
+  try {
+    return localStorage.getItem(DAY_TRAIL_MODE_STORAGE_KEY) === "models"
+      ? "models"
+      : "days";
+  } catch {
+    return "days";
+  }
+}
+
+export function saveDayTrailMode(mode: DayTrailMode) {
+  try {
+    localStorage.setItem(DAY_TRAIL_MODE_STORAGE_KEY, mode);
+  } catch {
+    // The choice holds for this session.
+  }
+}
+
+/**
+ * The week up to today, read again whenever `summary` is: the disc behind a
+ * day's numbers. Null while it loads or when it failed.
+ */
+function useTrailWeek(summary: UsageSummary | null, wanted: boolean) {
+  const [week, setWeek] = useState<UsageSummary | null>(null);
+  useEffect(() => {
+    if (!wanted || !summary) return;
+    let cancelled = false;
+    getUsageSummary(resolveUsageWindow("7d", new Date())).then(
+      (next) => {
+        if (!cancelled) setWeek(next);
+      },
+      () => {
+        if (!cancelled) setWeek(null);
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [summary, wanted]);
+  return wanted ? week : null;
+}
 
 const dayFormats = new Map<string, Intl.DateTimeFormat>();
 
@@ -111,11 +171,14 @@ export function UsageStarTrailSkeleton() {
  * the color legend, and the client bar that splits the same tokens.
  */
 export const UsageStarTrail = memo(function UsageStarTrail({
+  dayTrail = "days",
   metrics,
   now,
   status,
   summary,
 }: {
+  /** What the disc draws when the range is a day. */
+  dayTrail?: DayTrailMode;
   /** The range's numbers above the lists; keep it the same between reads. */
   metrics?: ReactNode;
   /** Fixed clock for tests. */
@@ -127,18 +190,28 @@ export const UsageStarTrail = memo(function UsageStarTrail({
   const modelsId = useId();
   const clientsId = useId();
   const unavailable = status === "blocked" || status === "error";
+  const daily = summary !== null && hourlyUsageWindow(summary.window);
+  const week = useTrailWeek(summary, daily && dayTrail === "days");
   const view = useMemo(() => {
-    const legend = starTrailLegend(summary?.by_model ?? []);
-    const trail =
-      summary && hourlyUsageWindow(summary.window)
+    const byModel = summary?.by_model ?? [];
+    const weekRings = daily && dayTrail === "days" && week !== null;
+    // The week's disc names the week's models; the list beside it the
+    // day's. One palette gives a model the same color in both.
+    const palette = starTrailPalette(
+      weekRings ? [week.by_model, byModel] : [byModel],
+    );
+    const legend = starTrailLegend(byModel, undefined, palette);
+    const trail = !daily
+      ? starTrail(summary ?? { by_day: [], by_hour_model: [] }, legend)
+      : !weekRings
         ? starTrailByModel(summary, legend)
-        : starTrail(summary ?? { by_day: [], by_hour_model: [] }, legend);
+        : starTrail(week, starTrailLegend(week.by_model, undefined, palette));
     return {
       legend,
       trail,
       clients: clientShares(summary?.by_client ?? []),
     };
-  }, [summary]);
+  }, [daily, dayTrail, summary, week]);
   const { legend, trail, clients } = view;
   // Labels are built once per summary and language, not on every render.
   const language = currentLocale();
@@ -211,13 +284,6 @@ export const UsageStarTrail = memo(function UsageStarTrail({
           summary={summaryText}
           today={today}
         />
-        {status === "ready" && trail.arcs.length === 0 ? (
-          <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-            <span className="rounded-md bg-card px-3 py-2 text-xs text-muted-foreground">
-              {t("overview.noUsage")}
-            </span>
-          </div>
-        ) : null}
       </div>
       {empty && !metrics ? null : (
         <div className={COLUMN}>

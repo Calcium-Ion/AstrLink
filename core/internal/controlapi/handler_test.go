@@ -137,7 +137,7 @@ func serve(t *testing.T, handler http.Handler, method, path string) *httptest.Re
 	if response.Header().Get("Content-Type") != "application/json" {
 		t.Fatalf("Content-Type = %q", response.Header().Get("Content-Type"))
 	}
-	if response.Header().Get("Cache-Control") != "no-store" {
+	if response.Header().Get("Cache-Control") != "no-store, no-transform" {
 		t.Fatalf("Cache-Control = %q", response.Header().Get("Cache-Control"))
 	}
 	return response

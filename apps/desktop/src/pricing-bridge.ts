@@ -1,6 +1,7 @@
 import { isWebEdition } from "./edition";
 import { webInvoke } from "./web-transport";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "./native-host/core";
+import { hasNativeHost } from "./native-host/presence";
 import {
   parseBillingSummary,
   parseQuotaEstimates,
@@ -13,8 +14,7 @@ async function call(
 ): Promise<unknown> {
   if (isWebEdition)
     return webInvoke("pricing", { operation, serviceId, input });
-  if (!("__TAURI_INTERNALS__" in window))
-    throw new Error("Native gateway unavailable");
+  if (!hasNativeHost()) throw new Error("Native gateway unavailable");
   return invoke("pricing", { operation, serviceId, input });
 }
 /** The limits LLM Metadata lists for the official model a gateway model reaches. */

@@ -690,6 +690,8 @@ export const LiveCrew = memo(function LiveCrew({
     saveSceneChoice(next);
   }, []);
 
+  const idle = header.count === 0;
+
   return (
     <section
       aria-labelledby={headingId}
@@ -704,20 +706,27 @@ export const LiveCrew = memo(function LiveCrew({
     >
       <div className="flex min-w-0 flex-wrap items-center justify-between gap-x-4 gap-y-1 px-4 py-1.5">
         <div className="flex min-w-0 items-center gap-2.5 text-xs text-muted-foreground">
-          <StatusDot
-            className="size-2"
-            pulse={header.count > 0}
-            tone={header.count > 0 ? "positive" : "neutral"}
-          />
-          <h2 className="text-sm font-semibold text-foreground" id={headingId}>
+          {/* Nothing running: the scene speaks for itself, so the status
+              line stays out and the heading only names the section. */}
+          {idle ? null : <StatusDot className="size-2" pulse tone="positive" />}
+          <h2
+            className={
+              idle ? "sr-only" : "text-sm font-semibold text-foreground"
+            }
+            id={headingId}
+          >
             {t("overview.liveCrew.title")}
           </h2>
-          <span className="tabular-nums" data-slot="live-crew-count">
-            {t("overview.liveCrew.conversations", { count: header.count })}
-          </span>
-          <span className="tabular-nums" data-slot="live-crew-rate">
-            {`${header.rate} tok/s`}
-          </span>
+          {idle ? null : (
+            <>
+              <span className="tabular-nums" data-slot="live-crew-count">
+                {t("overview.liveCrew.conversations", { count: header.count })}
+              </span>
+              <span className="tabular-nums" data-slot="live-crew-rate">
+                {`${header.rate} tok/s`}
+              </span>
+            </>
+          )}
         </div>
         <SegmentedControl
           label={t("overview.liveCrew.sceneLabel")}

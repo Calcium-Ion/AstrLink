@@ -34,12 +34,23 @@ function fixture(status = "Accepted") {
     path.join(tmpdir(), "astrlink-notarize-"),
   );
   directories.push(bundleDirectory);
-  mkdirSync(path.join(bundleDirectory, "macos/AstrLink.app"), {
+  // The layout `mygo build` writes: the app beside its disk image, the
+  // programs and their runtime among the resources, the widget in PlugIns.
+  const app = path.join(bundleDirectory, "AstrLink.app/Contents");
+  mkdirSync(path.join(app, "Resources/bin"), { recursive: true });
+  mkdirSync(path.join(app, "PlugIns/AstrLinkWidgets.appex"), {
     recursive: true,
   });
-  mkdirSync(path.join(bundleDirectory, "dmg"));
+  for (const name of [
+    "astrlink-core",
+    "astrlink-cli",
+    "astrlink-privacy-worker",
+    "astrlink-classifier-worker",
+    "libonnxruntime.1.23.2.dylib",
+  ])
+    writeFileSync(path.join(app, "Resources/bin", name), "synthetic program");
   writeFileSync(
-    path.join(bundleDirectory, "dmg/AstrLink.dmg"),
+    path.join(bundleDirectory, "astrlink-1.0.0-arm64.dmg"),
     "synthetic disk image",
   );
   const runCommand = vi.fn((command: string, args: string[]) => {
@@ -103,16 +114,13 @@ describe("macOS release signing gates", () => {
 
   it("checks every bundled runtime, including one only Apple silicon adds", () => {
     const options = fixture();
-    const frameworks = path.join(
-      options.bundleDirectory,
-      "macos/AstrLink.app/Contents/Frameworks",
+    writeFileSync(
+      path.join(
+        options.bundleDirectory,
+        "AstrLink.app/Contents/Resources/bin/libonnxruntime.1.24.4.dylib",
+      ),
+      "synthetic runtime",
     );
-    mkdirSync(frameworks, { recursive: true });
-    for (const name of [
-      "libonnxruntime.1.23.2.dylib",
-      "libonnxruntime.1.24.4.dylib",
-    ])
-      writeFileSync(path.join(frameworks, name), "synthetic runtime");
     const normal = options.runCommand.getMockImplementation()!;
     options.runCommand.mockImplementation((command, args) => {
       if (
@@ -209,7 +217,7 @@ describe("macOS release signing gates", () => {
       options.runCommand.mock.calls.filter(([command]) => command === "spctl"),
     ).toHaveLength(2);
     writeFileSync(
-      path.join(options.bundleDirectory, "dmg/AstrLink.dmg"),
+      path.join(options.bundleDirectory, "astrlink-1.0.0-arm64.dmg"),
       "replaced disk image",
     );
     expect(() => notarizeMacOS({ ...options, submissionID })).toThrow(
@@ -268,8 +276,8 @@ describe("macOS release signing gates", () => {
       "staple AstrLink.app",
       "validate AstrLink.app",
       "validate AstrLink.app",
-      "staple AstrLink.dmg",
-      "validate AstrLink.dmg",
+      "staple astrlink-1.0.0-arm64.dmg",
+      "validate astrlink-1.0.0-arm64.dmg",
     ]);
     expect(warn).toHaveBeenCalledTimes(2);
     expect(

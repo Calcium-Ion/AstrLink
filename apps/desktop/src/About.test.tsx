@@ -10,7 +10,7 @@ const mocks = vi.hoisted(() => ({
   saveUpdatePreferences: vi.fn(),
 }));
 vi.mock("./update-bridge", () => mocks);
-vi.mock("@tauri-apps/api/core", () => ({ isTauri: () => true }));
+vi.mock("./native-host/core", () => ({ isDesktopHost: () => true }));
 vi.mock("./bridge", () => ({ openExternalURL: vi.fn() }));
 vi.mock("./LocalClientUpdates", () => ({
   LocalClientUpdates: () => <div data-slot="local-clients" />,

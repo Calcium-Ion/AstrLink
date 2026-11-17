@@ -1591,7 +1591,7 @@ paths:
       requestBody:
         required: true
         content:
-          application/json:
+          application/merge-patch+json:
             schema:
               $ref: "#/components/schemas/AccessTokenUpdate"
       responses:
@@ -1612,6 +1612,8 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+        "415":
+          description: Content-Type must be application/merge-patch+json.
         "422":
           $ref: "#/components/responses/UnprocessableEntity"
     delete:
@@ -6325,6 +6327,15 @@ components:
             desktop notification. Off, the kind is still detected and its
             findings recorded; it only stays out of the warnings feed. A rule
             that omits the field notifies.
+        label:
+          type: string
+          minLength: 1
+          maxLength: 32
+          description: >
+            Display name of a custom kind; required for a custom kind and
+            rejected for a built-in one. Omitted when empty. Labels are unique
+            among a policy's custom kinds, ignoring case. Renaming changes the
+            label only; the kind stays the identity findings and records carry.
       additionalProperties: false
       description: >
         Per-kind detection switch, placeholder shape, and warning notification.
@@ -6333,7 +6344,11 @@ components:
         payment_card, account, phone, private_person, private_address, and
         private_date are rejected with any style other than token; models
         regroup, truncate, or remark on stand-in numbers in ways restoration
-        cannot follow.
+        cannot follow. A rule for a custom kind also declares that kind, at
+        most 32 per policy; it always uses token placeholders, such as
+        <PRIVATE_CUSTOM_ORG_hex> for custom_org. A custom regex rule may name a
+        custom kind only while a rule declares it, so a kind still in use
+        cannot be removed.
     PlaceholderStyle:
       type: string
       enum: [natural, token]
@@ -6364,8 +6379,14 @@ components:
             URL on that host, and an address at that domain.
       additionalProperties: false
     PrivacyKind:
+      description: >
+        Every kind a detector may emit; the local model adds the private_
+        kinds, and custom regex rules add the custom kinds a policy declares.
+      anyOf:
+        - $ref: "#/components/schemas/PrivacyBuiltinKind"
+        - $ref: "#/components/schemas/PrivacyCustomKind"
+    PrivacyBuiltinKind:
       type: string
-      description: Every kind a detector may emit; the local model adds the private_ kinds.
       enum:
         - common_secret
         - payment_card
@@ -6377,6 +6398,13 @@ components:
         - private_person
         - private_address
         - private_date
+    PrivacyCustomKind:
+      type: string
+      maxLength: 40
+      pattern: "^custom_[a-z][a-z0-9]*(_[a-z0-9]+)*$"
+      description: >
+        A user-defined kind, declared by a kind_rules entry with a label. Only
+        custom regex rules emit it.
     PolicyCreate:
       type: object
       required: [name, priority, detector, match, request_action]
@@ -6487,15 +6515,20 @@ components:
             $ref: "#/components/schemas/PolicyRegexRule"
       additionalProperties: false
     PrivacyRegexDetectorKind:
-      type: string
-      enum:
-        - email
-        - phone
-        - account
-        - payment_card
-        - ip_address
-        - url
-        - common_secret
+      description: >
+        A kind a Regex rule may emit: a built-in Regex kind, or a custom kind
+        the policy declares in kind_rules.
+      anyOf:
+        - type: string
+          enum:
+            - email
+            - phone
+            - account
+            - payment_card
+            - ip_address
+            - url
+            - common_secret
+        - $ref: "#/components/schemas/PrivacyCustomKind"
     PolicyDryRunRequest:
       type: object
       required: [protocol, sample_text]
@@ -6519,7 +6552,7 @@ components:
         plaintext for placeholders appears solely on redactions for local dry-run.
       properties:
         kind:
-          $ref: "#/components/schemas/PrivacyCanonicalKind"
+          $ref: "#/components/schemas/PrivacyRecordedKind"
         path:
           type: string
           minLength: 1
@@ -6564,7 +6597,7 @@ components:
           type: string
           minLength: 1
         kind:
-          $ref: "#/components/schemas/PrivacyCanonicalKind"
+          $ref: "#/components/schemas/PrivacyRecordedKind"
         value:
           type: string
           description: Original sample text for this placeholder; dry-run only.
@@ -6664,6 +6697,13 @@ components:
     PrivacyModelCatalogId:
       type: string
       pattern: "^catalog_[a-z0-9_]{3,80}$"
+    PrivacyRecordedKind:
+      description: >
+        A kind a finding, placeholder count, or statistic carries. Records keep
+        a custom kind after its declaration is removed.
+      anyOf:
+        - $ref: "#/components/schemas/PrivacyCanonicalKind"
+        - $ref: "#/components/schemas/PrivacyCustomKind"
     PrivacyCanonicalKind:
       type: string
       enum:
@@ -7649,7 +7689,7 @@ components:
       description: Where accepted matches of one kind were found. Never carries the matched value or a placeholder.
       properties:
         kind:
-          $ref: "#/components/schemas/PrivacyCanonicalKind"
+          $ref: "#/components/schemas/PrivacyRecordedKind"
         json_path:
           type: string
           minLength: 1
@@ -7693,7 +7733,7 @@ components:
         providers publish for test payments. Never carries the matched value.
       properties:
         kind:
-          $ref: "#/components/schemas/PrivacyCanonicalKind"
+          $ref: "#/components/schemas/PrivacyRecordedKind"
         reason:
           type: string
           enum:
@@ -7754,7 +7794,7 @@ components:
       required: [kind, count]
       properties:
         kind:
-          $ref: "#/components/schemas/PrivacyCanonicalKind"
+          $ref: "#/components/schemas/PrivacyRecordedKind"
         count:
           type: integer
           minimum: 1
@@ -9033,7 +9073,7 @@ components:
       required: [kind, count]
       properties:
         kind:
-          $ref: "#/components/schemas/PrivacyCanonicalKind"
+          $ref: "#/components/schemas/PrivacyRecordedKind"
         count:
           type: integer
           minimum: 1

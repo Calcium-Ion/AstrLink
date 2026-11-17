@@ -11,6 +11,9 @@ import (
 const (
 	sessionSchemaVersion = 1
 	sessionFileName      = "control-session.json"
+	// devSessionFileName is the development instance's session, beside the
+	// default instance's.
+	devSessionFileName = "control-session-dev.json"
 )
 
 // SessionFile is the 0600 locator written by the desktop when Core is ready.
@@ -23,6 +26,8 @@ type SessionFile struct {
 	ControlURL    string `json:"control_url,omitempty"`
 	ControlToken  string `json:"control_token,omitempty"`
 	PID           int    `json:"pid,omitempty"`
+	// GatewayURL is the instance's client inference address; optional.
+	GatewayURL string `json:"gateway_url,omitempty"`
 }
 
 func DefaultSessionPath() (string, error) {
@@ -34,6 +39,12 @@ func DefaultSessionPath() (string, error) {
 		return "", fmt.Errorf("resolve home directory: %w", err)
 	}
 	return filepath.Join(home, ".astrlink", sessionFileName), nil
+}
+
+// devSessionPath is the development instance's session file beside the
+// default instance's (or beside an explicitly given session file).
+func devSessionPath(sessionPath string) string {
+	return filepath.Join(filepath.Dir(sessionPath), devSessionFileName)
 }
 
 func LoadSessionFile(path string) (SessionFile, error) {
