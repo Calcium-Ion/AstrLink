@@ -166,6 +166,11 @@ func BuildWith(dir string, options Options) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The bundler names files by their real paths; a project reached through
+	// a symlink, such as a macOS temporary directory, must compare the same.
+	if real, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = real
+	}
 	manifest, err := ReadManifest(dir)
 	if err != nil {
 		return nil, &Error{Messages: []Message{{File: "package.json", Text: err.Error()}}}

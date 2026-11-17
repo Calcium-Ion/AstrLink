@@ -41,7 +41,7 @@ func (handler *Handler) pluginClient(writer http.ResponseWriter, target *plugin.
 		return
 	}
 	header := writer.Header()
-	header.Set("Cache-Control", "no-store")
+	header.Set("Cache-Control", "no-store, no-transform")
 	header.Set("X-Content-Type-Options", "nosniff")
 	if file == "client.js.map" {
 		header.Set("Content-Type", "application/json")

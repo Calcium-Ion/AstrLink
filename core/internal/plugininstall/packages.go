@@ -164,6 +164,12 @@ type placement struct {
 }
 
 func newPackageStore(ctx context.Context, root string, lock lockfile, fetcher *registryFetcher) *packageStore {
+	// The bundler names importers by their real paths; owner compares them
+	// with root, which a symlink such as a macOS temporary directory hides.
+	// root itself is made later, so its parent is resolved.
+	if parent, err := filepath.EvalSymlinks(filepath.Dir(root)); err == nil {
+		root = filepath.Join(parent, filepath.Base(root))
+	}
 	return &packageStore{ctx: ctx, root: root, lock: lock, fetcher: fetcher, placed: map[string]*placement{}, packages: map[string]*contract.PluginDependency{}}
 }
 
