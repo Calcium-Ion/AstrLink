@@ -1,10 +1,6 @@
 import { useState } from "react";
 
-import { FormMessage } from "@/components/FormMessage";
-import { GitHubRepoBadge } from "@/components/GitHubRepoBadge";
-import { HelpDisclosure } from "@/components/HelpDisclosure";
 import { Ellipsis } from "@/components/icons";
-import { Panel, PanelHeader } from "@/components/Panel";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -14,10 +10,13 @@ import {
 } from "@/components/ui/dialog";
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { cn } from "@/lib/utils";
 
 import { checkPluginUpdate, pluginInstallFailureOf } from "./bridge";
 import { controlErrorMessage } from "./control-error";
@@ -35,33 +34,40 @@ import type {
 } from "./plugin-model";
 
 /**
- * Where a plugin installed from source came from, at the top of its
- * overview: its repository and what it follows, the check for a newer
- * version, and, behind the menu, going back to a version an install
- * replaced or removing the plugin.
+ * What the header of a plugin's page offers besides its switch: the update
+ * a check found, and behind ⋯ the connection test, its interface, the check
+ * for a newer version, going back to a version an install replaced, and
+ * removing it.
  */
-export function PluginSourceCard({
+export function PluginMenu({
   detail,
-  source,
   busy,
+  testing,
+  onTest,
+  onUiEnabled,
   onUpdate,
   onRollback,
   onUninstall,
 }: {
   detail: PluginDetail;
-  source: PluginInstallSource;
   busy: boolean;
+  testing: boolean;
+  onTest: () => void;
+  onUiEnabled: (on: boolean) => void;
   /** Reviews the update the link names. */
   onUpdate: (url: string) => void;
   onRollback: (version: PluginInstalledVersion) => void;
   onUninstall: () => void;
 }) {
   const t = useT();
+  const source = detail.installed;
   const [check, setCheck] = useState<PluginUpdateCheck | null>(null);
   const [checking, setChecking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [choosing, setChoosing] = useState(false);
   const versions = detail.versions ?? [];
+  const loaded = detail.state === "loaded";
+  const testable = loaded && detail.hooks.includes("testConnection");
 
   async function runCheck() {
     setChecking(true);
@@ -80,130 +86,101 @@ export function PluginSourceCard({
     }
   }
 
-  const repository = `https://github.com/${source.repository}`;
+  const found = check && !check.pinned && check.available ? check : null;
+  const checked = check
+    ? check.pinned
+      ? t("plugins.install.pinned")
+      : check.available
+        ? ""
+        : t("plugins.install.latest")
+    : "";
+  const hasMenu = testable || (loaded && detail.client) || source !== undefined;
   return (
-    <Panel data-testid="plugin-source">
-      <PanelHeader
-        actions={
-          <>
+    <div className="flex items-center gap-2" data-testid="plugin-source">
+      {error || checked ? (
+        <span
+          className={cn(
+            "hidden max-w-64 truncate text-xs @[720px]:inline",
+            error ? "text-danger-foreground" : "text-muted-foreground",
+          )}
+          title={error ?? checked}
+        >
+          {error ?? checked}
+        </span>
+      ) : null}
+      {found?.url ? (
+        <Button
+          data-testid="plugin-update"
+          disabled={busy}
+          onClick={() => onUpdate(found.url ?? "")}
+          size="sm"
+          title={found.notes || undefined}
+          type="button"
+          variant="outline"
+        >
+          {t("plugins.install.updateTo", {
+            version:
+              found.version ??
+              (found.ref_kind === "branch"
+                ? t("plugins.install.newCommit", { ref: found.ref })
+                : (found.ref ?? "")),
+          })}
+        </Button>
+      ) : null}
+      {hasMenu ? (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
             <Button
-              disabled={checking || busy}
-              onClick={() => void runCheck()}
-              size="xs"
+              aria-label={t("plugins.install.more")}
+              disabled={busy}
+              size="icon-sm"
               type="button"
-              variant="outline"
+              variant="ghost"
             >
-              {checking
-                ? t("plugins.install.checking")
-                : t("plugins.install.checkUpdate")}
+              <Ellipsis />
             </Button>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  aria-label={t("plugins.install.more")}
-                  disabled={busy}
-                  size="icon-xs"
-                  type="button"
-                  variant="ghost"
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="min-w-44">
+            {testable ? (
+              <DropdownMenuItem disabled={testing} onSelect={onTest}>
+                {testing ? t("plugins.testing") : t("plugins.test")}
+              </DropdownMenuItem>
+            ) : null}
+            {loaded && detail.client ? (
+              <DropdownMenuCheckboxItem
+                checked={detail.ui_enabled}
+                onCheckedChange={(on) => onUiEnabled(on === true)}
+              >
+                {t("plugins.ui.pluginSwitch")}
+              </DropdownMenuCheckboxItem>
+            ) : null}
+            {source ? (
+              <>
+                {testable || (loaded && detail.client) ? (
+                  <DropdownMenuSeparator />
+                ) : null}
+                <DropdownMenuItem
+                  disabled={checking}
+                  onSelect={() => void runCheck()}
                 >
-                  <Ellipsis />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
+                  {checking
+                    ? t("plugins.install.checking")
+                    : t("plugins.install.checkUpdate")}
+                </DropdownMenuItem>
                 {versions.length > 0 ? (
                   <DropdownMenuItem onSelect={() => setChoosing(true)}>
                     {t("plugins.install.rollback")}
                   </DropdownMenuItem>
                 ) : null}
+                <DropdownMenuSeparator />
                 <DropdownMenuItem onSelect={onUninstall} variant="destructive">
                   {t("plugins.install.uninstall")}
                 </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </>
-        }
-        size="sm"
-      >
-        <h3 className="text-xs font-semibold">{t("plugins.install.source")}</h3>
-      </PanelHeader>
-      <div className="grid gap-2 p-3 text-sm">
-        {source.kind === "market" ? (
-          <div className="grid gap-0.5">
-            <span className="min-w-0 break-all">
-              {source.repository || t("plugins.source.market")}
-              {source.key ? ` / ${source.key}` : ""}
-            </span>
-            <span className="text-xs text-muted-foreground">
-              {t("plugins.install.marketRef", { version: source.ref ?? "" })}
-            </span>
-          </div>
-        ) : (
-          <>
-            <div className="flex min-w-0 flex-wrap items-center gap-2">
-              <GitHubRepoBadge
-                href={repository}
-                label={t("plugins.install.openRepository", {
-                  repository: source.repository,
-                })}
-              />
-              <span className="min-w-0 break-all">
-                {source.repository}
-                {source.subdir ? ` / ${source.subdir}` : ""}
-              </span>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              {sourceRef(source, t)}
-            </p>
-          </>
-        )}
-        {error ? <FormMessage tone="error">{error}</FormMessage> : null}
-        {check ? (
-          check.pinned ? (
-            <p className="text-xs text-muted-foreground">
-              {t("plugins.install.pinned")}
-            </p>
-          ) : check.available ? (
-            <div
-              className="grid gap-2 rounded-md border p-2"
-              data-testid="plugin-update"
-            >
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="flex-1 text-xs">
-                  {t("plugins.install.available", {
-                    version:
-                      check.version ??
-                      (check.ref_kind === "branch"
-                        ? t("plugins.install.newCommit", { ref: check.ref })
-                        : (check.ref ?? "")),
-                    day: formatDay(check.committed_at),
-                  })}
-                </span>
-                {check.url ? (
-                  <Button
-                    disabled={busy}
-                    onClick={() => onUpdate(check.url ?? "")}
-                    size="xs"
-                    type="button"
-                  >
-                    {t("plugins.install.reviewUpdate")}
-                  </Button>
-                ) : null}
-              </div>
-              {check.notes ? (
-                <HelpDisclosure title={t("plugins.install.notes")}>
-                  <p className="whitespace-pre-wrap text-foreground">
-                    {check.notes}
-                  </p>
-                </HelpDisclosure>
-              ) : null}
-            </div>
-          ) : (
-            <p className="text-xs text-muted-foreground">
-              {t("plugins.install.latest")}
-            </p>
-          )
-        ) : null}
-      </div>
+              </>
+            ) : null}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      ) : null}
       {choosing ? (
         <Dialog open onOpenChange={(open) => !open && setChoosing(false)}>
           <DialogContent className="sm:max-w-md">
@@ -250,6 +227,21 @@ export function PluginSourceCard({
           </DialogContent>
         </Dialog>
       ) : null}
-    </Panel>
+    </div>
   );
+}
+
+/** Where a plugin installed from source comes from, in one short line. */
+export function sourceLine(
+  source: PluginInstallSource,
+  t: ReturnType<typeof useT>,
+): string {
+  if (source.kind === "market")
+    return source.repository || t("plugins.source.market");
+  return [
+    `GitHub ${source.repository}${source.subdir ? `/${source.subdir}` : ""}`,
+    sourceRef(source, t),
+  ]
+    .filter(Boolean)
+    .join(" · ");
 }

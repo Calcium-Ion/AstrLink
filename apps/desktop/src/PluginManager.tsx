@@ -1,42 +1,19 @@
-import {
-  type ReactNode,
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-} from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
-import {
-  Activity,
-  AlignLeft,
-  Blocks,
-  Boxes,
-  Flask,
-  Home,
-  Plus,
-  RefreshCw,
-  SlidersHorizontal,
-  SquareStack,
-  Waypoints,
-} from "@/components/icons";
+import { Blocks, Plus, RefreshCw, SlidersHorizontal } from "@/components/icons";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { EmptyState } from "@/components/EmptyState";
 import { FormMessage } from "@/components/FormMessage";
 import { HelpPopover } from "@/components/HelpPopover";
 import { IconButton } from "@/components/IconButton";
 import { LoadingState } from "@/components/LoadingState";
-import { Metric, MetricGroup } from "@/components/Metric";
-import { Panel } from "@/components/Panel";
 import { PluginIcon, pluginAvatar } from "@/components/PluginIcon";
 import { SearchInput } from "@/components/SearchInput";
 import { SegmentedControl } from "@/components/SegmentedControl";
 import { StatusBadge } from "@/components/StatusBadge";
-import { StatusDot } from "@/components/StatusDot";
 import { Button } from "@/components/ui/button";
-import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { cn } from "@/lib/utils";
 import {
   clearPluginData,
   deletePluginCredential,
@@ -63,28 +40,26 @@ import { isWebEdition } from "./edition";
 import { PluginApprovalSummary } from "./PluginApprovalSummary";
 import { useT } from "./i18n";
 import { PageHeader } from "./PageHeader";
-import { PluginDevelop } from "./PluginDevelop";
+import { PluginRunLog } from "./PluginDevelop";
+import { PluginHealth } from "./PluginHealth";
 import { PluginInstallDialog } from "./PluginInstall";
 import {
   loadErrorText,
-  PluginDevelopHome,
   PluginHostDialog,
   pluginMatches,
-  PluginMetrics,
+  PluginSummaryBand,
   pluginOrigin,
   PluginRows,
-  pluginState,
-  pluginTone,
 } from "./PluginList";
-import { PluginStarMap, useRecentPluginUsage } from "./PluginStarMap";
+import { useRecentPluginUsage } from "./plugin-usage";
 import { PluginMarketView } from "./PluginMarket";
-import { TaskPluginOverview, TaskPluginTasks } from "./PluginTaskDetail";
+import { ProviderPluginOverview, TaskPluginTasks } from "./PluginTaskDetail";
 import {
   installFailureText,
   PluginInstallReviewView,
 } from "./PluginInstallReview";
 import { orderedPlugins, PluginOrderDialog } from "./PluginOrder";
-import { PluginSourceCard } from "./PluginSource";
+import { PluginMenu, sourceLine } from "./PluginSource";
 import {
   PluginSlotView,
   refreshPluginUi,
@@ -118,37 +93,15 @@ import { DailyEffects } from "./PluginEffects";
 type DetailTab =
   | "overview"
   | "settings"
-  | "status"
-  | "develop"
   /** A task plugin's tasks. */
   | "tasks"
+  /** What the plugin did: its calls, its days and its log. */
+  | "log"
   /** A tab the plugin's interface registered. */
   | `plugin:${string}`;
 
-/** The tabs of the list page: the installed plugins, the marketplace, development. */
-type ListTab = "installed" | "market" | "develop";
-
-/** How the installed plugins show: a star map, or a list. */
-type PluginView = "map" | "list";
-
-/** Where the page keeps the view a viewer chose last. */
-const VIEW_KEY = "astrlink.plugins.view";
-
-function rememberedView(): PluginView {
-  try {
-    return localStorage.getItem(VIEW_KEY) === "list" ? "list" : "map";
-  } catch {
-    return "map";
-  }
-}
-
-function rememberView(view: PluginView) {
-  try {
-    localStorage.setItem(VIEW_KEY, view);
-  } catch {
-    // The page works without storage; the view just resets.
-  }
-}
+/** The two halves of the list page: the installed plugins and the marketplace. */
+type ListTab = "installed" | "market";
 
 /** The plugin open after the list changes: the same one while it is listed, else the list. */
 function keptSelection(current: string | null, list: PluginList) {
@@ -193,8 +146,11 @@ export function PluginManager({
   const t = useT();
   const [list, setList] = useState<PluginList | null>(null);
   const [listTab, setListTab] = useState<ListTab>("installed");
-  const [view, setView] = useState<PluginView>(rememberedView);
   const [query, setQuery] = useState("");
+  const [marketQuery, setMarketQuery] = useState("");
+  // The plugin whose switch on the list is being saved.
+  const [switching, setSwitching] = useState<string | null>(null);
+  const [switchError, setSwitchError] = useState<string | null>(null);
   const [hostOpen, setHostOpen] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
   const [rescanning, setRescanning] = useState(false);
@@ -589,6 +545,23 @@ export function PluginManager({
     }
   }
 
+  /**
+   * Turns a plugin on or off from its row. Turning one on grants what it
+   * asks for, so it may wait for the confirmation as on its own page.
+   */
+  async function switchPlugin(plugin: PluginSummary, enabled: boolean) {
+    setSwitching(plugin.key);
+    setSwitchError(null);
+    try {
+      const next = await save(plugin.key, { enabled });
+      if (next !== "waiting") show(next);
+    } catch (error) {
+      setSwitchError(controlErrorMessage(error, t("plugins.saveFailed")));
+    } finally {
+      setSwitching(null);
+    }
+  }
+
   async function runTest(key: string) {
     setTesting(true);
     setActionError(null);
@@ -679,9 +652,9 @@ export function PluginManager({
 
   const notices = (
     <>
-      {listError || hostError ? (
+      {listError || hostError || switchError ? (
         <FormMessage className="mb-3" tone="error">
-          {listError ?? hostError}
+          {listError ?? hostError ?? switchError}
         </FormMessage>
       ) : null}
       {host?.paused ? (
@@ -736,45 +709,73 @@ export function PluginManager({
               />
             }
             titleSuffix={
-              <span className="flex min-w-0 items-center gap-2">
-                <StatusBadge tone={pluginTone(selected)}>
-                  {pluginState(selected, t)}
-                </StatusBadge>
-                {/* Narrow, the name keeps the room; the page says the rest. */}
-                <span className="truncate text-xs text-muted-foreground @max-[560px]:hidden">
-                  {[pluginOrigin(selected, t), selected.version]
-                    .filter(Boolean)
-                    .join(" · ")}
-                </span>
+              <span className="truncate text-xs text-muted-foreground @max-[560px]:hidden">
+                {[
+                  selected.version,
+                  detail?.key === selected.key && detail.installed
+                    ? sourceLine(detail.installed, t)
+                    : pluginOrigin(selected, t),
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
               </span>
             }
             actions={
               detail && detail.key === selected.key ? (
-                <PluginActions
-                  busy={busy}
-                  detail={detail}
-                  onDisable={() =>
-                    void apply(() => save(detail.key, { enabled: false }))
-                  }
-                  onEnable={() => {
-                    // A plugin is trusted code: what it declares the install
-                    // review listed, and enabling it grants all of that.
-                    void apply(() => save(detail.key, { enabled: true })).then(
-                      (enabled) => {
-                        if (!enabled) return;
-                        setTab("overview");
-                        setLinkPlay((count) => count + 1);
-                        if (detail.hooks.includes("describeStatus"))
-                          void loadStatus(detail.key);
-                      },
-                    );
-                  }}
-                  onTest={() => void runTest(detail.key)}
-                  onUiEnabled={(on) =>
-                    void apply(() => save(detail.key, { ui_enabled: on }))
-                  }
-                  testing={testing}
-                />
+                <div className="flex items-center gap-2">
+                  <PluginMenu
+                    busy={busy}
+                    detail={detail}
+                    onRollback={(version) => void rollback(detail.key, version)}
+                    onTest={() => void runTest(detail.key)}
+                    onUiEnabled={(on) =>
+                      void apply(() => save(detail.key, { ui_enabled: on }))
+                    }
+                    onUninstall={() => setUninstalling(detail)}
+                    onUpdate={(link) => setInstalling({ link })}
+                    testing={testing}
+                  />
+                  {detail.state === "loaded" ? (
+                    <Switch
+                      aria-label={t("plugins.row.enable", {
+                        name: detail.name,
+                      })}
+                      checked={detail.enabled}
+                      data-testid="plugin-enabled"
+                      disabled={busy}
+                      onCheckedChange={(on) => {
+                        if (!on) {
+                          void apply(() =>
+                            save(detail.key, { enabled: false }),
+                          );
+                          return;
+                        }
+                        // A plugin is trusted code: what it declares the
+                        // install review listed, and enabling it grants all
+                        // of that.
+                        void apply(() =>
+                          save(detail.key, { enabled: true }),
+                        ).then((enabled) => {
+                          if (!enabled) return;
+                          setTab("overview");
+                          setLinkPlay((count) => count + 1);
+                          if (detail.hooks.includes("describeStatus"))
+                            void loadStatus(detail.key);
+                        });
+                      }}
+                    />
+                  ) : (
+                    <Button
+                      disabled={rescanning}
+                      onClick={() => void rescan()}
+                      size="sm"
+                      type="button"
+                      variant="outline"
+                    >
+                      {t("plugins.row.reload")}
+                    </Button>
+                  )}
+                </div>
               ) : null
             }
           />
@@ -799,9 +800,6 @@ export function PluginManager({
               }
               awaiting={awaiting === detail.key}
               onOpenApproval={() => void openPluginApproval()}
-              onUpdate={(link) => setInstalling({ link })}
-              onRollback={(version) => void rollback(detail.key, version)}
-              onUninstall={() => setUninstalling(detail)}
               onRefreshStatus={() =>
                 // Refresh reads the plugin anew, then what it did.
                 void loadDetail(detail.key).then((next) => {
@@ -841,17 +839,36 @@ export function PluginManager({
           <PageHeader
             actions={
               <>
+                {list && listTab === "installed" && plugins.length > 0 ? (
+                  <SearchInput
+                    className="hidden w-48 @[720px]:block @[960px]:w-56"
+                    clearLabel={t("common.clearSearch")}
+                    label={t("plugins.search")}
+                    onValueChange={setQuery}
+                    placeholder={t("plugins.search")}
+                    value={query}
+                  />
+                ) : null}
+                {list && listTab === "market" ? (
+                  <SearchInput
+                    className="hidden w-48 @[720px]:block @[960px]:w-56"
+                    clearLabel={t("common.clearSearch")}
+                    label={t("plugins.market.search")}
+                    onValueChange={setMarketQuery}
+                    placeholder={t("plugins.market.search")}
+                    value={marketQuery}
+                  />
+                ) : null}
                 {list || host ? (
-                  <Button
+                  <IconButton
                     disabled={!isReady}
+                    label={t("plugins.host.open")}
                     onClick={() => setHostOpen(true)}
-                    size="sm"
                     type="button"
                     variant="outline"
                   >
-                    <SlidersHorizontal aria-hidden="true" />
-                    {t("plugins.host.open")}
-                  </Button>
+                    <SlidersHorizontal />
+                  </IconButton>
                 ) : null}
                 <Button
                   disabled={!isReady}
@@ -869,20 +886,19 @@ export function PluginManager({
             titleId="plugin-manager-heading"
             titleSuffix={
               list ? (
-                <span className="inline-flex shrink-0 items-center gap-1.5 text-micro whitespace-nowrap text-muted-foreground">
-                  <StatusDot
-                    tone={
-                      !isReady
-                        ? "neutral"
-                        : host?.paused
-                          ? "pending"
-                          : "positive"
-                    }
-                  />
-                  {host?.paused
-                    ? t("plugins.host.pausedShort")
-                    : t("plugins.countLabel", { count: plugins.length })}
-                </span>
+                <SegmentedControl
+                  label={t("plugins.list.tabs")}
+                  onValueChange={setListTab}
+                  options={[
+                    {
+                      value: "installed",
+                      label: t("plugins.list.installed"),
+                      count: plugins.length,
+                    },
+                    { value: "market", label: t("plugins.list.market") },
+                  ]}
+                  value={listTab}
+                />
               ) : null
             }
             variant="compact"
@@ -898,175 +914,60 @@ export function PluginManager({
             />
           ) : list === null && !listError ? (
             <LoadingState className="flex-1" label={t("plugins.loading")} />
-          ) : list !== null ? (
-            <Tabs
-              className="min-h-0 min-w-0 flex-1 gap-0"
-              onValueChange={(value) => setListTab(value as ListTab)}
-              value={listTab}
-            >
-              <div className="pb-3">
-                <PluginMetrics plugins={plugins} recent={recent} />
-              </div>
-              <div className="flex min-w-0 shrink-0 items-center gap-2 border-b">
-                <TabsList
-                  aria-label={t("plugins.list.tabs")}
-                  className="min-w-0 flex-1 justify-start"
-                  variant="line"
+          ) : list !== null && listTab === "market" ? (
+            <PluginMarketView
+              isReady={isReady}
+              onInstall={(link) => setInstalling({ link })}
+              query={marketQuery}
+            />
+          ) : list !== null && plugins.length === 0 ? (
+            <EmptyState
+              action={
+                <Button
+                  onClick={() => setListTab("market")}
+                  size="sm"
+                  type="button"
+                  variant="outline"
                 >
-                  <TabsTrigger className="flex-none" value="installed">
-                    <Blocks aria-hidden="true" />
-                    {t("plugins.list.installed")}
-                  </TabsTrigger>
-                  <TabsTrigger className="flex-none" value="market">
-                    <Boxes aria-hidden="true" />
-                    {t("plugins.list.market")}
-                  </TabsTrigger>
-                  <TabsTrigger className="flex-none" value="develop">
-                    <Flask aria-hidden="true" />
-                    {t("plugins.list.develop")}
-                  </TabsTrigger>
-                </TabsList>
-                {listTab === "installed" ? (
-                  <>
-                    {plugins.length > 0 ? (
-                      <>
-                        <SearchInput
-                          className="hidden w-48 @[720px]:block"
-                          clearLabel={t("common.clearSearch")}
-                          label={t("plugins.search")}
-                          onValueChange={setQuery}
-                          placeholder={t("plugins.search")}
-                          value={query}
-                        />
-                        {/* Narrow, the map has no room: the list stands. */}
-                        <span className="hidden @[640px]:inline-flex">
-                          <SegmentedControl
-                            label={t("plugins.view.label")}
-                            onValueChange={(next) => {
-                              setView(next);
-                              rememberView(next);
-                            }}
-                            options={[
-                              {
-                                value: "map",
-                                label: t("plugins.view.map"),
-                                icon: <Waypoints />,
-                              },
-                              {
-                                value: "list",
-                                label: t("plugins.view.list"),
-                                icon: <AlignLeft />,
-                              },
-                            ]}
-                            value={view}
-                          />
-                        </span>
-                      </>
-                    ) : null}
-                    <IconButton
-                      disabled={!isReady || rescanning}
-                      label={t("plugins.rescan")}
-                      onClick={() => void rescan()}
-                      type="button"
-                      variant="outline"
-                    >
-                      <RefreshCw
-                        className={
-                          rescanning
-                            ? "animate-spin motion-reduce:animate-none"
-                            : undefined
-                        }
-                      />
-                    </IconButton>
-                  </>
-                ) : null}
-              </div>
-              <TabsContent
-                className="flex min-h-0 min-w-0 flex-1 flex-col"
-                value="installed"
+                  {t("plugins.list.browseMarket")}
+                </Button>
+              }
+              className="flex-1"
+              description={t("plugins.emptyHint")}
+              illustration={<Blocks className="size-6" />}
+              title={t("plugins.empty")}
+              variant="page"
+            />
+          ) : list !== null ? (
+            <div
+              className="flex min-h-0 min-w-0 flex-1 flex-col gap-3"
+              data-testid="plugin-installed"
+            >
+              <PluginSummaryBand plugins={plugins} recent={recent} />
+              <div
+                className="min-h-0 flex-1 overflow-y-auto overscroll-contain pb-3"
+                data-tab-scroller
               >
-                {plugins.length === 0 ? (
+                {shown.length === 0 ? (
                   <EmptyState
-                    action={
-                      <Button
-                        onClick={() => setListTab("market")}
-                        size="sm"
-                        type="button"
-                        variant="outline"
-                      >
-                        {t("plugins.list.browseMarket")}
-                      </Button>
-                    }
-                    className="h-full"
-                    description={t("plugins.emptyHint")}
-                    illustration={<Blocks className="size-6" />}
-                    title={t("plugins.empty")}
-                    variant="page"
+                    className="mt-3"
+                    title={t("plugins.market.noMatch")}
                   />
                 ) : (
-                  <>
-                    {view === "map" ? (
-                      <PluginStarMap
-                        className="my-3 hidden @[640px]:block"
-                        matches={(plugin) => pluginMatches(plugin, query, t)}
-                        onAddEnhancer={
-                          isReady ? () => setInstalling({}) : undefined
-                        }
-                        onAddProvider={() => setListTab("market")}
-                        onHub={() => setHostOpen(true)}
-                        onOpen={setSelectedKey}
-                        onShowList={() => setView("list")}
-                        paused={host?.paused === true}
-                        usage={recent}
-                        plugins={plugins}
-                        services={services}
-                      />
-                    ) : null}
-                    <div
-                      className={cn(
-                        "min-h-0 flex-1 overflow-y-auto overscroll-contain pb-3",
-                        view === "map" && "@[640px]:hidden",
-                      )}
-                      data-tab-scroller
-                    >
-                      {shown.length === 0 ? (
-                        <EmptyState
-                          className="mt-3"
-                          title={t("plugins.market.noMatch")}
-                        />
-                      ) : (
-                        <PluginRows onOpen={setSelectedKey} plugins={shown} />
-                      )}
-                    </div>
-                  </>
-                )}
-              </TabsContent>
-              <TabsContent
-                className="flex min-h-0 min-w-0 flex-1 flex-col pt-3"
-                value="market"
-              >
-                {listTab === "market" ? (
-                  <PluginMarketView
-                    isReady={isReady}
-                    onInstall={(link) => setInstalling({ link })}
+                  <PluginRows
+                    busyKey={switching}
+                    disabled={!isReady}
+                    onEnabled={(plugin, enabled) =>
+                      void switchPlugin(plugin, enabled)
+                    }
+                    onOpen={setSelectedKey}
+                    onReload={() => void rescan()}
+                    plugins={shown}
+                    recent={recent}
                   />
-                ) : null}
-              </TabsContent>
-              <TabsContent
-                className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain"
-                data-tab-scroller
-                value="develop"
-              >
-                <PluginDevelopHome
-                  directory={list.directory}
-                  disabled={!isReady}
-                  onOpen={setSelectedKey}
-                  onRescan={() => void rescan()}
-                  plugins={plugins}
-                  rescanning={rescanning}
-                />
-              </TabsContent>
-            </Tabs>
+                )}
+              </div>
+            </div>
           ) : null}
         </>
       )}
@@ -1245,83 +1146,6 @@ function summaryOf(detail: PluginDetail): Partial<PluginSummary> {
   };
 }
 
-/**
- * What a plugin's page offers in its header: its interface switch, the
- * connection test, and enabling or turning it off.
- */
-function PluginActions({
-  detail,
-  busy,
-  testing,
-  onEnable,
-  onDisable,
-  onTest,
-  onUiEnabled,
-}: {
-  detail: PluginDetail;
-  busy: boolean;
-  testing: boolean;
-  onEnable: () => void;
-  onDisable: () => void;
-  onTest: () => void;
-  onUiEnabled: (on: boolean) => void;
-}) {
-  const t = useT();
-  if (detail.state !== "loaded") return null;
-  return (
-    <div className="flex flex-wrap items-center justify-end gap-2">
-      {detail.client ? (
-        <Label className="mr-1 inline-flex cursor-pointer items-center gap-2 text-xs font-normal text-text-secondary">
-          <span>{t("plugins.ui.pluginSwitchLabel")}</span>
-          <Switch
-            aria-label={t("plugins.ui.pluginSwitch")}
-            checked={detail.ui_enabled}
-            disabled={busy}
-            id="plugin-ui-enabled"
-            onCheckedChange={onUiEnabled}
-            size="sm"
-          />
-        </Label>
-      ) : null}
-      {detail.hooks.includes("testConnection") ? (
-        <Button
-          disabled={testing || busy}
-          onClick={onTest}
-          size="sm"
-          type="button"
-          variant="outline"
-        >
-          {testing ? t("plugins.testing") : t("plugins.test")}
-        </Button>
-      ) : null}
-      {detail.enabled ? (
-        <Button
-          disabled={busy}
-          onClick={onDisable}
-          size="sm"
-          type="button"
-          variant="outline"
-        >
-          {t("plugins.disable")}
-        </Button>
-      ) : (
-        <Button disabled={busy} onClick={onEnable} size="sm" type="button">
-          {t("plugins.enable")}
-        </Button>
-      )}
-    </div>
-  );
-}
-
-/** Each tab of a plugin's page with its icon. */
-const tabIcons: Partial<Record<DetailTab, ReactNode>> = {
-  overview: <Home aria-hidden="true" />,
-  settings: <SlidersHorizontal aria-hidden="true" />,
-  status: <Activity aria-hidden="true" />,
-  develop: <Flask aria-hidden="true" />,
-  tasks: <SquareStack aria-hidden="true" />,
-};
-
 function PluginDetailPane({
   detail,
   stats,
@@ -1343,9 +1167,6 @@ function PluginDetailPane({
   onClearData,
   awaiting,
   onOpenApproval,
-  onUpdate,
-  onRollback,
-  onUninstall,
   onAddProvider,
   onOpenService,
 }: {
@@ -1372,9 +1193,6 @@ function PluginDetailPane({
   onClearData: (what: PluginClearTarget) => Promise<boolean>;
   awaiting: boolean;
   onOpenApproval: () => void;
-  onUpdate: (link: string) => void;
-  onRollback: (version: PluginInstalledVersion) => void;
-  onUninstall: () => void;
   onAddProvider?: () => void;
   onOpenService?: (id: string) => void;
 }) {
@@ -1382,30 +1200,20 @@ function PluginDetailPane({
   const loaded = detail.state === "loaded";
   const task = detail.task;
   const pluginTabs = usePluginSlot("plugin.tab", detail.key);
+  const servesProviders = Boolean(task) || detail.kind === "provider";
   const tabs: DetailTab[] = !loaded
     ? []
     : task
-      ? ["overview", "tasks", "status"]
-      : detail.kind === "provider" || detail.kind === "request"
-        ? ["overview", "status"]
+      ? ["overview", "tasks", "log"]
+      : servesProviders || detail.kind === "request"
+        ? ["overview", "log"]
         : [
             "overview",
             "settings",
-            "status",
-            "develop",
+            "log",
             ...pluginTabs.map((entry) => `plugin:${entry.id}` as const),
           ];
   const current = tabs.includes(tab) ? tab : "overview";
-  const source = detail.installed ? (
-    <PluginSourceCard
-      busy={busy}
-      detail={detail}
-      onRollback={onRollback}
-      onUninstall={onUninstall}
-      onUpdate={onUpdate}
-      source={detail.installed}
-    />
-  ) : null;
   return (
     <div
       className="flex min-h-0 min-w-0 flex-1 flex-col"
@@ -1445,7 +1253,6 @@ function PluginDetailPane({
               </span>
             </FormMessage>
           ) : null}
-          {source}
         </div>
       ) : (
         <Tabs
@@ -1462,7 +1269,6 @@ function PluginDetailPane({
             >
               {tabs.map((item) => (
                 <TabsTrigger className="flex-none" key={item} value={item}>
-                  {tabIcons[item] ?? null}
                   {item.startsWith("plugin:")
                     ? (pluginTabs.find((entry) => `plugin:${entry.id}` === item)
                         ?.title ?? t("plugins.ui.tab"))
@@ -1470,7 +1276,7 @@ function PluginDetailPane({
                 </TabsTrigger>
               ))}
             </TabsList>
-            {current === "overview" || current === "status" ? (
+            {current === "overview" || current === "log" ? (
               <IconButton
                 label={t("common.refresh")}
                 onClick={onRefreshStatus}
@@ -1492,39 +1298,39 @@ function PluginDetailPane({
             data-tab-scroller
             value="overview"
           >
-            {task ? (
-              <div className="grid min-w-0 gap-5">
-                {source}
-                <TaskPluginOverview
+            {servesProviders ? (
+              <ProviderPluginOverview
+                detail={detail}
+                health={<PluginHealth detail={detail} revision={revision} />}
+                onAddProvider={onAddProvider}
+                onAllTasks={task ? () => onTab("tasks") : undefined}
+                onOpenProvider={onOpenService}
+                services={services}
+              />
+            ) : detail.request ? (
+              <div className="grid min-w-0 gap-4">
+                {detail.request.description ? (
+                  <p className="text-sm leading-6 text-text-secondary">
+                    {detail.request.description}
+                  </p>
+                ) : null}
+                <RequestPluginInstances
                   detail={detail}
-                  onAddProvider={onAddProvider}
-                  onOpenProvider={onOpenService}
-                  services={services}
-                  task={task}
+                  disabled={!detail.enabled}
                 />
+                <PluginHealth detail={detail} revision={revision} />
               </div>
             ) : (
-              <>
-                {source ? <div className="mb-4">{source}</div> : null}
-                {detail.request ? (
-                  <div className="mb-4">
-                    <RequestPluginInstances
-                      detail={detail}
-                      disabled={!detail.enabled}
-                    />
-                  </div>
-                ) : null}
-                <PluginOverview
-                  busy={busy}
-                  detail={detail}
-                  linkPlay={linkPlay}
-                  onClear={onClearData}
-                  stars={stars}
-                  stats={stats}
-                  status={status}
-                  statusError={statusError}
-                />
-              </>
+              <PluginOverview
+                busy={busy}
+                detail={detail}
+                linkPlay={linkPlay}
+                onClear={onClearData}
+                stars={stars}
+                stats={stats}
+                status={status}
+                statusError={statusError}
+              />
             )}
           </TabsContent>
           {task ? (
@@ -1556,24 +1362,21 @@ function PluginDetailPane({
           <TabsContent
             className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain py-4"
             data-tab-scroller
-            value="status"
+            value="log"
           >
-            <StatusTab
-              detail={detail}
-              stats={stats}
-              status={status}
-              statusError={statusError}
-            />
+            {current === "log" ? (
+              <PluginRunLog
+                days={
+                  stats && !servesProviders && !detail.request ? (
+                    <DailyEffects detail={detail} stats={stats} />
+                  ) : undefined
+                }
+                detail={detail}
+                status={status}
+                statusError={statusError}
+              />
+            ) : null}
           </TabsContent>
-          {task ? null : (
-            <TabsContent
-              className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain py-4"
-              data-tab-scroller
-              value="develop"
-            >
-              {current === "develop" ? <PluginDevelop detail={detail} /> : null}
-            </TabsContent>
-          )}
           {pluginTabs.map((entry) => (
             <TabsContent
               className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain py-4"
@@ -1639,86 +1442,6 @@ function AboutPlugin({ detail }: { detail: PluginDetail }) {
           </div>
         )}
       </section>
-    </div>
-  );
-}
-
-function StatusTab({
-  detail,
-  stats,
-  status,
-  statusError,
-}: {
-  detail: PluginDetail;
-  stats: PluginStats | null;
-  status: PluginStatus | null;
-  statusError: string | null;
-}) {
-  const t = useT();
-  if (statusError) return <FormMessage tone="error">{statusError}</FormMessage>;
-  if (status === null) return <LoadingState label={t("plugins.loading")} />;
-  const failures = Object.entries(status.failures);
-  const warn = (count: number) => (
-    <span className={count > 0 ? "text-warning-foreground" : undefined}>
-      {count}
-    </span>
-  );
-  return (
-    <div
-      className="@container/overview grid min-w-0 gap-5"
-      data-testid="plugin-status"
-    >
-      <Panel>
-        <MetricGroup className="grid-cols-2 @[560px]/overview:grid-cols-4">
-          <Metric
-            label={t("plugins.status.calls")}
-            size="sm"
-            value={status.calls}
-          />
-          <Metric
-            label={t("plugins.status.timeouts")}
-            size="sm"
-            value={warn(status.timeouts)}
-          />
-          <Metric
-            label={t("plugins.status.memoryLimits")}
-            size="sm"
-            value={warn(status.memory_limits)}
-          />
-          <Metric
-            detail={t("plugins.status.networkDetail", {
-              denied: status.network.denied,
-              errors: status.network.errors,
-            })}
-            label={t("plugins.status.networkRequests")}
-            size="sm"
-            value={status.network.requests}
-          />
-        </MetricGroup>
-      </Panel>
-      {failures.length > 0 ? (
-        <section className="grid gap-1">
-          <h3 className="text-xs font-medium text-muted-foreground">
-            {t("plugins.status.failures")}
-          </h3>
-          <ul className="divide-y border-y text-xs">
-            {failures.map(([reason, count]) => (
-              <li className="flex justify-between gap-3 py-2" key={reason}>
-                <span>
-                  {t(`plugins.status.reasons.${reason}`, {
-                    defaultValue: reason,
-                  })}
-                </span>
-                <span className="tabular-nums">{count}</span>
-              </li>
-            ))}
-          </ul>
-        </section>
-      ) : null}
-      {/* The days count what an extension did; a task plugin's are its tasks. */}
-      {stats && !detail.task ? (
-        <DailyEffects detail={detail} stats={stats} />
-      ) : null}
     </div>
   );
 }

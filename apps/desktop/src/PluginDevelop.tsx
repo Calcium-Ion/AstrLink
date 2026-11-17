@@ -1,8 +1,12 @@
-import { useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 
 import { EmptyState } from "@/components/EmptyState";
 import { FormMessage } from "@/components/FormMessage";
 import { HelpPopover } from "@/components/HelpPopover";
+import { LoadingState } from "@/components/LoadingState";
+import { Metric, MetricGroup } from "@/components/Metric";
+import { Panel } from "@/components/Panel";
+import { SegmentedControl } from "@/components/SegmentedControl";
 import { StatusBadge } from "@/components/StatusBadge";
 import type { StatusTone } from "@/components/StatusDot";
 import { Button } from "@/components/ui/button";
@@ -42,6 +46,7 @@ import type {
   PluginHookTiming,
   PluginJournal,
   PluginJournalEntry,
+  PluginStatus,
 } from "./plugin-model";
 
 /** How often the open tab reads the plugin's new log lines. */
@@ -97,13 +102,29 @@ const levelTone: Record<string, StatusTone> = {
   debug: "neutral",
 };
 
-/** The development tab: hook timings, the live log and a hand-run hook. */
-export function PluginDevelop({ detail }: { detail: PluginDetail }) {
+/**
+ * What a plugin did: its calls since the gateway started, then its log, the
+ * newest first. Its days and, for whoever builds it, the timings of its
+ * calls and a hand run open on demand.
+ */
+export function PluginRunLog({
+  detail,
+  status,
+  statusError,
+  days,
+}: {
+  detail: PluginDetail;
+  status: PluginStatus | null;
+  statusError: string | null;
+  /** The plugin's own account of its days, when it keeps one. */
+  days?: ReactNode;
+}) {
   const t = useT();
   const [entries, setEntries] = useState<PluginJournalEntry[]>([]);
   const [timings, setTimings] = useState<PluginHookTiming[]>([]);
   const [breakers, setBreakers] = useState<PluginJournal["breakers"]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [view, setView] = useState<"log" | "days" | "tools">("log");
   const since = useRef(0);
 
   useEffect(() => {
@@ -138,9 +159,17 @@ export function PluginDevelop({ detail }: { detail: PluginDetail }) {
     };
   }, [detail.key, t]);
 
+  const views: Array<{ value: "log" | "days" | "tools"; label: string }> = [
+    { value: "log", label: t("plugins.develop.log") },
+    ...(days
+      ? [{ value: "days" as const, label: t("plugins.runLog.days") }]
+      : []),
+    { value: "tools", label: t("plugins.runLog.tools") },
+  ];
   return (
-    <div className="grid gap-5" data-testid="plugin-develop">
+    <div className="grid min-w-0 gap-4" data-testid="plugin-develop">
       {detail.development ? <DevelopmentBuild detail={detail} /> : null}
+      <RunNumbers status={status} statusError={statusError} />
       {error ? <FormMessage tone="error">{error}</FormMessage> : null}
       {breakers.map((breaker) => (
         <FormMessage
@@ -154,10 +183,117 @@ export function PluginDevelop({ detail }: { detail: PluginDetail }) {
           })}
         </FormMessage>
       ))}
-      <Timings timings={timings} />
-      <DryRun detail={detail} />
-      <Log entries={entries} onClear={() => setEntries([])} />
+      <div className="flex min-h-7 min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
+        <SegmentedControl
+          label={t("plugins.runLog.views")}
+          onValueChange={setView}
+          options={views}
+          value={view}
+          variant="line"
+        />
+        {view === "log" ? (
+          <HelpPopover label={t("plugins.develop.logHelpLabel")}>
+            {t("plugins.develop.logHelp")}
+          </HelpPopover>
+        ) : null}
+        <span className="flex-1" />
+        {view === "log" && entries.length > 0 ? (
+          <Button
+            onClick={() => setEntries([])}
+            size="xs"
+            type="button"
+            variant="ghost"
+          >
+            {t("plugins.develop.clear")}
+          </Button>
+        ) : null}
+      </div>
+      {view === "log" ? (
+        <Log entries={entries} />
+      ) : view === "days" ? (
+        days
+      ) : (
+        <div className="grid min-w-0 gap-5">
+          <Timings timings={timings} />
+          <DryRun detail={detail} />
+        </div>
+      )}
     </div>
+  );
+}
+
+/** The plugin's calls since the gateway started, and what went wrong. */
+function RunNumbers({
+  status,
+  statusError,
+}: {
+  status: PluginStatus | null;
+  statusError: string | null;
+}) {
+  const t = useT();
+  if (statusError) return <FormMessage tone="error">{statusError}</FormMessage>;
+  if (status === null) return <LoadingState label={t("plugins.loading")} />;
+  const failed = Object.values(status.failures).reduce(
+    (sum, count) => sum + count,
+    0,
+  );
+  const failures = Object.entries(status.failures).filter(
+    ([, count]) => count > 0,
+  );
+  const warn = (count: number) => (
+    <span className={count > 0 ? "text-warning-foreground" : undefined}>
+      {count}
+    </span>
+  );
+  return (
+    <Panel data-testid="plugin-status">
+      <MetricGroup className="grid-cols-2 @min-[640px]/workspace-surface:grid-cols-4">
+        <Metric
+          detail={t("plugins.runLog.sinceStart")}
+          label={t("plugins.status.calls")}
+          size="sm"
+          value={status.calls}
+        />
+        <Metric
+          detail={
+            failures.length > 0
+              ? failures
+                  .map(
+                    ([reason, count]) =>
+                      `${t(`plugins.status.reasons.${reason}`, {
+                        defaultValue: reason,
+                      })} ${count}`,
+                  )
+                  .join(" · ")
+              : undefined
+          }
+          label={t("plugins.status.failures")}
+          size="sm"
+          value={warn(failed)}
+        />
+        <Metric
+          detail={
+            status.memory_limits > 0
+              ? t("plugins.runLog.memoryLimits", {
+                  count: status.memory_limits,
+                })
+              : undefined
+          }
+          label={t("plugins.status.timeouts")}
+          size="sm"
+          value={warn(status.timeouts)}
+        />
+        <Metric
+          detail={t("plugins.status.networkDetail", {
+            denied: status.network.denied,
+            errors: status.network.errors,
+          })}
+          label={t("plugins.status.networkRequests")}
+          size="sm"
+          value={status.network.requests}
+        />
+      </MetricGroup>
+    </Panel>
   );
 }
 
@@ -409,47 +545,27 @@ function DryRunOutcome({ outcome }: { outcome: PluginDryRunResult }) {
   );
 }
 
-function Log({
-  entries,
-  onClear,
-}: {
-  entries: PluginJournalEntry[];
-  onClear: () => void;
-}) {
+function Log({ entries }: { entries: PluginJournalEntry[] }) {
   const t = useT();
-  return (
-    <section className="grid gap-2" data-testid="plugin-log">
-      <div className="flex items-center gap-1.5">
-        <h3 className="text-xs font-medium text-muted-foreground">
-          {t("plugins.develop.log")}
-        </h3>
-        <HelpPopover label={t("plugins.develop.logHelpLabel")}>
-          {t("plugins.develop.logHelp")}
-        </HelpPopover>
-        <span className="flex-1" />
-        {entries.length > 0 ? (
-          <Button onClick={onClear} size="xs" type="button" variant="ghost">
-            {t("plugins.develop.clear")}
-          </Button>
-        ) : null}
-      </div>
-      {entries.length === 0 ? (
-        <EmptyState className="py-6" title={t("plugins.develop.noLog")} />
-      ) : (
-        <ul className="divide-y border-y">
-          {[...entries].reverse().map((entry) => (
-            <LogLine entry={entry} key={entry.seq} />
-          ))}
-        </ul>
-      )}
-    </section>
+  return entries.length === 0 ? (
+    <div data-testid="plugin-log">
+      <EmptyState className="py-6" title={t("plugins.develop.noLog")} />
+    </div>
+  ) : (
+    <Panel asChild>
+      <ul className="divide-y" data-testid="plugin-log">
+        {[...entries].reverse().map((entry) => (
+          <LogLine entry={entry} key={entry.seq} />
+        ))}
+      </ul>
+    </Panel>
   );
 }
 
 function LogLine({ entry }: { entry: PluginJournalEntry }) {
   const t = useT();
   return (
-    <li className="grid gap-1 py-2 text-xs">
+    <li className="grid gap-1 px-3 py-2 text-xs">
       <div className="flex min-w-0 flex-wrap items-center gap-2">
         <time
           className="text-muted-foreground tabular-nums"

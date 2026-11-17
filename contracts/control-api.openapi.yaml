@@ -4594,9 +4594,25 @@ components:
         failed_requests those where one of its calls failed; a request the
         plugin only skipped counts in neither. tasks counts the tasks its
         providers took in the window and failed_tasks those that failed.
-      required: [plugin, requests, failed_requests, tasks, failed_tasks]
+        days splits the same counts by local day.
+      required: [plugin, requests, failed_requests, tasks, failed_tasks, days]
       properties:
         plugin: { type: string, minLength: 1, maxLength: 32 }
+        requests: { type: integer, minimum: 0 }
+        failed_requests: { type: integer, minimum: 0 }
+        tasks: { type: integer, minimum: 0 }
+        failed_tasks: { type: integer, minimum: 0 }
+        days:
+          type: array
+          description: Local days the plugin did something, oldest first.
+          items: { $ref: "#/components/schemas/UsagePluginDay" }
+    UsagePluginDay:
+      type: object
+      additionalProperties: false
+      description: One plugin's part in one local day of the window.
+      required: [date, requests, failed_requests, tasks, failed_tasks]
+      properties:
+        date: { type: string, format: date }
         requests: { type: integer, minimum: 0 }
         failed_requests: { type: integer, minimum: 0 }
         tasks: { type: integer, minimum: 0 }

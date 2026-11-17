@@ -179,9 +179,20 @@ export interface ServicePerformance {
  * acted on without failing and `failed_requests` those where one of its
  * calls failed; a request it only skipped counts in neither. `tasks` counts
  * the tasks its providers took and `failed_tasks` those that failed.
+ * `days` splits the counts by local day, oldest first, skipping idle days.
  */
 export interface UsagePluginGroup {
   plugin: string;
+  requests: number;
+  failed_requests: number;
+  tasks: number;
+  failed_tasks: number;
+  days?: UsagePluginDay[];
+}
+
+/** One plugin's part in one local day. */
+export interface UsagePluginDay {
+  date: string;
   requests: number;
   failed_requests: number;
   tasks: number;
@@ -620,7 +631,7 @@ export function aggregateUsageRecords(
       status === "failed",
       false,
     );
-    addPluginRecords(pluginMap, record.plugin_records ?? []);
+    addPluginRecords(pluginMap, record.plugin_records ?? [], day?.date);
 
     if (status === "failed") {
       totals.failed_requests += 1;
@@ -960,6 +971,7 @@ function addUsageGroup(
 function addPluginRecords(
   groups: Map<string, UsagePluginGroup>,
   records: NonNullable<RequestRecord["plugin_records"]>,
+  date: string | undefined,
 ): void {
   const acted = new Map<string, boolean>();
   for (const record of records) {
@@ -978,11 +990,28 @@ function addPluginRecords(
         failed_requests: 0,
         tasks: 0,
         failed_tasks: 0,
+        days: [],
       };
       groups.set(plugin, group);
     }
     if (failed) group.failed_requests += 1;
     else group.requests += 1;
+    if (date === undefined) continue;
+    const days = (group.days ??= []);
+    let day = days.find((entry) => entry.date === date);
+    if (!day) {
+      day = {
+        date,
+        requests: 0,
+        failed_requests: 0,
+        tasks: 0,
+        failed_tasks: 0,
+      };
+      days.push(day);
+      days.sort((left, right) => left.date.localeCompare(right.date));
+    }
+    if (failed) day.failed_requests += 1;
+    else day.requests += 1;
   }
 }
 

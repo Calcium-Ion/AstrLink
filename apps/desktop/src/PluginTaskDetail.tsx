@@ -4,12 +4,13 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { EmptyState } from "@/components/EmptyState";
 import { ExternalLink } from "@/components/ExternalLink";
 import { FormMessage } from "@/components/FormMessage";
+import { HelpDisclosure } from "@/components/HelpDisclosure";
 import { IconButton } from "@/components/IconButton";
-import { Plus, RefreshCw, SquareStack } from "@/components/icons";
+import { ChevronRight, Plus, RefreshCw, SquareStack } from "@/components/icons";
 import { LoadingState } from "@/components/LoadingState";
-import { Metric, MetricGroup } from "@/components/Metric";
-import { Panel } from "@/components/Panel";
+import { Panel, PanelHeader } from "@/components/Panel";
 import { StatusBadge } from "@/components/StatusBadge";
+import { StatusDot } from "@/components/StatusDot";
 import { Button } from "@/components/ui/button";
 
 import { clearPluginTasks, listPluginTasks } from "./bridge";
@@ -43,7 +44,7 @@ function Section({
   testId?: string;
 }) {
   return (
-    <section className="grid min-w-0 gap-2" data-testid={testId}>
+    <section className="grid min-w-0 content-start gap-2" data-testid={testId}>
       <div className="flex min-h-7 items-center justify-between gap-2">
         <h3 className="text-xs font-medium text-muted-foreground">{title}</h3>
         {actions}
@@ -53,36 +54,164 @@ function Section({
   );
 }
 
-/** The providers bound to a task plugin, from the providers page. */
+/** The providers that run a plugin, from the providers page. */
 function boundProviders(services: Service[], key: string): Service[] {
   return services.filter(
-    (service) =>
-      service.kind === "plugin" &&
-      service.plugin?.key === key &&
-      service.plugin.provider === "task",
+    (service) => service.kind === "plugin" && service.plugin?.key === key,
   );
 }
 
 /**
- * A task plugin's overview: its numbers, what it is, the endpoints clients
- * reach it on, its models and the providers that run it.
+ * The overview of a plugin that serves providers: what it is, the providers
+ * that run it, a task plugin's latest tasks, the models and endpoints it
+ * offers, how it ran over the last days and, behind a disclosure, how it
+ * connects.
  */
-export function TaskPluginOverview({
+export function ProviderPluginOverview({
   detail,
-  task,
   services,
+  health,
   onAddProvider,
   onOpenProvider,
+  onAllTasks,
 }: {
   detail: PluginDetail;
-  task: PluginTask;
   services: Service[];
+  /** The plugin's last days. */
+  health?: React.ReactNode;
   /** Opens the editor of a new provider of this plugin; absent where there is none. */
   onAddProvider?: () => void;
   onOpenProvider?: (id: string) => void;
+  /** Shows every task, on the tasks tab. */
+  onAllTasks?: () => void;
 }) {
   const t = useT();
+  const task = detail.task;
   const providers = boundProviders(services, detail.key);
+  const models = task?.models ?? [
+    ...new Set((detail.providers ?? []).flatMap((item) => item.models ?? [])),
+  ];
+  const description =
+    task?.description ?? detail.request?.description ?? detail.notice;
+  const about = task ? taskAbout(task, t) : [];
+  return (
+    <div
+      className="@container/overview grid min-w-0 gap-4"
+      data-testid="plugin-task-overview"
+    >
+      {description ? (
+        <p className="text-sm leading-6 text-text-secondary">{description}</p>
+      ) : null}
+      <Panel data-testid="plugin-task-providers">
+        <PanelHeader
+          actions={
+            onAddProvider && detail.enabled ? (
+              <Button
+                onClick={onAddProvider}
+                size="xs"
+                type="button"
+                variant="outline"
+              >
+                <Plus />
+                {t("plugins.task.addProvider")}
+              </Button>
+            ) : null
+          }
+          size="sm"
+        >
+          <h3 className="text-xs font-semibold">
+            {t("plugins.task.providers")}
+            {providers.length > 0 ? (
+              <span className="ml-1.5 font-normal text-muted-foreground tabular-nums">
+                {providers.length}
+              </span>
+            ) : null}
+          </h3>
+        </PanelHeader>
+        {providers.length === 0 ? (
+          <p className="px-3 py-3 text-xs text-muted-foreground">
+            {detail.enabled
+              ? t("plugins.task.noProviders")
+              : t("plugins.task.enableFirst")}
+          </p>
+        ) : (
+          <ul className="divide-y text-xs">
+            {providers.map((service) => (
+              <li key={service.id}>
+                <Button
+                  className="grid h-auto w-full min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-none px-3 py-2 text-left font-normal whitespace-normal text-foreground hover:bg-muted/40 focus-visible:bg-accent focus-visible:ring-inset"
+                  disabled={!onOpenProvider}
+                  onClick={() => onOpenProvider?.(service.id)}
+                  type="button"
+                  variant="ghost"
+                >
+                  <StatusDot
+                    label={
+                      service.enabled
+                        ? t("plugins.task.providerOn")
+                        : t("plugins.task.providerOff")
+                    }
+                    tone={service.enabled ? "positive" : "neutral"}
+                  />
+                  <span className="grid min-w-0 gap-0.5">
+                    <span className="truncate text-sm font-medium">
+                      {service.name}
+                    </span>
+                    <span className="truncate font-mono text-micro text-muted-foreground">
+                      {service.http?.base_url || t("plugins.task.noBaseUrl")}
+                    </span>
+                  </span>
+                  <span className="flex items-center gap-2 text-micro text-muted-foreground">
+                    {t("plugins.market.models", {
+                      count: service.models.length,
+                    })}
+                    <ChevronRight aria-hidden="true" className="size-3.5" />
+                  </span>
+                </Button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Panel>
+      {task ? <RecentTasks onAll={onAllTasks} pluginKey={detail.key} /> : null}
+      {models.length > 0 || task ? (
+        <div className="grid min-w-0 gap-4 @[720px]/overview:grid-cols-2">
+          {models.length > 0 ? (
+            <Section
+              title={t("plugins.market.models", { count: models.length })}
+            >
+              <ModelChips models={models} />
+            </Section>
+          ) : null}
+          {task ? (
+            <Section title={t("plugins.task.endpoints")}>
+              <TaskEndpoints protocols={task.protocols} routes={task.routes} />
+            </Section>
+          ) : null}
+        </div>
+      ) : null}
+      {health}
+      {about.length > 0 ? (
+        <HelpDisclosure title={t("plugins.task.about")}>
+          <dl className="grid grid-cols-[7rem_minmax(0,1fr)] gap-x-4 gap-y-2 text-xs text-foreground">
+            {about.map((item) => (
+              <div className="contents" key={item.label}>
+                <dt className="text-muted-foreground">{item.label}</dt>
+                <dd className="min-w-0 break-words">{item.value}</dd>
+              </div>
+            ))}
+          </dl>
+        </HelpDisclosure>
+      ) : null}
+    </div>
+  );
+}
+
+/** How a task plugin connects, for the disclosure under its overview. */
+function taskAbout(
+  task: PluginTask,
+  t: ReturnType<typeof useT>,
+): Array<{ label: string; value: React.ReactNode }> {
   const about: Array<{ label: string; value: React.ReactNode }> = [];
   if (task.author)
     about.push({
@@ -129,117 +258,103 @@ export function TaskPluginOverview({
       label: t("plugins.task.allowedHosts"),
       value: <span className="font-mono">{task.allowed_hosts.join(", ")}</span>,
     });
+  return about;
+}
+
+/** A task plugin's three latest tasks, with the way to all of them. */
+function RecentTasks({
+  pluginKey,
+  onAll,
+}: {
+  pluginKey: string;
+  onAll?: () => void;
+}) {
+  const t = useT();
+  const [items, setItems] = useState<PluginTaskRecord[] | null>(null);
+  useEffect(() => {
+    let live = true;
+    listPluginTasks(pluginKey)
+      .then((page) => {
+        if (live) setItems(page.items.slice(0, 3));
+      })
+      .catch(() => {
+        if (live) setItems([]);
+      });
+    return () => {
+      live = false;
+    };
+  }, [pluginKey]);
+  if (!items || items.length === 0) return null;
+  const now = Date.now();
   return (
-    <div
-      className="@container/overview grid min-w-0 gap-5"
-      data-testid="plugin-task-overview"
-    >
-      <Panel>
-        <MetricGroup className="grid-cols-2 @[560px]/overview:grid-cols-4">
-          <Metric
-            label={t("plugins.task.metrics.models")}
-            size="sm"
-            value={task.models.length}
-          />
-          <Metric
-            label={t("plugins.task.metrics.running")}
-            size="sm"
-            value={detail.running_tasks ?? 0}
-          />
-          <Metric
-            label={t("plugins.task.metrics.tasks")}
-            size="sm"
-            value={detail.tasks ?? 0}
-          />
-          <Metric
-            label={t("plugins.task.metrics.providers")}
-            size="sm"
-            value={providers.length}
-          />
-        </MetricGroup>
-      </Panel>
-      {task.description ? (
-        <p className="text-sm leading-6 text-text-secondary">
-          {task.description}
-        </p>
-      ) : null}
-      <Section
-        title={t("plugins.task.providers")}
-        testId="plugin-task-providers"
+    <Panel data-testid="plugin-recent-tasks">
+      <PanelHeader
         actions={
-          onAddProvider && detail.enabled ? (
-            <Button
-              onClick={onAddProvider}
-              size="xs"
-              type="button"
-              variant="outline"
-            >
-              <Plus />
-              {t("plugins.task.addProvider")}
+          onAll ? (
+            <Button onClick={onAll} size="xs" type="button" variant="ghost">
+              {t("plugins.task.allTasks")}
+              <ChevronRight aria-hidden="true" />
             </Button>
           ) : null
         }
+        size="sm"
       >
-        {providers.length === 0 ? (
-          <p className="text-xs text-muted-foreground">
-            {detail.enabled
-              ? t("plugins.task.noProviders")
-              : t("plugins.task.enableFirst")}
-          </p>
-        ) : (
-          <ul className="grid divide-y overflow-hidden rounded-md border text-xs">
-            {providers.map((service) => (
-              <li key={service.id}>
-                <Button
-                  className="grid h-auto w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-none px-3 py-2 text-left font-normal whitespace-normal text-foreground hover:bg-muted/60 focus-visible:bg-accent focus-visible:ring-inset"
-                  disabled={!onOpenProvider}
-                  onClick={() => onOpenProvider?.(service.id)}
-                  type="button"
-                  variant="ghost"
-                >
-                  <span className="grid min-w-0 gap-0.5">
-                    <span className="truncate font-medium">{service.name}</span>
-                    <span className="truncate font-mono text-micro text-muted-foreground">
-                      {service.http?.base_url || t("plugins.task.noBaseUrl")}
-                    </span>
-                  </span>
-                  <span className="flex items-center gap-2 text-micro text-muted-foreground">
-                    {t("plugins.market.models", {
-                      count: service.models.length,
-                    })}
-                    <StatusBadge
-                      tone={service.enabled ? "positive" : "neutral"}
-                    >
-                      {service.enabled
-                        ? t("plugins.task.providerOn")
-                        : t("plugins.task.providerOff")}
-                    </StatusBadge>
-                  </span>
-                </Button>
-              </li>
-            ))}
-          </ul>
-        )}
-      </Section>
-      <Section title={t("plugins.task.endpoints")}>
-        <TaskEndpoints protocols={task.protocols} routes={task.routes} />
-      </Section>
-      <Section
-        title={t("plugins.market.models", { count: task.models.length })}
+        <h3 className="text-xs font-semibold">{t("plugins.task.recent")}</h3>
+      </PanelHeader>
+      <ul className="divide-y">
+        {items.map((task) => (
+          <TaskRow key={task.id} now={now} task={task} />
+        ))}
+      </ul>
+    </Panel>
+  );
+}
+
+/** One task: its state, model and what it reported, and when and how long. */
+function TaskRow({ task, now }: { task: PluginTaskRecord; now: number }) {
+  const t = useT();
+  return (
+    <li
+      className="grid min-w-0 grid-cols-[5.5rem_minmax(0,1fr)_auto] items-start gap-x-3 gap-y-1 px-3 py-2.5 text-xs"
+      data-testid="plugin-task-row"
+    >
+      <StatusBadge
+        className="justify-self-start"
+        tone={taskStatusTone(task.status)}
       >
-        <ModelChips models={task.models} />
-      </Section>
-      <Section title={t("plugins.task.about")}>
-        <dl className="grid grid-cols-[7rem_minmax(0,1fr)] gap-x-4 gap-y-2 text-xs">
-          {about.map((item) => (
-            <div className="contents" key={item.label}>
-              <dt className="text-muted-foreground">{item.label}</dt>
-              <dd className="min-w-0 break-words">{item.value}</dd>
-            </div>
-          ))}
-        </dl>
-      </Section>
-    </div>
+        {taskStatusLabel(task.status, t)}
+        {task.status === "IN_PROGRESS" && task.progress
+          ? ` ${task.progress}`
+          : ""}
+      </StatusBadge>
+      <span className="grid min-w-0 gap-0.5">
+        <span className="flex min-w-0 items-center gap-2">
+          <span className="truncate font-medium">{task.model}</span>
+          <span className="shrink-0 text-micro text-muted-foreground">
+            {taskSurfaceLabel(task.surface, t)}
+            {task.action ? ` · ${task.action}` : ""}
+          </span>
+        </span>
+        {task.fail_reason ? (
+          <span className="break-words text-micro text-danger-foreground">
+            {task.fail_reason}
+          </span>
+        ) : factsText(task.usage) ? (
+          <span className="truncate text-micro text-muted-foreground">
+            {factsText(task.usage)}
+          </span>
+        ) : null}
+      </span>
+      <span className="grid justify-items-end gap-0.5 text-micro text-muted-foreground tabular-nums">
+        <time
+          dateTime={task.created_at}
+          title={formatDateTime(task.created_at)}
+        >
+          {formatMoment(task.created_at)}
+        </time>
+        <span>{taskDuration(task, now)}</span>
+      </span>
+    </li>
   );
 }
 
@@ -367,52 +482,13 @@ export function TaskPluginTasks({ pluginKey }: { pluginKey: string }) {
           title={t("plugins.task.noTasks")}
         />
       ) : (
-        <ul className="grid divide-y overflow-hidden rounded-md border">
-          {items.map((task) => (
-            <li
-              className="grid min-w-0 grid-cols-[5.5rem_minmax(0,1fr)_auto] items-start gap-x-3 gap-y-1 px-3 py-2.5 text-xs"
-              data-testid="plugin-task-row"
-              key={task.id}
-            >
-              <StatusBadge
-                className="justify-self-start"
-                tone={taskStatusTone(task.status)}
-              >
-                {taskStatusLabel(task.status, t)}
-                {task.status === "IN_PROGRESS" && task.progress
-                  ? ` ${task.progress}`
-                  : ""}
-              </StatusBadge>
-              <span className="grid min-w-0 gap-0.5">
-                <span className="flex min-w-0 items-center gap-2">
-                  <span className="truncate font-medium">{task.model}</span>
-                  <span className="shrink-0 text-micro text-muted-foreground">
-                    {taskSurfaceLabel(task.surface, t)}
-                    {task.action ? ` · ${task.action}` : ""}
-                  </span>
-                </span>
-                {task.fail_reason ? (
-                  <span className="break-words text-micro text-danger-foreground">
-                    {task.fail_reason}
-                  </span>
-                ) : factsText(task.usage) ? (
-                  <span className="truncate text-micro text-muted-foreground">
-                    {factsText(task.usage)}
-                  </span>
-                ) : null}
-              </span>
-              <span className="grid justify-items-end gap-0.5 text-micro text-muted-foreground tabular-nums">
-                <time
-                  dateTime={task.created_at}
-                  title={formatDateTime(task.created_at)}
-                >
-                  {formatMoment(task.created_at)}
-                </time>
-                <span>{taskDuration(task, now)}</span>
-              </span>
-            </li>
-          ))}
-        </ul>
+        <Panel asChild>
+          <ul className="divide-y">
+            {items.map((task) => (
+              <TaskRow key={task.id} now={now} task={task} />
+            ))}
+          </ul>
+        </Panel>
       )}
       {next ? (
         <Button

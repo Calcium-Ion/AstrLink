@@ -4846,8 +4846,8 @@
     "statusFailed": "无法加载插件的运行状态。",
     "saveFailed": "无法保存修改。",
     "testFailed": "测试连接没有运行。",
-    "empty": "还没有插件",
-    "emptyHint": "把插件放进插件目录，再重新扫描。",
+    "empty": "还没有安装插件",
+    "emptyHint": "插件可以接入新的模型服务、检查请求，或者给 AstrLink 加上新功能。",
     "select": "选择一个插件",
     "rescan": "重新扫描",
     "rescanning": "正在扫描…",
@@ -4875,9 +4875,8 @@
     "tabs": {
       "overview": "概览",
       "settings": "设置",
-      "status": "运行状态",
-      "develop": "开发",
-      "tasks": "任务"
+      "tasks": "任务",
+      "log": "运行记录"
     },
     "testStatus": {
       "ok": "连接正常",
@@ -5040,8 +5039,8 @@
       "pause": "暂停所有插件",
       "pauseHelp": "暂停期间所有插件都不运行：不装载、不询问、不写入，请求原样发出。每轮第一个请求的记录里会写明原因。恢复后照常工作。",
       "pausedNotice": "所有插件已暂停，请求原样发出。",
-      "budget": "注入总预算",
-      "budgetHelp": "所有插件往一次请求里注入的内容合计不超过这么多。超出时按插件顺序丢掉后面插件的块，请求记录里写明「超出注入总预算」。",
+      "budget": "插件加的内容上限",
+      "budgetHelp": "所有插件往一次请求里加的内容合计不超过这么多。超出时按处理顺序丢掉后面插件加的内容，请求记录里写明原因。",
       "budgetValue": "{{value}} KB",
       "saveFailed": "无法保存插件的总设置。",
       "open": "插件设置",
@@ -5327,12 +5326,12 @@
     },
     "order": {
       "open": "调整顺序",
-      "title": "插件的执行顺序",
+      "title": "处理顺序",
       "description": "同一个扩展点上，插件从上到下依次执行，每个插件拿到上一个插件的结果。"
     },
     "install": {
-      "open": "安装插件",
-      "title": "安装插件",
+      "open": "从 GitHub 安装",
+      "title": "从 GitHub 安装",
       "helpLabel": "关于从 GitHub 安装",
       "helpLinks": "可以粘贴仓库首页（装最新的版本标签，没有标签就装默认分支）、tree/ 下的分支、标签或目录、Release 或提交的链接。暂不支持私有仓库。",
       "helpBuild": "AstrLink 在本机按锁文件从 npm 下载依赖，逐个核对锁文件里的哈希，再用内置的构建器打包，不运行任何安装脚本；带原生模块的依赖用不了。",
@@ -5435,12 +5434,6 @@
         "busy": "正在构建另一个插件，请稍后再试。",
         "unknown": "无法安装（{{reason}}）。"
       },
-      "sourceLabel": "安装来源",
-      "sources": {
-        "github": "GitHub",
-        "market": "插件市场"
-      },
-      "backToMarket": "换一个插件",
       "marketRef": "版本 {{version}} · 已校验",
       "directorySource": "插件目录里原来的版本",
       "groups": {
@@ -5454,7 +5447,9 @@
       "requestKind": "请求处理插件",
       "keyHosts": "密钥只发往",
       "highRisk": "申请了高风险能力：{{capability}}",
-      "changelog": "更新记录"
+      "changelog": "更新记录",
+      "marketTitle": "从插件市场安装",
+      "updateTo": "更新到 {{version}}"
     },
     "ui": {
       "switch": "插件界面",
@@ -5476,25 +5471,33 @@
     "countLabel_other": "{{count}} 个插件",
     "metrics": {
       "label": "插件概况",
-      "installed": "已安装",
-      "running": "运行中",
+      "running": "启用中",
       "calls": "调用（本次启动后）",
-      "recentCalls": "近 30 天处理的请求",
-      "tasks": "进行中的任务",
-      "problems": "问题",
-      "callCount_one": "{{count}} 次调用",
-      "callCount_other": "{{count}} 次调用"
+      "recentCalls": "近 7 天处理",
+      "tasks": "生成中的任务",
+      "recentFailures": "近 7 天出错",
+      "failures": "出错（本次启动后）",
+      "installedCount_one": "共 {{count}} 个",
+      "installedCount_other": "共 {{count}} 个",
+      "failedCount_one": "{{count}} 个没能加载",
+      "failedCount_other": "{{count}} 个没能加载",
+      "allTasks_one": "共 {{count}} 个",
+      "allTasks_other": "共 {{count}} 个"
     },
     "list": {
-      "tabs": "插件页签",
+      "tabs": "插件",
       "installed": "已安装",
       "market": "插件市场",
-      "develop": "开发",
       "browseMarket": "去插件市场看看"
     },
     "groups": {
-      "providers": "供应商插件",
-      "extensions": "增强插件"
+      "providers": "提供商",
+      "extensions": "功能扩展",
+      "requests": "请求检查",
+      "helpLabel": "关于「{{group}}」",
+      "providersHelp": "接入新的模型服务，或者视频、图片生成。在提供商页添加成提供商、填上密钥后，客户端才会用上它。",
+      "requestsHelp": "按规则检查经过网关的请求和回复，可以拦下或改写。每条规则单独设置适用的模型。",
+      "extensionsHelp": "在请求经过网关时做额外的事：给会话加上记忆或上下文、改写请求，或者记下发生了什么。"
     },
     "market": {
       "failed": "无法读取插件市场。",
@@ -5619,77 +5622,33 @@
       "clearFailed": "无法清除任务。",
       "tasksFailed": "无法读取任务。",
       "noTasks": "还没有任务",
-      "loadMore": "加载更多"
+      "loadMore": "加载更多",
+      "allTasks": "全部任务",
+      "recent": "最近的任务"
     },
     "developHome": {
       "commands": "命令行",
-      "builds": "本机项目构建的插件",
-      "noBuilds": "还没有。在插件项目里运行 astrlink plugin dev，插件会出现在这里并随改动重新加载。",
       "command": {
         "new": "从模板新建插件项目",
         "dev": "监听改动、构建并装进本机 AstrLink，实时输出日志",
         "check": "构建并检查清单、能力和不该用的 API",
         "test": "按 tests/ 里的用例跑钩子",
         "build": "构建出 plugin.js 和 client.js"
-      }
+      },
+      "title": "开发插件"
     },
     "directoryPath": "路径",
     "search": "搜索插件或模型",
-    "view": {
-      "label": "插件的显示方式",
-      "map": "星图",
-      "list": "列表"
-    },
-    "map": {
-      "label": "插件星图",
-      "hubRunning": "网关运行中",
-      "helpLabel": "关于{{kind}}",
-      "enhancersHelp": "增强插件在网关处理请求的过程中起作用：给会话装载上下文、改写请求和回复、决定走哪个提供商，或者记下发生了什么。请求从这一侧进入网关。行星越大，近 30 天用得越多。",
-      "providersHelp": "供应商插件把网关接到上游：转接对话接口，或者接入视频、图片、音乐生成。在提供商页把它添加成提供商、填上密钥后，客户端才会用上它。行星越大，近 30 天用得越多；绕着它转的卫星是用它的提供商。",
-      "addEnhancer": "从 GitHub 安装",
-      "addProvider": "去插件市场",
-      "providers_one": "{{count}} 个提供商在用",
-      "providers_other": "{{count}} 个提供商在用",
-      "noProviders": "还没有提供商在用"
-    },
-    "star": {
-      "callCount_one": "{{value}} 次",
-      "callCount_other": "{{value}} 次",
-      "taskCount_one": "{{value}} 个任务",
-      "taskCount_other": "{{value}} 个任务",
-      "open": "{{name}}，{{fact}}，打开插件",
-      "more_one": "还有 {{count}} 个",
-      "more_other": "还有 {{count}} 个",
-      "calls": "处理的请求",
-      "providers": "使用它的提供商",
-      "served": "提供商的请求",
-      "tasks": "生成任务",
-      "failedTasks": "失败的任务",
-      "kind": {
-        "enhancer": "增强插件",
-        "provider": "供应商插件"
-      },
-      "state": {
-        "running": "运行中",
-        "failing": "运行中，有失败",
-        "off": "已停用",
-        "failed": "加载失败"
-      },
-      "failed": "失败",
-      "times": "{{value}} 次",
-      "window": "近 30 天：处理 {{requests}} 次请求，生成 {{tasks}} 个任务",
-      "showList": "在列表中查看全部插件"
-    },
     "requestPlugins": {
-      "title": "请求处理实例",
-      "add": "添加实例",
-      "addTitle": "添加请求处理实例",
-      "editTitle": "编辑请求处理实例",
+      "title": "规则",
+      "add": "添加规则",
+      "addTitle": "添加规则",
+      "editTitle": "编辑规则",
       "edit": "编辑",
       "remove": "删除",
-      "removeTitle": "删除这个实例？",
+      "removeTitle": "删除这条规则？",
       "removeConfirm": "删除「{{name}}」后，它不再检查请求。插件本身不会卸载。",
-      "empty": "还没有实例。添加一个实例后，它才会检查请求。",
+      "empty": "还没有规则。添加一条规则后，它才会检查请求。",
       "enabled": "启用",
       "name": "名称",
       "models": "限定模型",
@@ -5698,15 +5657,15 @@
       "config": "配置",
       "keywords": "每行一个关键词",
       "invalidJSON": "这里要填 JSON，格式不对。",
-      "loadFailed": "读取请求处理实例失败。",
-      "saveFailed": "保存请求处理实例失败。",
+      "loadFailed": "读取规则失败。",
+      "saveFailed": "保存规则失败。",
       "stages": {
-        "ingress": "入口检查",
+        "ingress": "收到请求",
         "request": "请求设置",
-        "outbound": "出站改写",
-        "egress": "发送前检查",
-        "reply": "回复检查",
-        "report": "请求上报"
+        "outbound": "发出前改写",
+        "egress": "发出前",
+        "reply": "回复返回前",
+        "report": "请求结束后"
       },
       "dryRun": "试运行",
       "sample": "插件自带的示例",
@@ -5726,6 +5685,38 @@
         "claude": "Claude Messages",
         "gemini": "Gemini"
       }
+    },
+    "health": {
+      "tasks": "生成任务",
+      "failedTasks": "失败的任务",
+      "requests": "处理的请求",
+      "checked": "检查的请求",
+      "failedRequests": "出错",
+      "helpLabel": "关于运行情况",
+      "help": "最近 7 天，按本机的请求记录和任务汇总。小柱是每天的数，最右一根是今天。"
+    },
+    "row": {
+      "enable": "启用「{{name}}」",
+      "failed": "没能加载：{{reason}}",
+      "failures_one": "{{count}} 次出错",
+      "failures_other": "{{count}} 次出错",
+      "noProviders": "还没有提供商使用",
+      "providers_one": "{{count}} 个提供商",
+      "providers_other": "{{count}} 个提供商",
+      "recent_one": "近 7 天 {{count}} 次",
+      "recent_other": "近 7 天 {{count}} 次",
+      "reload": "重新加载",
+      "times_one": "{{count}} 次",
+      "times_other": "{{count}} 次",
+      "trend": "近 7 天每天处理的次数"
+    },
+    "runLog": {
+      "days": "按天统计",
+      "tools": "开发者工具",
+      "views": "运行记录",
+      "sinceStart": "本次启动后",
+      "memoryLimits_one": "内存超限 {{count}} 次",
+      "memoryLimits_other": "内存超限 {{count}} 次"
     }
   },
   "pluginRecords": {

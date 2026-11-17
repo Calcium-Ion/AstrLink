@@ -4847,7 +4847,7 @@
     "saveFailed": "変更を保存できませんでした。",
     "testFailed": "接続テストを実行できませんでした。",
     "empty": "プラグインはまだありません",
-    "emptyHint": "プラグインをプラグインディレクトリに置いて、再スキャンしてください。",
+    "emptyHint": "プラグインで新しいモデルサービスをつないだり、リクエストをチェックしたり、AstrLink に機能を加えたりできます。",
     "select": "プラグインを選んでください",
     "rescan": "再スキャン",
     "rescanning": "スキャン中…",
@@ -4875,9 +4875,8 @@
     "tabs": {
       "overview": "概要",
       "settings": "設定",
-      "status": "稼働状況",
-      "develop": "開発",
-      "tasks": "タスク"
+      "tasks": "タスク",
+      "log": "実行記録"
     },
     "testStatus": {
       "ok": "接続 OK",
@@ -5040,8 +5039,8 @@
       "pause": "すべてのプラグインを一時停止",
       "pauseHelp": "一時停止中はどのプラグインも動きません。読み込み・確認・書き込みを行わず、リクエストはそのまま送られます。各ターン最初のリクエストの記録に理由が残ります。再開すると元どおり動きます。",
       "pausedNotice": "すべてのプラグインを一時停止中です。リクエストはそのまま送られます。",
-      "budget": "注入の上限",
-      "budgetHelp": "すべてのプラグインが 1 回のリクエストに追加できる内容の合計です。超えた場合、順番が後のプラグインのブロックは入らず、リクエスト記録に「注入の上限を超過」と残ります。",
+      "budget": "プラグインが加える内容の上限",
+      "budgetHelp": "すべてのプラグインが 1 回のリクエストに加える内容の合計がこれを超えないようにします。超えた分は処理順で後のプラグインのものから外し、リクエスト記録に理由を書きます。",
       "budgetValue": "{{value}} KB",
       "saveFailed": "プラグイン全体の設定を保存できませんでした。",
       "open": "プラグイン設定",
@@ -5327,12 +5326,12 @@
     },
     "order": {
       "open": "順序を変更",
-      "title": "プラグインの実行順序",
+      "title": "処理の順序",
       "description": "各拡張ポイントでプラグインは上から順に実行され、それぞれが上のプラグインの結果を受け取ります。"
     },
     "install": {
-      "open": "プラグインをインストール",
-      "title": "プラグインをインストール",
+      "open": "GitHub からインストール",
+      "title": "GitHub からインストール",
       "helpLabel": "GitHub からのインストールについて",
       "helpLinks": "リポジトリのトップ（最新のバージョンタグ、タグがなければデフォルトブランチをインストール）、tree/ 以下のブランチ・タグ・ディレクトリ、リリース、コミットのリンクを貼り付けられます。プライベートリポジトリはまだ対応していません。",
       "helpBuild": "AstrLink はこのコンピューターでロックファイルが固定する依存を npm からダウンロードし、ロックファイルのハッシュと 1 つずつ照合してから、内蔵のバンドラーでビルドします。インストールスクリプトは一切実行しません。ネイティブモジュールを含む依存は使えません。",
@@ -5435,12 +5434,6 @@
         "busy": "別のプラグインをビルドしています。少し待ってから再試行してください。",
         "unknown": "インストールできませんでした（{{reason}}）。"
       },
-      "sourceLabel": "インストール元",
-      "sources": {
-        "github": "GitHub",
-        "market": "マーケットプレイス"
-      },
-      "backToMarket": "ほかを選ぶ",
       "marketRef": "バージョン {{version}} · 検証済み",
       "directorySource": "プラグインディレクトリにあった版",
       "groups": {
@@ -5454,7 +5447,9 @@
       "requestKind": "リクエスト処理プラグイン",
       "keyHosts": "キーの送信先",
       "highRisk": "高リスクの権限を要求：{{capability}}",
-      "changelog": "更新履歴"
+      "changelog": "更新履歴",
+      "marketTitle": "マーケットからインストール",
+      "updateTo": "{{version}} に更新"
     },
     "ui": {
       "switch": "プラグインの画面",
@@ -5476,25 +5471,33 @@
     "countLabel_other": "{{count}} 個のプラグイン",
     "metrics": {
       "label": "プラグインの概況",
-      "installed": "インストール済み",
-      "running": "実行中",
+      "running": "有効",
       "calls": "起動後の呼び出し",
-      "recentCalls": "過去 30 日の処理リクエスト",
-      "tasks": "実行中のタスク",
-      "problems": "問題",
-      "callCount_one": "{{count}} 回の呼び出し",
-      "callCount_other": "{{count}} 回の呼び出し"
+      "recentCalls": "7 日間の処理",
+      "tasks": "生成中のタスク",
+      "recentFailures": "7 日間のエラー",
+      "failures": "起動後のエラー",
+      "installedCount_one": "全 {{count}} 個",
+      "installedCount_other": "全 {{count}} 個",
+      "failedCount_one": "{{count}} 個が読み込めず",
+      "failedCount_other": "{{count}} 個が読み込めず",
+      "allTasks_one": "全 {{count}} 件",
+      "allTasks_other": "全 {{count}} 件"
     },
     "list": {
-      "tabs": "プラグインのセクション",
+      "tabs": "プラグイン",
       "installed": "インストール済み",
       "market": "マーケットプレイス",
-      "develop": "開発",
       "browseMarket": "マーケットプレイスを見る"
     },
     "groups": {
-      "providers": "プロバイダープラグイン",
-      "extensions": "拡張プラグイン"
+      "providers": "プロバイダー",
+      "extensions": "機能拡張",
+      "requests": "リクエストチェック",
+      "helpLabel": "「{{group}}」について",
+      "providersHelp": "新しいモデルサービスや、動画・画像生成をつなぎます。プロバイダーページで追加してキーを入れると、クライアントが使えます。",
+      "requestsHelp": "ゲートウェイを通るリクエストと応答をルールでチェックし、止めたり書き換えたりします。ルールごとに対象モデルを選べます。",
+      "extensionsHelp": "リクエストがゲートウェイを通るときに追加の処理をします。セッションに記憶や文脈を加える、リクエストを書き換える、起きたことを記録するなど。"
     },
     "market": {
       "failed": "マーケットプレイスを読み込めませんでした。",
@@ -5619,77 +5622,33 @@
       "clearFailed": "タスクを消去できませんでした。",
       "tasksFailed": "タスクを読み込めませんでした。",
       "noTasks": "タスクはまだありません",
-      "loadMore": "さらに読み込む"
+      "loadMore": "さらに読み込む",
+      "allTasks": "すべてのタスク",
+      "recent": "最近のタスク"
     },
     "developHome": {
       "commands": "コマンドライン",
-      "builds": "このコンピューターのプロジェクトからビルドしたプラグイン",
-      "noBuilds": "まだありません。プラグインのプロジェクトで astrlink plugin dev を実行すると、ここに表示され、変更のたびに再読み込みされます。",
       "command": {
         "new": "テンプレートからプラグインプロジェクトを作成",
         "dev": "変更を監視してビルドし、このコンピューターの AstrLink に入れてログを表示",
         "check": "ビルドしてマニフェスト・権限・API を確認",
         "test": "tests/ のケースでフックを実行",
         "build": "plugin.js と client.js をビルド"
-      }
+      },
+      "title": "プラグインを開発"
     },
     "directoryPath": "パス",
     "search": "プラグインやモデルを検索",
-    "view": {
-      "label": "プラグインの表示",
-      "map": "スターマップ",
-      "list": "リスト"
-    },
-    "map": {
-      "label": "プラグインのスターマップ",
-      "hubRunning": "ゲートウェイ稼働中",
-      "helpLabel": "{{kind}}について",
-      "enhancersHelp": "拡張プラグインはゲートウェイがリクエストを処理する途中で働きます。セッションへのコンテキストの読み込み、リクエストと応答の書き換え、プロバイダーの選択、出来事の記録などを行います。リクエストはこちら側からゲートウェイに入ります。惑星が大きいほど、過去 30 日によく使われています。",
-      "providersHelp": "プロバイダープラグインはゲートウェイを上流につなぎます。チャット API を中継したり、動画・画像・音楽の生成を取り込んだりします。プロバイダー画面でプロバイダーとして追加し、キーを設定するとクライアントから使えます。惑星が大きいほど、過去 30 日によく使われています。周りを回る衛星は、それを使っているプロバイダーです。",
-      "addEnhancer": "GitHub からインストール",
-      "addProvider": "マーケットプレイスへ",
-      "providers_one": "{{count}} 件のプロバイダーで使用中",
-      "providers_other": "{{count}} 件のプロバイダーで使用中",
-      "noProviders": "まだプロバイダーで使われていません"
-    },
-    "star": {
-      "callCount_one": "{{value}} 回",
-      "callCount_other": "{{value}} 回",
-      "taskCount_one": "{{value}} 件のタスク",
-      "taskCount_other": "{{value}} 件のタスク",
-      "open": "{{name}}、{{fact}}。プラグインを開く",
-      "more_one": "ほか {{count}} 個",
-      "more_other": "ほか {{count}} 個",
-      "calls": "処理したリクエスト",
-      "providers": "使っているプロバイダー",
-      "served": "プロバイダーのリクエスト",
-      "tasks": "生成タスク",
-      "failedTasks": "失敗したタスク",
-      "kind": {
-        "enhancer": "拡張プラグイン",
-        "provider": "プロバイダープラグイン"
-      },
-      "state": {
-        "running": "実行中",
-        "failing": "実行中・失敗あり",
-        "off": "停止中",
-        "failed": "読み込み失敗"
-      },
-      "failed": "失敗",
-      "times": "{{value}} 回",
-      "window": "過去 30 日：{{requests}} 件のリクエストを処理、{{tasks}} 件のタスクを生成",
-      "showList": "すべてのプラグインをリストで見る"
-    },
     "requestPlugins": {
-      "title": "リクエスト処理インスタンス",
-      "add": "インスタンスを追加",
-      "addTitle": "リクエスト処理インスタンスを追加",
-      "editTitle": "リクエスト処理インスタンスを編集",
+      "title": "ルール",
+      "add": "ルールを追加",
+      "addTitle": "ルールを追加",
+      "editTitle": "ルールを編集",
       "edit": "編集",
       "remove": "削除",
-      "removeTitle": "このインスタンスを削除しますか？",
+      "removeTitle": "このルールを削除しますか？",
       "removeConfirm": "「{{name}}」を削除すると、リクエストを確認しなくなります。プラグイン自体はアンインストールされません。",
-      "empty": "インスタンスはまだありません。追加するとリクエストの確認を始めます。",
+      "empty": "ルールはまだありません。ルールを追加するとリクエストをチェックします。",
       "enabled": "有効",
       "name": "名前",
       "models": "対象モデル",
@@ -5698,15 +5657,15 @@
       "config": "設定",
       "keywords": "1 行に 1 つのキーワード",
       "invalidJSON": "ここには JSON を入力します。JSON の形式が正しくありません。",
-      "loadFailed": "リクエスト処理インスタンスを読み込めませんでした。",
-      "saveFailed": "リクエスト処理インスタンスを保存できませんでした。",
+      "loadFailed": "ルールを読み込めませんでした。",
+      "saveFailed": "ルールを保存できませんでした。",
       "stages": {
-        "ingress": "入口チェック",
+        "ingress": "受信時",
         "request": "リクエスト設定",
         "outbound": "送信前の書き換え",
-        "egress": "送信前チェック",
-        "reply": "応答チェック",
-        "report": "レポート"
+        "egress": "送信前",
+        "reply": "応答を返す前",
+        "report": "リクエスト後"
       },
       "dryRun": "試行",
       "sample": "プラグインのサンプル",
@@ -5726,6 +5685,38 @@
         "claude": "Claude Messages",
         "gemini": "Gemini"
       }
+    },
+    "health": {
+      "tasks": "生成タスク",
+      "failedTasks": "失敗したタスク",
+      "requests": "処理したリクエスト",
+      "checked": "チェックしたリクエスト",
+      "failedRequests": "エラー",
+      "helpLabel": "稼働状況について",
+      "help": "直近 7 日間を、この PC のリクエスト記録とタスクから集計します。小さな棒は 1 日ずつで、右端が今日です。"
+    },
+    "row": {
+      "enable": "「{{name}}」を有効にする",
+      "failed": "読み込めませんでした：{{reason}}",
+      "failures_one": "エラー {{count}} 回",
+      "failures_other": "エラー {{count}} 回",
+      "noProviders": "まだ使っているプロバイダーはありません",
+      "providers_one": "プロバイダー {{count}} 件",
+      "providers_other": "プロバイダー {{count}} 件",
+      "recent_one": "7 日間で {{count}} 回",
+      "recent_other": "7 日間で {{count}} 回",
+      "reload": "再読み込み",
+      "times_one": "{{count}} 回",
+      "times_other": "{{count}} 回",
+      "trend": "7 日間の 1 日ごとの処理回数"
+    },
+    "runLog": {
+      "days": "日別",
+      "tools": "開発者ツール",
+      "views": "実行記録",
+      "sinceStart": "起動後",
+      "memoryLimits_one": "メモリ上限 {{count}} 回",
+      "memoryLimits_other": "メモリ上限 {{count}} 回"
     }
   },
   "pluginRecords": {

@@ -523,6 +523,48 @@ function button(label: string, root: ParentNode = document): HTMLButtonElement {
   return match;
 }
 
+/** A control by its accessible name, as an icon button or a switch has it. */
+function labelled(label: string, root: ParentNode = document): HTMLElement {
+  const match = root.querySelector<HTMLElement>(`[aria-label="${label}"]`);
+  if (!match) throw new Error(`Missing control: ${label}`);
+  return match;
+}
+
+/** Picks an option of a segmented control by its text. */
+async function chooseSegment(label: string) {
+  const item = [
+    ...document.querySelectorAll<HTMLElement>(
+      '[data-slot="segmented-control-item"]',
+    ),
+  ].find((candidate) => candidate.textContent?.trim().startsWith(label));
+  if (!item) throw new Error(`Missing segment: ${label}`);
+  await act(async () => {
+    item.click();
+  });
+}
+
+/** Opens the ⋯ menu of a plugin's page and picks an item. */
+async function chooseMenuItem(label: string) {
+  await act(async () => {
+    document
+      .querySelector<HTMLButtonElement>('[aria-label="更多操作"]')
+      ?.dispatchEvent(
+        new PointerEvent("pointerdown", {
+          bubbles: true,
+          button: 0,
+          pointerType: "mouse",
+        }),
+      );
+  });
+  const item = [
+    ...document.querySelectorAll<HTMLElement>(
+      '[role="menuitem"], [role="menuitemcheckbox"]',
+    ),
+  ].find((candidate) => candidate.textContent?.trim() === label);
+  if (!item) throw new Error(`Missing menu item: ${label}`);
+  await click(item);
+}
+
 async function click(element: HTMLElement) {
   await act(async () => {
     element.click();
@@ -681,7 +723,7 @@ describe("PluginManager", () => {
 
   /** Opens the dialog of the settings of every plugin. */
   async function openHostSettings() {
-    await click(button("插件设置"));
+    await click(labelled("插件设置"));
     const dialog = document.querySelector(
       '[data-testid="plugin-host-dialog"]',
     ) as HTMLElement | null;
@@ -899,9 +941,10 @@ describe("PluginManager", () => {
     ).toContain("查询8 次命中 75% · 2 个会话用过 · 拒绝 1 次");
   });
 
-  it("lists the account day by day on the status page, today first", async () => {
+  it("lists the account day by day in the activity, today first", async () => {
     await renderOpen();
-    await openTab("运行状态");
+    await openTab("运行记录");
+    await chooseSegment("按天统计");
     const daily = document.querySelector(
       '[data-testid="plugin-daily-effects"]',
     );
@@ -921,7 +964,7 @@ describe("PluginManager", () => {
     expect(rows[1]?.className).toContain("text-muted-foreground");
   });
 
-  it("shows hook timings, the log and a dry run on the develop tab", async () => {
+  it("shows the log, and hook timings and a dry run in the developer tools", async () => {
     bridgeMocks.getPlugin.mockResolvedValue({
       ...memory,
       development: {
@@ -980,8 +1023,8 @@ describe("PluginManager", () => {
     });
     await renderOpen();
     // A development build says so instead of where it came from.
-    expect(document.body.textContent).toContain("开发版 · 1.0.0");
-    await openTab("开发");
+    expect(document.body.textContent).toContain("1.0.0 · 开发版");
+    await openTab("运行记录");
     expect(bridgeMocks.getPluginJournal).toHaveBeenCalledWith(
       "powercontext",
       0,
@@ -993,17 +1036,19 @@ describe("PluginManager", () => {
     expect(
       develop?.querySelector('[data-testid="plugin-breaker"]')?.textContent,
     ).toContain("「入口」最近失败太多");
-    const timings = develop?.querySelector('[data-testid="plugin-timings"]');
-    expect(timings?.textContent).toContain("prepareTurn");
-    expect(timings?.textContent).toContain("43 ms");
-    expect(timings?.textContent).toContain("310 ms");
-    expect(timings?.textContent).toContain("1.25 s");
     const log = develop?.querySelector('[data-testid="plugin-log"]');
     const lines = log?.querySelectorAll("li") ?? [];
     // Newest first, failures with their stack.
     expect(lines[0]?.textContent).toContain("错误");
     expect(lines[0]?.textContent).toContain("src/plugin.ts:40:3");
     expect(lines[1]?.textContent).toContain("recalled 3 memories");
+
+    await chooseSegment("开发者工具");
+    const timings = develop?.querySelector('[data-testid="plugin-timings"]');
+    expect(timings?.textContent).toContain("prepareTurn");
+    expect(timings?.textContent).toContain("43 ms");
+    expect(timings?.textContent).toContain("310 ms");
+    expect(timings?.textContent).toContain("1.25 s");
 
     const run = develop?.querySelector('[data-testid="plugin-dry-run"]');
     const args = run?.querySelector("textarea") as HTMLTextAreaElement;
@@ -1119,8 +1164,7 @@ describe("PluginManager", () => {
       granted_capabilities: memory.requested_capabilities,
     });
     await renderOpen();
-    await openTab("设置");
-    await click(button("启用"));
+    await click(labelled("启用「PowerContext 记忆」"));
     // A plugin is trusted code: its install review listed what it
     // declares, and enabling it asks nothing more.
     expect(document.querySelector('[role="alertdialog"]')).toBeNull();
@@ -1141,7 +1185,7 @@ describe("PluginManager", () => {
       new Error('{"error":{"code":"approval_pending","message":"waits"}}'),
     );
     await render();
-    await click(button("安装插件"));
+    await click(button("从 GitHub 安装"));
     const dialog = document.querySelector(
       '[data-testid="plugin-install-dialog"]',
     ) as HTMLElement;
@@ -1186,7 +1230,8 @@ describe("PluginManager", () => {
     ).toBeNull();
     expect(bridgeMocks.getPlugin).toHaveBeenCalledWith("hello");
     expect(
-      document.querySelector('[data-testid="plugin-source"]')?.textContent,
+      document.getElementById("plugin-manager-heading")?.parentElement
+        ?.textContent,
     ).toContain("acme/hello");
   });
 
@@ -1198,7 +1243,7 @@ describe("PluginManager", () => {
       },
     });
     await render();
-    await click(button("安装插件"));
+    await click(button("从 GitHub 安装"));
     const dialog = document.querySelector(
       '[data-testid="plugin-install-dialog"]',
     ) as HTMLElement;
@@ -1241,15 +1286,18 @@ describe("PluginManager", () => {
     bridgeMocks.previewPluginInstall.mockResolvedValue(helloReview);
     bridgeMocks.uninstallPlugin.mockResolvedValue(list);
     await renderOpen("hello");
-    const source = document.querySelector(
-      '[data-testid="plugin-source"]',
-    ) as HTMLElement;
-    expect(source.textContent).toContain("标签 v1.1.0");
-    expect(source.textContent).not.toContain(helloReview.source.commit);
-    await click(button("检查更新", source));
+    // Where it comes from sits by its name.
+    const heading = document.getElementById("plugin-manager-heading")
+      ?.parentElement as HTMLElement;
+    expect(heading.textContent).toContain("标签 v1.1.0");
+    expect(heading.textContent).not.toContain(helloReview.source.commit);
+    await chooseMenuItem("检查更新");
     expect(bridgeMocks.checkPluginUpdate).toHaveBeenCalledWith("hello");
-    expect(source.textContent).toContain("有新版本：1.2.0");
-    await click(button("查看并更新", source));
+    const update = document.querySelector(
+      '[data-testid="plugin-update"]',
+    ) as HTMLButtonElement;
+    expect(update.textContent).toBe("更新到 1.2.0");
+    await click(update);
     // The update is reviewed as an install is.
     expect(bridgeMocks.previewPluginInstall).toHaveBeenCalledWith(
       "https://github.com/acme/hello/tree/v1.2.0",
@@ -1257,22 +1305,7 @@ describe("PluginManager", () => {
     await click(button("取消"));
     await settleClosedLayer();
 
-    await act(async () => {
-      document
-        .querySelector<HTMLButtonElement>('[aria-label="更多操作"]')
-        ?.dispatchEvent(
-          new PointerEvent("pointerdown", {
-            bubbles: true,
-            button: 0,
-            pointerType: "mouse",
-          }),
-        );
-    });
-    const uninstall = [
-      ...document.querySelectorAll<HTMLElement>('[role="menuitem"]'),
-    ].find((item) => item.textContent?.trim() === "卸载");
-    if (!uninstall) throw new Error("Missing the uninstall item");
-    await click(uninstall);
+    await chooseMenuItem("卸载");
     const confirm = document.querySelector(
       '[role="alertdialog"]',
     ) as HTMLElement;
@@ -1349,7 +1382,10 @@ describe("PluginManager", () => {
       '[data-testid="plugin-host-controls"]',
     );
     expect(controls?.textContent).toContain("暂停所有插件");
-    expect(controls?.textContent).toContain("注入总预算");
+    expect(controls?.textContent).toContain("插件加的内容上限");
+    // Building plugins has its place here too.
+    expect(controls?.textContent).toContain("/data/plugins");
+    expect(controls?.textContent).toContain("astrlink plugin dev");
     // No explanation under the controls: each is behind its ?.
     expect(controls?.textContent).not.toContain("暂停期间所有插件都不运行");
     const help = controls?.querySelector<HTMLButtonElement>(
@@ -1516,11 +1552,7 @@ describe("PluginManager", () => {
     );
     expect(controls?.textContent).toContain("16 KB");
     expect(document.body.textContent).not.toContain("所有插件已暂停");
-    await click(
-      document.querySelector(
-        'button[aria-label="暂停所有插件"]',
-      ) as HTMLElement,
-    );
+    await click(document.getElementById("plugin-host-pause") as HTMLElement);
     expect(bridgeMocks.updatePluginHostSettings).toHaveBeenCalledWith({
       paused: true,
     });
@@ -1777,7 +1809,7 @@ describe("PluginManager", () => {
     const link = () => document.querySelector('[data-testid="plugin-link"]');
     expect(link()?.getAttribute("data-state")).toBe("idle");
     expect(link()?.textContent).toContain("还没测试");
-    await click(button("测试连接"));
+    await chooseMenuItem("测试连接");
     expect(bridgeMocks.testPlugin).toHaveBeenCalledWith("powercontext");
     // The overview reads the test back with what it changed in the counts.
     expect(bridgeMocks.getPluginStatus).toHaveBeenCalledTimes(2);
@@ -1836,10 +1868,17 @@ describe("PluginManager", () => {
     });
     bridgeMocks.reloadPlugins.mockResolvedValue(list);
     await render();
-    expect(document.body.textContent).toContain("还没有插件");
-    await click(
-      document.querySelector('button[aria-label="重新扫描"]') as HTMLElement,
-    );
+    expect(document.body.textContent).toContain("还没有安装插件");
+    // A plugin put in the directory shows after a rescan, in the settings.
+    const dialog = await openHostSettings();
+    await click(button("重新扫描", dialog));
+    await act(async () => {
+      document.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+      );
+    });
+    await finishExitAnimations();
+    await settleClosedLayer();
     expect(
       document.querySelectorAll('[data-testid="plugin-row"]'),
     ).toHaveLength(2);
@@ -1874,12 +1913,8 @@ describe("PluginManager", () => {
     ).toContain("启用时授予「界面视图」，这里才会显示插件提供的概览。");
   });
 
-  describe("the star map", () => {
-    afterEach(() => {
-      localStorage.removeItem("astrlink.plugins.view");
-    });
-
-    async function renderMap(
+  describe("the installed list", () => {
+    async function renderList(
       plugins: PluginList["plugins"],
       services: Service[] = [],
     ) {
@@ -1900,111 +1935,80 @@ describe("PluginManager", () => {
       });
     }
 
-    const stars = () => [
-      ...document.querySelectorAll<HTMLElement>('[data-testid="plugin-star"]'),
-    ];
-
-    it("draws enhancement plugins left of the gateway and provider plugins right of it", async () => {
-      const idle = { ...sora, running_tasks: 0 };
-      await renderMap([...list.plugins, idle], [soraService]);
-      expect(
-        stars().map((star) => [star.dataset.pluginKey, star.dataset.side]),
-      ).toEqual([
-        ["powercontext", "left"],
-        ["team-rules", "left"],
-        ["sora", "right"],
+    const groups = () =>
+      [
+        ...document.querySelectorAll<HTMLElement>(
+          '[data-testid="plugin-group"]',
+        ),
+      ].map((group) => [
+        group.dataset.group,
+        [
+          ...group.querySelectorAll<HTMLElement>('[data-testid="plugin-row"]'),
+        ].map((row) => row.dataset.pluginKey),
       ]);
-      // A star says what its plugin is doing, else its state.
-      expect(stars()[0].textContent).toContain("已停用");
-      expect(stars()[1].textContent).toContain("加载失败");
-      expect(stars()[2].textContent).toContain("1 个提供商在用");
-      await renderMap([...list.plugins, idle]);
-      expect(stars()[2].textContent).toContain("还没有提供商在用");
-      // A star opens its plugin; the gateway the settings of every plugin.
-      await click(
-        document.querySelector(
-          '[data-testid="plugin-star-hub"]',
-        ) as HTMLElement,
+
+    it("groups the plugins by what they are for, providers first", async () => {
+      bridgeMocks.listPluginTasks.mockResolvedValue({ items: [], running: 0 });
+      await renderList([...list.plugins, sora], [soraService]);
+      expect(groups()).toEqual([
+        ["providers", ["sora"]],
+        ["extensions", ["powercontext", "team-rules"]],
+      ]);
+      const soraRow = document.querySelector<HTMLElement>(
+        '[data-testid="plugin-row"][data-plugin-key="sora"]',
       );
-      expect(
-        document.querySelector('[data-testid="plugin-host-dialog"]'),
-      ).not.toBe(null);
-      await act(async () => {
-        document.dispatchEvent(
-          new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
-        );
-      });
-      await finishExitAnimations();
-      await settleClosedLayer();
-      await click(stars()[2]);
+      expect(soraRow?.textContent).toContain("1 个提供商");
+      expect(soraRow?.textContent).toContain("1 个进行中");
+      // A row opens its plugin.
+      await click(soraRow!);
       expect(
         document.querySelector('[data-testid="plugin-task-overview"]'),
       ).not.toBe(null);
     });
 
-    it("searches the stars and the list, and keeps the list once chosen", async () => {
-      await renderMap([...list.plugins, sora]);
+    it("searches the rows by name and model", async () => {
+      await renderList([...list.plugins, sora]);
       await type(
         document.querySelector<HTMLInputElement>(
           'input[placeholder="搜索插件或模型"]',
         )!,
         "sora-2-pro",
       );
-      // The stars that do not match fade; the rows go.
-      expect(
-        stars()
-          .filter((star) => star.dataset.faded === undefined)
-          .map((star) => star.dataset.pluginKey),
-      ).toEqual(["sora"]);
-      expect(
-        [
-          ...document.querySelectorAll<HTMLElement>(
-            '[data-testid="plugin-row"]',
-          ),
-        ].map((row) => row.dataset.pluginKey),
-      ).toEqual(["sora"]);
-      await click(button("列表"));
-      expect(document.querySelector('[data-testid="plugin-star-map"]')).toBe(
-        null,
-      );
-      expect(localStorage.getItem("astrlink.plugins.view")).toBe("list");
-      await act(async () => reactRoot.unmount());
-      reactRoot = createRoot(container);
-      await renderMap([...list.plugins, sora]);
-      expect(document.querySelector('[data-testid="plugin-star-map"]')).toBe(
-        null,
-      );
-      await click(button("星图"));
-      expect(
-        document.querySelector('[data-testid="plugin-star-map"]'),
-      ).not.toBe(null);
+      expect(groups()).toEqual([["providers", ["sora"]]]);
     });
 
-    it("leads an empty side to where its plugins come from", async () => {
-      await renderMap([sora]);
-      const enhancer = document.querySelector<HTMLElement>(
-        '[data-testid="plugin-star-add"][data-side="left"]',
-      );
-      expect(enhancer?.textContent).toBe("从 GitHub 安装");
-      await click(enhancer!);
-      expect(
-        document.querySelector('[data-testid="plugin-install-dialog"]'),
-      ).not.toBe(null);
-      await act(async () => reactRoot.unmount());
-      reactRoot = createRoot(container);
-      await renderMap([memory]);
-      const provider = document.querySelector<HTMLElement>(
-        '[data-testid="plugin-star-add"][data-side="right"]',
-      );
-      expect(provider?.textContent).toBe("去插件市场");
-      await click(provider!);
+    it("leads an empty list to the marketplace", async () => {
+      await renderList([]);
+      await click(button("去插件市场看看"));
       expect(document.querySelector('[data-testid="plugin-market"]')).not.toBe(
         null,
       );
     });
 
-    it("lights each plugin with what it did over the last 30 days", async () => {
-      const summary = emptyUsageSummary(resolveUsageWindow("30d", new Date()));
+    it("turns a plugin on and off from its row", async () => {
+      bridgeMocks.updatePlugin.mockResolvedValueOnce({
+        ...memory,
+        enabled: true,
+      });
+      await renderList(list.plugins);
+      await click(labelled("启用「PowerContext 记忆」"));
+      expect(bridgeMocks.updatePlugin).toHaveBeenCalledWith("powercontext", {
+        enabled: true,
+      });
+      expect(
+        labelled("启用「PowerContext 记忆」").getAttribute("aria-checked"),
+      ).toBe("true");
+      // One that did not load offers a reload instead.
+      const failed = document
+        .querySelector('[data-plugin-key="team-rules"]')
+        ?.closest("li") as HTMLElement;
+      await click(button("重新加载", failed));
+      expect(bridgeMocks.reloadPlugins).toHaveBeenCalled();
+    });
+
+    it("shows each plugin's last 7 days on its row and over the list", async () => {
+      const summary = emptyUsageSummary(resolveUsageWindow("7d", new Date()));
+      const today = summary.by_day[summary.by_day.length - 1].date;
       summary.by_plugin = [
         {
           plugin: "powercontext",
@@ -2012,39 +2016,54 @@ describe("PluginManager", () => {
           failed_requests: 2,
           tasks: 0,
           failed_tasks: 0,
+          days: [
+            {
+              date: today,
+              requests: 40,
+              failed_requests: 2,
+              tasks: 0,
+              failed_tasks: 0,
+            },
+          ],
         },
         {
           plugin: "sora",
           requests: 0,
           failed_requests: 0,
           tasks: 5,
-          failed_tasks: 0,
+          failed_tasks: 1,
+          days: [
+            {
+              date: today,
+              requests: 0,
+              failed_requests: 0,
+              tasks: 5,
+              failed_tasks: 1,
+            },
+          ],
         },
       ];
       bridgeMocks.getUsageSummary.mockResolvedValue(summary);
-      await renderMap(
+      await renderList(
         [
           { ...memory, enabled: true },
           { ...sora, running_tasks: 0 },
         ],
         [soraService],
       );
-      expect(bridgeMocks.getUsageSummary.mock.calls[0][0].preset).toBe("30d");
-      expect(stars()[0].textContent).toContain("42 次");
-      expect(stars()[1].textContent).toContain("5 个任务");
-      expect(
-        document.querySelector('[data-testid="plugin-star-map"]')?.textContent,
-      ).toContain("近 30 天：处理 42 次请求，生成 5 个任务");
-      // A planet is as large as its work, a task counting as ten requests;
-      // sparks run to each plugin at work.
-      const size = (key: string) =>
-        parseFloat(
-          document.querySelector<HTMLElement>(
-            `[data-plugin-key="${key}"] .star-stage-sphere`,
-          )!.style.width,
-        );
-      expect(size("sora")).toBeGreaterThan(size("powercontext"));
-      expect(document.querySelectorAll(".star-stage-spark")).toHaveLength(2);
+      expect(bridgeMocks.getUsageSummary.mock.calls[0][0].preset).toBe("7d");
+      const row = (key: string) =>
+        document.querySelector<HTMLElement>(
+          `[data-testid="plugin-row"][data-plugin-key="${key}"]`,
+        )?.textContent;
+      expect(row("powercontext")).toContain("近 7 天 42 次");
+      expect(row("powercontext")).toContain("2 次出错");
+      expect(row("sora")).toContain("近 7 天 5 次");
+      const band = document.querySelector(
+        '[data-testid="plugin-metrics"]',
+      )?.textContent;
+      expect(band).toContain("近 7 天处理47");
+      expect(band).toContain("近 7 天出错3");
     });
   });
 
@@ -2127,26 +2146,23 @@ describe("PluginManager", () => {
       const row = document.querySelector<HTMLElement>(
         '[data-testid="plugin-row"][data-plugin-key="sora"]',
       );
-      // The list puts it with the providers, its models on the right.
-      expect(row?.textContent).toContain("2 个模型");
+      // The list puts it with the providers, with what it serves.
+      expect(row?.textContent).toContain("1 个提供商");
       await click(row!);
       expect(
         [...document.querySelectorAll('[role="tab"]')].map(
           (tab) => tab.textContent,
         ),
-      ).toEqual(["概览", "任务", "运行状态"]);
+      ).toEqual(["概览", "任务", "运行记录"]);
       const overview = document.querySelector(
         '[data-testid="plugin-task-overview"]',
       ) as HTMLElement;
-      const metrics = [
-        ...overview.querySelectorAll('[data-slot="metric-group"] dt'),
-      ].map((dt) => [dt.textContent, dt.nextElementSibling?.textContent]);
-      expect(metrics).toEqual([
-        ["模型", "2"],
-        ["进行中", "1"],
-        ["全部任务", "3"],
-        ["提供商", "1"],
-      ]);
+      expect(overview.textContent).toContain("2 个模型");
+      // Its latest tasks, the newest first.
+      expect(
+        overview.querySelector('[data-testid="plugin-recent-tasks"]')
+          ?.textContent,
+      ).toContain("sora-2");
       const endpoints = overview.querySelector(
         '[data-testid="plugin-task-endpoints"]',
       )?.textContent;
@@ -2154,6 +2170,7 @@ describe("PluginManager", () => {
       expect(endpoints).toContain("流式 · 同步 · 后台");
       expect(endpoints).toContain("/v1/videos");
       expect(overview.textContent).toContain("sora-2-pro");
+      // How it connects sits behind a disclosure.
       expect(overview.textContent).toContain("逐个查询");
       await click(button("添加提供商"));
       expect(onAddProvider).toHaveBeenCalledWith(
@@ -2202,7 +2219,8 @@ describe("PluginManager", () => {
       await click(button("清除已完成的任务", dialog));
       await finishExitAnimations();
       expect(bridgeMocks.clearPluginTasks).toHaveBeenCalledWith("sora");
-      expect(bridgeMocks.listPluginTasks).toHaveBeenCalledTimes(2);
+      // The overview's latest tasks, the tab's, and the tab's again.
+      expect(bridgeMocks.listPluginTasks).toHaveBeenCalledTimes(3);
     });
 
     it("lists a plugin that needs a new-api part AstrLink does not run as not compatible", async () => {
@@ -2221,15 +2239,14 @@ describe("PluginManager", () => {
         ],
       });
       await renderTasks();
-      await openTab("插件市场");
+      await chooseSegment("插件市场");
       const card = [
         ...document.querySelectorAll<HTMLElement>(
-          '[data-testid="plugin-market-card"]',
+          '[data-testid="plugin-market-row"]',
         ),
       ].find((item) => item.textContent?.includes("Relay"))!;
-      const badge = card.querySelector<HTMLElement>("[data-tone]")!;
-      expect(badge.textContent).toBe("不兼容");
-      expect(badge.title).toBe(
+      expect(card.textContent).toContain("不兼容");
+      expect(card.textContent).toContain(
         "需要 new-api 的请求处理插件，AstrLink 还不能运行。",
       );
       expect(card.querySelector("button")).toBeNull();
@@ -2252,11 +2269,11 @@ describe("PluginManager", () => {
         name: "Alibaba Bailian",
       });
       await renderTasks();
-      await openTab("插件市场");
+      await chooseSegment("插件市场");
       const cards = () =>
         [
           ...document.querySelectorAll<HTMLElement>(
-            '[data-testid="plugin-market-card"]',
+            '[data-testid="plugin-market-row"]',
           ),
         ].map((card) => card);
       expect(cards()).toHaveLength(2);
@@ -2367,14 +2384,14 @@ describe("PluginManager", () => {
       });
       try {
         await renderTasks();
-        await openTab("插件市场");
-        await chooseOption('[aria-label="插件市场来源"]', "社区市场");
+        await chooseSegment("插件市场");
+        await chooseSegment("社区市场");
         expect(bridgeMocks.getPluginMarket).toHaveBeenLastCalledWith(
           communityIndex,
         );
         const cards = () => [
           ...document.querySelectorAll<HTMLElement>(
-            '[data-testid="plugin-market-card"]',
+            '[data-testid="plugin-market-row"]',
           ),
         ];
         expect(cards()).toHaveLength(1);

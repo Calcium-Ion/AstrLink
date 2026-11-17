@@ -140,7 +140,7 @@ WHERE parent_request_id IS NULL AND started_at >= ? AND started_at < ?
 		// statistics.
 		var readable bool
 		if outcomes, readable = readPluginOutcomes(pluginRecords, outcomes[:0]); readable {
-			countPluginOutcomes(plugins, outcomes)
+			countPluginOutcomes(plugins, outcomes, date)
 		}
 		// The same definition the desktop shows per call: an explicit failure,
 		// or a call stored as succeeded that came back 4xx/5xx. A failure
@@ -236,38 +236,53 @@ WHERE parent_request_id IS NULL AND started_at >= ? AND started_at < ?
 	result.ByToken = sortedUsageGroups(tokens)
 	result.ByClient = sortedUsageGroups(clients)
 	result.ByRoute = sortedUsageRoutes(routes)
-	if result.ByPlugin, err = pluginUsage(ctx, reader, options, plugins); err != nil {
+	if result.ByPlugin, err = pluginUsage(ctx, reader, options, zone, plugins); err != nil {
 		return result, err
 	}
 	return result, nil
 }
 
 // pluginUsage adds the tasks each plugin took in the window to the requests
-// it acted on, and sorts the plugins by how much they did.
-func pluginUsage(ctx context.Context, reader historyReader, options storage.UsageSummaryOptions, plugins map[string]*storage.UsagePluginGroup) ([]storage.UsagePluginGroup, error) {
-	rows, err := reader.QueryContext(ctx, `SELECT plugin_key, COUNT(*), SUM(status = ?) FROM plugin_tasks
-WHERE created_at >= ? AND created_at < ? GROUP BY plugin_key`,
+// it acted on, each on the local day it was created, and sorts the plugins by
+// how much they did.
+func pluginUsage(ctx context.Context, reader historyReader, options storage.UsageSummaryOptions, zone *time.Location, plugins map[string]*storage.UsagePluginGroup) ([]storage.UsagePluginGroup, error) {
+	rows, err := reader.QueryContext(ctx, `SELECT plugin_key, created_at, status = ? FROM plugin_tasks
+WHERE created_at >= ? AND created_at < ?`,
 		contract.PluginTaskFailure, formatTaskTime(options.From), formatTaskTime(options.To))
 	if err != nil {
 		return nil, fmt.Errorf("query plugin task usage: %w", err)
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var plugin string
-		var tasks, failed int64
-		if err := rows.Scan(&plugin, &tasks, &failed); err != nil {
+		var plugin, createdAt string
+		var failed bool
+		if err := rows.Scan(&plugin, &createdAt, &failed); err != nil {
 			return nil, fmt.Errorf("scan plugin task usage: %w", err)
+		}
+		created, err := time.Parse(time.RFC3339Nano, createdAt)
+		if err != nil {
+			return nil, fmt.Errorf("%w: plugin task time", storage.ErrInvalidRecord)
 		}
 		if plugins[plugin] == nil {
 			plugins[plugin] = &storage.UsagePluginGroup{Plugin: plugin}
 		}
-		plugins[plugin].Tasks, plugins[plugin].FailedTasks = tasks, failed
+		group := plugins[plugin]
+		day := group.Day(created.In(zone).Format("2006-01-02"))
+		group.Tasks++
+		day.Tasks++
+		if failed {
+			group.FailedTasks++
+			day.FailedTasks++
+		}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("read plugin task usage: %w", err)
 	}
 	result := make([]storage.UsagePluginGroup, 0, len(plugins))
 	for _, group := range plugins {
+		if group.Days == nil {
+			group.Days = []storage.UsagePluginDay{}
+		}
 		result = append(result, *group)
 	}
 	sort.Slice(result, func(i, j int) bool {

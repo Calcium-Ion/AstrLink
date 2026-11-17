@@ -516,11 +516,14 @@ func TestUsageSummaryGroupsPlugins(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	day := func(requests, failedRequests, tasks, failedTasks int64) []storage.UsagePluginDay {
+		return []storage.UsagePluginDay{{Date: "2026-10-01", Requests: requests, FailedRequests: failedRequests, Tasks: tasks, FailedTasks: failedTasks}}
+	}
 	want := []storage.UsagePluginGroup{
-		{Plugin: "memory", Requests: 2, FailedRequests: 1},
-		{Plugin: "rules", Requests: 1},
-		{Plugin: "sora", Tasks: 2, FailedTasks: 1},
-		{Plugin: "kling", Tasks: 1},
+		{Plugin: "memory", Requests: 2, FailedRequests: 1, Days: day(2, 1, 0, 0)},
+		{Plugin: "rules", Requests: 1, Days: day(1, 0, 0, 0)},
+		{Plugin: "sora", Tasks: 2, FailedTasks: 1, Days: day(0, 0, 2, 1)},
+		{Plugin: "kling", Tasks: 1, Days: day(0, 0, 1, 0)},
 	}
 	if !reflect.DeepEqual(summary.ByPlugin, want) {
 		t.Fatalf("by_plugin=%+v want %+v", summary.ByPlugin, want)

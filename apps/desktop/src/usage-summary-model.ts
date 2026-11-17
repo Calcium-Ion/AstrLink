@@ -9,6 +9,7 @@ import {
   emptyUsageTotals,
   type ServicePerformance,
   type UsageGroup,
+  type UsagePluginDay,
   type UsagePluginGroup,
   type UsageHourModelBucket,
   type UsageRoute,
@@ -92,10 +93,39 @@ const pluginKeys = [
   "failed_tasks",
 ] as const;
 
+/** A plugin's days: each a date of the window once, oldest first. */
+function pluginDaysAt(value: unknown): UsagePluginDay[] {
+  let last = "";
+  return arrayAt(value).map((value) => {
+    const object = objectAt(value, ["date", ...pluginKeys.slice(1)]);
+    const date = object.date;
+    if (
+      typeof date !== "string" ||
+      !/^\d{4}-\d{2}-\d{2}$/.test(date) ||
+      date <= last
+    ) {
+      throw new Error("Invalid usage summary plugin day");
+    }
+    last = date;
+    return {
+      date,
+      requests: count(object.requests),
+      failed_requests: count(object.failed_requests),
+      tasks: count(object.tasks),
+      failed_tasks: count(object.failed_tasks),
+    };
+  });
+}
+
 function pluginGroupsAt(value: unknown): UsagePluginGroup[] {
   const seen = new Set<string>();
   return arrayAt(value).map((value) => {
-    const object = objectAt(value, [...pluginKeys]);
+    const withDays =
+      value !== null && typeof value === "object" && "days" in value;
+    const object = objectAt(value, [
+      ...pluginKeys,
+      ...(withDays ? ["days"] : []),
+    ]);
     const plugin = object.plugin;
     if (
       typeof plugin !== "string" ||
@@ -112,6 +142,7 @@ function pluginGroupsAt(value: unknown): UsagePluginGroup[] {
       failed_requests: count(object.failed_requests),
       tasks: count(object.tasks),
       failed_tasks: count(object.failed_tasks),
+      ...(withDays ? { days: pluginDaysAt(object.days) } : {}),
     };
   });
 }

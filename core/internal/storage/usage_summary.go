@@ -2,6 +2,8 @@ package storage
 
 import (
 	"fmt"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/QuantumNous/astrlink/core/contract"
@@ -77,13 +79,35 @@ type UsageTimeBucket struct {
 // requests of Totals its hooks acted on without failing and FailedRequests
 // those where one of its calls failed; a request the plugin only skipped
 // counts in neither. Tasks counts the tasks its providers took in the window
-// and FailedTasks those that failed.
+// and FailedTasks those that failed. Days splits the same counts by local
+// day, oldest first, leaving out days the plugin did nothing.
 type UsagePluginGroup struct {
-	Plugin         string `json:"plugin"`
+	Plugin         string           `json:"plugin"`
+	Requests       int64            `json:"requests"`
+	FailedRequests int64            `json:"failed_requests"`
+	Tasks          int64            `json:"tasks"`
+	FailedTasks    int64            `json:"failed_tasks"`
+	Days           []UsagePluginDay `json:"days"`
+}
+
+// UsagePluginDay is one plugin's part in one local day of the window.
+type UsagePluginDay struct {
+	Date           string `json:"date"`
 	Requests       int64  `json:"requests"`
 	FailedRequests int64  `json:"failed_requests"`
 	Tasks          int64  `json:"tasks"`
 	FailedTasks    int64  `json:"failed_tasks"`
+}
+
+// Day returns the group's count for date, adding it in order when missing.
+func (group *UsagePluginGroup) Day(date string) *UsagePluginDay {
+	index, found := slices.BinarySearchFunc(group.Days, date, func(day UsagePluginDay, date string) int {
+		return strings.Compare(day.Date, date)
+	})
+	if !found {
+		group.Days = slices.Insert(group.Days, index, UsagePluginDay{Date: date})
+	}
+	return &group.Days[index]
 }
 
 // UsageDetailMaxSpan is the longest window that gets hour-by-model buckets

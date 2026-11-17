@@ -14,9 +14,6 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input, verbatimTextInput } from "@/components/ui/input";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Boxes } from "@/components/icons";
-import { GithubMono } from "@/components/brand-icons";
 
 import {
   installPlugin,
@@ -32,7 +29,6 @@ import {
   installFailureText,
   PluginInstallReviewView,
 } from "./PluginInstallReview";
-import { PluginMarketView } from "./PluginMarket";
 import type {
   PluginHostSettings,
   PluginHostSettingsUpdate,
@@ -75,10 +71,9 @@ export function PluginInstallDialog({
   const t = useT();
   const [url, setUrl] = useState(link ?? "");
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
-  // A marketplace link (…/index.json#key@version) comes from the market.
-  const [source, setSource] = useState<"github" | "market">(
-    link && !/github\.com/i.test(link) ? "market" : "github",
-  );
+  // A marketplace link (…/index.json#key@version) comes from the market page
+  // and is reviewed as it is; only a GitHub install takes a typed link.
+  const fromMarket = Boolean(link && !/github\.com/i.test(link));
   const [registry, setRegistry] = useState(host?.npm_registry ?? "");
   // The newest preview wins; an older one's answer is dropped.
   const previewRun = useRef(0);
@@ -187,53 +182,25 @@ export function PluginInstallDialog({
       >
         <DialogHeader className="text-left">
           <DialogTitle className="flex items-center gap-1">
-            {t("plugins.install.title")}
-            <HelpPopover
-              inDialog
-              label={t("plugins.install.helpLabel")}
-              size="wide"
-            >
-              <div className="grid gap-2">
-                <p>{t("plugins.install.helpLinks")}</p>
-                <p>{t("plugins.install.helpBuild")}</p>
-                <p>{t("plugins.install.helpConfirm")}</p>
-              </div>
-            </HelpPopover>
+            {fromMarket
+              ? t("plugins.install.marketTitle")
+              : t("plugins.install.title")}
+            {fromMarket ? null : (
+              <HelpPopover
+                inDialog
+                label={t("plugins.install.helpLabel")}
+                size="wide"
+              >
+                <div className="grid gap-2">
+                  <p>{t("plugins.install.helpLinks")}</p>
+                  <p>{t("plugins.install.helpBuild")}</p>
+                  <p>{t("plugins.install.helpConfirm")}</p>
+                </div>
+              </HelpPopover>
+            )}
           </DialogTitle>
         </DialogHeader>
-        <Tabs
-          className="gap-3"
-          onValueChange={(value) => {
-            setSource(value as "github" | "market");
-            if (phase.kind === "failed" || phase.kind === "review")
-              setPhase({ kind: "idle" });
-          }}
-          value={source}
-        >
-          <TabsList
-            aria-label={t("plugins.install.sourceLabel")}
-            className="justify-start border-b"
-            variant="line"
-          >
-            <TabsTrigger
-              className="flex-none"
-              disabled={busy || phase.kind === "waiting"}
-              value="github"
-            >
-              <GithubMono aria-hidden="true" className="size-3.5" />
-              {t("plugins.install.sources.github")}
-            </TabsTrigger>
-            <TabsTrigger
-              className="flex-none"
-              disabled={busy || phase.kind === "waiting"}
-              value="market"
-            >
-              <Boxes aria-hidden="true" />
-              {t("plugins.install.sources.market")}
-            </TabsTrigger>
-          </TabsList>
-        </Tabs>
-        {source === "github" ? (
+        {fromMarket ? null : (
           <form
             className="flex items-end gap-2"
             onSubmit={(event) => {
@@ -265,30 +232,7 @@ export function PluginInstallDialog({
               {t("plugins.install.check")}
             </Button>
           </form>
-        ) : phase.kind === "idle" ? (
-          <div className="flex min-h-64 flex-1 flex-col">
-            <PluginMarketView
-              compact
-              isReady
-              onInstall={(target) => {
-                setUrl(target);
-                void preview(target);
-              }}
-            />
-          </div>
-        ) : review || phase.kind === "previewing" || phase.kind === "failed" ? (
-          <div className="flex min-w-0 items-center justify-end gap-2">
-            <Button
-              disabled={busy || phase.kind === "waiting"}
-              onClick={() => setPhase({ kind: "idle" })}
-              size="xs"
-              type="button"
-              variant="ghost"
-            >
-              {t("plugins.install.backToMarket")}
-            </Button>
-          </div>
-        ) : null}
+        )}
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
           {phase.kind === "previewing" ? (
             <LoadingState
@@ -345,7 +289,7 @@ export function PluginInstallDialog({
             </Button>
           </FormMessage>
         ) : null}
-        {source === "github" ? (
+        {fromMarket ? null : (
           <HelpDisclosure title={t("plugins.install.registry")}>
             <Field
               htmlFor="plugin-install-registry"
@@ -363,7 +307,7 @@ export function PluginInstallDialog({
               />
             </Field>
           </HelpDisclosure>
-        ) : null}
+        )}
         <DialogFooter>
           <Button onClick={onClose} size="sm" type="button" variant="outline">
             {t("common.cancel")}

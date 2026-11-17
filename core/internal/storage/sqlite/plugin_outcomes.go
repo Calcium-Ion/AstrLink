@@ -68,8 +68,8 @@ func readPluginOutcomes(text []byte, into []pluginOutcome) ([]pluginOutcome, boo
 
 // countPluginOutcomes adds a request to the group of each plugin that acted
 // on it, as failed when one of the plugin's calls failed. A plugin that only
-// skipped the request leaves it out.
-func countPluginOutcomes(groups map[string]*storage.UsagePluginGroup, outcomes []pluginOutcome) {
+// skipped the request leaves it out. The request counts on its local date too.
+func countPluginOutcomes(groups map[string]*storage.UsagePluginGroup, outcomes []pluginOutcome, date string) {
 	for index, outcome := range outcomes {
 		same := func(other pluginOutcome) bool { return bytes.Equal(other.plugin, outcome.plugin) }
 		// A plugin counts at its first record that acted.
@@ -89,10 +89,13 @@ func countPluginOutcomes(groups map[string]*storage.UsagePluginGroup, outcomes [
 			group = &storage.UsagePluginGroup{Plugin: string(outcome.plugin)}
 			groups[group.Plugin] = group
 		}
+		day := group.Day(date)
 		if failed {
 			group.FailedRequests++
+			day.FailedRequests++
 		} else {
 			group.Requests++
+			day.Requests++
 		}
 	}
 }

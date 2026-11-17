@@ -44,6 +44,7 @@ export function SettingRow({
   required = false,
   help,
   helpLabel,
+  inDialog = false,
   children,
   className,
 }: {
@@ -53,6 +54,8 @@ export function SettingRow({
   help?: ReactNode;
   /** Accessible name of the `?` trigger; defaults to the label text. */
   helpLabel?: string;
+  /** The row sits in a dialog, so its `?` opens above it. */
+  inDialog?: boolean;
   children: ReactNode;
   className?: string;
 }) {
@@ -79,6 +82,7 @@ export function SettingRow({
         ) : null}
         {help ? (
           <HelpPopover
+            inDialog={inDialog}
             label={helpLabel ?? (typeof label === "string" ? label : "")}
           >
             {help}

@@ -42,18 +42,20 @@ func TestReadPluginOutcomesStepsOverEverythingElse(t *testing.T) {
 
 func TestCountPluginOutcomesCountsEachPluginOncePerRequest(t *testing.T) {
 	groups := map[string]*storage.UsagePluginGroup{}
-	count := func(text string) {
+	count := func(date, text string) {
 		outcomes, readable := readPluginOutcomes([]byte(text), nil)
 		if !readable {
 			t.Fatalf("unreadable %s", text)
 		}
-		countPluginOutcomes(groups, outcomes)
+		countPluginOutcomes(groups, outcomes, date)
 	}
-	count(`[{"plugin":"memory","status":"skipped"},{"plugin":"memory","status":"ok"},{"plugin":"memory","status":"failed"},{"plugin":"rules","status":"ok"},{"plugin":"rules","status":"ok"}]`)
-	count(`[{"plugin":"memory","status":"ok"},{"plugin":"Not A Key","status":"ok"},{"plugin":"quiet","status":"skipped"}]`)
+	count("2026-10-02", `[{"plugin":"memory","status":"skipped"},{"plugin":"memory","status":"ok"},{"plugin":"memory","status":"failed"},{"plugin":"rules","status":"ok"},{"plugin":"rules","status":"ok"}]`)
+	count("2026-10-01", `[{"plugin":"memory","status":"ok"},{"plugin":"Not A Key","status":"ok"},{"plugin":"quiet","status":"skipped"}]`)
 	want := map[string]storage.UsagePluginGroup{
-		"memory": {Plugin: "memory", Requests: 1, FailedRequests: 1},
-		"rules":  {Plugin: "rules", Requests: 1},
+		"memory": {Plugin: "memory", Requests: 1, FailedRequests: 1, Days: []storage.UsagePluginDay{
+			{Date: "2026-10-01", Requests: 1}, {Date: "2026-10-02", FailedRequests: 1},
+		}},
+		"rules": {Plugin: "rules", Requests: 1, Days: []storage.UsagePluginDay{{Date: "2026-10-02", Requests: 1}}},
 	}
 	got := map[string]storage.UsagePluginGroup{}
 	for key, group := range groups {

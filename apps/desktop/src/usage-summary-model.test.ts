@@ -35,6 +35,15 @@ const response = {
       failed_requests: 2,
       tasks: 0,
       failed_tasks: 0,
+      days: [
+        {
+          date,
+          requests: 4000,
+          failed_requests: 2,
+          tasks: 0,
+          failed_tasks: 0,
+        },
+      ],
     },
   ],
   by_client: [{ id: null, ...totals }],
@@ -174,6 +183,24 @@ describe("usage summary contract", () => {
     {
       ...response,
       by_plugin: [{ ...response.by_plugin[0], requests: undefined }],
+    },
+    {
+      ...response,
+      by_plugin: [
+        {
+          ...response.by_plugin[0],
+          days: [response.by_plugin[0].days[0], response.by_plugin[0].days[0]],
+        },
+      ],
+    },
+    {
+      ...response,
+      by_plugin: [
+        {
+          ...response.by_plugin[0],
+          days: [{ ...response.by_plugin[0].days[0], date: "Sept 18" }],
+        },
+      ],
     },
     { ...response, by_client: [...response.by_client, ...response.by_client] },
     { ...response, by_client: undefined },

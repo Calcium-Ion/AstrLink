@@ -4846,8 +4846,8 @@
     "statusFailed": "Couldn't load this plugin's status.",
     "saveFailed": "Couldn't save the change.",
     "testFailed": "The connection test did not run.",
-    "empty": "No plugins yet",
-    "emptyHint": "Put a plugin in the plugin directory, then scan again.",
+    "empty": "No plugins installed",
+    "emptyHint": "Plugins can connect new model services, check requests, or add features to AstrLink.",
     "select": "Choose a plugin",
     "rescan": "Scan again",
     "rescanning": "Scanning…",
@@ -4875,9 +4875,8 @@
     "tabs": {
       "overview": "Overview",
       "settings": "Settings",
-      "status": "Activity",
-      "develop": "Develop",
-      "tasks": "Tasks"
+      "tasks": "Tasks",
+      "log": "Activity"
     },
     "testStatus": {
       "ok": "Connected",
@@ -5040,8 +5039,8 @@
       "pause": "Pause all plugins",
       "pauseHelp": "While paused, no plugin runs: nothing is loaded, asked or written, and requests go out as they came. The first request of each turn records why. Resume to carry on.",
       "pausedNotice": "All plugins are paused; requests go out as they came.",
-      "budget": "Injection budget",
-      "budgetHelp": "What all plugins together may add to one request. Past it, the blocks of the plugins later in order stay out, and the request record says it went over the budget.",
+      "budget": "Plugin content limit",
+      "budgetHelp": "What all plugins add to one request stays within this. Past it, what later plugins add is dropped in processing order, and the request record says why.",
       "budgetValue": "{{value}} KB",
       "saveFailed": "Couldn't save the settings of the plugins.",
       "open": "Plugin settings",
@@ -5327,12 +5326,12 @@
     },
     "order": {
       "open": "Change the order",
-      "title": "The order plugins run in",
+      "title": "Processing order",
       "description": "At each extension point the plugins run from top to bottom, each with what the one above returned."
     },
     "install": {
-      "open": "Install plugin",
-      "title": "Install a plugin",
+      "open": "Install from GitHub",
+      "title": "Install from GitHub",
       "helpLabel": "About installing from GitHub",
       "helpLinks": "Paste a repository's home page (installs its newest version tag, or its default branch without tags), a branch, tag or directory under tree/, a release, or a commit. Private repositories are not supported yet.",
       "helpBuild": "AstrLink fetches the dependencies the lock file pins from npm on this computer, checks each against the lock file's hash, and builds the plugin with its own bundler, without running any install script. Dependencies with native modules cannot be used.",
@@ -5435,12 +5434,6 @@
         "busy": "Another plugin is being built. Try again shortly.",
         "unknown": "Could not install ({{reason}})."
       },
-      "sourceLabel": "Install from",
-      "sources": {
-        "github": "GitHub",
-        "market": "Marketplace"
-      },
-      "backToMarket": "Choose another",
       "marketRef": "Version {{version}} · verified",
       "directorySource": "The version the plugin directory held",
       "groups": {
@@ -5454,7 +5447,9 @@
       "requestKind": "Request plugin",
       "keyHosts": "Key goes only to",
       "highRisk": "Asks for a high-risk capability: {{capability}}",
-      "changelog": "Changelog"
+      "changelog": "Changelog",
+      "marketTitle": "Install from the marketplace",
+      "updateTo": "Update to {{version}}"
     },
     "ui": {
       "switch": "Plugin interfaces",
@@ -5476,25 +5471,33 @@
     "countLabel_other": "{{count}} plugins",
     "metrics": {
       "label": "Plugins at a glance",
-      "installed": "Installed",
-      "running": "Running",
+      "running": "Enabled",
       "calls": "Calls since start",
-      "recentCalls": "Requests handled, 30 days",
-      "tasks": "Tasks running",
-      "problems": "Problems",
-      "callCount_one": "{{count}} call",
-      "callCount_other": "{{count}} calls"
+      "recentCalls": "Handled in 7 days",
+      "tasks": "Tasks generating",
+      "recentFailures": "Errors in 7 days",
+      "failures": "Errors since start",
+      "installedCount_one": "{{count}} installed",
+      "installedCount_other": "{{count}} installed",
+      "failedCount_one": "{{count}} failed to load",
+      "failedCount_other": "{{count}} failed to load",
+      "allTasks_one": "{{count}} in all",
+      "allTasks_other": "{{count}} in all"
     },
     "list": {
-      "tabs": "Plugin sections",
+      "tabs": "Plugins",
       "installed": "Installed",
       "market": "Marketplace",
-      "develop": "Develop",
       "browseMarket": "Browse the marketplace"
     },
     "groups": {
-      "providers": "Provider plugins",
-      "extensions": "Enhancement plugins"
+      "providers": "Providers",
+      "extensions": "Features",
+      "requests": "Request checks",
+      "helpLabel": "About {{group}}",
+      "providersHelp": "Connect a new model service, or video and image generation. Clients use it once you add it as a provider and enter its key on the Providers page.",
+      "requestsHelp": "Check requests and replies passing through the gateway by rules, and block or rewrite them. Each rule picks the models it applies to.",
+      "extensionsHelp": "Do more while requests pass through the gateway: give sessions memory or context, rewrite requests, or record what happened."
     },
     "market": {
       "failed": "Could not read the marketplace.",
@@ -5619,77 +5622,33 @@
       "clearFailed": "Could not clear the tasks.",
       "tasksFailed": "Could not read the tasks.",
       "noTasks": "No tasks yet",
-      "loadMore": "Load more"
+      "loadMore": "Load more",
+      "allTasks": "All tasks",
+      "recent": "Recent tasks"
     },
     "developHome": {
       "commands": "Command line",
-      "builds": "Plugins built from projects here",
-      "noBuilds": "None yet. Run astrlink plugin dev in a plugin project and it shows here, reloading as it changes.",
       "command": {
         "new": "Start a plugin project from a template",
         "dev": "Watch, build and install into AstrLink here, with live logs",
         "check": "Build and check the manifest, capabilities and APIs",
         "test": "Run the hooks against the cases in tests/",
         "build": "Build plugin.js and client.js"
-      }
+      },
+      "title": "Build plugins"
     },
     "directoryPath": "Path",
     "search": "Search plugins or models",
-    "view": {
-      "label": "Plugin view",
-      "map": "Star map",
-      "list": "List"
-    },
-    "map": {
-      "label": "Plugin star map",
-      "hubRunning": "Gateway running",
-      "helpLabel": "About {{kind}}",
-      "enhancersHelp": "Enhancement plugins take part while the gateway handles a request: they load context into sessions, rewrite requests and replies, choose the provider, or note what happened. Requests reach the gateway from this side. The larger a planet, the more it did over the last 30 days.",
-      "providersHelp": "Provider plugins connect the gateway to upstream services: they adapt chat APIs or bring in video, image and music generation. Clients use one once it is added as a provider with its key on the providers page. The larger a planet, the more it did over the last 30 days; the moons going round it are the providers that run it.",
-      "addEnhancer": "Install from GitHub",
-      "addProvider": "Browse the marketplace",
-      "providers_one": "{{count}} provider uses it",
-      "providers_other": "{{count}} providers use it",
-      "noProviders": "No provider uses it yet"
-    },
-    "star": {
-      "callCount_one": "{{value}} call",
-      "callCount_other": "{{value}} calls",
-      "taskCount_one": "{{value}} task",
-      "taskCount_other": "{{value}} tasks",
-      "open": "{{name}}, {{fact}}. Open the plugin",
-      "more_one": "{{count}} more",
-      "more_other": "{{count}} more",
-      "calls": "Requests handled",
-      "providers": "Providers using it",
-      "served": "Requests to its providers",
-      "tasks": "Generation tasks",
-      "failedTasks": "Failed tasks",
-      "kind": {
-        "enhancer": "Enhancement plugin",
-        "provider": "Provider plugin"
-      },
-      "state": {
-        "running": "Running",
-        "failing": "Running, with failures",
-        "off": "Off",
-        "failed": "Failed to load"
-      },
-      "failed": "Failed",
-      "times": "{{value}}",
-      "window": "Last 30 days: {{requests}} requests handled, {{tasks}} tasks generated",
-      "showList": "See every plugin in the list"
-    },
     "requestPlugins": {
-      "title": "Request processing instances",
-      "add": "Add instance",
-      "addTitle": "Add a request processing instance",
-      "editTitle": "Edit request processing instance",
+      "title": "Rules",
+      "add": "Add rule",
+      "addTitle": "Add rule",
+      "editTitle": "Edit rule",
       "edit": "Edit",
       "remove": "Delete",
-      "removeTitle": "Delete this instance?",
+      "removeTitle": "Delete this rule?",
       "removeConfirm": "After “{{name}}” is deleted it no longer checks requests. The plugin stays installed.",
-      "empty": "No instances yet. Add one and it starts checking requests.",
+      "empty": "No rules yet. A rule checks requests once you add it.",
       "enabled": "Enabled",
       "name": "Name",
       "models": "Models",
@@ -5698,15 +5657,15 @@
       "config": "Settings",
       "keywords": "One keyword per line",
       "invalidJSON": "This field takes JSON, and this is not valid JSON.",
-      "loadFailed": "Could not read the request processing instances.",
-      "saveFailed": "Could not save the request processing instances.",
+      "loadFailed": "Could not read the rules.",
+      "saveFailed": "Could not save the rules.",
       "stages": {
-        "ingress": "Ingress check",
+        "ingress": "On receipt",
         "request": "Request settings",
-        "outbound": "Outbound rewrite",
-        "egress": "Final check",
-        "reply": "Reply check",
-        "report": "Report"
+        "outbound": "Rewrite before sending",
+        "egress": "Before sending",
+        "reply": "Before the reply",
+        "report": "After the request"
       },
       "dryRun": "Dry run",
       "sample": "Plugin samples",
@@ -5726,6 +5685,38 @@
         "claude": "Claude Messages",
         "gemini": "Gemini"
       }
+    },
+    "health": {
+      "tasks": "Generation tasks",
+      "failedTasks": "Failed tasks",
+      "requests": "Requests handled",
+      "checked": "Requests checked",
+      "failedRequests": "Errors",
+      "helpLabel": "About activity",
+      "help": "The last 7 days, from this computer's request records and tasks. Each small column is a day; the rightmost is today."
+    },
+    "row": {
+      "enable": "Enable {{name}}",
+      "failed": "Failed to load: {{reason}}",
+      "failures_one": "{{count}} error",
+      "failures_other": "{{count}} errors",
+      "noProviders": "No provider uses it yet",
+      "providers_one": "{{count}} provider",
+      "providers_other": "{{count}} providers",
+      "recent_one": "{{count}} in 7 days",
+      "recent_other": "{{count}} in 7 days",
+      "reload": "Reload",
+      "times_one": "{{count}} time",
+      "times_other": "{{count}} times",
+      "trend": "Handled per day over 7 days"
+    },
+    "runLog": {
+      "days": "By day",
+      "tools": "Developer tools",
+      "views": "Activity",
+      "sinceStart": "Since start",
+      "memoryLimits_one": "Memory limit hit {{count}} time",
+      "memoryLimits_other": "Memory limit hit {{count}} times"
     }
   },
   "pluginRecords": {

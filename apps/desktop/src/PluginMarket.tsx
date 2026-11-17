@@ -10,7 +10,7 @@ import { LoadingState } from "@/components/LoadingState";
 import { MarkdownContent } from "@/components/MarkdownContent";
 import { Panel } from "@/components/Panel";
 import { PluginIcon, pluginAvatar } from "@/components/PluginIcon";
-import { SearchInput } from "@/components/SearchInput";
+import { SegmentedControl } from "@/components/SegmentedControl";
 import { StatusBadge } from "@/components/StatusBadge";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -23,14 +23,6 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input, verbatimTextInput } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { cn } from "@/lib/utils";
 
 import {
   findPluginByCode,
@@ -42,7 +34,7 @@ import { controlErrorMessage } from "./control-error";
 import { useT } from "./i18n";
 import { installFailureText } from "./PluginInstallReview";
 import { ModelChips, TaskEndpoints } from "./PluginTaskParts";
-import { taskAuthLabel, taskSurfaceLabels } from "./plugin-task-labels";
+import { taskAuthLabel } from "./plugin-task-labels";
 import type {
   PluginMarket,
   PluginMarketDoc,
@@ -142,22 +134,23 @@ function incompatibleReason(
 }
 
 /**
- * A plugin marketplace in new-api's index format: its plugins as cards, a
- * card opening what the plugin serves, its usage guide and its versions.
- * Installing hands the link of a version to the install dialog, which
- * reviews it first. An 8-digit code in the search finds the plugin of that
- * code in any New API marketplace. `compact` lists the plugins as rows,
- * inside the install dialog.
+ * A plugin marketplace in new-api's index format: official, community or
+ * another one, its plugins as rows, a row opening what the plugin serves,
+ * its usage guide and its versions. Installing hands the link of a version
+ * to the install dialog, which reviews it first. The page header's search
+ * filters the rows, and an 8-digit code finds the plugin of that code in any
+ * New API marketplace.
  */
 export function PluginMarketView({
   isReady,
+  query,
   onInstall,
-  compact = false,
 }: {
   isReady: boolean;
+  /** The page header's search. */
+  query: string;
   /** Reviews the install of the version a link names. */
   onInstall: (link: string) => void;
-  compact?: boolean;
 }) {
   const t = useT();
   const [index, setIndex] = useState(rememberedIndex);
@@ -166,7 +159,6 @@ export function PluginMarketView({
   const [market, setMarket] = useState<PluginMarket | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [query, setQuery] = useState("");
   const [open, setOpen] = useState<{
     entry: PluginMarketEntry;
     index: string;
@@ -198,8 +190,8 @@ export function PluginMarketView({
   );
 
   useEffect(() => {
-    if (isReady) void load(index);
-  }, [index, isReady, load]);
+    if (isReady && sourceOf(index) === source) void load(index);
+  }, [index, isReady, load, source]);
 
   const needle = query.trim().toLowerCase();
   const listed = useMemo(() => {
@@ -262,34 +254,25 @@ export function PluginMarketView({
       className="flex min-h-0 min-w-0 flex-1 flex-col gap-3"
       data-testid="plugin-market"
     >
-      <div className="flex min-w-0 flex-wrap items-center gap-2">
-        <Select
+      <div className="flex min-h-8 min-w-0 shrink-0 flex-wrap items-center gap-x-3 gap-y-2">
+        <SegmentedControl
           disabled={!isReady}
-          onValueChange={(value) => {
-            const next = value as MarketSource;
+          label={t("plugins.market.source")}
+          onValueChange={(next) => {
             setSource(next);
             if (next === "official") choose("");
             else if (next === "community") choose(COMMUNITY_MARKET_INDEX);
+            else if (draft.trim()) choose(draft.trim());
+            else setMarket(null);
           }}
+          options={[
+            { value: "official", label: t("plugins.market.official") },
+            { value: "community", label: t("plugins.market.community") },
+            { value: "custom", label: t("plugins.market.custom") },
+          ]}
           value={source}
-        >
-          <SelectTrigger
-            aria-label={t("plugins.market.source")}
-            className="w-40"
-            size="sm"
-          >
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="official">
-              {t("plugins.market.official")}
-            </SelectItem>
-            <SelectItem value="community">
-              {t("plugins.market.community")}
-            </SelectItem>
-            <SelectItem value="custom">{t("plugins.market.custom")}</SelectItem>
-          </SelectContent>
-        </Select>
+          variant="line"
+        />
         {source === "custom" ? (
           <form
             className="flex min-w-0 flex-[1_1_18rem] items-center gap-2"
@@ -315,24 +298,26 @@ export function PluginMarketView({
               {t("plugins.market.open")}
             </Button>
           </form>
+        ) : (
+          <span className="flex-1" />
+        )}
+        {market ? (
+          <span className="text-micro text-muted-foreground">
+            {found && code
+              ? t("plugins.market.foundByCode", { code })
+              : t("plugins.market.count", {
+                  name: market.name || t("plugins.market.official"),
+                  count: market.plugins.length,
+                })}
+          </span>
         ) : null}
-        <SearchInput
-          className={cn(
-            "min-w-40 flex-[1_1_12rem]",
-            source === "custom" && "max-w-64",
-          )}
-          clearLabel={t("common.clearSearch")}
-          label={t("plugins.market.search")}
-          onValueChange={setQuery}
-          placeholder={t("plugins.market.search")}
-          value={query}
-        />
         <IconButton
-          disabled={!isReady || loading}
+          disabled={!isReady || loading || (source === "custom" && !index)}
           label={t("common.refresh")}
           onClick={() => void load(index)}
+          size="icon-sm"
           type="button"
-          variant="outline"
+          variant="ghost"
         >
           <RefreshCw
             className={
@@ -341,16 +326,6 @@ export function PluginMarketView({
           />
         </IconButton>
       </div>
-      {market && !compact ? (
-        <p className="-mt-1 text-micro text-muted-foreground">
-          {found && code
-            ? t("plugins.market.foundByCode", { code })
-            : t("plugins.market.count", {
-                name: market.name || t("plugins.market.official"),
-                count: market.plugins.length,
-              })}
-        </p>
-      ) : null}
       {error ? <FormMessage tone="error">{error}</FormMessage> : null}
       {findError ? <FormMessage tone="error">{findError}</FormMessage> : null}
       {(loading && !market) || finding ? (
@@ -374,37 +349,26 @@ export function PluginMarketView({
                 : t("plugins.market.empty")
           }
         />
-      ) : compact ? (
-        <ul
-          aria-label={t("plugins.market.listLabel")}
-          className="min-h-0 overflow-y-auto overscroll-contain rounded-md border"
+      ) : market ? (
+        <div
+          className="min-h-0 flex-1 overflow-y-auto overscroll-contain pb-1"
+          data-tab-scroller
         >
-          {shown.map((entry) => (
-            <li className="border-b last:border-b-0" key={entry.key}>
-              <MarketRow
-                entry={entry}
-                onInstall={onInstall}
-                onOpen={() => setOpen({ entry, index: shownIndex })}
-              />
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <ul
-          aria-label={t("plugins.market.listLabel")}
-          className="grid min-h-0 grid-cols-1 content-start gap-3 overflow-y-auto overscroll-contain pb-1 @[640px]:grid-cols-2 @[1040px]:grid-cols-3"
-        >
-          {shown.map((entry) => (
-            <li className="min-w-0" key={entry.key}>
-              <MarketCard
-                entry={entry}
-                onInstall={onInstall}
-                onOpen={() => setOpen({ entry, index: shownIndex })}
-              />
-            </li>
-          ))}
-        </ul>
-      )}
+          <Panel asChild>
+            <ul aria-label={t("plugins.market.listLabel")}>
+              {shown.map((entry) => (
+                <li className="border-b last:border-b-0" key={entry.key}>
+                  <MarketRow
+                    entry={entry}
+                    onInstall={onInstall}
+                    onOpen={() => setOpen({ entry, index: shownIndex })}
+                  />
+                </li>
+              ))}
+            </ul>
+          </Panel>
+        </div>
+      ) : null}
       {open ? (
         <MarketEntryDialog
           entry={open.entry}
@@ -433,9 +397,9 @@ function EntryAction({
   const state = entryState(entry);
   if (state === "installed")
     return (
-      <StatusBadge className="shrink-0" tone="positive">
+      <span className="shrink-0 text-xs text-muted-foreground">
         {t("plugins.market.installed")}
-      </StatusBadge>
+      </span>
     );
   if (state === "revoked")
     return (
@@ -449,13 +413,12 @@ function EntryAction({
     );
   if (state === "incompatible")
     return (
-      <StatusBadge
-        className="shrink-0"
+      <span
+        className="shrink-0 text-xs text-muted-foreground"
         title={incompatibleReason(entry, t)}
-        tone="neutral"
       >
         {t("plugins.market.incompatible")}
-      </StatusBadge>
+      </span>
     );
   return (
     <Button
@@ -466,7 +429,7 @@ function EntryAction({
       }}
       size={size}
       type="button"
-      variant={state === "update" ? "default" : "outline"}
+      variant="outline"
     >
       {state === "update"
         ? t("plugins.market.update", { version: entry.latest })
@@ -475,93 +438,11 @@ function EntryAction({
   );
 }
 
-/** What a marketplace plugin serves and how many models, in one line. */
-function EntryFacts({ entry }: { entry: PluginMarketEntry }) {
-  const t = useT();
-  const surfaces = taskSurfaceLabels(entry.protocols, entry.routes, t);
-  return (
-    <span className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-micro text-muted-foreground">
-      <span className="tabular-nums">
-        {t("plugins.market.models", { count: entry.models.length })}
-      </span>
-      {surfaces.map((surface) => (
-        <Badge
-          className="px-1.5 py-0 font-normal"
-          key={surface}
-          variant="outline"
-        >
-          {surface}
-        </Badge>
-      ))}
-    </span>
-  );
-}
-
-function MarketCard({
-  entry,
-  onInstall,
-  onOpen,
-}: {
-  entry: PluginMarketEntry;
-  onInstall: (link: string) => void;
-  onOpen: () => void;
-}) {
-  const t = useT();
-  return (
-    <Panel
-      className="group flex h-full min-h-36 cursor-pointer flex-col gap-2.5 p-3 transition-colors hover:border-ring/40 hover:bg-muted/30"
-      data-testid="plugin-market-card"
-      onClick={onOpen}
-      onKeyDown={(event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          onOpen();
-        }
-      }}
-      role="button"
-      tabIndex={0}
-    >
-      <div className="flex min-w-0 items-start gap-2.5">
-        <PluginIcon
-          className="size-9 rounded-md"
-          icon={entry.icon_url}
-          label={pluginAvatar({ name: entry.name, task: { icon: entry.icon } })}
-        />
-        <div className="grid min-w-0 flex-1 gap-0.5">
-          <span className="flex min-w-0 items-center gap-1.5">
-            <strong className="truncate text-sm font-semibold">
-              {entry.name}
-            </strong>
-            <span className="shrink-0 text-micro text-muted-foreground tabular-nums">
-              {entry.latest}
-            </span>
-            {entry.recommended ? (
-              <Badge className="shrink-0 px-1.5 py-0 font-normal">
-                {t("plugins.market.recommended")}
-              </Badge>
-            ) : null}
-          </span>
-          {entry.author ? (
-            <span className="truncate text-micro text-muted-foreground">
-              {t("plugins.market.by", { author: entry.author.login })}
-            </span>
-          ) : null}
-        </div>
-        <EntryAction entry={entry} onInstall={onInstall} />
-      </div>
-      <p className="line-clamp-2 min-h-8 text-xs leading-4 text-text-secondary">
-        {entry.description || t("plugins.market.noDescription")}
-      </p>
-      <div className="mt-auto flex min-w-0 items-center justify-between gap-2">
-        <EntryFacts entry={entry} />
-        {entry.installed && entryState(entry) === "update" ? (
-          <span className="shrink-0 text-micro text-muted-foreground">
-            {t("plugins.market.installedVersion", { version: entry.installed })}
-          </span>
-        ) : null}
-      </div>
-    </Panel>
-  );
+/** What kind of plugin an entry is, from what it declares. */
+function entryKind(entry: PluginMarketEntry, t: ReturnType<typeof useT>) {
+  if (entry.protocols.length > 0 || entry.routes.length > 0)
+    return t("plugins.groups.providers");
+  return "";
 }
 
 function MarketRow({
@@ -573,13 +454,33 @@ function MarketRow({
   onInstall: (link: string) => void;
   onOpen: () => void;
 }) {
+  const t = useT();
+  const kind = entryKind(entry, t);
+  const state = entryState(entry);
+  const subtitle =
+    state === "incompatible"
+      ? incompatibleReason(entry, t)
+      : [
+          entry.description || t("plugins.market.noDescription"),
+          entry.models.length > 0
+            ? t("plugins.market.models", { count: entry.models.length })
+            : "",
+          entry.author
+            ? t("plugins.market.by", { author: entry.author.login })
+            : "",
+        ]
+          .filter(Boolean)
+          .join(" · ");
   return (
     <div
-      className="flex min-w-0 cursor-pointer items-center gap-2.5 px-3 py-2 hover:bg-muted/60"
+      className="flex h-15 min-w-0 cursor-pointer items-center gap-3 px-3 transition-colors hover:bg-muted/40"
       data-testid="plugin-market-row"
       onClick={onOpen}
       onKeyDown={(event) => {
-        if (event.key === "Enter") onOpen();
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onOpen();
+        }
       }}
       role="button"
       tabIndex={0}
@@ -590,15 +491,32 @@ function MarketRow({
         label={pluginAvatar({ name: entry.name, task: { icon: entry.icon } })}
       />
       <span className="grid min-w-0 flex-1 gap-0.5">
-        <span className="flex min-w-0 items-center gap-1.5">
+        <span className="flex min-w-0 items-center gap-2">
           <strong className="truncate text-sm font-medium">{entry.name}</strong>
           <span className="shrink-0 text-micro text-muted-foreground tabular-nums">
             {entry.latest}
           </span>
+          {kind ? (
+            <Badge className="shrink-0 font-normal" variant="secondary">
+              {kind}
+            </Badge>
+          ) : null}
+          {entry.recommended ? (
+            <Badge className="shrink-0 font-normal" variant="accent">
+              {t("plugins.market.recommended")}
+            </Badge>
+          ) : null}
         </span>
-        <EntryFacts entry={entry} />
+        <span className="truncate text-xs text-text-secondary" title={subtitle}>
+          {subtitle}
+        </span>
       </span>
-      <EntryAction entry={entry} onInstall={onInstall} />
+      {state === "update" && entry.installed ? (
+        <span className="hidden shrink-0 text-micro text-muted-foreground @[560px]:inline">
+          {t("plugins.market.installedVersion", { version: entry.installed })}
+        </span>
+      ) : null}
+      <EntryAction entry={entry} onInstall={onInstall} size="sm" />
     </div>
   );
 }
