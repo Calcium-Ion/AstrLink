@@ -7,6 +7,7 @@ import type { ClientType } from "../request-record-model";
 import claude from "./pet-art/claude.json";
 import codex from "./pet-art/codex.json";
 import deepseek from "./pet-art/deepseek.json";
+import gemini from "./pet-art/gemini.json";
 import { cfg } from "./toy-config";
 
 export interface Point {
@@ -70,6 +71,7 @@ const KITS: Partial<Record<ClientType, Kit>> = {
   claude_code: claude as Kit,
   codex: codex as Kit,
   deepseek_harness: deepseek as Kit,
+  gemini_cli: gemini as Kit,
 };
 
 /** Whether the client has a drawn girl of its own. */

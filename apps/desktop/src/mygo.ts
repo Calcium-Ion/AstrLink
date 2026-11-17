@@ -594,7 +594,7 @@ export interface Opened {
  * PetCharacter is who the big pet is: one of the drawn girls, or whoever
  * has the most conversations going.
  */
-export type PetCharacter = "auto" | "claude_code" | "codex" | "deepseek_harness";
+export type PetCharacter = "auto" | "claude_code" | "codex" | "deepseek_harness" | "gemini_cli";
 
 /** Phase is where Core is in its lifecycle. */
 export type Phase = "stopped" | "spawning" | "waiting_for_ready" | "handshaking" | "ready" | "stopping" | "exited" | "error";

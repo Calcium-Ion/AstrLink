@@ -108,6 +108,7 @@ export const PET_CHARACTERS = [
   "claude_code",
   "codex",
   "deepseek_harness",
+  "gemini_cli",
 ] as const;
 export type PetCharacter = (typeof PET_CHARACTERS)[number];
 

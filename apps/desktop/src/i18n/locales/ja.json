@@ -4807,7 +4807,8 @@
       "auto": "自動",
       "claude_code": "Claude",
       "codex": "Codex",
-      "deepseek_harness": "DeepSeek"
+      "deepseek_harness": "DeepSeek",
+      "gemini_cli": "Gemini"
     },
     "size": {
       "label": "大きさ",

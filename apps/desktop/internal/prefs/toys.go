@@ -37,10 +37,11 @@ const (
 	PetClaudeCode      PetCharacter = "claude_code"
 	PetCodex           PetCharacter = "codex"
 	PetDeepseekHarness PetCharacter = "deepseek_harness"
+	PetGeminiCLI       PetCharacter = "gemini_cli"
 )
 
 func (c *PetCharacter) UnmarshalJSON(data []byte) error {
-	return unmarshalChoice(data, (*string)(c), "pet character", PetAuto, PetClaudeCode, PetCodex, PetDeepseekHarness)
+	return unmarshalChoice(data, (*string)(c), "pet character", PetAuto, PetClaudeCode, PetCodex, PetDeepseekHarness, PetGeminiCLI)
 }
 
 // DesktopToysSwitched are the toy switches flipped by hand. One never

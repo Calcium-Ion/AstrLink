@@ -28,6 +28,10 @@ func TestDesktopToysKeepOnlyHandFlippedSwitchesAndSaveOnTheirOwn(t *testing.T) {
 		fixed.Pet.Character != PetDeepseekHarness || !fixed.Pet.Grab || !fixed.Pet.Rate {
 		t.Fatal(fixed, err)
 	}
+	var gemini DesktopToysPreferences
+	if err := json.Unmarshal([]byte(`{"pet":{"character":"gemini_cli"}}`), &gemini); err != nil || gemini.Pet.Character != PetGeminiCLI {
+		t.Fatal(gemini, err)
+	}
 	for _, bad := range []string{`{"pet":{"character":"pi"}}`, `{"pet":{"size":"huge"}}`, `{"pet":{"egg":1}}`, `{"level":"wild"}`} {
 		var v DesktopToysPreferences
 		if err := json.Unmarshal([]byte(bad), &v); err == nil {

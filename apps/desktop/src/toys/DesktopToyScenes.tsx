@@ -80,6 +80,7 @@ const GIRLS: readonly ClientType[] = [
   "claude_code",
   "codex",
   "deepseek_harness",
+  "gemini_cli",
 ];
 const TURN_SECONDS = 10;
 
