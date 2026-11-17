@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"os"
+	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
@@ -44,6 +45,8 @@ type App struct {
 	quitting atomic.Bool
 	// builds counts the main windows built; the first is the startup one.
 	builds atomic.Int32
+	// notices are the notices shown once.
+	notices notices
 	// stop ends the background work at quit.
 	stopOnce sync.Once
 	stop     context.CancelFunc
@@ -234,13 +237,36 @@ func (a *App) hideMainToTray(w *mygo.Window) {
 	// An inspector following the list must not stay on screen showing a
 	// request the operator can no longer reach. Pinned ones stay.
 	a.closeUnpinnedInspectors()
-	titleKey, bodyKey := "host.tray.hiddenTitle", "host.tray.hiddenBody"
-	if mac {
-		titleKey, bodyKey = "host.tray.hiddenMenuBarTitle", "host.tray.hiddenMenuBarBody"
+	// An in-window toast is not seen once the window hides. A notification
+	// says where the window went the first time only: from then on, closing
+	// to the tray is what the operator expects of it.
+	path := a.noticesPath()
+	if !a.notices.Seen(path, noticeHiddenToTray) {
+		a.notifyHidden(path)
 	}
-	locale := a.locale()
-	// An in-window toast is not seen once the window hides.
-	notify(prefs.T(locale, titleKey), prefs.T(locale, bodyKey))
+}
+
+// notifyHidden shows hiddenNotification, which brings the window back when
+// clicked, and keeps that it was shown.
+func (a *App) notifyHidden(path string) {
+	n := mygo.NewNotification(hiddenNotification(a.locale()))
+	n.OnClick(a.ShowMain)
+	if err := n.Show(); err != nil {
+		log.Printf("astrlink: unable to show a notification: %v", err)
+		return
+	}
+	if err := a.notices.Record(path, noticeHiddenToTray); err != nil {
+		log.Printf("astrlink: unable to keep that the tray notice was shown: %v", err)
+	}
+}
+
+// noticesPath is the file of the notices shown, none when the config
+// directory is unknown.
+func (a *App) noticesPath() string {
+	if config := a.h.Directories().Config; config != "" {
+		return filepath.Join(config, noticesFile)
+	}
+	return ""
 }
 
 // ShowMain brings the main window up, building it again when the hidden

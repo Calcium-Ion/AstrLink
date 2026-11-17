@@ -37,7 +37,7 @@ const macosSvg = readFileSync(
   join(desktopDir, "../../assets/branding/astrlink-macos-icon.svg"),
 );
 // Bump when the variant derivation below changes so stale PNGs regenerate.
-const TRAY_VARIANTS_VERSION = "10";
+const TRAY_VARIANTS_VERSION = "11";
 const trayHash = createHash("sha256")
   .update(traySvg)
   .update(svg)
@@ -166,13 +166,19 @@ const trayVariants = [
     }),
     size: 32,
   },
+  // Notifications on Windows and Linux show the colour mark, large enough
+  // for the balloon's large icon and the notification image to shrink, so
+  // they never take the tray icon's current, possibly idle, state
+  // (internal/ui/notices.go).
+  { dir: "notification", source: svg.toString("utf8"), size: 256 },
 ];
 
 const previousTrayHash = existsSync(trayStampPath)
   ? readFileSync(trayStampPath, "utf8").trim()
   : "";
 // One image per state: the tray loads the 36px glyph as an 18pt template on
-// macOS and the 32px colour mark elsewhere (internal/ui/tray.go).
+// macOS and the 32px colour mark elsewhere (internal/ui/tray.go). The
+// notification image goes beside them.
 const trayOutput = (variant) => join(trayDir, `${variant.dir}.png`);
 if (
   previousTrayHash !== trayHash ||
