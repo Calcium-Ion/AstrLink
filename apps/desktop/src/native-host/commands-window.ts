@@ -29,6 +29,8 @@ export const windowCommands = {
 
   save_text_file: (a: { defaultFilename: string; contents: string }) =>
     Files.saveTextFile(a.defaultFilename, a.contents),
+  save_gateway_file: (a: { url: string; defaultFilename: string }) =>
+    Files.saveGatewayFile(a.url, a.defaultFilename),
   display_currency: () => Currency.displayCurrency(),
 
   tray_state: (a: { tray?: TrayPreferences | null }) =>

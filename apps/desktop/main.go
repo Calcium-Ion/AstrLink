@@ -21,7 +21,8 @@ func main() {
 	h := host.New()
 	// One file per area binds its services, so each can change on its own.
 	registerCoreCommands(h)
-	registerWindowCommands(h)
+	app := registerWindowCommands(h)
+	registerPluginCommands(h, app)
 	registerClientCommands(h)
 	registerAgentCommands(h)
 	registerReleaseCommands(h)

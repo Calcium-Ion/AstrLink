@@ -3,12 +3,15 @@ package ui
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode"
 
 	"github.com/egoist/mygo"
 
+	"github.com/QuantumNous/astrlink/desktop/internal/core"
 	"github.com/QuantumNous/astrlink/desktop/internal/currency"
 	"github.com/QuantumNous/astrlink/desktop/internal/host"
 	"github.com/QuantumNous/astrlink/desktop/internal/prefs"
@@ -38,8 +41,8 @@ func (m MainWindow) SetMainWindowUnsaved(unsaved bool) {
 
 // ---- Files ----
 
-// Files saves what pages export.
-type Files struct{}
+// Files saves what pages export, and files the gateway generated.
+type Files struct{ a *App }
 
 // SaveTextFile asks where to save contents, offering defaultFilename, and
 // writes it there. It returns the path, nil when the operator canceled.
@@ -60,6 +63,35 @@ func (Files) SaveTextFile(defaultFilename, contents string) (*string, error) {
 		return nil, err
 	}
 	return &path, nil
+}
+
+// SaveGatewayFile asks where to save a file the gateway generated, such
+// as an image or a video, offering defaultFilename, and saves it there as
+// it streams in. It returns the path, nil when the operator canceled.
+func (f Files) SaveGatewayFile(ctx context.Context, link, defaultFilename string) (*string, error) {
+	source, ok := f.a.h.GatewayFile(link)
+	if !ok {
+		return nil, errors.New("not a file of the gateway")
+	}
+	path, err := mygo.Dialog.Save(mygo.SaveDialogOptions{DefaultPath: safeFilename(defaultFilename)})
+	if err != nil || path == "" {
+		return nil, err
+	}
+	if err := core.SaveGatewayFile(ctx, source, path); err != nil {
+		return nil, err
+	}
+	return &path, nil
+}
+
+// safeFilename drops control characters and those no file name may hold
+// on some system.
+func safeFilename(name string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) || strings.ContainsRune(`/\:*?"<>|`, r) {
+			return -1
+		}
+		return r
+	}, name)
 }
 
 // ---- Currency ----

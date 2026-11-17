@@ -353,6 +353,11 @@ export interface DesktopToyPet {
   reply: boolean;
   /** Failover shows a bubble when a call switches route. */
   failover: boolean;
+  /**
+   * Rate shows the output tokens per second over her head while a
+   * conversation works or tokens still flow.
+   */
+  rate: boolean;
 }
 
 /**
@@ -591,6 +596,17 @@ export interface Opened {
 }
 
 /**
+ * PendingPluginApproval is a change waiting for the user: the plugin, what
+ * Core said it grants, and the change to send again once confirmed.
+ */
+export interface PendingPluginApproval {
+  id: string;
+  key: string;
+  /** Approval is Core's description of what the change grants. */
+  approval: unknown;
+}
+
+/**
  * PetCharacter is who the big pet is: one of the drawn girls, or whoever
  * has the most conversations going.
  */
@@ -605,6 +621,14 @@ export interface PlanTypeDescriptor {
   id: PlanType;
   available_in_alpha: boolean;
   uses_local_conversion: boolean;
+}
+
+/** PluginApprovalFinished is what every window hears once the user decided. */
+export interface PluginApprovalFinished {
+  id: string;
+  key: string;
+  approved: boolean;
+  error?: string;
 }
 
 /** PolicyRecord is a privacy policy and the ETag its update must quote. */
@@ -738,7 +762,7 @@ export interface ProtocolDescriptor {
  * ProtocolID is the stable identifier persisted by AstrLink and exposed by the
  * control API. It deliberately does not reuse new-api or RelayKit identifiers.
  */
-export type ProtocolID = "openai.responses" | "openai.responses.compact" | "anthropic.messages" | "google.generate_content" | "openai.chat" | "openai.completions" | "openai.models" | "google.models" | "openai.embeddings" | "google.embeddings" | "rerank" | "openai.realtime" | "openai.images" | "openai.audio" | "openai.videos" | "openai.search";
+export type ProtocolID = "plugin.native" | "openai.responses" | "openai.responses.compact" | "anthropic.messages" | "google.generate_content" | "openai.chat" | "openai.completions" | "openai.models" | "google.models" | "openai.embeddings" | "google.embeddings" | "rerank" | "openai.realtime" | "openai.images" | "openai.audio" | "openai.videos" | "openai.search";
 
 export type ProtocolPhase = "alpha" | "post_alpha";
 
@@ -1237,7 +1261,10 @@ export const Shell = {
   openAuthorizationURL(url: string): Promise<void> {
     return call("Shell.OpenAuthorizationURL", url);
   },
-  /** OpenExternalURL opens an https link in the system browser. */
+  /**
+   * OpenExternalURL opens an https link in the system browser. A file the
+   * gateway generated, such as an image, opens there too.
+   */
   openExternalURL(url: string): Promise<void> {
     return call("Shell.OpenExternalURL", url);
   },
@@ -1773,8 +1800,16 @@ export const MainWindow = {
   },
 } as const;
 
-/** Files saves what pages export. */
+/** Files saves what pages export, and files the gateway generated. */
 export const Files = {
+  /**
+   * SaveGatewayFile asks where to save a file the gateway generated, such
+   * as an image or a video, offering defaultFilename, and saves it there as
+   * it streams in. It returns the path, nil when the operator canceled.
+   */
+  saveGatewayFile(link: string, defaultFilename: string): Promise<string | null> {
+    return call("Files.SaveGatewayFile", link, defaultFilename);
+  },
   /**
    * SaveTextFile asks where to save contents, offering defaultFilename, and
    * writes it there. It returns the path, nil when the operator canceled.
@@ -1889,6 +1924,80 @@ export const Toys = {
   /** UpdateDesktopToys saves the pet's preferences and applies them at once. */
   updateDesktopToys(input: DesktopToysPreferences): Promise<SettingsSnapshot> {
     return call("Toys.UpdateDesktopToys", input);
+  },
+} as const;
+
+/**
+ * Plugins is the plugin page: list, rescan, settings, credentials, tests,
+ * status, installs from source, the marketplace, and the plugins' part in
+ * a session; and the confirmation window's change.
+ */
+export const Plugins = {
+  /**
+   * OpenPluginApproval brings the confirmation window back, for a change
+   * still waiting; false when none waits.
+   */
+  openPluginApproval(): Promise<boolean> {
+    return call("Plugins.OpenPluginApproval");
+  },
+  /**
+   * PluginAction runs one plugin page action. A change of settings that
+   * grants the plugin more, and an install or rollback from source, wait
+   * for the user in the confirmation window; the rest is sent at once.
+   */
+  pluginAction(action: string, key: string, name: string, input: unknown): Promise<unknown> {
+    return call("Plugins.PluginAction", action, key, name, input);
+  },
+  /**
+   * PluginApprovalDecide decides the change waiting for confirmation. Only
+   * the confirmation window may: what runs in the main window cannot confirm
+   * for the user. kept are the added capabilities the user left ticked; nil
+   * keeps them all.
+   */
+  pluginApprovalDecide(id: string, approve: boolean, kept: string[] | null): Promise<void> {
+    return call("Plugins.PluginApprovalDecide", id, approve, kept);
+  },
+  /**
+   * PluginApprovalPending is the change waiting in the confirmation window,
+   * for that window alone.
+   */
+  pluginApprovalPending(): Promise<PendingPluginApproval | null> {
+    return call("Plugins.PluginApprovalPending");
+  },
+  /**
+   * SessionPlugins reads the plugins' part in a session, pauses or resumes a
+   * plugin there, or makes its next request load the plugin's block again.
+   */
+  sessionPlugins(sessionID: string, key: string, input: unknown, refresh: boolean): Promise<unknown> {
+    return call("Plugins.SessionPlugins", sessionID, key, input, refresh);
+  },
+} as const;
+
+/**
+ * Metadata is the request attributes, an access token's default metadata
+ * and a session's bindings.
+ */
+export const Metadata = {
+  /**
+   * AccessTokenMetadata reads an access token's default metadata, or
+   * replaces it with input.
+   */
+  accessTokenMetadata(tokenID: string, input: unknown): Promise<unknown> {
+    return call("Metadata.AccessTokenMetadata", tokenID, input);
+  },
+  /**
+   * MetadataAction lists, creates, updates or deletes a request attribute,
+   * or reads the values one took.
+   */
+  metadataAction(action: string, key: string, input: unknown): Promise<unknown> {
+    return call("Metadata.MetadataAction", action, key, input);
+  },
+  /**
+   * SessionMetadata reads a session's bindings, sets one by hand, or unbinds
+   * one, which Core stores as none.
+   */
+  sessionMetadata(sessionID: string, key: string, input: unknown, unbind: boolean): Promise<unknown> {
+    return call("Metadata.SessionMetadata", sessionID, key, input, unbind);
   },
 } as const;
 
@@ -2174,6 +2283,16 @@ export const events = {
   quotaDisplayModeChanged: event<string>("quota-display-mode-changed"),
   /** ThemePreferenceChanged carries the theme the user chose. */
   themePreferenceChanged: event<string>("theme-preference-changed"),
+  /**
+   * PluginApprovalFinished tells every window that the user decided the
+   * plugin change waiting in the plugin confirmation window.
+   */
+  pluginApprovalFinished: event<PluginApprovalFinished>("plugin-approval-finished"),
+  /**
+   * PluginApprovalChanged tells the plugin confirmation window that a
+   * newer change replaced the one it shows.
+   */
+  pluginApprovalChanged: event<{}>("plugin-approval-changed"),
   /**
    * WindowResized tells a window's page that it was resized, maximized or
    * went into or out of full screen, so a custom title bar reads its

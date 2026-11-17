@@ -11,6 +11,8 @@ import (
 	"os"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/QuantumNous/astrlink/core/contract"
 )
 
 // Caller sends one request to Core's control API. Package core implements
@@ -30,6 +32,10 @@ type Request struct {
 	Body any
 	// IfMatch is sent as the If-Match header when it is not empty.
 	IfMatch string
+	// PluginApproved marks a change of a plugin the user confirmed in the
+	// plugin confirmation window; Core refuses a change that grants a
+	// plugin more without it.
+	PluginApproved bool
 }
 
 // Response is what Core answered.
@@ -114,6 +120,9 @@ func (c *Client) dispatch(ctx context.Context, url, token string, req Request, b
 	request.Header.Set("Authorization", "Bearer "+token)
 	if req.IfMatch != "" {
 		request.Header.Set("If-Match", req.IfMatch)
+	}
+	if req.PluginApproved {
+		request.Header.Set(contract.PluginApprovalHeader, "confirmed")
 	}
 	if body != nil {
 		contentType := "application/json"

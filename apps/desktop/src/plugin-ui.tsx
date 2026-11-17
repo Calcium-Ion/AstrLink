@@ -85,7 +85,7 @@ export type PluginNavigation =
   | { page: "overview" | "records" | "plugins" | "settings" }
   | { page: "plugin"; entry?: string };
 
-/** Must match `SCHEME` in plugin_client.rs. */
+/** Must match `PluginScheme` in `internal/control/plugins.go`. */
 export const PLUGIN_SCHEME = "astrlink-plugin";
 
 const SAFE_MODE_KEY = "astrlink:plugin-ui-safe-mode";

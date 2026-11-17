@@ -94,9 +94,10 @@ func (p Preferences) UpdatePreferences(input json.RawMessage) (SettingsSnapshot,
 // Shell opens links in the system browser.
 type Shell struct{ h *Host }
 
-// OpenExternalURL opens an https link in the system browser.
+// OpenExternalURL opens an https link in the system browser. A file the
+// gateway generated, such as an image, opens there too.
 func (s Shell) OpenExternalURL(url string) error {
-	if err := checkExternalURL(url); err != nil {
+	if err := checkExternalURL(url); err != nil && !s.h.IsGatewayFile(url) {
 		return err
 	}
 	if err := s.h.openURL(url); err != nil {

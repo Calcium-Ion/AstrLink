@@ -6,6 +6,7 @@ import { isMyGo } from "mygo-runtime";
 import { agentsCommands } from "./commands-agents";
 import { clientsCommands } from "./commands-clients";
 import { coreCommands } from "./commands-core";
+import { pluginsCommands } from "./commands-plugins";
 import { releaseCommands } from "./commands-release";
 import { windowCommands } from "./commands-window";
 import type { CommandTable } from "./types";
@@ -16,6 +17,7 @@ export const commandTable: CommandTable = {
   ...clientsCommands,
   ...agentsCommands,
   ...releaseCommands,
+  ...pluginsCommands,
 };
 
 /** Reports whether the page runs in the desktop app. */

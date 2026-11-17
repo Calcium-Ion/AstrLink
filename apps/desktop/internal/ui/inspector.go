@@ -10,6 +10,7 @@ import (
 
 	"github.com/egoist/mygo"
 
+	"github.com/QuantumNous/astrlink/desktop/internal/control"
 	"github.com/QuantumNous/astrlink/desktop/internal/darwin"
 	"github.com/QuantumNous/astrlink/desktop/internal/host"
 	"github.com/QuantumNous/astrlink/desktop/internal/prefs"
@@ -238,6 +239,7 @@ func (a *App) inspectorLocaleChanged(locale prefs.Locale) {
 	}
 	a.inspectors.mu.Unlock()
 	titles[ApprovalLabel] = prefs.T(locale, "host.window.rawAccessApproval")
+	titles[control.PluginApprovalLabel] = prefs.T(locale, "host.window.pluginApproval")
 	for label, title := range titles {
 		if w := windowByLabel(label); w != nil {
 			w.SetTitle(title)

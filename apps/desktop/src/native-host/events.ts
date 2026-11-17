@@ -14,6 +14,8 @@ export const eventTable = {
   "display-currency-changed": events.displayCurrencyChanged,
   "quota-display-mode-changed": events.quotaDisplayModeChanged,
   "theme-preference-changed": events.themePreferenceChanged,
+  "plugin-approval-finished": events.pluginApprovalFinished,
+  "plugin-approval-changed": events.pluginApprovalChanged,
   "toys:feed": events.toysFeed,
   "toys:prefs": events.toysPrefs,
   "toys:pointer": events.toysPointer,

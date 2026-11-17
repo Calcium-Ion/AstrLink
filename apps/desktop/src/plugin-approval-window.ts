@@ -1,6 +1,6 @@
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { getCurrentWindow } from "./native-host/window";
 
-/** Must match `LABEL` in `src-tauri/src/plugin_approval.rs`. */
+/** Must match `PluginApprovalLabel` in `internal/control/plugins.go`. */
 export const PLUGIN_APPROVAL_LABEL = "plugin-approval";
 
 export function isPluginApprovalWindow(): boolean {
