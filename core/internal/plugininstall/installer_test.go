@@ -1026,3 +1026,38 @@ export async function prepareTurn() { return { text: "hello" }; }
 		t.Fatalf("the review of a directory version = %+v", review.Source)
 	}
 }
+
+// A preview asked while another builds waits for it instead of failing: a
+// dialog that asks twice, or one opened right after another closed.
+func TestAPreviewWaitsForTheBuildRunning(t *testing.T) {
+	fixture := newFixture(t)
+	date := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	fixture.hub.repos["acme/hello"] = &fakeRepo{
+		defaultBranch: "main",
+		branches:      map[string]string{"main": sha1v},
+		commits: map[string]fakeCommit{
+			sha1v: {files: pluginFiles("1.0.0", "", "package-lock.json", fixture.npmLockFile()), date: date},
+		},
+	}
+	installer := fixture.installer()
+	errs := make(chan error, 2)
+	for range 2 {
+		go func() {
+			_, err := installer.Preview(context.Background(), "https://github.com/acme/hello", nil)
+			errs <- err
+		}()
+	}
+	for range 2 {
+		if err := <-errs; err != nil {
+			t.Fatalf("Preview: %v", err)
+		}
+	}
+	// A caller that gives up while another build runs is told so.
+	installer.busy <- struct{}{}
+	defer func() { <-installer.busy }()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := installer.Preview(ctx, "https://github.com/acme/hello", nil); !hasReason(err, contract.PluginInstallBusy) {
+		t.Fatalf("Preview with the build running = %v", err)
+	}
+}

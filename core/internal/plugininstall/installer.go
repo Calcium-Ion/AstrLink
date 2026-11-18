@@ -85,8 +85,10 @@ type Existing struct {
 type Installer struct {
 	options Options
 	hub     *gitHub
-	// busy lets one build run at a time.
-	busy sync.Mutex
+	// busy lets one build run at a time; a preview waits for the one
+	// running, so a review asked again or a dialog closed mid-build does
+	// not fail the next.
+	busy chan struct{}
 	// mutex guards staged and the moves in the plugin directory.
 	mutex  sync.Mutex
 	staged map[string]*staged
@@ -136,6 +138,7 @@ func New(options Options) *Installer {
 			api: strings.TrimRight(options.GitHubAPI, "/"), codeload: strings.TrimRight(options.Codeload, "/"),
 		},
 		staged: map[string]*staged{},
+		busy:   make(chan struct{}, 1),
 	}
 }
 
@@ -148,12 +151,14 @@ func (installer *Installer) Preview(ctx context.Context, link string, existing f
 	if !ok && !isMarket {
 		return contract.PluginInstallReview{}, fail(contract.PluginInstallInvalidLink, "")
 	}
-	if !installer.busy.TryLock() {
-		return contract.PluginInstallReview{}, fail(contract.PluginInstallBusy, "")
-	}
-	defer installer.busy.Unlock()
 	ctx, cancel := context.WithTimeout(ctx, previewTimeout)
 	defer cancel()
+	select {
+	case installer.busy <- struct{}{}:
+	case <-ctx.Done():
+		return contract.PluginInstallReview{}, fail(contract.PluginInstallBusy, "")
+	}
+	defer func() { <-installer.busy }()
 	installer.expire()
 	token := randomHex(16)
 	work := filepath.Join(installer.options.Dir, stagingDir, token)

@@ -97,8 +97,12 @@ export function PluginInstallDialog({
     }
   }
 
+  // A development build runs effects twice; the link is reviewed once.
+  const reviewed = useRef(false);
   useEffect(() => {
-    if (link) void preview(link);
+    if (!link || reviewed.current) return;
+    reviewed.current = true;
+    void preview(link);
     // The link opens the dialog once.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
