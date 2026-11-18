@@ -142,6 +142,7 @@ describe("plugin model", () => {
           routes: [],
           link: "https://example.com/index.json#sora@1.1.0",
           installed: "1.0.0",
+          parts: ["task", "provider"],
         },
         {
           key: "relay",
@@ -162,6 +163,7 @@ describe("plugin model", () => {
     expect(market.plugins[0]).toMatchObject({
       latest: "1.1.0",
       installed: "1.0.0",
+      parts: ["task", "provider"],
       versions: [{ version: "1.1.0", base_url: "https://api.openai.com" }],
     });
     expect(() =>

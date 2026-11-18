@@ -5469,21 +5469,6 @@
     },
     "countLabel_one": "{{count}} 个插件",
     "countLabel_other": "{{count}} 个插件",
-    "metrics": {
-      "label": "插件概况",
-      "running": "启用中",
-      "calls": "调用（本次启动后）",
-      "recentCalls": "近 7 天处理",
-      "tasks": "生成中的任务",
-      "recentFailures": "近 7 天出错",
-      "failures": "出错（本次启动后）",
-      "installedCount_one": "共 {{count}} 个",
-      "installedCount_other": "共 {{count}} 个",
-      "failedCount_one": "{{count}} 个没能加载",
-      "failedCount_other": "{{count}} 个没能加载",
-      "allTasks_one": "共 {{count}} 个",
-      "allTasks_other": "共 {{count}} 个"
-    },
     "list": {
       "tabs": "插件",
       "installed": "已安装",
@@ -5493,10 +5478,10 @@
     "groups": {
       "providers": "提供商",
       "extensions": "功能扩展",
-      "requests": "请求检查",
+      "requests": "请求处理",
       "helpLabel": "关于「{{group}}」",
       "providersHelp": "接入新的模型服务，或者视频、图片生成。在提供商页添加成提供商、填上密钥后，客户端才会用上它。",
-      "requestsHelp": "按规则检查经过网关的请求和回复，可以拦下或改写。每条规则单独设置适用的模型。",
+      "requestsHelp": "按规则处理经过网关的请求和回复，可以拦下或改写。每条规则单独设置适用的模型。",
       "extensionsHelp": "在请求经过网关时做额外的事：给会话加上记忆或上下文、改写请求，或者记下发生了什么。"
     },
     "market": {
@@ -5504,9 +5489,12 @@
       "source": "插件市场来源",
       "official": "官方市场",
       "custom": "其他市场",
+      "kind": "插件类型",
+      "allKinds": "全部",
+      "otherKind": "其他",
       "indexLabel": "市场的 index.json 地址",
       "open": "打开",
-      "search": "搜索插件、模型或编码",
+      "search": "搜索插件、模型或插件码",
       "count_one": "{{name}} · {{count}} 个插件",
       "count_other": "{{name}} · {{count}} 个插件",
       "loading": "正在读取插件市场…",
@@ -5539,7 +5527,7 @@
       "by": "作者 {{author}}",
       "author": "作者",
       "repository": "源码仓库",
-      "code": "插件编码",
+      "code": "插件码",
       "installs": "近 30 天",
       "installsCount_one": "{{count}} 次安装",
       "installsCount_other": "{{count}} 次安装",
@@ -5551,9 +5539,9 @@
       "revoked": "已下架",
       "revokedReason": "市场已经下架了你装的这个版本：{{reason}}。建议更新到其他版本，或者卸载。",
       "revokedNoReason": "市场已经下架了你装的这个版本。建议更新到其他版本，或者卸载。",
-      "finding": "正在查找编码 {{code}} 的插件…",
-      "foundByCode": "编码 {{code}} 的插件",
-      "noCode": "没有找到编码为 {{code}} 的插件"
+      "finding": "正在查找插件码 {{code}} 的插件…",
+      "foundByCode": "插件码 {{code}} 的插件",
+      "noCode": "没有找到插件码为 {{code}} 的插件"
     },
     "task": {
       "protocols": {
@@ -5690,7 +5678,7 @@
       "tasks": "生成任务",
       "failedTasks": "失败的任务",
       "requests": "处理的请求",
-      "checked": "检查的请求",
+      "checked": "处理的请求",
       "failedRequests": "出错",
       "helpLabel": "关于运行情况",
       "help": "最近 7 天，按本机的请求记录和任务汇总。小柱是每天的数，最右一根是今天。"

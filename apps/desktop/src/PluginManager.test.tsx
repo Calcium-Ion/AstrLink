@@ -2059,11 +2059,6 @@ describe("PluginManager", () => {
       expect(row("powercontext")).toContain("近 7 天 42 次");
       expect(row("powercontext")).toContain("2 次出错");
       expect(row("sora")).toContain("近 7 天 5 次");
-      const band = document.querySelector(
-        '[data-testid="plugin-metrics"]',
-      )?.textContent;
-      expect(band).toContain("近 7 天处理47");
-      expect(band).toContain("近 7 天出错3");
     });
   });
 
@@ -2261,6 +2256,48 @@ describe("PluginManager", () => {
       expect(bridgeMocks.previewPluginInstall).not.toHaveBeenCalled();
     });
 
+    it("filters the marketplace by plugin type", async () => {
+      bridgeMocks.getPluginMarket.mockResolvedValue({
+        ...market,
+        plugins: [
+          ...market.plugins.map((entry) => ({ ...entry, parts: ["task"] })),
+          {
+            ...market.plugins[0],
+            key: "guard",
+            name: "Content Guard",
+            installed: undefined,
+            parts: ["transform"],
+            protocols: [],
+            routes: [],
+            models: [],
+            link: market.index + "#guard@1.0.0",
+          },
+        ],
+      });
+      await renderTasks();
+      await chooseSegment("插件市场");
+      const names = () =>
+        [
+          ...document.querySelectorAll<HTMLElement>(
+            '[data-testid="plugin-market-row"]',
+          ),
+        ].map((card) => card.querySelector("strong")?.textContent);
+      expect(names()).toHaveLength(3);
+      const guard = [
+        ...document.querySelectorAll<HTMLElement>(
+          '[data-testid="plugin-market-row"]',
+        ),
+      ].find((card) => card.textContent?.includes("Content Guard"))!;
+      expect(guard.textContent).toContain("请求处理");
+      await chooseSegment("请求处理");
+      expect(names()).toEqual(["Content Guard"]);
+      await chooseSegment("提供商");
+      expect(names()).toHaveLength(2);
+      expect(names()).not.toContain("Content Guard");
+      await chooseSegment("全部");
+      expect(names()).toHaveLength(3);
+    });
+
     it("browses the marketplace and installs from it after the review", async () => {
       bridgeMocks.previewPluginInstall.mockResolvedValue(alibabaReview);
       bridgeMocks.installPlugin.mockResolvedValue({
@@ -2282,7 +2319,7 @@ describe("PluginManager", () => {
       // The search reaches the models too.
       await type(
         document.querySelector<HTMLInputElement>(
-          'input[placeholder="搜索插件、模型或编码"]',
+          'input[placeholder="搜索插件、模型或插件码"]',
         )!,
         "wan2.5",
       );
@@ -2404,7 +2441,7 @@ describe("PluginManager", () => {
         // A code the listing does not have is looked up on the site.
         await type(
           document.querySelector<HTMLInputElement>(
-            'input[placeholder="搜索插件、模型或编码"]',
+            'input[placeholder="搜索插件、模型或插件码"]',
           )!,
           "30000003",
         );

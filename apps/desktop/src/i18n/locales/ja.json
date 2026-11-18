@@ -5469,21 +5469,6 @@
     },
     "countLabel_one": "{{count}} 個のプラグイン",
     "countLabel_other": "{{count}} 個のプラグイン",
-    "metrics": {
-      "label": "プラグインの概況",
-      "running": "有効",
-      "calls": "起動後の呼び出し",
-      "recentCalls": "7 日間の処理",
-      "tasks": "生成中のタスク",
-      "recentFailures": "7 日間のエラー",
-      "failures": "起動後のエラー",
-      "installedCount_one": "全 {{count}} 個",
-      "installedCount_other": "全 {{count}} 個",
-      "failedCount_one": "{{count}} 個が読み込めず",
-      "failedCount_other": "{{count}} 個が読み込めず",
-      "allTasks_one": "全 {{count}} 件",
-      "allTasks_other": "全 {{count}} 件"
-    },
     "list": {
       "tabs": "プラグイン",
       "installed": "インストール済み",
@@ -5493,10 +5478,10 @@
     "groups": {
       "providers": "プロバイダー",
       "extensions": "機能拡張",
-      "requests": "リクエストチェック",
+      "requests": "リクエスト処理",
       "helpLabel": "「{{group}}」について",
       "providersHelp": "新しいモデルサービスや、動画・画像生成をつなぎます。プロバイダーページで追加してキーを入れると、クライアントが使えます。",
-      "requestsHelp": "ゲートウェイを通るリクエストと応答をルールでチェックし、止めたり書き換えたりします。ルールごとに対象モデルを選べます。",
+      "requestsHelp": "ゲートウェイを通るリクエストと応答をルールで処理し、止めたり書き換えたりします。ルールごとに対象モデルを選べます。",
       "extensionsHelp": "リクエストがゲートウェイを通るときに追加の処理をします。セッションに記憶や文脈を加える、リクエストを書き換える、起きたことを記録するなど。"
     },
     "market": {
@@ -5504,6 +5489,9 @@
       "source": "マーケットプレイスの提供元",
       "official": "公式マーケットプレイス",
       "custom": "ほかのマーケットプレイス",
+      "kind": "プラグインの種類",
+      "allKinds": "すべて",
+      "otherKind": "その他",
       "indexLabel": "マーケットプレイスの index.json のアドレス",
       "open": "開く",
       "search": "プラグイン、モデル、コードで検索",
@@ -5690,7 +5678,7 @@
       "tasks": "生成タスク",
       "failedTasks": "失敗したタスク",
       "requests": "処理したリクエスト",
-      "checked": "チェックしたリクエスト",
+      "checked": "処理したリクエスト",
       "failedRequests": "エラー",
       "helpLabel": "稼働状況について",
       "help": "直近 7 日間を、この PC のリクエスト記録とタスクから集計します。小さな棒は 1 日ずつで、右端が今日です。"

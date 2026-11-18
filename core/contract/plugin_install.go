@@ -350,6 +350,9 @@ type PluginMarketEntry struct {
 	Link string `json:"link"`
 	// Installed is the version installed now, "" for none.
 	Installed string `json:"installed,omitempty"`
+	// Parts are the parts the newest version has, as the index lists them:
+	// task, provider and transform (request processing).
+	Parts []string `json:"parts"`
 	// Unsupported are the parts of the newest version this gateway does
 	// not run yet; such a plugin is listed but cannot be installed.
 	Unsupported []string `json:"unsupported,omitempty"`

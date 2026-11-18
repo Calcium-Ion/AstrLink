@@ -204,11 +204,17 @@ func TestAMarketListsItsPluginsBeforeIconsThatTakeTooLong(t *testing.T) {
 	if len(listed.Plugins) != 4 {
 		t.Fatalf("listed = %+v", listed)
 	}
-	// The gateway runs every part of new-api's plugins.
+	// The gateway runs every part of new-api's plugins, and lists the parts
+	// the index flags; a plugin without flags is a task plugin.
+	parts := map[string][]string{}
 	for _, entry := range listed.Plugins {
 		if len(entry.Unsupported) > 0 {
 			t.Fatalf("%s unsupported = %v", entry.Key, entry.Unsupported)
 		}
+		parts[entry.Key] = entry.Parts
+	}
+	if !slices.Equal(parts["kling"], []string{"task", "provider", "transform"}) || !slices.Equal(parts["sora"], []string{"task"}) {
+		t.Fatalf("parts = %v", parts)
 	}
 	if icons := iconsOf(listed); icons["incho"] {
 		t.Fatalf("icons = %v", icons)
@@ -282,7 +288,8 @@ func TestTheCommunityMarketListsAuthorsCodesAndTakenDownVersions(t *testing.T) {
 	// not run is listed so.
 	if len(listed.Plugins) != 3 || listed.Plugins[1].Key != "someone_realtime" || !slices.Equal(listed.Plugins[1].Unsupported, []string{"realtime"}) ||
 		listed.Plugins[2].Key != "someone_relay" || len(listed.Plugins[2].Unsupported) != 0 ||
-		listed.Plugins[2].Author == nil || listed.Plugins[2].Author.URL != "" {
+		listed.Plugins[2].Author == nil || listed.Plugins[2].Author.URL != "" ||
+		!slices.Equal(listed.Plugins[0].Parts, []string{"task"}) || !slices.Equal(listed.Plugins[2].Parts, []string{"task"}) {
 		t.Fatalf("listed = %+v", listed.Plugins)
 	}
 	echo := listed.Plugins[0]

@@ -1,7 +1,6 @@
 import { CopyableValue } from "@/components/CopyableValue";
 import { HelpPopover } from "@/components/HelpPopover";
 import { ChevronRight, RefreshCw } from "@/components/icons";
-import { Metric, MetricGroup } from "@/components/Metric";
 import { Panel } from "@/components/Panel";
 import { PluginIcon, pluginAvatar } from "@/components/PluginIcon";
 import { SettingGroup, SettingRow } from "@/components/SettingRows";
@@ -25,7 +24,6 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 
-import { formatExactNumber } from "./format-compact-number";
 import { useT } from "./i18n";
 import { taskSurfaceLabels } from "./plugin-task-labels";
 import type {
@@ -122,126 +120,6 @@ function pluginPurpose(plugin: PluginSummary, t: Translate): string {
     return count > 0 ? "" : t("plugins.row.noProviders");
   }
   return "";
-}
-
-/**
- * The band over the list: the plugins running, the requests they worked on
- * over the last 7 days, the tasks under way, and what failed in those days,
- * each with its days as small columns. Without the days, the counts since
- * the gateway started stand in.
- */
-export function PluginSummaryBand({
-  plugins,
-  recent,
-}: {
-  plugins: PluginSummary[];
-  /** The last 7 days: undefined while they are read, null if they could not be. */
-  recent?: UsageSummary | null;
-}) {
-  const t = useT();
-  const running = plugins.filter(
-    (plugin) => plugin.state === "loaded" && plugin.enabled,
-  ).length;
-  const failed = plugins.filter((plugin) => plugin.state === "failed").length;
-  const days = recent ? pluginDays(recent) : null;
-  const work = days
-    ? days.reduce((sum, day) => sum + dayWork(day), 0)
-    : plugins.reduce((sum, plugin) => sum + (plugin.calls ?? 0), 0);
-  const trouble = days
-    ? days.reduce((sum, day) => sum + dayTrouble(day), 0)
-    : plugins.reduce((sum, plugin) => sum + (plugin.failures ?? 0), 0);
-  const tasks = plugins.reduce(
-    (sum, plugin) => sum + (plugin.running_tasks ?? 0),
-    0,
-  );
-  const allTasks = plugins.reduce(
-    (sum, plugin) => sum + (plugin.tasks ?? 0),
-    0,
-  );
-  const times = (value: number) => t("plugins.row.times", { count: value });
-  return (
-    <Panel
-      aria-label={t("plugins.metrics.label")}
-      className="shrink-0"
-      data-testid="plugin-metrics"
-      role="region"
-    >
-      <MetricGroup className="grid-cols-2 @min-[640px]/workspace-surface:grid-cols-4">
-        <Metric
-          detail={[
-            t("plugins.metrics.installedCount", { count: plugins.length }),
-            failed > 0
-              ? t("plugins.metrics.failedCount", { count: failed })
-              : "",
-          ]
-            .filter(Boolean)
-            .join(" · ")}
-          label={t("plugins.metrics.running")}
-          size="compact"
-          value={running}
-        />
-        <Metric
-          label={t(
-            recent === null
-              ? "plugins.metrics.calls"
-              : "plugins.metrics.recentCalls",
-          )}
-          size="compact"
-          trend={
-            days ? (
-              <Sparkline
-                className="h-4 w-24"
-                format={times}
-                label={t("plugins.metrics.recentCalls")}
-                points={dayPoints(days, dayWork)}
-              />
-            ) : null
-          }
-          value={recent === undefined ? "—" : formatExactNumber(work)}
-        />
-        <Metric
-          detail={
-            allTasks > 0
-              ? t("plugins.metrics.allTasks", { count: allTasks })
-              : undefined
-          }
-          label={t("plugins.metrics.tasks")}
-          size="compact"
-          value={tasks}
-        />
-        <Metric
-          label={t(
-            recent === null
-              ? "plugins.metrics.failures"
-              : "plugins.metrics.recentFailures",
-          )}
-          size="compact"
-          trend={
-            days ? (
-              <Sparkline
-                className="h-4 w-24"
-                format={times}
-                label={t("plugins.metrics.recentFailures")}
-                points={dayPoints(days, dayTrouble)}
-                tone="warning"
-              />
-            ) : null
-          }
-          value={
-            recent === undefined ? (
-              "—"
-            ) : (
-              <span
-                className={trouble > 0 ? "text-warning-foreground" : undefined}
-              >
-                {formatExactNumber(trouble)}
-              </span>
-            )
-          }
-        />
-      </MetricGroup>
-    </Panel>
-  );
 }
 
 /**

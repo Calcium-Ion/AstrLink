@@ -193,9 +193,26 @@ export function PluginMarketView({
     if (isReady && sourceOf(index) === source) void load(index);
   }, [index, isReady, load, source]);
 
+  const [group, setGroup] = useState<EntryGroup | "all">("all");
   const needle = query.trim().toLowerCase();
+  const groupCounts = useMemo(() => {
+    const counts: Record<EntryGroup, number> = {
+      providers: 0,
+      requests: 0,
+      other: 0,
+    };
+    for (const entry of market?.plugins ?? []) counts[entryGroup(entry)] += 1;
+    return counts;
+  }, [market]);
+  const groups = (["providers", "requests", "other"] as const).filter(
+    (next) => groupCounts[next] > 0,
+  );
+  // A group the listing shown does not have filters nothing.
+  const shownGroup = group !== "all" && groupCounts[group] > 0 ? group : "all";
   const listed = useMemo(() => {
-    const plugins = market?.plugins ?? [];
+    const plugins = (market?.plugins ?? []).filter(
+      (entry) => shownGroup === "all" || entryGroup(entry) === shownGroup,
+    );
     if (!needle) return plugins;
     return plugins.filter((entry) =>
       [
@@ -207,7 +224,7 @@ export function PluginMarketView({
         ...entry.models,
       ].some((text) => text.toLowerCase().includes(needle)),
     );
-  }, [market, needle]);
+  }, [market, needle, shownGroup]);
   // A code the listing does not have is looked up on the New API site.
   const code =
     PLUGIN_CODE.test(needle) && listed.length === 0 && market ? needle : "";
@@ -326,6 +343,30 @@ export function PluginMarketView({
           />
         </IconButton>
       </div>
+      {market && groups.length > 1 && !(found && code) ? (
+        <div className="shrink-0 self-start">
+          <SegmentedControl
+            label={t("plugins.market.kind")}
+            onValueChange={setGroup}
+            options={[
+              {
+                value: "all",
+                label: t("plugins.market.allKinds"),
+                count: market.plugins.length,
+              },
+              ...groups.map((next) => ({
+                value: next,
+                label:
+                  next === "other"
+                    ? t("plugins.market.otherKind")
+                    : t(`plugins.groups.${next}`),
+                count: groupCounts[next],
+              })),
+            ]}
+            value={shownGroup}
+          />
+        </div>
+      ) : null}
       {error ? <FormMessage tone="error">{error}</FormMessage> : null}
       {findError ? <FormMessage tone="error">{findError}</FormMessage> : null}
       {(loading && !market) || finding ? (
@@ -438,11 +479,30 @@ function EntryAction({
   );
 }
 
+type EntryGroup = "providers" | "requests" | "other";
+
+/**
+ * Which group of the installed list an entry would join: a plugin that
+ * serves models joins the providers, one that only processes requests the
+ * request checks.
+ */
+function entryGroup(entry: PluginMarketEntry): EntryGroup {
+  const parts = entry.parts ?? [];
+  if (
+    parts.includes("task") ||
+    parts.includes("provider") ||
+    entry.protocols.length > 0 ||
+    entry.routes.length > 0
+  )
+    return "providers";
+  if (parts.includes("transform")) return "requests";
+  return "other";
+}
+
 /** What kind of plugin an entry is, from what it declares. */
 function entryKind(entry: PluginMarketEntry, t: ReturnType<typeof useT>) {
-  if (entry.protocols.length > 0 || entry.routes.length > 0)
-    return t("plugins.groups.providers");
-  return "";
+  const group = entryGroup(entry);
+  return group === "other" ? "" : t(`plugins.groups.${group}`);
 }
 
 function MarketRow({
@@ -691,12 +751,17 @@ function MarketEntryDialog({
               )}
             </section>
           ) : null}
-          <section className="grid gap-1.5">
-            <h3 className="text-xs font-medium text-muted-foreground">
-              {t("plugins.task.endpoints")}
-            </h3>
-            <TaskEndpoints protocols={entry.protocols} routes={entry.routes} />
-          </section>
+          {entryGroup(entry) === "providers" ? (
+            <section className="grid gap-1.5">
+              <h3 className="text-xs font-medium text-muted-foreground">
+                {t("plugins.task.endpoints")}
+              </h3>
+              <TaskEndpoints
+                protocols={entry.protocols}
+                routes={entry.routes}
+              />
+            </section>
+          ) : null}
           {latest?.base_url || latest?.auth ? (
             <section className="grid gap-1 text-xs">
               <h3 className="text-xs font-medium text-muted-foreground">
@@ -732,12 +797,14 @@ function MarketEntryDialog({
               </dl>
             </section>
           ) : null}
-          <section className="grid gap-1.5">
-            <h3 className="text-xs font-medium text-muted-foreground">
-              {t("plugins.market.models", { count: entry.models.length })}
-            </h3>
-            <ModelChips models={entry.models} />
-          </section>
+          {entry.models.length > 0 ? (
+            <section className="grid gap-1.5">
+              <h3 className="text-xs font-medium text-muted-foreground">
+                {t("plugins.market.models", { count: entry.models.length })}
+              </h3>
+              <ModelChips models={entry.models} />
+            </section>
+          ) : null}
           {notes.doc ? (
             <HelpDisclosure title={t("plugins.market.notes")}>
               <MarkdownContent

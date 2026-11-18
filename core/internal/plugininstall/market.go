@@ -92,6 +92,9 @@ type marketPlugin struct {
 	// the task part.
 	Provider  bool `json:"provider"`
 	Transform bool `json:"transform"`
+	// Task says the newest version has a task part; an index without any
+	// of the three flags means a task plugin.
+	Task bool `json:"task"`
 	// Code, Recommended, Author, Repo and Installs30d are what the New API
 	// site adds: the plugin's 8-digit code, whether it recommends the
 	// plugin, who published a community plugin and from where, and how many
@@ -725,6 +728,22 @@ func (installer *Installer) fillIcons(ctx context.Context, listing marketListing
 	group.Wait()
 }
 
+// entryParts are the parts the index says a plugin's newest version has:
+// task, provider and transform (request processing), in that order.
+func entryParts(entry marketPlugin) []string {
+	parts := []string{}
+	if entry.Task || !entry.Provider && !entry.Transform {
+		parts = append(parts, "task")
+	}
+	if entry.Provider {
+		parts = append(parts, contract.PluginPartProvider)
+	}
+	if entry.Transform {
+		parts = append(parts, contract.PluginPartTransform)
+	}
+	return parts
+}
+
 // readMarket reads a marketplace's index; the icons of its plugins come with
 // each listing.
 func (installer *Installer) readMarket(ctx context.Context, address string) (marketListing, error) {
@@ -766,6 +785,7 @@ func (installer *Installer) readMarket(ctx context.Context, address string) (mar
 		for _, claim := range entry.Protocols {
 			listed.Protocols = append(listed.Protocols, contract.PluginTaskProtocol{Name: claim.Name, Supports: claim.Supports, Models: claim.Models})
 		}
+		listed.Parts = entryParts(entry)
 		for _, route := range entry.Routes {
 			listed.Routes = append(listed.Routes, contract.PluginTaskRoute{Method: route.Method, Path: route.Path, Type: route.Type, Models: route.Models})
 		}

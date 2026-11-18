@@ -591,6 +591,11 @@ export interface PluginMarketEntry {
   /** The version installed now. */
   installed?: string;
   /**
+   * The parts the newest version has, as the index lists them: task,
+   * provider and transform (request processing).
+   */
+  parts?: string[];
+  /**
    * Parts of the newest version AstrLink does not run yet: new-api's
    * provider and request processing parts. Such a plugin cannot be
    * installed.
@@ -1574,6 +1579,7 @@ export function parsePluginMarket(value: unknown): PluginMarket {
         routes: parseTaskRoutes(entry.routes, `${at}.routes`),
         link: plugin.string(entry.link, `${at}.link`),
         installed: plugin.optionalString(entry.installed, `${at}.installed`),
+        parts: optionalStrings(entry.parts, `${at}.parts`),
         unsupported: optionalStrings(entry.unsupported, `${at}.unsupported`),
         code: plugin.optionalString(entry.code, `${at}.code`),
         recommended: plugin.optionalBoolean(

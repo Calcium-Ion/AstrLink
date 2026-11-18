@@ -47,7 +47,6 @@ import {
   loadErrorText,
   PluginHostDialog,
   pluginMatches,
-  PluginSummaryBand,
   pluginOrigin,
   PluginRows,
 } from "./PluginList";
@@ -943,7 +942,6 @@ export function PluginManager({
               className="flex min-h-0 min-w-0 flex-1 flex-col gap-3"
               data-testid="plugin-installed"
             >
-              <PluginSummaryBand plugins={plugins} recent={recent} />
               <div
                 className="min-h-0 flex-1 overflow-y-auto overscroll-contain pb-3"
                 data-tab-scroller

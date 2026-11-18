@@ -5469,21 +5469,6 @@
     },
     "countLabel_one": "{{count}} plugin",
     "countLabel_other": "{{count}} plugins",
-    "metrics": {
-      "label": "Plugins at a glance",
-      "running": "Enabled",
-      "calls": "Calls since start",
-      "recentCalls": "Handled in 7 days",
-      "tasks": "Tasks generating",
-      "recentFailures": "Errors in 7 days",
-      "failures": "Errors since start",
-      "installedCount_one": "{{count}} installed",
-      "installedCount_other": "{{count}} installed",
-      "failedCount_one": "{{count}} failed to load",
-      "failedCount_other": "{{count}} failed to load",
-      "allTasks_one": "{{count}} in all",
-      "allTasks_other": "{{count}} in all"
-    },
     "list": {
       "tabs": "Plugins",
       "installed": "Installed",
@@ -5493,10 +5478,10 @@
     "groups": {
       "providers": "Providers",
       "extensions": "Features",
-      "requests": "Request checks",
+      "requests": "Request processing",
       "helpLabel": "About {{group}}",
       "providersHelp": "Connect a new model service, or video and image generation. Clients use it once you add it as a provider and enter its key on the Providers page.",
-      "requestsHelp": "Check requests and replies passing through the gateway by rules, and block or rewrite them. Each rule picks the models it applies to.",
+      "requestsHelp": "Process requests and replies passing through the gateway by rules, and block or rewrite them. Each rule picks the models it applies to.",
       "extensionsHelp": "Do more while requests pass through the gateway: give sessions memory or context, rewrite requests, or record what happened."
     },
     "market": {
@@ -5504,6 +5489,9 @@
       "source": "Marketplace source",
       "official": "Official marketplace",
       "custom": "Another marketplace",
+      "kind": "Plugin type",
+      "allKinds": "All",
+      "otherKind": "Other",
       "indexLabel": "Address of the marketplace's index.json",
       "open": "Open",
       "search": "Search plugins, models or codes",
@@ -5690,7 +5678,7 @@
       "tasks": "Generation tasks",
       "failedTasks": "Failed tasks",
       "requests": "Requests handled",
-      "checked": "Requests checked",
+      "checked": "Requests processed",
       "failedRequests": "Errors",
       "helpLabel": "About activity",
       "help": "The last 7 days, from this computer's request records and tasks. Each small column is a day; the rightmost is today."
