@@ -146,6 +146,8 @@ func Timeout(method, path string) time.Duration {
 	path = pathOnly(path)
 	post := method == http.MethodPost
 	switch {
+	case post && path == RawPasswordPath:
+		return RequestPurgeTimeout
 	case IsProofRequest(method, path):
 		return ProofTimeout
 	case isBuiltinToolTest(method, path):
