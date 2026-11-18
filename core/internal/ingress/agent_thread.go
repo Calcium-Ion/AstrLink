@@ -59,6 +59,9 @@ type agentThread struct {
 	// Claude Code subagent, a Codex thread, an OpenCode session. Empty when
 	// convo's own explicit cursor already names it.
 	cursor string
+	// openingKey lets concurrent first calls select the same new session.
+	// DeepSeek Harness sends its thread id as the Responses prompt_cache_key.
+	openingKey string
 	// parent is the explicit cursor of the thread that started this one.
 	parent string
 	// helper marks a title request the client sends under its
@@ -66,7 +69,7 @@ type agentThread struct {
 	helper bool
 	// quotedOpener is the opening message a title request quotes when the
 	// client sends it outside the conversation, as a Codex title thread or
-	// DeepSeek Harness does. Raw client text: never persist or log it.
+	// DeepSeek Harness over Chat does. Raw client text: never persist or log it.
 	quotedOpener string
 	// spawnOpener is the newest DeepSeek Harness user message that carries
 	// the parent note, which names its subagent thread when the request
@@ -207,6 +210,14 @@ func readCodexThread(thread *agentThread, header http.Header, fields map[string]
 }
 
 func readDeepSeekHarnessThread(thread *agentThread, protocol contract.ProtocolID, fields map[string]json.RawMessage, summary convo.RequestSummary) {
+	if protocol == contract.ProtocolOpenAIResponses && !summary.Stateful && len(summary.ExplicitCursors) > 0 {
+		// Use the cache key only when it actually names this request: a
+		// session header or another explicit cursor may take precedence.
+		key := strings.TrimSpace(ojson.ParseBytes(fields["prompt_cache_key"]).Str)
+		if key == summary.ExplicitCursors[0] && (thread.cursor == "" || thread.cursor == key) {
+			thread.openingKey = key
+		}
+	}
 	texts := userRawTexts(protocol, fields)
 	for index := len(texts) - 1; index >= 0; index-- {
 		_, note, ok := strings.Cut(texts[index], deepSeekHarnessParentMarker)
@@ -235,7 +246,11 @@ func readDeepSeekHarnessThread(thread *agentThread, protocol contract.ProtocolID
 		Text string `json:"text"`
 	}
 	if json.Unmarshal([]byte(strings.TrimSpace(quoted)), &messages) == nil && len(messages) > 0 {
-		thread.quotedOpener = messages[0].Text
+		if thread.openingKey != "" {
+			thread.helper = true
+		} else {
+			thread.quotedOpener = messages[0].Text
+		}
 	}
 }
 

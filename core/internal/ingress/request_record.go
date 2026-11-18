@@ -3,7 +3,9 @@ package ingress
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -2020,7 +2022,7 @@ func (session *recordSession) resolveSession(ctx context.Context, store RequestR
 		session.attachTitleRequest(lookupCtx, store, logf, thread.quotedOpener)
 	}
 	if session.sessionID == "" {
-		session.sessionID = newSessionID()
+		session.sessionID = newSessionID(thread.openingKey)
 		session.noteOpener()
 		// A Paseo agent opens with the create_agent task its creator gave
 		// it, which a response of the creator's conversation recorded. A
@@ -2315,9 +2317,17 @@ func eventsWithoutAttempt(events []contract.RequestEvent, attempt int) []contrac
 	return filtered
 }
 
-func newSessionID() contract.SessionID {
+// A process-local key is enough: only overlapping misses must agree.
+// Once a request has been recorded, lookup retains its ID across restarts.
+var sessionOpeningSecret = []byte(rand.Text())
+
+func newSessionID(openingKey string) contract.SessionID {
 	var value [12]byte
-	if _, err := rand.Read(value[:]); err != nil {
+	if openingKey != "" {
+		mac := hmac.New(sha256.New, sessionOpeningSecret)
+		mac.Write([]byte(openingKey))
+		copy(value[:], mac.Sum(nil))
+	} else if _, err := rand.Read(value[:]); err != nil {
 		return contract.SessionID("session_unavailable")
 	}
 	return contract.SessionID("session_" + hex.EncodeToString(value[:]))
