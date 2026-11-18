@@ -58,28 +58,32 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,id=cargo-registry-$TARGE
     cargo build --locked --release \
     && install -D target/release/astrlink-privacy-worker /out/astrlink-privacy-worker
 
-# ONNX Runtime 1.23.2, the official archive for each architecture.
-FROM scratch AS onnxruntime-amd64
-ADD --checksum=sha256:1fa4dcaef22f6f7d5cd81b28c2800414350c10116f5fdd46a2160082551c5f9b \
-    https://github.com/microsoft/onnxruntime/releases/download/v1.23.2/onnxruntime-linux-x64-1.23.2.tgz /onnxruntime.tgz
-
-FROM scratch AS onnxruntime-arm64
-ADD --checksum=sha256:7c63c73560ed76b1fac6cff8204ffe34fe180e70d6582b5332ec094810241e5c \
-    https://github.com/microsoft/onnxruntime/releases/download/v1.23.2/onnxruntime-linux-aarch64-1.23.2.tgz /onnxruntime.tgz
-
-FROM onnxruntime-${TARGETARCH} AS onnxruntime-archive
-
+# ONNX Runtime 1.23.2 from Microsoft's NuGet package, which carries the
+# official library for each architecture.
 FROM --platform=$BUILDPLATFORM debian:12-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587 AS onnxruntime
-COPY --from=onnxruntime-archive /onnxruntime.tgz /tmp/
-# The license and notices are the files the desktop bundle pins.
-RUN mkdir -p /tmp/ort /out \
-    && tar -xzf /tmp/onnxruntime.tgz -C /tmp/ort --strip-components=1 \
-    && cd /tmp/ort \
+ARG TARGETARCH
+ADD --checksum=sha256:25fe172f7fcdf34f2b5b02c8b997f6b88abc282956849d4af4335af23d0c4e4a \
+    https://api.nuget.org/v3-flatcontainer/microsoft.ml.onnxruntime/1.23.2/microsoft.ml.onnxruntime.1.23.2.nupkg /tmp/onnxruntime.nupkg
+# The license and notices are the files the desktop bundle pins, which keep
+# the repository's line endings.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends unzip \
+    && rm -rf /var/lib/apt/lists/* \
+    && case "$TARGETARCH" in \
+        amd64) rid=linux-x64 ;; \
+        arm64) rid=linux-arm64 ;; \
+        *) echo "unsupported architecture: $TARGETARCH" >&2; exit 1 ;; \
+    esac \
+    && mkdir -p /tmp/ort /out \
+    && unzip -q /tmp/onnxruntime.nupkg "runtimes/$rid/native/libonnxruntime.so" LICENSE ThirdPartyNotices.txt -d /tmp/ort \
+    && tr -d '\r' < /tmp/ort/LICENSE > /out/LICENSE \
+    && tr -d '\r' < /tmp/ort/ThirdPartyNotices.txt > /out/ThirdPartyNotices.txt \
+    && cd /out \
     && printf '%s  %s\n' \
         2f07c72751aed99790b8a4869cf2311df85a860b22ded05fa22803587a48922c LICENSE \
         e9e90971a8e75a9a8ac0c6412e29c1202d079998389915aa485f46c816c3b4cc ThirdPartyNotices.txt \
         | sha256sum -c - \
-    && cp lib/libonnxruntime.so.1.23.2 LICENSE ThirdPartyNotices.txt /out/
+    && cp "/tmp/ort/runtimes/$rid/native/libonnxruntime.so" /out/libonnxruntime.so.1.23.2
 
 FROM debian:12-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587
 RUN apt-get update \

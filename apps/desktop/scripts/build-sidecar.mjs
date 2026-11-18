@@ -15,7 +15,11 @@ import {
 } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
-import { downloadWithRetry } from "./download-with-retry.mjs";
+import {
+  fetchOnnxRuntimePackage,
+  readZipEntry,
+  withUnixLineEndings,
+} from "./onnx-runtime-package.mjs";
 import { stageWindowsVcRuntime } from "./stage-windows-vc-runtime.mjs";
 
 const onnxRuntimeVersion = "1.23.2";
@@ -72,35 +76,32 @@ const onnxRuntimeNotices = {
     },
   ],
 };
+// Microsoft.ML.OnnxRuntime on NuGet, one package per runtime version. Windows
+// takes only the notices from its package.
+const onnxRuntimePackages = {
+  [onnxRuntimeVersion]: {
+    sha256: "25fe172f7fcdf34f2b5b02c8b997f6b88abc282956849d4af4335af23d0c4e4a",
+    size: 123_371_574,
+  },
+  [coreMLRuntimeVersion]: {
+    sha256: "4b978d5065b85e7004b6c6f60ca494bd978fbe6836cbf0a0b52d82b61ab99638",
+    size: 125_194_303,
+  },
+  [windowsRuntimeVersion]: {
+    sha256: "7e35fdb4f5adb62f01e60798e2e5ed05108f5fbbe1cca03fbcc37903cf7c5e3b",
+    size: 159_626_085,
+  },
+};
+// Each target's library inside the package.
 const macOSRuntimeAssets = {
-  "aarch64-apple-darwin": {
-    archive: `onnxruntime-osx-arm64-${onnxRuntimeVersion}.tgz`,
-    directory: `onnxruntime-osx-arm64-${onnxRuntimeVersion}`,
-    sha256: "b4d513ab2b26f088c66891dbbc1408166708773d7cc4163de7bdca0e9bbb7856",
-    size: 9_999_931,
-  },
-  "x86_64-apple-darwin": {
-    archive: `onnxruntime-osx-x86_64-${onnxRuntimeVersion}.tgz`,
-    directory: `onnxruntime-osx-x86_64-${onnxRuntimeVersion}`,
-    sha256: "d10359e16347b57d9959f7e80a225a5b4a66ed7d7e007274a15cae86836485a6",
-    size: 11_676_322,
-  },
+  "aarch64-apple-darwin": "runtimes/osx-arm64/native/libonnxruntime.dylib",
+  "x86_64-apple-darwin": "runtimes/osx-x64/native/libonnxruntime.dylib",
 };
 const coreMLRuntimeAssets = {
-  "aarch64-apple-darwin": {
-    archive: `onnxruntime-osx-arm64-${coreMLRuntimeVersion}.tgz`,
-    directory: `onnxruntime-osx-arm64-${coreMLRuntimeVersion}`,
-    sha256: "93787795f47e1eee369182e43ed51b9e5da0878ab0346aecf4258979b8bba989",
-    size: 30_937_282,
-  },
+  "aarch64-apple-darwin": "runtimes/osx-arm64/native/libonnxruntime.dylib",
 };
 const linuxRuntimeAssets = {
-  "x86_64-unknown-linux-gnu": {
-    archive: `onnxruntime-linux-x64-${onnxRuntimeVersion}.tgz`,
-    directory: `onnxruntime-linux-x64-${onnxRuntimeVersion}`,
-    sha256: "1fa4dcaef22f6f7d5cd81b28c2800414350c10116f5fdd46a2160082551c5f9b",
-    size: 8_309_231,
-  },
+  "x86_64-unknown-linux-gnu": "runtimes/linux-x64/native/libonnxruntime.so",
 };
 
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
@@ -199,6 +200,34 @@ function stageProgram(sidecar, name) {
   console.log(`Staged ${name} for MyGo: ${resourcesBinDirectory}`);
 }
 
+// onnxRuntimePackage returns the pinned NuGet package of a runtime version,
+// kept under the privacy worker's target directory between builds.
+function onnxRuntimePackage(version) {
+  return fetchOnnxRuntimePackage(
+    version,
+    onnxRuntimePackages[version],
+    path.join(workerDirectory, "target", "onnxruntime", version),
+  );
+}
+
+// extractOnnxRuntimeLibrary writes this target's library from the package
+// under libraryName, the name the workers load, and returns its path.
+async function extractOnnxRuntimeLibrary(version, entry, libraryName) {
+  const archive = readFileSync(await onnxRuntimePackage(version));
+  const directory = path.join(
+    workerDirectory,
+    "target",
+    "onnxruntime",
+    version,
+    target,
+  );
+  rmSync(directory, { recursive: true, force: true });
+  mkdirSync(directory, { recursive: true });
+  const runtimeSource = path.join(directory, libraryName);
+  writeFileSync(runtimeSource, readZipEntry(archive, entry), { mode: 0o755 });
+  return runtimeSource;
+}
+
 async function stageOnnxRuntimeNotices(version) {
   const cacheDirectory = path.join(
     workerDirectory,
@@ -209,6 +238,7 @@ async function stageOnnxRuntimeNotices(version) {
   );
   mkdirSync(cacheDirectory, { recursive: true });
 
+  let archive;
   for (const notice of onnxRuntimeNotices[version]) {
     const cached = path.join(cacheDirectory, notice.source);
     if (
@@ -218,13 +248,8 @@ async function stageOnnxRuntimeNotices(version) {
       rmSync(cached, { force: true });
     }
     if (!existsSync(cached)) {
-      const url =
-        `https://raw.githubusercontent.com/microsoft/onnxruntime/` +
-        `v${version}/${notice.source}`;
-      const bytes = await downloadWithRetry(
-        url,
-        `pinned ONNX Runtime ${version} ${notice.source}`,
-      );
+      archive ??= readFileSync(await onnxRuntimePackage(version));
+      const bytes = withUnixLineEndings(readZipEntry(archive, notice.source));
       if (bytes.byteLength !== notice.size || sha256(bytes) !== notice.sha256) {
         throw new Error(
           `Pinned ONNX Runtime ${version} ${notice.source} failed integrity verification.`,
@@ -253,64 +278,19 @@ async function stageMacOSRuntime(
   libraryName = macOSRuntimeLibraryName,
   workerDirectories = [workerDirectory, classifierWorkerDirectory],
 ) {
-  const asset = assets[target];
-  if (!asset) {
+  const entry = assets[target];
+  if (!entry) {
     if (target.endsWith("-apple-darwin") && assets === macOSRuntimeAssets) {
       throw new Error(`Unsupported macOS target for ONNX Runtime: ${target}`);
     }
     return;
   }
 
-  const cacheDirectory = path.join(
-    workerDirectory,
-    "target",
-    "onnxruntime",
+  const runtimeSource = await extractOnnxRuntimeLibrary(
     version,
-    target,
-  );
-  const archivePath = path.join(cacheDirectory, asset.archive);
-  const extractionDirectory = path.join(cacheDirectory, "extracted");
-  mkdirSync(cacheDirectory, { recursive: true });
-
-  if (
-    existsSync(archivePath) &&
-    !fileMatches(archivePath, asset.size, asset.sha256)
-  ) {
-    rmSync(archivePath, { force: true });
-  }
-  if (!existsSync(archivePath)) {
-    const url =
-      `https://github.com/microsoft/onnxruntime/releases/download/` +
-      `v${version}/${asset.archive}`;
-    const bytes = await downloadWithRetry(
-      url,
-      `pinned ONNX Runtime ${version}`,
-    );
-    if (bytes.byteLength !== asset.size || sha256(bytes) !== asset.sha256) {
-      throw new Error(
-        `Pinned ONNX Runtime ${version} archive failed integrity verification.`,
-      );
-    }
-    const temporaryArchive = `${archivePath}.download`;
-    writeFileSync(temporaryArchive, bytes, { mode: 0o600 });
-    renameSync(temporaryArchive, archivePath);
-  }
-
-  rmSync(extractionDirectory, { recursive: true, force: true });
-  mkdirSync(extractionDirectory, { recursive: true });
-  execFileSync("tar", ["-xzf", archivePath, "-C", extractionDirectory], {
-    stdio: "inherit",
-  });
-  const runtimeSource = path.join(
-    extractionDirectory,
-    asset.directory,
-    "lib",
+    entry,
     libraryName,
   );
-  if (!existsSync(runtimeSource)) {
-    throw new Error(`Pinned ONNX Runtime archive is missing ${libraryName}.`);
-  }
-
   const runtimeDestinations = [
     ...workerDirectories.map((directory) =>
       path.join(directory, "target", "release", libraryName),
@@ -332,66 +312,19 @@ function stageCoreMLRuntime() {
 }
 
 async function stageLinuxRuntime() {
-  const asset = linuxRuntimeAssets[target];
-  if (!asset) {
+  const entry = linuxRuntimeAssets[target];
+  if (!entry) {
     if (target.includes("-linux-")) {
       throw new Error(`Unsupported Linux target for ONNX Runtime: ${target}`);
     }
     return;
   }
 
-  const cacheDirectory = path.join(
-    workerDirectory,
-    "target",
-    "onnxruntime",
+  const runtimeSource = await extractOnnxRuntimeLibrary(
     onnxRuntimeVersion,
-    target,
-  );
-  const archivePath = path.join(cacheDirectory, asset.archive);
-  const extractionDirectory = path.join(cacheDirectory, "extracted");
-  mkdirSync(cacheDirectory, { recursive: true });
-
-  if (
-    existsSync(archivePath) &&
-    !fileMatches(archivePath, asset.size, asset.sha256)
-  ) {
-    rmSync(archivePath, { force: true });
-  }
-  if (!existsSync(archivePath)) {
-    const url =
-      `https://github.com/microsoft/onnxruntime/releases/download/` +
-      `v${onnxRuntimeVersion}/${asset.archive}`;
-    const bytes = await downloadWithRetry(
-      url,
-      `pinned ONNX Runtime ${onnxRuntimeVersion}`,
-    );
-    if (bytes.byteLength !== asset.size || sha256(bytes) !== asset.sha256) {
-      throw new Error(
-        `Pinned ONNX Runtime ${onnxRuntimeVersion} archive failed integrity verification.`,
-      );
-    }
-    const temporaryArchive = `${archivePath}.download`;
-    writeFileSync(temporaryArchive, bytes, { mode: 0o600 });
-    renameSync(temporaryArchive, archivePath);
-  }
-
-  rmSync(extractionDirectory, { recursive: true, force: true });
-  mkdirSync(extractionDirectory, { recursive: true });
-  execFileSync("tar", ["-xzf", archivePath, "-C", extractionDirectory], {
-    stdio: "inherit",
-  });
-  const runtimeSource = path.join(
-    extractionDirectory,
-    asset.directory,
-    "lib",
+    entry,
     linuxRuntimeLibraryName,
   );
-  if (!existsSync(runtimeSource)) {
-    throw new Error(
-      `Pinned ONNX Runtime archive is missing ${linuxRuntimeLibraryName}.`,
-    );
-  }
-
   const runtimeDestinations = [
     path.join(workerDirectory, "target", "release", linuxRuntimeLibraryName),
     path.join(
