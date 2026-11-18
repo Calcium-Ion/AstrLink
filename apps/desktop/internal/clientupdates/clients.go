@@ -17,6 +17,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/QuantumNous/astrlink/desktop/internal/clientconfig/format"
+	"github.com/QuantumNous/astrlink/desktop/internal/realpath"
 )
 
 const (
@@ -170,7 +171,7 @@ func executable(path string) bool {
 
 // canonical resolves path's links, as a full path.
 func canonical(path string) (string, bool) {
-	resolved, err := filepath.EvalSymlinks(path)
+	resolved, err := realpath.Resolve(path)
 	if err != nil {
 		return "", false
 	}

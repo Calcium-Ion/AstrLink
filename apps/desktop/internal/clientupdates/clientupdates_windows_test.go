@@ -2,6 +2,7 @@ package clientupdates
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -128,5 +129,38 @@ func TestNeverStartsAFileThatIsNotAWindowsProgram(t *testing.T) {
 	output, failure := run(env, command(os.Getenv("ComSpec"), "/d", "/c", "echo ok"), probeTimeout)
 	if failure != nil || strings.TrimSpace(output) != "ok" {
 		t.Fatal(output, failure)
+	}
+}
+
+// The standalone Codex installer puts Programs\OpenAI\Codex\bin on PATH,
+// a junction to .codex\packages\standalone\current\bin, where current is
+// a junction to the release. filepath.EvalSymlinks fails on that path.
+func TestDetectsStandaloneCodexBehindTwoJunctions(t *testing.T) {
+	f := newFixture(t)
+	root, ok := canonical(f.root)
+	if !ok {
+		t.Fatal(root)
+	}
+	release := `.codex/packages/standalone/releases/0.169.0-x86_64-pc-windows-msvc`
+	f.write(release+"/codex-package.json", `{"variant":"codex","layoutVersion":1,"entrypoint":"bin/codex.exe"}`)
+	f.write(release+"/bin/codex.exe", "")
+	f.mkdir("Programs/OpenAI/Codex")
+	current := filepath.Join(root, `.codex\packages\standalone\current`)
+	bin := filepath.Join(root, `Programs\OpenAI\Codex\bin`)
+	for _, link := range [][2]string{
+		{current, filepath.Join(root, filepath.FromSlash(release))},
+		{bin, filepath.Join(current, "bin")},
+	} {
+		if out, err := exec.Command("cmd", "/c", "mklink", "/J", link[0], link[1]).CombinedOutput(); err != nil {
+			t.Fatalf("mklink /J: %v: %s", err, out)
+		}
+	}
+	env := &Environment{home: root, path: bin}
+
+	codex := detect(env, ClientCodex)
+	want := filepath.Join(root, filepath.FromSlash(release), `bin\codex.exe`)
+	if codex == nil || codex.method != native || codex.executable != filepath.Join(bin, "codex.exe") ||
+		!strings.EqualFold(codex.resolved, want) {
+		t.Fatalf("codex = %+v, want %s", codex, want)
 	}
 }

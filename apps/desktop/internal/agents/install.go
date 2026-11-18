@@ -20,6 +20,7 @@ import (
 
 	"github.com/QuantumNous/astrlink/desktop/internal/clientconfig/format"
 	"github.com/QuantumNous/astrlink/desktop/internal/prefs"
+	"github.com/QuantumNous/astrlink/desktop/internal/realpath"
 )
 
 // Agent tool installs: the skills AstrLink writes into the coding agents'
@@ -1183,7 +1184,7 @@ func canonicalize(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.EvalSymlinks(absolute)
+	return realpath.Resolve(absolute)
 }
 
 func managedFilesPath(dest string) string { return filepath.Join(dest, managedFilesName) }

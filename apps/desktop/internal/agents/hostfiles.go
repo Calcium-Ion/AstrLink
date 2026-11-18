@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 
 	"github.com/QuantumNous/astrlink/desktop/internal/prefs"
+	"github.com/QuantumNous/astrlink/desktop/internal/realpath"
 	"github.com/QuantumNous/astrlink/desktop/internal/wsl"
 )
 
@@ -77,7 +78,7 @@ var errChanged = errors.New("the file changed while it was being edited; try aga
 func WriteText(path, contents string, options WriteOptions) error {
 	target := path
 	if info, err := os.Lstat(path); err == nil && info.Mode()&fs.ModeSymlink != 0 {
-		resolved, err := filepath.EvalSymlinks(path)
+		resolved, err := realpath.Resolve(path)
 		if err != nil {
 			return fmt.Errorf("unable to resolve %s: %v", path, ioError(err))
 		}

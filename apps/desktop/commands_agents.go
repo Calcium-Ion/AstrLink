@@ -22,6 +22,7 @@ import (
 	"github.com/QuantumNous/astrlink/desktop/internal/instance"
 	"github.com/QuantumNous/astrlink/desktop/internal/keystore"
 	"github.com/QuantumNous/astrlink/desktop/internal/prefs"
+	"github.com/QuantumNous/astrlink/desktop/internal/realpath"
 	"github.com/QuantumNous/astrlink/desktop/internal/ui"
 	"github.com/QuantumNous/astrlink/desktop/internal/wsl"
 )
@@ -447,7 +448,7 @@ func folder(path string) (string, bool) {
 	if err != nil {
 		return "", false
 	}
-	resolved, err := filepath.EvalSymlinks(absolute)
+	resolved, err := realpath.Resolve(absolute)
 	if err != nil {
 		return "", false
 	}

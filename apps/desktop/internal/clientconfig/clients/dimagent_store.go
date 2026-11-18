@@ -15,6 +15,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/QuantumNous/astrlink/desktop/internal/clientconfig/format"
+	"github.com/QuantumNous/astrlink/desktop/internal/realpath"
 
 	// SQLite 3.54.1, which fixes the read of uninitialized page-cache memory
 	// through a -wal file of another page size (CVE-2026-119375).
@@ -486,7 +487,7 @@ func dimAgentWrite(path string, before, after *string) error {
 	if info, err := os.Stat(path); err != nil || !info.Mode().IsRegular() {
 		return errors.New("open DimAgent once before writing its settings")
 	}
-	resolved, err := filepath.EvalSymlinks(path)
+	resolved, err := realpath.Resolve(path)
 	if err != nil {
 		return errors.New("unable to locate DimAgent settings")
 	}

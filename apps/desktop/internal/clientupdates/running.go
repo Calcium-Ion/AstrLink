@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"github.com/QuantumNous/astrlink/desktop/internal/realpath"
 )
 
 // Finding running processes started from a client's installation, to name
@@ -37,7 +39,7 @@ func newPathRoots(roots []string) pathRoots {
 	var keys []string
 	for _, root := range roots {
 		keys = append(keys, windowsKey(root))
-		if resolved, err := filepath.EvalSymlinks(root); err == nil {
+		if resolved, err := realpath.Resolve(root); err == nil {
 			if absolute, err := filepath.Abs(resolved); err == nil {
 				keys = append(keys, windowsKey(absolute))
 			}

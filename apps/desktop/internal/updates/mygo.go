@@ -13,6 +13,8 @@ import (
 	"sync"
 
 	"github.com/egoist/mygo"
+
+	"github.com/QuantumNous/astrlink/desktop/internal/realpath"
 )
 
 // publicKey is updates.publicKey of mygo.config.ts, which the desktop build
@@ -54,7 +56,7 @@ func InstallSupported() bool {
 	if err != nil {
 		return false
 	}
-	if real, err := filepath.EvalSymlinks(exe); err == nil {
+	if real, err := realpath.Resolve(exe); err == nil {
 		exe = real
 	}
 	target := filepath.Dir(exe)
