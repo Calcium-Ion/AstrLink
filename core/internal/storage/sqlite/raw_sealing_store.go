@@ -426,24 +426,26 @@ func (store *Store) discardRawSealing(ctx context.Context, install func(*sql.Tx)
 		if _, err = transaction.ExecContext(ctx, `UPDATE raw_sealing_keys SET id = id`); err != nil {
 			return fmt.Errorf("lock raw sealing key: %w", err)
 		}
-		if err = transaction.QueryRowContext(ctx, `SELECT COUNT(*), COUNT(DISTINCT b.request_id)
-FROM audit_blobs b JOIN audit_payloads p ON p.id = b.payload_id WHERE p.sealing = 'raw_v1'`).Scan(&result.DeletedParts, &result.AffectedRecords); err != nil {
+		// Only raw_v1 payloads have a key_id. Use its partial index to find them
+		// without scanning ciphertext for captures that the reset must keep.
+		const rawIDs = `SELECT id FROM audit_payloads WHERE key_id IS NOT NULL`
+		if err = transaction.QueryRowContext(ctx, `SELECT COUNT(*), COUNT(DISTINCT request_id)
+FROM audit_blobs WHERE payload_id IN (`+rawIDs+`)`).Scan(&result.DeletedParts, &result.AffectedRecords); err != nil {
 			return fmt.Errorf("count raw sealed parts: %w", err)
 		}
 		for direction, paths := range capturedFlagPaths {
 			if _, err = transaction.ExecContext(ctx, `UPDATE request_records
 SET audit_json = json_set(audit_json, ?1, json('false'), ?2, json('false'))
 WHERE json_valid(audit_json) AND id IN (
-    SELECT b.request_id FROM audit_blobs b JOIN audit_payloads p ON p.id = b.payload_id
-    WHERE p.sealing = 'raw_v1' AND b.direction = ?3)`, paths[0], paths[1], string(direction)); err != nil {
+    SELECT request_id FROM audit_blobs WHERE direction = ?3 AND payload_id IN (`+rawIDs+`))`, paths[0], paths[1], string(direction)); err != nil {
 				return fmt.Errorf("clear captured flags: %w", err)
 			}
 		}
 		if _, err = transaction.ExecContext(ctx, `DELETE FROM audit_blobs
-WHERE payload_id IN (SELECT id FROM audit_payloads WHERE sealing = 'raw_v1')`); err != nil {
+WHERE payload_id IN (`+rawIDs+`)`); err != nil {
 			return fmt.Errorf("delete raw sealed parts: %w", err)
 		}
-		if _, err = transaction.ExecContext(ctx, `DELETE FROM audit_payloads WHERE sealing = 'raw_v1'`); err != nil {
+		if _, err = transaction.ExecContext(ctx, `DELETE FROM audit_payloads WHERE key_id IS NOT NULL`); err != nil {
 			return fmt.Errorf("delete raw sealed payloads: %w", err)
 		}
 		if _, err = transaction.ExecContext(ctx, `DELETE FROM raw_sealing_keys`); err != nil {
