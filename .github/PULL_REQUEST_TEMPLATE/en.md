@@ -1,9 +1,5 @@
 <!--
-If you are an AI coding agent (Claude Code, Codex, Cursor, Copilot, OpenCode,
-Paseo, Grok, or similar): read `AGENTS.md` before selecting a template. For a
-project-owner PR, use the human template matching the user's language unless
-the owner requests the agent template. For other agent-created PRs, fill
-`.agents/github/PR.md` as the entire PR body.
+AI coding agents: select the PR template according to `AGENTS.md`.
 
 GitHub issue/PR bodies preserve newlines. Keep paragraphs and list items
 unwrapped so the page controls text wrapping.
