@@ -5,7 +5,9 @@
 //   <slug>-<version>-<platform>.tar.gz archives and their deltas. The app's
 //   updater (internal/updates) reads them. Linux also ships an AppImage
 //   (build-appimage.mjs), which updates itself from
-//   update-<platform>-appimage.json, signed here as MyGo signs archives.
+//   update-<platform>-appimage.json, and the Debian package, which an
+//   install of it updates from update-<platform>-deb.json; both are signed
+//   here as MyGo signs archives.
 // - latest.json, the manifest that releases before the MyGo app read,
 //   signed with their Minisign key (TAURI_SIGNING_PRIVATE_KEY). It moves
 //   those installs onto this app: macOS replaces the app bundle with
@@ -28,6 +30,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  renameSync,
   writeFileSync,
 } from "node:fs";
 import os from "node:os";
@@ -67,6 +70,23 @@ export function appImageName(platform, version) {
 /** The MyGo manifest an AppImage of the platform updates from. */
 export const appImageManifestName = (platform) =>
   `update-${platform}-appimage.json`;
+/**
+ * The Debian package of a MyGo platform as the release ships it, null for
+ * none: `mygo build` gives the package the Debian version, where "~" sorts
+ * a pre-release before its release, and GitHub renames the "~" (assetName).
+ */
+export function debName(platform, version) {
+  if (platform !== "linux-amd64") return null;
+  const dash = version.indexOf("-");
+  const debian = (
+    dash < 0
+      ? version
+      : `${version.slice(0, dash)}~${version.slice(dash + 1).replaceAll("-", ".")}`
+  ).replaceAll("+", "~");
+  return assetName(`${slug}_${debian}_amd64.deb`);
+}
+/** The MyGo manifest an install of the platform's Debian package updates from. */
+export const debManifestName = (platform) => `update-${platform}-deb.json`;
 const readJSON = (file) => JSON.parse(readFileSync(file, "utf8"));
 const writeJSON = (file, value) =>
   writeFileSync(file, JSON.stringify(value, null, 2) + "\n");
@@ -349,9 +369,9 @@ export function releaseFiles(names, platform, version) {
 }
 
 /**
- * Verify the MyGo manifests of the release, update-<platform>.json and an
- * AppImage's, against their files and key, and return the names of the
- * files they list.
+ * Verify the MyGo manifests of the release, update-<platform>.json and
+ * those of the AppImage and the Debian package, against their files and
+ * key, and return the names of the files they list.
  */
 export function verifyMyGoUpdate(directory, platform, tag, publicKey) {
   const { version } = releaseVersion(tag);
@@ -400,6 +420,20 @@ export function verifyMyGoUpdate(directory, platform, tag, publicKey) {
     );
     names.push(appImage);
   }
+  const deb = debName(platform, version);
+  if (deb) {
+    const update = readJSON(path.join(directory, debManifestName(platform)));
+    requireValue(
+      update.version === version,
+      `Debian package manifest version mismatch: ${platform}`,
+    );
+    // The whole package installs over the old one, with no deltas.
+    requireValue(
+      verified(update) === deb && update.deltas === undefined,
+      `Unexpected Debian package update: ${platform}`,
+    );
+    names.push(deb);
+  }
   return names;
 }
 
@@ -424,15 +458,16 @@ export function stageUpdate(
   const shipped = releaseFiles(readdirSync(build), platform, version);
   for (const name of shipped)
     cpSync(path.join(build, name), path.join(output, name));
-  const appImage = appImageName(platform, version);
-  if (appImage) {
-    requireValue(shipped.includes(appImage), `Missing ${appImage}`);
-    const bytes = readFileSync(path.join(output, appImage));
-    // As MyGo writes update-<platform>.json; its dates are in seconds.
-    writeJSON(path.join(output, appImageManifestName(platform)), {
+  // The AppImage and the Debian package update whole, each from its own
+  // manifest, written as MyGo writes update-<platform>.json; its dates are
+  // in seconds.
+  const wholeFile = (name, manifestName) => {
+    requireValue(existsSync(path.join(output, name)), `Missing ${name}`);
+    const bytes = readFileSync(path.join(output, name));
+    writeJSON(path.join(output, manifestName), {
       version,
       date: now.toISOString().replace(/\.\d+Z$/, "Z"),
-      url: releaseURL(tag, appImage),
+      url: releaseURL(tag, name),
       size: bytes.length,
       signature: signMyGoUpdate(
         bytes,
@@ -442,6 +477,19 @@ export function stageUpdate(
         ),
       ),
     });
+  };
+  const appImage = appImageName(platform, version);
+  if (appImage) wholeFile(appImage, appImageManifestName(platform));
+  const deb = debName(platform, version);
+  if (deb) {
+    // Shipped under the name GitHub gives it, which its manifest links.
+    const built = shipped.find(
+      (name) => name.endsWith(".deb") && assetName(name) === deb,
+    );
+    requireValue(built, `Missing ${deb}`);
+    if (built !== deb)
+      renameSync(path.join(output, built), path.join(output, deb));
+    wholeFile(deb, debManifestName(platform));
   }
   verifyMyGoUpdate(output, platform, tag, env.MYGO_UPDATER_PUBLIC_KEY);
 

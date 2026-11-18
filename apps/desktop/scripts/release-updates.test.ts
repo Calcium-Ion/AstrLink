@@ -24,6 +24,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   appImageManifestName,
   appImageName,
+  debManifestName,
+  debName,
   assetName,
   attachRelease,
   collectRelease,
@@ -119,9 +121,14 @@ const download = (tag: string, name: string) =>
   `https://github.com/Calcium-Ion/AstrLink/releases/download/${tag}/${name}`;
 
 /** What `mygo build` leaves in build/<platform> with updates. */
-function mygoBuild(root: string, target: Target, keys: Keys, tag = "v1.0.0") {
-  const version = "1.0.0",
-    platform = mygoPlatforms[target],
+function mygoBuild(
+  root: string,
+  target: Target,
+  keys: Keys,
+  tag = "v1.0.0",
+  version = "1.0.0",
+) {
+  const platform = mygoPlatforms[target],
     arch = platform.split("-")[1];
   const build = path.join(root, "build", platform);
   mkdirSync(build, { recursive: true });
@@ -178,7 +185,11 @@ function mygoBuild(root: string, target: Target, keys: Keys, tag = "v1.0.0") {
     write(`astrlink-setup-${version}-${arch}.exe`, `installer ${arch}`);
     write("install.ps1", "install script");
   } else {
-    write(`astrlink_${version}_${arch}.deb`, `package ${arch}`);
+    // MyGo gives the package its Debian version: "~" before a pre-release.
+    write(
+      `astrlink_${version.replace("-", "~")}_${arch}.deb`,
+      `package ${arch}`,
+    );
     write("install.sh", "install script");
     // build-appimage.mjs, after `mygo build`.
     write(`AstrLink_${version}_${arch}.AppImage`, `AppImage ${arch}`);
@@ -192,7 +203,8 @@ function staged(keys: Keys, list: readonly Target[], tag = "v1.0.0") {
     path.join(root, "package.json"),
     JSON.stringify({ version: releaseVersion(tag).version }),
   );
-  for (const target of list) mygoBuild(root, target, keys, tag);
+  for (const target of list)
+    mygoBuild(root, target, keys, tag, releaseVersion(tag).version);
   for (const target of list) stageUpdate(root, target, tag, keys.env);
   return path.join(root, "package");
 }
@@ -262,6 +274,7 @@ describe("release updates", () => {
       "AstrLink_1.0.0_amd64.AppImage.sig",
       "update-linux-amd64.json",
       "update-linux-amd64-appimage.json",
+      "update-linux-amd64-deb.json",
       "astrlink_1.0.0_amd64.deb",
       "astrlink-0.9.0-to-1.0.0-darwin-arm64.delta",
     ])
@@ -325,7 +338,30 @@ describe("release updates", () => {
       "astrlink-1.0.0-linux-amd64.tar.gz",
       "astrlink-0.9.0-to-1.0.0-linux-amd64.delta",
       "AstrLink_1.0.0_amd64.AppImage",
+      "astrlink_1.0.0_amd64.deb",
     ]);
+    // The Debian package installs whole from its own manifest, signed the
+    // same way.
+    const deb = readFileSync(path.join(packages, "astrlink_1.0.0_amd64.deb"));
+    const debUpdate = JSON.parse(
+      readFileSync(path.join(packages, debManifestName("linux-amd64")), {
+        encoding: "utf8",
+      }),
+    );
+    expect(debUpdate).toMatchObject({
+      version: "1.0.0",
+      url: download("v1.0.0", "astrlink_1.0.0_amd64.deb"),
+      size: deb.length,
+    });
+    expect(debUpdate.deltas).toBeUndefined();
+    expect(
+      verify(
+        null,
+        createHash("sha256").update(deb).digest(),
+        createPublicKey(keys.mygo),
+        Buffer.from(debUpdate.signature, "base64"),
+      ),
+    ).toBe(true);
 
     const release = path.join(directory(), "release");
     const manifest = collectRelease(
@@ -358,6 +394,7 @@ describe("release updates", () => {
       "update-windows-amd64.json",
       "update-linux-amd64.json",
       "update-linux-amd64-appimage.json",
+      "update-linux-amd64-deb.json",
       "AstrLink_1.0.0_amd64.AppImage",
       "AstrLink_1.0.0_amd64.AppImage.sig",
     ])
@@ -379,6 +416,21 @@ describe("release updates", () => {
     expect(Object.keys(extended.platforms).sort()).toEqual([...targets].sort());
   });
 
+  it("links a pre-release Debian package by the name GitHub gives it", () => {
+    const keys = releaseKeys(),
+      packages = staged(keys, ["linux-x86_64"], "v1.0.0-rc.1");
+    const update = JSON.parse(
+      readFileSync(path.join(packages, debManifestName("linux-amd64")), "utf8"),
+    );
+    expect(update.url).toBe(
+      download("v1.0.0-rc.1", "astrlink_1.0.0.rc.1_amd64.deb"),
+    );
+    expect(readdirSync(packages)).toContain("astrlink_1.0.0.rc.1_amd64.deb");
+    expect(readdirSync(packages)).not.toContain(
+      "astrlink_1.0.0~rc.1_amd64.deb",
+    );
+  });
+
   it("ships files under the names GitHub gives them", () => {
     expect(assetName("astrlink_1.0.0~rc.1_amd64.deb")).toBe(
       "astrlink_1.0.0.rc.1_amd64.deb",
@@ -387,12 +439,9 @@ describe("release updates", () => {
       "astrlink-setup-1.0.0-rc.1-amd64.exe",
     );
     const keys = releaseKeys(),
-      packages = staged(keys, releaseTargets as Target[]);
-    const deb = path.join(packages, "astrlink_1.0.0_amd64.deb");
-    cpSync(deb, path.join(packages, "astrlink_1.0.0~rc.1_amd64.deb"));
-    rmSync(deb);
+      packages = staged(keys, releaseTargets as Target[], "v1.0.0-rc.1");
     const release = path.join(directory(), "release");
-    collectRelease(packages, release, "v1.0.0", publicKeys(keys));
+    collectRelease(packages, release, "v1.0.0-rc.1", publicKeys(keys));
     expect(readdirSync(release)).toContain("astrlink_1.0.0.rc.1_amd64.deb");
     expect(readFileSync(path.join(release, "SHA256SUMS"), "utf8")).toContain(
       "  astrlink_1.0.0.rc.1_amd64.deb\n",
@@ -513,6 +562,49 @@ describe("release updates", () => {
     tampered((update) => {
       update.signature = signMyGoUpdate(Buffer.from("other"), keys.mygo);
     }, "MyGo update signature mismatch");
+
+    // The Debian package, which the Linux build must hold too.
+    const noDeb = linux();
+    rmSync(path.join(noDeb, "build/linux-amd64/astrlink_1.0.0_amd64.deb"));
+    expect(() =>
+      stageUpdate(noDeb, "linux-x86_64", "v1.0.0", keys.env),
+    ).toThrow("Missing astrlink_1.0.0_amd64.deb");
+    const debManifest = path.join(packages, debManifestName("linux-amd64")),
+      debWritten = readFileSync(debManifest, "utf8");
+    writeFileSync(manifest, written);
+    for (const [change, failure] of [
+      [
+        (u: Record<string, unknown>) => (u.version = "0.9.0"),
+        "Debian package manifest version mismatch",
+      ],
+      [
+        (u: Record<string, unknown>) => (u.deltas = []),
+        "Unexpected Debian package update",
+      ],
+    ] as const) {
+      const update = JSON.parse(debWritten);
+      change(update);
+      writeFileSync(debManifest, JSON.stringify(update));
+      expect(() =>
+        verifyMyGoUpdate(
+          packages,
+          "linux-amd64",
+          "v1.0.0",
+          keys.env.MYGO_UPDATER_PUBLIC_KEY,
+        ),
+      ).toThrow(failure);
+    }
+  });
+
+  it("names the Debian package as mygo build and GitHub do", () => {
+    expect(debName("linux-amd64", "1.0.0")).toBe("astrlink_1.0.0_amd64.deb");
+    expect(debName("linux-amd64", "1.0.0-rc.1")).toBe(
+      "astrlink_1.0.0.rc.1_amd64.deb",
+    );
+    expect(debName("linux-amd64", "1.0.0-rc-1+build.2")).toBe(
+      "astrlink_1.0.0.rc.1.build.2_amd64.deb",
+    );
+    expect(debName("darwin-arm64", "1.0.0")).toBeNull();
   });
 
   it("signs AppImage updates as mygo build does, with the key of mygo keygen", () => {
@@ -779,6 +871,7 @@ describe("release updates", () => {
       expect(github.uploads()[1].sort()).toEqual([
         "update-darwin-arm64.json",
         "update-linux-amd64-appimage.json",
+        "update-linux-amd64-deb.json",
         "update-linux-amd64.json",
         "update-windows-amd64.json",
       ]);

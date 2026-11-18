@@ -46,9 +46,13 @@ func Arch() string {
 // installed, as mygo.Updater.Enabled decides it apart from the build's
 // configuration: an app bundle on macOS, a directory the user can write to
 // elsewhere. An AppImage replaces its file, in a directory the user can
-// write to. The packages a package manager installed, such as a .deb in
-// /opt, cannot.
+// write to. The Debian package installs the new package through apt, when
+// pkexec can ask the user to authorize it; other packages a package
+// manager installed cannot.
 func InstallSupported() bool {
+	if debInstalled() {
+		return debInstallSupported()
+	}
 	if file, ok := appImageFile(); ok {
 		return writable(filepath.Dir(file))
 	}

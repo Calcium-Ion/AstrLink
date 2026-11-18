@@ -209,6 +209,9 @@ type Manager struct {
 	// appImage is the AppImage file the app runs from, "" otherwise: its
 	// update is the release's AppImage, which replaces the file.
 	appImage string
+	// deb is set when the Debian package installed the app: its update is
+	// the release's package, which apt installs.
+	deb bool
 	// operation is held by the check, download or install that runs.
 	operation chan struct{}
 	// wake asks the scheduler to read its deadline again.
@@ -250,6 +253,8 @@ func NewManager(cfg Config) *Manager {
 	}
 	if file, ok := appImageFile(); ok {
 		m.appImage = file
+	} else {
+		m.deb = debInstalled()
 	}
 	m.generationCtx, m.cancelGeneration = context.WithCancel(context.Background())
 	m.snapshot = UpdateSnapshot{
@@ -537,10 +542,13 @@ func (m *Manager) checkLocked(parent context.Context) UpdateSnapshot {
 }
 
 // manifestName is the manifest of this platform's update, or of the
-// AppImage the app runs from.
+// AppImage the app runs from, or of the Debian package that installed it.
 func (m *Manager) manifestName() string {
 	if m.appImage != "" {
 		return appImageManifestName(m.cfg.Target)
+	}
+	if m.deb {
+		return debManifestName(m.cfg.Target)
 	}
 	return "update-" + m.cfg.Target + ".json"
 }
@@ -645,11 +653,16 @@ func (m *Manager) checkInner(ctx context.Context, generation uint64) error {
 		return err
 	}
 	var installer Installer
-	if m.appImage != "" {
+	switch {
+	case m.appImage != "":
 		// The AppImage is always installed whole.
 		update.Deltas = nil
 		installer = appImageInstaller{target: m.appImage, file: update.firstFile(m.cfg.CurrentVersion), key: m.key, open: m.openPackage}
-	} else {
+	case m.deb:
+		// So is the Debian package.
+		update.Deltas = nil
+		installer = debInstaller{dir: os.TempDir(), file: update.firstFile(m.cfg.CurrentVersion), key: m.key, open: m.openPackage}
+	default:
 		installer, err = m.cfg.Updater.Check(ctx, body, m.openPackage)
 		if err != nil {
 			return failure("manifest", "%v", err)
@@ -938,6 +951,15 @@ func (m *Manager) Install(ctx context.Context) (UpdateSnapshot, error) {
 			if err := m.cfg.Core.Start(); err != nil {
 				detail += "; gateway recovery failed: " + err.Error()
 			}
+		}
+		if errors.Is(err, errDebNotAuthorized) {
+			// Dismissed: the update stays ready to install.
+			m.publish(func() {
+				if m.generation == generation {
+					m.snapshot.Phase = PhaseReady
+				}
+			})
+			return m.Snapshot(), nil
 		}
 		m.fail(generation, failure("install", "%s", detail))
 		return m.Snapshot(), nil
