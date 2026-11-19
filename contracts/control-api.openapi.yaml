@@ -2907,6 +2907,63 @@ paths:
           $ref: "#/components/responses/Conflict"
         "500":
           $ref: "#/components/responses/InternalServerError"
+  /control/v1/requests/{request_id}/audit/conversation:
+    x-astrlink-implementation-status: implemented
+    parameters:
+      - $ref: "#/components/parameters/RequestId"
+    get:
+      x-astrlink-role: observer
+      tags: [Requests]
+      operationId: getRequestConversationContent
+      summary: Read a call's audit content cut down to what a conversation view shows.
+      description: |
+        Opens the call's parts under the same rules as
+        `GET /control/v1/requests/{request_id}/audit`: the same `view` values,
+        roles, raw access grants and raw lock. The response has the same shape
+        with less in it: no HTTP metadata, no provider request, and the
+        provider response only when the client response was not kept. The
+        client request body keeps only its history (`input`, `messages` or
+        `contents`): user messages whole, the trailing run of tool results and
+        user messages whole, and earlier tool results and assistant messages
+        reduced to their role and type. A body that is not JSON or not in one
+        of those protocols comes back as an empty string. This response must
+        not be logged, cached, included in diagnostics, or exported as
+        ordinary configuration.
+      parameters:
+        - name: view
+          in: query
+          description: Which parts may be read. Unknown values are rejected.
+          schema:
+            $ref: "#/components/schemas/AuditContentView"
+        - name: X-AstrLink-Raw-Grant
+          in: header
+          description: Token of an approved raw access grant.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+      responses:
+        "200":
+          description: Decrypted audit content, cut down.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditContent"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
   /control/v1/requests/{request_id}/audit/context:
     x-astrlink-implementation-status: implemented
     parameters:

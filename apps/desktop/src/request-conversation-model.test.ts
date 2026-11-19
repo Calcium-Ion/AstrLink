@@ -10,6 +10,7 @@ import {
   pairToolCalls,
   parseCallContent,
   replyExcerpt,
+  reuseSettledTurns,
   stripClientWrappers,
   type ParsedCall,
 } from "./request-conversation-model";
@@ -727,5 +728,48 @@ describe("replyExcerpt", () => {
 
   it("cuts a long reply well past one line", () => {
     expect(replyExcerpt("长".repeat(5000))).toHaveLength(240);
+  });
+});
+
+describe("reuseSettledTurns", () => {
+  const settled = record({ id: "req_done", turn_index: 1 });
+  const running = (now: string) =>
+    record({
+      id: "req_run",
+      turn_index: 2,
+      started_at: now,
+      status: "pending",
+      completed_at: null,
+    });
+  const build = (records: RequestRecord[]) =>
+    conversationTurns(
+      records,
+      {},
+      new Map(),
+      Date.parse("2026-10-03T02:00:00Z"),
+    );
+
+  it("keeps a finished turn whose fresh records are equal", () => {
+    const first = build([{ ...settled }, running("2026-10-03T01:30:00Z")]);
+    const next = reuseSettledTurns(
+      first,
+      build([{ ...settled }, running("2026-10-03T01:30:00Z")]),
+    );
+    expect(next[0]).toBe(first[0]);
+    expect(next[1]).not.toBe(first[1]);
+  });
+
+  it("replaces a finished turn whose record changed", () => {
+    const first = build([settled]);
+    const next = reuseSettledTurns(
+      first,
+      build([{ ...settled, latency_ms: 11_000 }]),
+    );
+    expect(next[0]).not.toBe(first[0]);
+  });
+
+  it("returns the previous model when nothing moved", () => {
+    const first = build([settled]);
+    expect(reuseSettledTurns(first, build([{ ...settled }]))).toBe(first);
   });
 });

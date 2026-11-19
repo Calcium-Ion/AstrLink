@@ -948,3 +948,72 @@ export function replyExcerpt(text: string): string {
     .trim()
     .slice(0, EXCERPT_LIMIT);
 }
+
+const recordKeys = new WeakMap<RequestRecord, string>();
+
+function recordKey(record: RequestRecord): string {
+  let key = recordKeys.get(record);
+  if (key === undefined) {
+    key = JSON.stringify(record);
+    recordKeys.set(record, key);
+  }
+  return key;
+}
+
+function segmentShape(segments: ConversationSegment[]): string {
+  return segments
+    .map((segment) =>
+      segment.kind === "call"
+        ? segment.call.record.id
+        : `run:${segment.calls.length}`,
+    )
+    .join(",");
+}
+
+/** Same records, same read content, same folding: nothing on screen moved. */
+function sameSettledTurn(
+  previous: ConversationTurn,
+  next: ConversationTurn,
+): boolean {
+  if (previous.id !== next.id) return false;
+  if (previous.stats.pending || next.stats.pending) return false;
+  if (previous.calls.length !== next.calls.length) return false;
+  const callsMatch = previous.calls.every((call, index) => {
+    const other = next.calls[index]!;
+    return (
+      call.parsed === other.parsed &&
+      call.children.length === other.children.length &&
+      recordKey(call.record) === recordKey(other.record) &&
+      call.children.every(
+        (child, position) =>
+          recordKey(child) === recordKey(other.children[position]!),
+      )
+    );
+  });
+  return (
+    callsMatch &&
+    segmentShape(previous.segments) === segmentShape(next.segments)
+  );
+}
+
+/**
+ * Keeps the previous object of every finished turn whose inputs are
+ * unchanged. A running session rebuilds the model every second from freshly
+ * fetched records; reusing settled turns lets their memoized views skip the
+ * render, so only the running turn repaints.
+ */
+export function reuseSettledTurns(
+  previous: readonly ConversationTurn[],
+  next: ConversationTurn[],
+): ConversationTurn[] {
+  if (previous.length === 0) return next;
+  const byId = new Map(previous.map((turn) => [turn.id, turn]));
+  let changed = previous.length !== next.length;
+  const merged = next.map((turn, index) => {
+    const old = byId.get(turn.id);
+    const kept = old && sameSettledTurn(old, turn) ? old : turn;
+    if (kept !== previous[index]) changed = true;
+    return kept;
+  });
+  return changed ? merged : (previous as ConversationTurn[]);
+}

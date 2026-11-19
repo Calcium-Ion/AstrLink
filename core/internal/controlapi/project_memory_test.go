@@ -174,6 +174,21 @@ func TestRequestContextTextsControlAPI(t *testing.T) {
 		read.protocol != contract.ProtocolAnthropicMessages || read.body != body {
 		t.Fatalf("texts = %+v, read %+v", texts, read)
 	}
+	// The conversation read opens the same body under the same rules, cut
+	// down to the history it draws on.
+	response = requestRecordHTTP(t, handler, http.MethodGet, RequestsPath+"/request_texts/audit/conversation", "", "")
+	if response.Code != http.StatusOK {
+		t.Fatalf("conversation status=%d body=%s", response.Code, response.Body.String())
+	}
+	var conversation contract.AuditContent
+	decode(t, response, &conversation)
+	if conversation.RequestID != "request_texts" || conversation.RequestBody == nil ||
+		!conversation.RequestBody.Truncated || conversation.RequestBody.Content != `{"messages":[]}` {
+		t.Fatalf("conversation = %+v", conversation)
+	}
+	if response := requestRecordHTTP(t, handler, http.MethodGet, RequestsPath+"/request_texts/audit/conversation?view=private", "", ""); response.Code != http.StatusBadRequest {
+		t.Fatalf("conversation view status=%d", response.Code)
+	}
 	// A call whose body was not kept says so instead of failing.
 	response = requestRecordHTTP(t, handler, http.MethodGet, RequestsPath+"/request_bare/audit/context?view=shareable", "", "")
 	if response.Code != http.StatusOK {

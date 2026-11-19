@@ -2,11 +2,14 @@
 
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const bridgeMocks = vi.hoisted(() => ({ getUsageSummary: vi.fn() }));
+vi.mock("./bridge", () => bridgeMocks);
 
 import { applyLocale } from "./i18n";
 import { emptyUsageSummary, resolveUsageWindow } from "./usage-range";
-import { UsageStarTrail } from "./UsageStarTrail";
+import { resetTrailWeekForTests, UsageStarTrail } from "./UsageStarTrail";
 
 describe("UsageStarTrail", () => {
   let container: HTMLDivElement;
@@ -17,6 +20,8 @@ describe("UsageStarTrail", () => {
       globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
     ).IS_REACT_ACT_ENVIRONMENT = true;
     applyLocale("zh-CN");
+    resetTrailWeekForTests();
+    bridgeMocks.getUsageSummary.mockReset();
     container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
@@ -64,5 +69,25 @@ describe("UsageStarTrail", () => {
     expect(
       container.querySelector("[data-slot='star-trail-chart']"),
     ).toBeNull();
+  });
+
+  it("draws the kept week at once when the overview is opened again", async () => {
+    const summary = emptyUsageSummary(resolveUsageWindow("1d", new Date()));
+    const week = emptyUsageSummary(resolveUsageWindow("7d", new Date()));
+    bridgeMocks.getUsageSummary.mockResolvedValue(week);
+    const dayRings = "[aria-label^='星轨：每天']";
+    await act(async () =>
+      root.render(<UsageStarTrail status="ready" summary={summary} />),
+    );
+    expect(container.querySelector(dayRings)).not.toBeNull();
+
+    // Back from another page: the next read is still on its way.
+    await act(async () => root.unmount());
+    root = createRoot(container);
+    bridgeMocks.getUsageSummary.mockReturnValue(new Promise(() => {}));
+    await act(async () =>
+      root.render(<UsageStarTrail status="ready" summary={summary} />),
+    );
+    expect(container.querySelector(dayRings)).not.toBeNull();
   });
 });

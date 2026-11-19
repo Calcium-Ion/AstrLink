@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { i18n } from "./i18n";
 
@@ -67,7 +67,8 @@ export function useCopyFeedback(): CopyFeedback {
       });
   }, []);
 
-  return { activeKey, state, copy };
+  // Stable between copies, so memoized rows that take it skip re-renders.
+  return useMemo(() => ({ activeKey, state, copy }), [activeKey, state, copy]);
 }
 
 export function copyButtonLabel(

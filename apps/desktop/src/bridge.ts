@@ -1002,6 +1002,21 @@ export async function getRequestAuditContent(
   );
 }
 
+/**
+ * A call's captured content cut down to what the conversation view reads:
+ * the history items that carry the operator's words and the tool results
+ * the call sent back, and the response. Full bodies replay the whole
+ * session, megabytes per call.
+ */
+export async function getRequestConversationContent(
+  requestId: string,
+): Promise<AuditContent> {
+  requireNativeBridge();
+  return parseAuditContent(
+    await invoke<unknown>("get_request_conversation_content", { requestId }),
+  );
+}
+
 /** What the texts of a call's captured body read: rules, memory, summary. */
 export async function getRequestContextTexts(
   requestId: string,

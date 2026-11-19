@@ -55,10 +55,18 @@ type Client struct {
 	http *http.Client
 }
 
+// maxIdleControlConns is how many idle connections to Core are kept for
+// reuse.
+const maxIdleControlConns = 16
+
 // NewClient returns a client for Core's loopback control listener.
 func NewClient() *Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.Proxy = nil
+	// The pages poll several reads at once (sessions, a running session's
+	// detail, call bodies, status); Go keeps only two idle connections per
+	// host by default and closes the rest after each burst.
+	transport.MaxIdleConnsPerHost = maxIdleControlConns
 	return &Client{http: &http.Client{
 		Transport: transport,
 		CheckRedirect: func(*http.Request, []*http.Request) error {

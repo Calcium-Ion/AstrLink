@@ -69,6 +69,7 @@ import type { RawSealingState } from "./raw-sealing-model";
 import {
   cancelledLabel,
   conversationTurns,
+  reuseSettledTurns,
   replyExcerpt,
   toolCountLabel,
   TOOL_TEXT_LIMIT,
@@ -175,14 +176,31 @@ export function RequestConversation({
     `${session.id}:${rawSealing?.unlocked ? "unlocked" : "locked"}`,
     contentCache,
   );
-  const markers = useMemo(() => callMarkers(context, turns), [context, turns]);
-  const marked = useMemo(() => new Set(markers.keys()), [markers]);
+  // The records arrive as new objects with every refresh; keep the markers
+  // and their ids stable while their content is, or every turn re-renders.
+  const markersRef = useRef<{
+    key: string;
+    markers: ReadonlyMap<string, CallMarkers>;
+    marked: ReadonlySet<string>;
+  } | null>(null);
+  const { markers, marked } = useMemo(() => {
+    const next = callMarkers(context, turns);
+    const key = JSON.stringify([...next]);
+    if (markersRef.current?.key !== key) {
+      markersRef.current = { key, markers: next, marked: new Set(next.keys()) };
+    }
+    return markersRef.current;
+  }, [context, turns]);
   const [textTarget, setTextTarget] = useState<ContextTextTarget | null>(null);
-  const model = useMemo(
-    () =>
+  const previousModelRef = useRef<ConversationTurn[]>([]);
+  const model = useMemo(() => {
+    const next = reuseSettledTurns(
+      previousModelRef.current,
       conversationTurns(turns, childrenByRoot, content.parsed, nowMs, marked),
-    [turns, childrenByRoot, content.parsed, nowMs, marked],
-  );
+    );
+    previousModelRef.current = next;
+    return next;
+  }, [turns, childrenByRoot, content.parsed, nowMs, marked]);
   const latestTurnId = model[model.length - 1]?.id ?? null;
 
   // A session paints once the turn on screen has its words and every retried
@@ -342,6 +360,14 @@ export function RequestConversation({
     setCurrentTurnId(current ?? model[0]?.id ?? null);
   }, [model, latestTurnId]);
 
+  const setTurnElement = useCallback(
+    (turnId: string, element: HTMLElement | null) => {
+      if (element) turnRefs.current.set(turnId, element);
+      else turnRefs.current.delete(turnId);
+    },
+    [],
+  );
+
   const scrollToEnd = useCallback(() => {
     const scroller = scrollerRef.current;
     if (!scroller) return;
@@ -370,7 +396,9 @@ export function RequestConversation({
       setNewTurns((count) => count + (model.length - previous));
     }
     measure();
-  }, [model, scrollToEnd, measure]);
+    // The clock too: settled turns keep their objects, but a reader at the
+    // end follows height that grew without a new model.
+  }, [model, nowMs, scrollToEnd, measure]);
 
   const scrollToTurn = useCallback(
     (turnId: string) => {
@@ -527,13 +555,12 @@ export function RequestConversation({
                     onToggleShowAll={toggleShowAll}
                     open={turnOpen(turn)}
                     openRuns={openRuns}
-                    reading={content.reading}
-                    refFor={(element) => {
-                      if (element) turnRefs.current.set(turn.id, element);
-                      else turnRefs.current.delete(turn.id);
-                    }}
+                    readingHere={turn.calls.some((c) =>
+                      content.reading.has(c.record.id),
+                    )}
+                    onTurnElement={setTurnElement}
                     services={services}
-                    session={session}
+                    sessionClientType={session.client_type}
                     showAll={showAllTurns.has(turn.id)}
                     turn={turn}
                   />
@@ -548,7 +575,10 @@ export function RequestConversation({
         </div>
         {!atBottom && (newTurns > 0 || sessionPending) ? (
           <Button
-            className="absolute right-8 bottom-3 shadow-md"
+            // Its own layer above the stream: WebKit scrolls the stream's
+            // composited cards on another thread, and an unlayered button
+            // flickered under them while the reader scrolled.
+            className="absolute right-8 bottom-3 z-10 shadow-md will-change-transform"
             data-testid="conversation-latest"
             onClick={scrollToEnd}
             size="sm"
@@ -699,35 +729,38 @@ function Dots({ children }: { children: ReactNode[] }) {
 
 const TurnView = memo(function TurnView({
   turn,
-  session,
+  sessionClientType,
   services,
   open,
   showAll,
   openRuns,
-  reading,
+  readingHere,
   call,
   inspectorOpen,
   copyFeedback,
   markers,
-  refFor,
+  onTurnElement,
   onToggle,
   onToggleShowAll,
   onToggleRun,
   onSelectCall,
 }: {
   turn: ConversationTurn;
-  session: RequestSession;
+  /** A primitive: the session object is refetched every second. */
+  sessionClientType: RequestSession["client_type"];
   services: RequestServiceMap;
   open: boolean;
   showAll: boolean;
   openRuns: ReadonlySet<string>;
-  reading: ReadonlySet<string>;
+  /** A call of this turn is being read; a boolean keeps the memo. */
+  readingHere: boolean;
   call: ConversationCall | null;
   inspectorOpen: boolean;
   copyFeedback: CopyFeedback;
   /** Notes beside single calls: compactions, summaries, memory written. */
   markers: ReadonlyMap<string, CallMarkers>;
-  refFor: (element: HTMLElement | null) => void;
+  /** Stable across renders, so registering the element keeps the memo. */
+  onTurnElement: (turnId: string, element: HTMLElement | null) => void;
   onToggle: (turn: ConversationTurn) => void;
   onToggleShowAll: (turnId: string) => void;
   onToggleRun: (runId: string) => void;
@@ -738,11 +771,14 @@ const TurnView = memo(function TurnView({
   const reply = turn.reply;
   const selectedId = inspectorOpen ? call?.record.id : undefined;
   const unread = turn.calls.filter((c) => !c.parsed).length;
-  const readingHere = turn.calls.some((c) => reading.has(c.record.id));
   const segments: ConversationSegment[] = showAll
     ? turn.calls.map((c) => ({ kind: "call", call: c }))
     : turn.segments;
   const userCopyKey = `conversation-user:${turn.id}`;
+  const turnRef = useCallback(
+    (element: HTMLElement | null) => onTurnElement(turn.id, element),
+    [onTurnElement, turn.id],
+  );
   // A finished turn shows its tools once every call has been read: a count
   // that grew with each read made history look like a turn still running.
   // A running turn counts as it goes.
@@ -760,11 +796,11 @@ const TurnView = memo(function TurnView({
       className="min-w-0 border-b py-5 last:border-b-0"
       data-testid="conversation-turn"
       data-turn-id={turn.id}
-      ref={refFor}
+      ref={turnRef}
     >
       <div className="mb-2 flex items-center gap-2 text-xs text-muted-foreground">
         <ClientTypeIcon
-          clientType={first.record.client_type ?? session.client_type}
+          clientType={first.record.client_type ?? sessionClientType}
           decorative
           size={14}
         />

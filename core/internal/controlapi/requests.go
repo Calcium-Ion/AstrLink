@@ -222,6 +222,15 @@ func (handler *Handler) requestRecordItem(writer http.ResponseWriter, request *h
 		handler.getRequestAuditContent(writer, request, idPart)
 		return
 	}
+	if strings.HasSuffix(rawID, "/audit/conversation") {
+		idPart := strings.TrimSuffix(rawID, "/audit/conversation")
+		if idPart == "" || strings.Contains(idPart, "/") {
+			writeError(writer, http.StatusNotFound, "not_found", "control API path not found")
+			return
+		}
+		handler.getRequestConversationContent(writer, request, idPart)
+		return
+	}
 	if strings.HasSuffix(rawID, "/audit/context") {
 		idPart := strings.TrimSuffix(rawID, "/audit/context")
 		if idPart == "" || strings.Contains(idPart, "/") || handler.contextTexts == nil {

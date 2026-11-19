@@ -897,6 +897,16 @@ func (r Records) GetRequestAuditContent(ctx context.Context, requestID string) (
 	return r.value(ctx, http.MethodGet, path, nil, "request audit content")
 }
 
+// GetRequestConversationContent reads a request's captured content cut down
+// to what the conversation view draws from it.
+func (r Records) GetRequestConversationContent(ctx context.Context, requestID string) (json.RawMessage, error) {
+	path, err := requestPath(requestID, "/audit/conversation")
+	if err != nil {
+		return nil, err
+	}
+	return r.value(ctx, http.MethodGet, path, nil, "request conversation content")
+}
+
 // GetRequestContextTexts reads the texts a request's captured body
 // carried: rules, memory, summary.
 func (r Records) GetRequestContextTexts(ctx context.Context, requestID string) (json.RawMessage, error) {

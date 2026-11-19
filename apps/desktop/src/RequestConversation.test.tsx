@@ -5,7 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const bridgeMocks = vi.hoisted(() => ({
-  getRequestAuditContent: vi.fn(),
+  getRequestConversationContent: vi.fn(),
   getRequestContextTexts: vi.fn(),
 }));
 vi.mock("./bridge", () => bridgeMocks);
@@ -275,9 +275,9 @@ describe("RequestConversation", () => {
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
-    bridgeMocks.getRequestAuditContent.mockReset();
+    bridgeMocks.getRequestConversationContent.mockReset();
     bridgeMocks.getRequestContextTexts.mockReset();
-    bridgeMocks.getRequestAuditContent.mockImplementation(
+    bridgeMocks.getRequestConversationContent.mockImplementation(
       async (id: string) => {
         const found = contents[id];
         if (!found) throw new Error(`no content for ${id}`);
@@ -297,7 +297,7 @@ describe("RequestConversation", () => {
       expect(container.textContent).toContain("都在。");
     });
     // A folded turn reads only its first and last call.
-    expect(bridgeMocks.getRequestAuditContent).toHaveBeenCalledTimes(3);
+    expect(bridgeMocks.getRequestConversationContent).toHaveBeenCalledTimes(3);
     await openFirstTurn();
     await vi.waitFor(() => {
       expect(container.textContent).toContain("Read ×1 · Grep ×1 · Bash ×1");
@@ -362,12 +362,12 @@ describe("RequestConversation", () => {
       )?.textContent,
     ).toContain("都在。");
     // Bodies were read once per call, nothing more.
-    expect(bridgeMocks.getRequestAuditContent).toHaveBeenCalledTimes(5);
+    expect(bridgeMocks.getRequestConversationContent).toHaveBeenCalledTimes(5);
   });
 
   it("groups tools with readable summaries without inventing execution state", async () => {
     const call = record({ id: "req_tools", turn_index: 1 });
-    bridgeMocks.getRequestAuditContent.mockResolvedValue(
+    bridgeMocks.getRequestConversationContent.mockResolvedValue(
       content(
         call.id,
         anthropicRequest("检查代码"),
@@ -435,7 +435,7 @@ describe("RequestConversation", () => {
     const held = new Promise<void>((resolve) => {
       release = resolve;
     });
-    bridgeMocks.getRequestAuditContent.mockImplementation(
+    bridgeMocks.getRequestConversationContent.mockImplementation(
       async (id: string) => {
         if (id === "req_5") await held;
         return contents[id]!;
@@ -447,7 +447,9 @@ describe("RequestConversation", () => {
       '[data-testid="conversation-stream"]',
     )!;
     // The folded first turn has been read; the latest one has not.
-    expect(bridgeMocks.getRequestAuditContent).toHaveBeenCalledWith("req_1");
+    expect(bridgeMocks.getRequestConversationContent).toHaveBeenCalledWith(
+      "req_1",
+    );
     expect(stream.getAttribute("aria-busy")).toBe("true");
     expect(stream.classList.contains("invisible")).toBe(true);
 
@@ -462,7 +464,7 @@ describe("RequestConversation", () => {
   it("does not hold a session back for a slow read", async () => {
     vi.useFakeTimers();
     try {
-      bridgeMocks.getRequestAuditContent.mockImplementation(
+      bridgeMocks.getRequestConversationContent.mockImplementation(
         () => new Promise(() => {}),
       );
       render();
@@ -655,9 +657,9 @@ describe("RequestConversation", () => {
       // Out of view, a folded turn reads only its ends: too little to count
       // its tools, so the line leaves them out.
       expect(process.textContent).not.toContain("工具调用");
-      expect(bridgeMocks.getRequestAuditContent).not.toHaveBeenCalledWith(
-        "req_2",
-      );
+      expect(
+        bridgeMocks.getRequestConversationContent,
+      ).not.toHaveBeenCalledWith("req_2");
       await act(async () => {
         report(
           observed.map(
@@ -845,12 +847,13 @@ describe("RequestConversation", () => {
 
   it("names a dropped file by its file name and copies the message as sent", async () => {
     const path = "/Users/me/Desktop/Snapzy/Snapzy_2026-10-12_22-45-20_345.png";
-    bridgeMocks.getRequestAuditContent.mockImplementation(async (id: string) =>
-      content(
-        id,
-        anthropicRequest(`${path}这是什么`),
-        anthropicResponse([{ type: "text", text: "一张终端截图。" }]),
-      ),
+    bridgeMocks.getRequestConversationContent.mockImplementation(
+      async (id: string) =>
+        content(
+          id,
+          anthropicRequest(`${path}这是什么`),
+          anthropicResponse([{ type: "text", text: "一张终端截图。" }]),
+        ),
     );
     vi.mocked(copyFeedback.copy).mockClear();
     render({ turns: [calls[4]!] });
@@ -882,7 +885,7 @@ describe("RequestConversation", () => {
   });
 
   it("falls back to the preview and says the bodies are locked", async () => {
-    bridgeMocks.getRequestAuditContent.mockImplementation(
+    bridgeMocks.getRequestConversationContent.mockImplementation(
       async (id: string) =>
         ({
           request_id: id,
@@ -944,7 +947,7 @@ describe("RequestConversation", () => {
         response_content_captured: false,
       },
     }));
-    bridgeMocks.getRequestAuditContent.mockImplementation(
+    bridgeMocks.getRequestConversationContent.mockImplementation(
       async (id: string) =>
         ({
           request_id: id,
@@ -977,7 +980,7 @@ describe("RequestConversation", () => {
     const held = new Promise<void>((resolve) => {
       release = resolve;
     });
-    bridgeMocks.getRequestAuditContent.mockImplementation(
+    bridgeMocks.getRequestConversationContent.mockImplementation(
       async (id: string) => {
         if (id === "req_2") await held;
         return contents[id]!;
@@ -1016,7 +1019,7 @@ describe("RequestConversation", () => {
     await vi.waitFor(() => {
       expect(container.textContent).toContain("Read ×1 · Grep ×1 · Bash ×1");
     });
-    expect(bridgeMocks.getRequestAuditContent).toHaveBeenCalledTimes(5);
+    expect(bridgeMocks.getRequestConversationContent).toHaveBeenCalledTimes(5);
     // Back to the list and in again: the view paints at once, the folded
     // turn already names its tools, and nothing is read twice.
     act(() => root.unmount());
@@ -1031,7 +1034,7 @@ describe("RequestConversation", () => {
       turn.querySelector('button[aria-expanded="false"]')?.textContent,
     ).toContain("Read ×1 · Grep ×1 · Bash ×1");
     await flush();
-    expect(bridgeMocks.getRequestAuditContent).toHaveBeenCalledTimes(5);
+    expect(bridgeMocks.getRequestConversationContent).toHaveBeenCalledTimes(5);
   });
 
   it("keeps neither a running call nor a raw part for the next view", async () => {
@@ -1054,7 +1057,7 @@ describe("RequestConversation", () => {
         completed_at: null,
       }),
     ];
-    bridgeMocks.getRequestAuditContent.mockImplementation(
+    bridgeMocks.getRequestConversationContent.mockImplementation(
       async (id: string) => {
         const read = content(
           id,
@@ -1072,19 +1075,25 @@ describe("RequestConversation", () => {
     const live = { ...session, status: "pending" as const };
     render({ contentCache, session: live, turns });
     await vi.waitFor(() => {
-      expect(bridgeMocks.getRequestAuditContent).toHaveBeenCalledTimes(3);
+      expect(bridgeMocks.getRequestConversationContent).toHaveBeenCalledTimes(
+        3,
+      );
     });
     await flush();
     act(() => root.unmount());
     root = createRoot(container);
-    bridgeMocks.getRequestAuditContent.mockClear();
+    bridgeMocks.getRequestConversationContent.mockClear();
     render({ contentCache, session: live, turns });
     await vi.waitFor(() => {
-      expect(bridgeMocks.getRequestAuditContent).toHaveBeenCalledTimes(2);
+      expect(bridgeMocks.getRequestConversationContent).toHaveBeenCalledTimes(
+        2,
+      );
     });
     await flush();
     expect(
-      bridgeMocks.getRequestAuditContent.mock.calls.map(([id]) => id).sort(),
+      bridgeMocks.getRequestConversationContent.mock.calls
+        .map(([id]) => id)
+        .sort(),
     ).toEqual(["req_live", "req_raw"]);
   });
 
@@ -1146,7 +1155,7 @@ describe("RequestConversation", () => {
       },
     );
     const held = new Map<string, () => void>();
-    bridgeMocks.getRequestAuditContent.mockImplementation(
+    bridgeMocks.getRequestConversationContent.mockImplementation(
       (id: string) =>
         new Promise((resolve) => {
           held.set(id, () =>
@@ -1175,7 +1184,7 @@ describe("RequestConversation", () => {
       }),
     );
     const order = () =>
-      bridgeMocks.getRequestAuditContent.mock.calls.map(([id]) => id);
+      bridgeMocks.getRequestConversationContent.mock.calls.map(([id]) => id);
     try {
       render({ turns, session: { ...session, turn_count: 3 } });
       await flush();

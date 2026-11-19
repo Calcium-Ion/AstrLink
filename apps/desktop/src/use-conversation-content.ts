@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { getRequestAuditContent } from "./bridge";
+import { getRequestConversationContent } from "./bridge";
 import { i18n } from "./i18n";
 import {
   conversationResponsePart,
@@ -10,7 +10,10 @@ import {
 import { holdsRawPart, type RequestRecord } from "./request-record-model";
 import { parseResponsePreview } from "./response-preview-model";
 
-/** Decrypts in flight at once. Bodies run to megabytes, so two is plenty. */
+/**
+ * Decrypts in flight at once. Core still opens each full body, megabytes in
+ * a long session, before cutting it down, so two is plenty.
+ */
 const CONCURRENCY = 2;
 /** Conversations a page keeps read for the next time they are opened. */
 const KEPT_CONVERSATIONS = 3;
@@ -135,7 +138,7 @@ export function useConversationContent(
         });
         pump();
       };
-      void getRequestAuditContent(record.id)
+      void getRequestConversationContent(record.id)
         .then(async (content) => {
           const part = conversationResponsePart(content);
           const outputs = part

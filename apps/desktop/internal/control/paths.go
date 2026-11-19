@@ -100,10 +100,12 @@ func isSubscriptionUsagePath(path string) bool {
 }
 
 // isRequestAuditReadPath reports the reads that decrypt a call's captured
-// body: its audit content and the texts it carried.
+// body: its audit content, the part the conversation reads and the texts it
+// carried.
 func isRequestAuditReadPath(path string) bool {
 	return strings.HasPrefix(path, "/control/v1/requests/") &&
-		(strings.HasSuffix(path, "/audit") || strings.HasSuffix(path, "/audit/context"))
+		(strings.HasSuffix(path, "/audit") || strings.HasSuffix(path, "/audit/conversation") ||
+			strings.HasSuffix(path, "/audit/context"))
 }
 
 func isRequestRecordListPath(path string) bool {

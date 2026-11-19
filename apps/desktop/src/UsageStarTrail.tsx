@@ -71,19 +71,38 @@ export function saveDayTrailMode(mode: DayTrailMode) {
 }
 
 /**
+ * The last week read and the local day it ends on. Returning to the overview
+ * mounts the disc again; starting it from this keeps it from drawing the
+ * day's model rings until the read lands and then swapping to the week's.
+ */
+let lastWeek: { day: string; week: UsageSummary } | null = null;
+
+function keptWeek(): UsageSummary | null {
+  return lastWeek?.day === localDayKey(new Date()) ? lastWeek.week : null;
+}
+
+/** Forgets the kept week, for tests. */
+export function resetTrailWeekForTests() {
+  lastWeek = null;
+}
+
+/**
  * The week up to today, read again whenever `summary` is: the disc behind a
  * day's numbers. Null while it loads or when it failed.
  */
 function useTrailWeek(summary: UsageSummary | null, wanted: boolean) {
-  const [week, setWeek] = useState<UsageSummary | null>(null);
+  const [week, setWeek] = useState<UsageSummary | null>(keptWeek);
   useEffect(() => {
     if (!wanted || !summary) return;
     let cancelled = false;
+    const day = localDayKey(new Date());
     getUsageSummary(resolveUsageWindow("7d", new Date())).then(
       (next) => {
+        lastWeek = { day, week: next };
         if (!cancelled) setWeek(next);
       },
       () => {
+        if (lastWeek?.day === day) lastWeek = null;
         if (!cancelled) setWeek(null);
       },
     );

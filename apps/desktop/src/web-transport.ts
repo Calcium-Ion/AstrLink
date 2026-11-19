@@ -400,6 +400,9 @@ const commands: Record<string, Command> = {
   delete_request_record: route(request, "DELETE"),
   purge_request_records: route("/requests/purge", "POST", input),
   get_request_audit_content: route((a) => `${request(a)}/audit`),
+  get_request_conversation_content: route(
+    (a) => `${request(a)}/audit/conversation`,
+  ),
   get_request_context_texts: route((a) => `${request(a)}/audit/context`),
   list_raw_access: route("/audit/raw-access"),
   decide_raw_access: (a) =>

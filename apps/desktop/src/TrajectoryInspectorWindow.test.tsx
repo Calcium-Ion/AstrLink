@@ -25,6 +25,7 @@ vi.mock("./native-host/window", () => ({
 
 const bridgeMocks = vi.hoisted(() => ({
   getRequestAuditContent: vi.fn(),
+  getRequestConversationContent: vi.fn(),
   getRawSealingStatus: vi.fn(),
   listenRawSealingChanged: vi.fn(),
 }));
@@ -210,6 +211,10 @@ describe("TrajectoryInspectorWindow", () => {
       globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
     ).IS_REACT_ACT_ENVIRONMENT = true;
     vi.clearAllMocks();
+    // The conversation reads the same content the audit mock serves.
+    bridgeMocks.getRequestConversationContent.mockImplementation((id: string) =>
+      bridgeMocks.getRequestAuditContent(id),
+    );
     // Most tests represent returning users who already took the tour.
     localStorage.setItem(TRAJECTORY_INSPECTOR_TOUR_KEY, "seen");
     hostState.current = { selection: null, pinned: false };

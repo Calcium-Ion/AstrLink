@@ -1468,6 +1468,13 @@ export const Records = {
   getRequestContextTexts(requestID: string): Promise<unknown> {
     return call("Records.GetRequestContextTexts", requestID);
   },
+  /**
+   * GetRequestConversationContent reads a request's captured content cut down
+   * to what the conversation view draws from it.
+   */
+  getRequestConversationContent(requestID: string): Promise<unknown> {
+    return call("Records.GetRequestConversationContent", requestID);
+  },
   /** GetRequestRecord reads one request record. */
   getRequestRecord(requestID: string): Promise<unknown> {
     return call("Records.GetRequestRecord", requestID);

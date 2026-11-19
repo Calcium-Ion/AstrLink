@@ -119,6 +119,8 @@ export const coreCommands = {
     Records.purgeRequestRecords(a.input),
   get_request_audit_content: (a: { requestId: string }) =>
     Records.getRequestAuditContent(a.requestId),
+  get_request_conversation_content: (a: { requestId: string }) =>
+    Records.getRequestConversationContent(a.requestId),
   get_request_context_texts: (a: { requestId: string }) =>
     Records.getRequestContextTexts(a.requestId),
 

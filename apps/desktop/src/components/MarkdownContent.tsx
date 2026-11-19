@@ -1,4 +1,4 @@
-import { Component, lazy, Suspense, type ReactNode } from "react";
+import { Component, lazy, memo, Suspense, type ReactNode } from "react";
 
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
@@ -64,8 +64,12 @@ class ContentBoundary extends Component<
   }
 }
 
-/** Rich model text with a local, escaped plain-text fallback. */
-export function MarkdownContent({
+/**
+ * Rich model text with a local, escaped plain-text fallback. Parsing is the
+ * expensive part and depends only on the text, so a parent that re-renders
+ * every second (a running session) or on every scroll must not reparse it.
+ */
+export const MarkdownContent = memo(function MarkdownContent({
   content,
   className,
 }: {
@@ -85,4 +89,4 @@ export function MarkdownContent({
       </ContentBoundary>
     </div>
   );
-}
+});

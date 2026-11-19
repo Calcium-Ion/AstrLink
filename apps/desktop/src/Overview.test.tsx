@@ -78,7 +78,10 @@ import type { AccessTokenCatalog } from "./AccessTokenManager";
 import { browserSnapshot, type AppSnapshot } from "./core-model";
 import { Overview, type ServiceCatalog } from "./Overview";
 import { WorkspaceSnapshotProvider } from "./workspace-snapshots";
-import { DAY_TRAIL_MODE_STORAGE_KEY } from "./UsageStarTrail";
+import {
+  DAY_TRAIL_MODE_STORAGE_KEY,
+  resetTrailWeekForTests,
+} from "./UsageStarTrail";
 import {
   DEFAULT_HIDDEN_MODULES,
   DEFAULT_OVERVIEW_LAYOUT,
@@ -256,6 +259,7 @@ describe("Overview", () => {
   let root: Root;
 
   beforeEach(() => {
+    resetTrailWeekForTests();
     billingMocks.getBillingSummary.mockRejectedValue(
       new Error("billing unavailable"),
     );
