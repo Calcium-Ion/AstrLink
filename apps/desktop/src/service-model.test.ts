@@ -377,6 +377,16 @@ describe("service model", () => {
     });
     expect(droid.subscription?.provider).toBe("factory_droid");
     expect(supportsResponsesWebSocket(droid)).toBe(false);
+    // A task plugin's provider answers Responses through its tasks.
+    expect(
+      supportsResponsesWebSocket({
+        kind: "plugin",
+        capabilities: [
+          { protocol: "openai.responses", mode: "native", streaming: true },
+        ],
+        plugin: { key: "sora", provider: "task" },
+      }),
+    ).toBe(false);
   });
 
   it("parses a provider's own redirect rules", () => {

@@ -8,6 +8,7 @@ import { FormMessage } from "./components/FormMessage";
 import { RawPasswordEntry } from "./RawSealingControls";
 import { applyTheme } from "./theme";
 import { consoleRequest } from "./web-transport";
+import { MetadataSettings } from "./MetadataSettings";
 
 export function WebSettings({
   coreSessionKey,
@@ -62,6 +63,9 @@ export function WebSettings({
           </FormMessage>
         )}
       </Panel>
+      <div className="mt-3">
+        <MetadataSettings />
+      </div>
     </section>
   );
 }

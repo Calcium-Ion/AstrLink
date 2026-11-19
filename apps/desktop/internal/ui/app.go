@@ -98,7 +98,7 @@ func New(h *host.Host) *App {
 // the display currency and the desktop pet
 // (src/native-host/commands-window.ts).
 func (a *App) Services() []any {
-	return []any{MainWindow{a}, Files{}, Currency{a}, Tray{a}, TrajectoryInspector{a}, Toys{a}}
+	return []any{MainWindow{a}, Files{a}, Currency{a}, Tray{a}, TrajectoryInspector{a}, Toys{a}}
 }
 
 func (a *App) prefs() prefs.Preferences {

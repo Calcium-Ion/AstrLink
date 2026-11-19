@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 
 	"github.com/egoist/mygo"
+
+	"github.com/QuantumNous/astrlink/desktop/internal/control"
 )
 
 // The events the frontend listens to, under the names the Tauri shell
@@ -36,6 +38,12 @@ var (
 	QuotaDisplayModeChanged = mygo.NewEvent[string]("quota-display-mode-changed")
 	// ThemePreferenceChanged carries the theme the user chose.
 	ThemePreferenceChanged = mygo.NewEvent[string]("theme-preference-changed")
+	// PluginApprovalFinished tells every window that the user decided the
+	// plugin change waiting in the plugin confirmation window.
+	PluginApprovalFinished = mygo.NewEvent[control.PluginApprovalFinished]("plugin-approval-finished")
+	// PluginApprovalChanged tells the plugin confirmation window that a
+	// newer change replaced the one it shows.
+	PluginApprovalChanged = mygo.NewEvent[struct{}]("plugin-approval-changed")
 	// WindowResized tells a window's page that it was resized, maximized or
 	// went into or out of full screen, so a custom title bar reads its
 	// state again (getCurrentWindow().onResized).

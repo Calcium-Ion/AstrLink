@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/QuantumNous/astrlink/core/contract"
@@ -21,6 +22,10 @@ import (
 )
 
 const Timeout = 60 * time.Second
+
+// TaskTimeout bounds the test of a task plugin's provider, which waits for
+// the media it generates: a video takes minutes.
+const TaskTimeout = 5 * time.Minute
 const maxResponseBytes = 1 << 20
 const maxRawResponseCharacters = 64 << 10
 
@@ -28,6 +33,15 @@ type Tester struct {
 	gateway             *ingress.Handler
 	identities          *accountauth.IdentityRegistry
 	subscriptionBaseURL func(contract.SubscriptionProvider) string
+	// address is where programs on this machine reach the gateway, which
+	// the result links of a task plugin's test point at.
+	address atomic.Value
+}
+
+// UseGatewayAddress tells the tester the gateway's address once it
+// listens: host:port on this machine.
+func (tester *Tester) UseGatewayAddress(address string) {
+	tester.address.Store(address)
 }
 
 func New(authorizer endpoint.Authorizer, forwarder *transport.Forwarder, subscriptionBaseURL func(contract.SubscriptionProvider) string) *Tester {
@@ -55,13 +69,23 @@ func (tester *Tester) Test(ctx context.Context, service contract.Service, input 
 	if err := input.Validate(service); err != nil {
 		return fail("invalid_test", err.Error())
 	}
-	ctx, cancel := context.WithTimeout(ctx, Timeout)
+	task := service.Plugin != nil && service.Plugin.Provider == contract.PluginProviderTask
+	timeout := Timeout
+	if task {
+		timeout = TaskTimeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	path, payload := testPayload(service.Kind, input)
 	body, _ := json.Marshal(payload)
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, path, bytes.NewReader(body))
 	if err != nil {
 		return fail("invalid_configuration", "Could not build the provider test request.")
+	}
+	// A task plugin's answer links its results under the address the
+	// request reached the gateway at.
+	if address, _ := tester.address.Load().(string); task && address != "" {
+		request.Host = address
 	}
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Accept", "application/json")
@@ -168,6 +192,12 @@ func (tester *Tester) Test(ctx context.Context, service contract.Service, input 
 		return fail("invalid_response", err.Error())
 	}
 	result.OK = true
+	// A task plugin's media are known once the gateway is done answering.
+	select {
+	case <-exchange.done:
+		result.Media = exchange.media
+	case <-ctx.Done():
+	}
 	return result
 }
 

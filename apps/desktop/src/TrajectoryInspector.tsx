@@ -16,6 +16,10 @@ import { AuditPartSection, withheldHint } from "./AuditReviewer";
 import type { CopyFeedback } from "./copy-feedback";
 import { i18n, useT } from "./i18n";
 import {
+  PluginRecordDetails,
+  RequestMetadataLine,
+} from "./PluginRecordDetails";
+import {
   holdsLockedPart,
   type AuditContent,
   type RequestModelRedirect,
@@ -50,6 +54,7 @@ import {
   type PrivacyHitGroup,
   type TrajectoryChip,
   type TrajectoryRow,
+  trajectoryChipLabel,
 } from "./request-trajectory-model";
 import { PolicyKindTable } from "./PolicyKindTable";
 import { protocolEntryPath } from "./service-presets";
@@ -63,7 +68,10 @@ import {
 } from "./TrajectoryResponse";
 
 /** The parts backed by a captured body, as opposed to record metadata. */
-type BodyPart = Exclude<InspectorPart, "route" | "redirect" | "compression">;
+type BodyPart = Exclude<
+  InspectorPart,
+  "route" | "redirect" | "compression" | "plugin"
+>;
 
 /**
  * One selected call. Header chips are tabs; only the active section body is
@@ -226,7 +234,7 @@ export function TrajectoryInspector({
                   chipDotClass(item.chip, item.tone),
                 )}
               />
-              {t(`trajectory.chips.${item.chip}`)}
+              {trajectoryChipLabel(item.chip, item.title)}
             </Button>
           );
         })}
@@ -331,6 +339,7 @@ function InspectorSection({
     part === "route" ||
     part === "redirect" ||
     part === "compression" ||
+    part === "plugin" ||
     omitCapturedBody
       ? null
       : auditPart(auditContent, part);
@@ -375,6 +384,8 @@ function InspectorSection({
         <RedirectInspector redirect={row.redirect ?? record.model_redirect} />
       ) : part === "compression" ? (
         <CompressionInspector row={row} />
+      ) : part === "plugin" ? (
+        <PluginRecordDetails record={record} />
       ) : (
         <BodyInspector
           auditContent={auditContent}
@@ -701,6 +712,7 @@ function ClientInspector({
           </span>
         ) : null}
       </div>
+      <RequestMetadataLine metadata={record.metadata} />
       <CapturePane
         copyFeedback={copyFeedback}
         copyKey={`client:${record.id}`}

@@ -61,7 +61,8 @@ const (
 
 // React controls, Radix positioning, charts and toast animations use inline styles.
 // Scripts remain same-origin only; no inline scripts or eval are permitted.
-const contentSecurityPolicy = "default-src 'self'; style-src 'self' 'unsafe-inline'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; object-src 'none'"
+// Images may also be data URLs, as the desktop allows: plugin icons come so.
+const contentSecurityPolicy = "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; object-src 'none'"
 
 // maxBodyBytes bounds every console request, matching the control API's own
 // limit. The shared listener keeps the inference plane's timeouts, so

@@ -31,12 +31,16 @@ const (
 	RequestEventUpstream         RequestEventKind = "upstream"
 	RequestEventRestore          RequestEventKind = "restore"
 	RequestEventCompleted        RequestEventKind = "completed"
+	// RequestEventPlugin is a plugin's part in the request, in the gateway
+	// lane. Its title and summary come from the plugin; the details are the
+	// record's plugin_records entries of the same plugin.
+	RequestEventPlugin RequestEventKind = "plugin"
 )
 
 func (kind RequestEventKind) Valid() bool {
 	switch kind {
 	case RequestEventAccepted, RequestEventModelRedirect, RequestEventPrivacy, RequestEventImageCompression,
-		RequestEventRouted, RequestEventUpstream, RequestEventRestore, RequestEventCompleted:
+		RequestEventRouted, RequestEventUpstream, RequestEventRestore, RequestEventCompleted, RequestEventPlugin:
 		return true
 	default:
 		return false
@@ -57,11 +61,25 @@ type RequestEvent struct {
 	Status       RequestStatus    `json:"status"`
 	Summary      string           `json:"summary"`
 	AttemptIndex int              `json:"attempt_index"`
+	// Plugin is the key of the plugin a plugin event belongs to, and Title
+	// its name for the event, such as 「记忆」. Both are empty for every
+	// other kind.
+	Plugin string `json:"plugin,omitempty"`
+	Title  string `json:"title,omitempty"`
 }
 
 func (event RequestEvent) Validate() error {
 	if !event.Kind.Valid() {
 		return fmt.Errorf("unknown request event kind %q", event.Kind)
+	}
+	if (event.Kind == RequestEventPlugin) != (event.Plugin != "") || (event.Plugin != "" && !ValidPluginKey(event.Plugin)) {
+		return fmt.Errorf("a plugin event names its plugin, and no other event does")
+	}
+	if event.Kind != RequestEventPlugin && event.Title != "" {
+		return fmt.Errorf("only a plugin event has a title")
+	}
+	if err := validateBoundedText("title", event.Title, MaxPluginRecordTitleRunes, true); err != nil {
+		return err
 	}
 	if event.StartedAt.IsZero() {
 		return fmt.Errorf("started_at is required")
@@ -629,6 +647,12 @@ type RequestRecord struct {
 	Cursors    []SessionCursor `json:"cursors"`
 	Events     []RequestEvent  `json:"events"`
 	Extensions map[string]any  `json:"extensions,omitempty"`
+	// Metadata is the request's metadata: its values and where they came
+	// from, and the changes it made. Nil when it had none.
+	Metadata *RequestMetadata `json:"metadata,omitempty"`
+	// PluginRecords are the plugins' parts in the request, in the order
+	// they ran. Empty when no plugin ran.
+	PluginRecords []RequestPluginRecord `json:"plugin_records,omitempty"`
 	// Context is what the call carried to the model, read from its body;
 	// absent on retries, on calls whose body was not read, and on records
 	// from before it was kept.
@@ -756,6 +780,19 @@ func (record RequestRecord) Validate() error {
 	}
 	if err := validatePrivacyIgnored(record.PrivacyIgnored); err != nil {
 		return err
+	}
+	if record.Metadata != nil {
+		if err := record.Metadata.Validate(); err != nil {
+			return fmt.Errorf("metadata: %w", err)
+		}
+	}
+	if len(record.PluginRecords) > MaxRequestPluginRecords {
+		return fmt.Errorf("a request keeps at most %d plugin records", MaxRequestPluginRecords)
+	}
+	for index, plugin := range record.PluginRecords {
+		if err := plugin.Validate(); err != nil {
+			return fmt.Errorf("plugin_records[%d]: %w", index, err)
+		}
 	}
 	if err := validateConversionDiagnostics(record.ConversionDiagnostics); err != nil {
 		return err

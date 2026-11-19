@@ -406,6 +406,7 @@ export function ServiceTestDialog({
                 cancelled={cancelled}
                 blocked={blocked}
                 stream={stream}
+                generates={service.plugin?.provider === "task"}
               />
             </section>
           </div>

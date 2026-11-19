@@ -27,7 +27,7 @@ const requestRecordSelectColumns = `
            WHERE request_record_cursors.request_id = request_records.id
            ORDER BY kind, direction, value)) AS cursors_json, first_token_ms, model_redirect_json,
     routing_decision_json, client_type, privacy_decision, privacy_findings_json, conversion_diagnostics_json,
-    first_answer_ms, privacy_ignored_json, output_json, parent_session_id, context_json,
+    first_answer_ms, privacy_ignored_json, metadata_json, plugin_records_json, output_json, parent_session_id, context_json,
     (SELECT project FROM context_sets WHERE context_sets.id = request_records.context_set_id) AS context_project,
     (SELECT items_json FROM context_sets WHERE context_sets.id = request_records.context_set_id) AS context_items`
 
@@ -38,10 +38,10 @@ const requestRecordInsertColumns = `
     session_id, previous_response_id, output_response_id, input_preview, events_json, created_at,
     turn_index, session_link_json, turn_user_messages, turn_user_fingerprint, recovery_json, first_token_ms,
     model_redirect_json, routing_decision_json, client_type, privacy_decision, privacy_findings_json,
-    conversion_diagnostics_json, first_answer_ms, privacy_ignored_json, output_json, parent_session_id,
-    context_json, context_set_id`
+    conversion_diagnostics_json, first_answer_ms, privacy_ignored_json, metadata_json, plugin_records_json, output_json,
+    parent_session_id, context_json, context_set_id`
 
-const requestRecordInsertValues = `(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+const requestRecordInsertValues = `(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 func (row requestRecordRow) insertArgs() []any {
 	return []any{
@@ -52,8 +52,8 @@ func (row requestRecordRow) insertArgs() []any {
 		row.outputResponseID, row.inputPreview, row.eventsJSON, row.createdAt,
 		row.turnIndex, row.sessionLinkJSON, row.turnUserMessages, row.turnUserFingerprint, row.recoveryJSON, row.firstTokenMs,
 		row.modelRedirectJSON, row.routingDecisionJSON, row.clientType, row.privacyDecision, row.privacyFindingsJSON,
-		row.conversionDiagnosticsJSON, row.firstAnswerMs, row.privacyIgnoredJSON, row.outputJSON, row.parentSessionID,
-		row.contextJSON, row.contextSetID,
+		row.conversionDiagnosticsJSON, row.firstAnswerMs, row.privacyIgnoredJSON, row.metadataJSON, row.pluginRecordsJSON, row.outputJSON,
+		row.parentSessionID, row.contextJSON, row.contextSetID,
 	}
 }
 
@@ -152,6 +152,8 @@ ON CONFLICT(id) DO UPDATE SET
     privacy_decision = excluded.privacy_decision,
     privacy_findings_json = excluded.privacy_findings_json,
     privacy_ignored_json = excluded.privacy_ignored_json,
+    metadata_json = excluded.metadata_json,
+    plugin_records_json = excluded.plugin_records_json,
     conversion_diagnostics_json = excluded.conversion_diagnostics_json,
     output_json = excluded.output_json,
     parent_session_id = COALESCE(excluded.parent_session_id, request_records.parent_session_id),
@@ -271,6 +273,29 @@ WHERE terminal=0`); err != nil {
 		return 0, err
 	}
 	return updated, nil
+}
+
+// AppendRequestPluginRecords adds plugin records to a request record that
+// is no longer pending, such as what a capture reported after the request
+// ended, up to the records a request keeps.
+func (store *Store) AppendRequestPluginRecords(ctx context.Context, id contract.RequestID, records []contract.RequestPluginRecord) error {
+	for _, record := range records {
+		if err := record.Validate(); err != nil {
+			return fmt.Errorf("%w: plugin record: %w", storagecontract.ErrInvalidArgument, err)
+		}
+		encoded, err := json.Marshal(record)
+		if err != nil {
+			return fmt.Errorf("%w: plugin record", storagecontract.ErrInvalidArgument)
+		}
+		// One statement: no read that a concurrent writer could outdate.
+		if _, err := store.db.ExecContext(ctx, `UPDATE request_records
+SET plugin_records_json = json_insert(COALESCE(NULLIF(plugin_records_json, ''), '[]'), '$[#]', json(?))
+WHERE id = ? AND status <> 'pending' AND json_array_length(COALESCE(NULLIF(plugin_records_json, ''), '[]')) < ?`,
+			string(encoded), string(id), contract.MaxRequestPluginRecords); err != nil {
+			return fmt.Errorf("append request plugin record: %w", err)
+		}
+	}
+	return nil
 }
 
 func (store *Store) GetRequestRecord(ctx context.Context, id contract.RequestID) (contract.RequestRecord, error) {
@@ -798,6 +823,8 @@ type requestRecordRow struct {
 	privacyFindingsJSON       any
 	privacyIgnoredJSON        any
 	conversionDiagnosticsJSON any
+	metadataJSON              any
+	pluginRecordsJSON         any
 	outputJSON                any
 	parentSessionID           any
 	contextJSON               any
@@ -921,6 +948,20 @@ func encodeRequestRecordRow(record contract.RequestRecord, createdAt time.Time) 
 		}
 		row.privacyIgnoredJSON = string(encoded)
 	}
+	if record.Metadata != nil && !record.Metadata.Empty() {
+		encoded, err := json.Marshal(record.Metadata)
+		if err != nil {
+			return requestRecordRow{}, fmt.Errorf("encode metadata: %w", err)
+		}
+		row.metadataJSON = string(encoded)
+	}
+	if len(record.PluginRecords) > 0 {
+		encoded, err := json.Marshal(record.PluginRecords)
+		if err != nil {
+			return requestRecordRow{}, fmt.Errorf("encode plugin records: %w", err)
+		}
+		row.pluginRecordsJSON = string(encoded)
+	}
 	if len(record.ConversionDiagnostics) > 0 {
 		encoded, err := json.Marshal(record.ConversionDiagnostics)
 		if err != nil {
@@ -990,7 +1031,7 @@ type scannable interface {
 func scanRequestRecord(row scannable) (contract.RequestRecord, error) {
 	var recoveryJSON, modelRedirectJSON, routingDecisionJSON, clientType sql.NullString
 	var privacyDecision, privacyFindingsJSON, privacyIgnoredJSON, conversionDiagnosticsJSON sql.NullString
-	var outputJSON, parentSessionID, contextJSON, contextProject, contextItems sql.NullString
+	var metadataJSON, pluginRecordsJSON, outputJSON, parentSessionID, contextJSON, contextProject, contextItems sql.NullString
 	var firstTokenMs, firstAnswerMs sql.NullInt64
 	var (
 		id, startedAt, status, inputProtocol, auditJSON, createdAt        string
@@ -1011,8 +1052,8 @@ func scanRequestRecord(row scannable) (contract.RequestRecord, error) {
 		&sessionID, &previousResponseID, &outputResponseID, &inputPreview, &eventsJSON,
 		&createdAt, &turnIndex, &sessionLinkJSON, &turnUserMessages, &turnUserFingerprint, &recoveryJSON, &childCount, &cursorsJSON, &firstTokenMs,
 		&modelRedirectJSON, &routingDecisionJSON, &clientType, &privacyDecision, &privacyFindingsJSON,
-		&conversionDiagnosticsJSON, &firstAnswerMs, &privacyIgnoredJSON, &outputJSON, &parentSessionID,
-		&contextJSON, &contextProject, &contextItems,
+		&conversionDiagnosticsJSON, &firstAnswerMs, &privacyIgnoredJSON, &metadataJSON, &pluginRecordsJSON, &outputJSON,
+		&parentSessionID, &contextJSON, &contextProject, &contextItems,
 	); err != nil {
 		return contract.RequestRecord{}, err
 	}
@@ -1147,6 +1188,17 @@ func scanRequestRecord(row scannable) (contract.RequestRecord, error) {
 	if privacyIgnoredJSON.Valid && privacyIgnoredJSON.String != "" {
 		if err := json.Unmarshal([]byte(privacyIgnoredJSON.String), &record.PrivacyIgnored); err != nil {
 			return contract.RequestRecord{}, fmt.Errorf("%w: request %q privacy_ignored", storagecontract.ErrInvalidRecord, id)
+		}
+	}
+	if metadataJSON.Valid && metadataJSON.String != "" {
+		record.Metadata = &contract.RequestMetadata{}
+		if err := json.Unmarshal([]byte(metadataJSON.String), record.Metadata); err != nil {
+			return contract.RequestRecord{}, fmt.Errorf("%w: request %q metadata", storagecontract.ErrInvalidRecord, id)
+		}
+	}
+	if pluginRecordsJSON.Valid && pluginRecordsJSON.String != "" {
+		if err := json.Unmarshal([]byte(pluginRecordsJSON.String), &record.PluginRecords); err != nil {
+			return contract.RequestRecord{}, fmt.Errorf("%w: request %q plugin_records", storagecontract.ErrInvalidRecord, id)
 		}
 	}
 	if conversionDiagnosticsJSON.Valid && conversionDiagnosticsJSON.String != "" {

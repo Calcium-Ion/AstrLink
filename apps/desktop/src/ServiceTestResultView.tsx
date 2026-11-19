@@ -11,6 +11,7 @@ import { StatusBadge } from "./components/StatusBadge";
 import { Activity, LoaderCircle } from "./components/icons";
 import { Badge } from "./components/ui/badge";
 import { ActionGroup } from "./components/ActionGroup";
+import { ServiceTestMediaView } from "./ServiceTestMedia";
 
 export function ServiceTestResultView({
   result,
@@ -20,6 +21,7 @@ export function ServiceTestResultView({
   cancelled = false,
   blocked,
   stream = true,
+  generates = false,
   leading,
 }: {
   result?: ServiceTestResult | null;
@@ -29,6 +31,8 @@ export function ServiceTestResultView({
   cancelled?: boolean;
   blocked?: string | null;
   stream?: boolean;
+  /** The provider is a task plugin's: the test waits for what it generates. */
+  generates?: boolean;
   leading?: ReactNode;
 }) {
   const t = useT();
@@ -120,6 +124,11 @@ export function ServiceTestResultView({
       <ResponseViewer
         key={result ? "result" : "empty"}
         content={result?.output}
+        previewContent={
+          result?.media?.length ? (
+            <ServiceTestMediaView media={result.media} />
+          ) : undefined
+        }
         rawContent={result?.raw_response}
         rawTruncated={result?.raw_response_truncated}
         contentType={result?.response_content_type}
@@ -147,10 +156,14 @@ export function ServiceTestResultView({
             description={
               blocked ??
               (running
-                ? t("serviceTest.running")
+                ? t(
+                    generates
+                      ? "serviceTest.generating"
+                      : "serviceTest.running",
+                  )
                 : cancelled
                   ? t("serviceTest.cancelledDescription")
-                  : t("serviceTest.emptyDescription"))
+                  : undefined)
             }
             illustration={
               running ? (

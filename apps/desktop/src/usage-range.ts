@@ -174,6 +174,20 @@ export interface ServicePerformance {
   speed_samples: number;
 }
 
+/**
+ * One plugin's part in the window. `requests` counts the requests its hooks
+ * acted on without failing and `failed_requests` those where one of its
+ * calls failed; a request it only skipped counts in neither. `tasks` counts
+ * the tasks its providers took and `failed_tasks` those that failed.
+ */
+export interface UsagePluginGroup {
+  plugin: string;
+  requests: number;
+  failed_requests: number;
+  tasks: number;
+  failed_tasks: number;
+}
+
 export interface UsageDayBucket extends UsageTotals {
   /** Local calendar day as `YYYY-MM-DD`. */
   date: string;
@@ -238,6 +252,8 @@ export interface UsageSummary {
    * for windows of about a month or less and leaves longer ones empty.
    */
   by_route: UsageRoute[];
+  /** Plugins by the requests they acted on, then their tasks. */
+  by_plugin: UsagePluginGroup[];
   scanned_records: number;
   capped: boolean;
 }
@@ -530,6 +546,7 @@ export function emptyUsageSummary(
     by_token: [],
     by_client: [],
     by_route: [],
+    by_plugin: [],
     scanned_records: 0,
     capped,
   };
@@ -548,6 +565,7 @@ export interface UsageAggregate {
   by_service: UsageGroup[];
   by_model: UsageGroup[];
   by_token: UsageGroup[];
+  by_plugin: UsagePluginGroup[];
   by_day: UsageDayBucket[];
   scanned_records: number;
 }
@@ -567,6 +585,8 @@ export function aggregateUsageRecords(
   // The client only sees records, so it cannot apply Core's current-token
   // whitelist. The display layer must intersect this list with the catalog.
   const tokenMap = new Map<string, UsageGroup>();
+  // Tasks are not in the records: only Core counts them.
+  const pluginMap = new Map<string, UsagePluginGroup>();
   const dayMap = new Map<string, UsageDayBucket>();
   let scanned_records = 0;
 
@@ -600,6 +620,7 @@ export function aggregateUsageRecords(
       status === "failed",
       false,
     );
+    addPluginRecords(pluginMap, record.plugin_records ?? []);
 
     if (status === "failed") {
       totals.failed_requests += 1;
@@ -621,6 +642,7 @@ export function aggregateUsageRecords(
     by_service: sortUsageGroups([...serviceMap.values()]),
     by_model: sortUsageGroups([...modelMap.values()]),
     by_token: sortUsageGroups([...tokenMap.values()]),
+    by_plugin: sortPluginGroups([...pluginMap.values()]),
     by_day: [...dayMap.values()].sort((left, right) =>
       left.date.localeCompare(right.date),
     ),
@@ -654,6 +676,7 @@ export function aggregateUsage(
     by_client: clientGroups(records),
     // Only Core tells which rewrites a call got.
     by_route: [],
+    by_plugin: aggregate.by_plugin,
     scanned_records: aggregate.scanned_records,
     capped,
   };
@@ -928,6 +951,51 @@ function addUsageGroup(
   group.requests += 1;
   if (!usage) return;
   addUsage(group, usage);
+}
+
+/**
+ * A request counts once for each plugin that acted on it, as failed when one
+ * of the plugin's calls failed; a plugin that only skipped it leaves it out.
+ */
+function addPluginRecords(
+  groups: Map<string, UsagePluginGroup>,
+  records: NonNullable<RequestRecord["plugin_records"]>,
+): void {
+  const acted = new Map<string, boolean>();
+  for (const record of records) {
+    if (record.status === "skipped") continue;
+    acted.set(
+      record.plugin,
+      acted.get(record.plugin) === true || record.status === "failed",
+    );
+  }
+  for (const [plugin, failed] of acted) {
+    let group = groups.get(plugin);
+    if (!group) {
+      group = {
+        plugin,
+        requests: 0,
+        failed_requests: 0,
+        tasks: 0,
+        failed_tasks: 0,
+      };
+      groups.set(plugin, group);
+    }
+    if (failed) group.failed_requests += 1;
+    else group.requests += 1;
+  }
+}
+
+/** Core's order: by the requests acted on, then tasks, then key. */
+function sortPluginGroups(groups: UsagePluginGroup[]): UsagePluginGroup[] {
+  return groups.sort(
+    (left, right) =>
+      right.requests +
+        right.failed_requests -
+        (left.requests + left.failed_requests) ||
+      right.tasks - left.tasks ||
+      (left.plugin < right.plugin ? -1 : left.plugin > right.plugin ? 1 : 0),
+  );
 }
 
 function sortUsageGroups(groups: UsageGroup[]): UsageGroup[] {

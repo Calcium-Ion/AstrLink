@@ -439,11 +439,28 @@ if (process.argv.includes("--test-runtime-only")) {
   process.exit(0);
 }
 
-// The licenses the app ships, as the About page lists them.
+// The licenses the app ships, as the About page lists them, with those of
+// moejs, the plugin runtime Core embeds, and the Node.js modules it bundles.
 for (const [source, destination] of [
   ["LICENSE", "licenses/LICENSE"],
   ["LICENSING.md", "licenses/LICENSING.md"],
   ["LICENSES/AGPL-3.0.txt", "licenses/LICENSES/AGPL-3.0.txt"],
+  ["LICENSES/dsh-ptc-moejs-MIT.txt", "licenses/LICENSES/dsh-ptc-moejs-MIT.txt"],
+  ["LICENSES/events-MIT.txt", "licenses/LICENSES/events-MIT.txt"],
+  ["LICENSES/nodejs-MIT.txt", "licenses/LICENSES/nodejs-MIT.txt"],
+  ["LICENSES/punycode-MIT.txt", "licenses/LICENSES/punycode-MIT.txt"],
+  [
+    "LICENSES/readable-stream-MIT.txt",
+    "licenses/LICENSES/readable-stream-MIT.txt",
+  ],
+  [
+    "LICENSES/string_decoder-MIT.txt",
+    "licenses/LICENSES/string_decoder-MIT.txt",
+  ],
+  [
+    "LICENSES/moejs-THIRD_PARTY_NOTICES.txt",
+    "notices/moejs/THIRD_PARTY_NOTICES.txt",
+  ],
 ]) {
   stageResource(path.join(repositoryRoot, source), destination);
 }

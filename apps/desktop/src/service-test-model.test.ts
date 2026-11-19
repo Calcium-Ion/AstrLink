@@ -105,3 +105,28 @@ it("accepts raw bodies without parsing them and rejects invalid envelope field t
     );
   }
 });
+
+it("reads what a task plugin's provider generated, only as the gateway's files", () => {
+  const file = "/v1/tasks/resp_1/artifacts/image-1/content?access=Zm9v";
+  const media = [
+    { kind: "image", url: `http://127.0.0.1:8324${file}`, name: "image-1" },
+    {
+      kind: "video",
+      url: "/v1/tasks/video_1/artifacts/video/content?access=YmFy",
+      name: "video",
+      mime_type: "video/mp4",
+    },
+  ];
+  expect(parseServiceTestResult({ ...result, media }).media).toEqual(media);
+  for (const wrong of [
+    [{ kind: "image", url: "https://images.example/cat.png", name: "cat" }],
+    [{ kind: "image", url: "javascript:alert(1)", name: "x" }],
+    [{ kind: "model", url: file, name: "x" }],
+    [{ kind: "image", url: file }],
+    "image",
+  ]) {
+    expect(() => parseServiceTestResult({ ...result, media: wrong })).toThrow(
+      "Invalid provider test media",
+    );
+  }
+});

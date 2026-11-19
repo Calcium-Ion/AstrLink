@@ -6,7 +6,9 @@ export type DataSubject =
   | "rawAccess"
   | "localData"
   | "requestRecord"
-  | "auditSettings";
+  | "auditSettings"
+  | "plugin"
+  | "metadata";
 
 /** Why a value was rejected. */
 export type DataProblem =
@@ -31,6 +33,7 @@ export type DataProblem =
   | "belowMinimumLength"
   | "integer"
   | "integerBetween"
+  | "number"
   | "nonNegativeNumber"
   | "exceedsTotal"
   | "tooMany"

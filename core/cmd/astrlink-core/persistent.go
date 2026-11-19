@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"path/filepath"
 	"sync"
 	"time"
@@ -11,21 +13,31 @@ import (
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/accesstoken"
 	"github.com/QuantumNous/astrlink/core/internal/accountauth"
+	"github.com/QuantumNous/astrlink/core/internal/buildinfo"
 	"github.com/QuantumNous/astrlink/core/internal/codingplan"
 	"github.com/QuantumNous/astrlink/core/internal/controlapi"
 	"github.com/QuantumNous/astrlink/core/internal/endpoint"
 	"github.com/QuantumNous/astrlink/core/internal/ingress"
 	"github.com/QuantumNous/astrlink/core/internal/localkey"
+	"github.com/QuantumNous/astrlink/core/internal/metadata"
 	"github.com/QuantumNous/astrlink/core/internal/networkproxy"
+	"github.com/QuantumNous/astrlink/core/internal/plugin"
+	"github.com/QuantumNous/astrlink/core/internal/plugin/hostapi"
+	"github.com/QuantumNous/astrlink/core/internal/pluginhost"
+	"github.com/QuantumNous/astrlink/core/internal/plugininstall"
 	"github.com/QuantumNous/astrlink/core/internal/pricing"
 	"github.com/QuantumNous/astrlink/core/internal/privacy"
 	"github.com/QuantumNous/astrlink/core/internal/privacymodel"
 	"github.com/QuantumNous/astrlink/core/internal/privacyworker"
 	"github.com/QuantumNous/astrlink/core/internal/relaykitbridge"
+	"github.com/QuantumNous/astrlink/core/internal/secretstore"
 	"github.com/QuantumNous/astrlink/core/internal/servicemodel"
 	"github.com/QuantumNous/astrlink/core/internal/servicetest"
+	"github.com/QuantumNous/astrlink/core/internal/storage"
 	"github.com/QuantumNous/astrlink/core/internal/storage/sqlite"
 	syncengine "github.com/QuantumNous/astrlink/core/internal/sync"
+	"github.com/QuantumNous/astrlink/core/internal/taskplugin"
+	"github.com/QuantumNous/astrlink/core/internal/transport"
 	"github.com/QuantumNous/astrlink/core/internal/vertexauth"
 )
 
@@ -95,9 +107,14 @@ type persistentCore struct {
 	rawVault *controlapi.Vault
 	// gateway configures the inference plane; the caller adds its host gate.
 	gateway ingress.Dependencies
+	// serviceTester tests providers; it learns the gateway's address once
+	// the inference plane listens.
+	serviceTester *servicetest.Tester
 	// claudeOfficial serves official Claude accounts; the caller reports the
 	// inference listener to it. Nil when they are unavailable.
 	claudeOfficial *officialClaude
+	// pluginHost learns the inference listener for the logins plugins run.
+	pluginHost     *pluginhost.Host
 	retentionSweep func(context.Context) error
 	// close stops the background monitors, zeroes raw keys, closes the
 	// store and then the privacy worker.
@@ -191,8 +208,13 @@ func openPersistentCore(ctx context.Context, options persistentOptions) (*persis
 		return fail("configure local privacy filter: %w", err)
 	}
 	auditKey, err := store.GetAuditKey(ctx)
+	// The workspace key fingerprints the directories sessions run in, so a
+	// new session there takes the project of the last.
+	var workspaceKey, taskKey []byte
 	if err == nil {
 		err = privacyFilter.PersistPlaceholders(auditKey, store)
+		workspaceKey = pluginhost.WorkspaceKey(auditKey)
+		taskKey = taskplugin.SigningKey(auditKey)
 		clear(auditKey)
 	}
 	if err != nil {
@@ -256,7 +278,12 @@ func openPersistentCore(ctx context.Context, options persistentOptions) (*persis
 	resolver.WithSubscriptionBaseURL(subscriptionManager.APIBaseURL())
 	resolver.WithUsageCache(subscriptionManager)
 	vertexTokens := vertexauth.New(nil)
+	requestMetadata := metadata.NewRegistry(store)
+	if err := requestMetadata.Refresh(ctx); err != nil {
+		return fail("load request metadata: %w", err)
+	}
 	gatewayDependencies := ingress.Dependencies{
+		Metadata:         requestMetadata,
 		ProxyCredentials: store,
 		Resolver:         resolver,
 		Authorizer: endpoint.NewServiceAuthorizer(store, subscriptionManager, subscriptionManager.Provider().IdentityPolicy()).
@@ -291,6 +318,79 @@ func openPersistentCore(ctx context.Context, options persistentOptions) (*persis
 		Identities:               identities,
 		ClaudeOfficial:           claudeOfficial.serving(),
 	}
+	// Plugins load from <data-dir>/plugins in the background; until the first
+	// scan ends, requests see none.
+	pluginDirectory := filepath.Join(options.dataDirectory, "plugins")
+	if err := os.MkdirAll(pluginDirectory, 0o700); err != nil {
+		logf("create plugin directory: %v", err)
+	}
+	// Each plugin reads and writes its own directory under
+	// <data-dir>/plugin-data through node:fs.
+	pluginManager := plugin.NewManager(plugin.ManagerOptions{
+		Dir:      pluginDirectory,
+		DataDir:  filepath.Join(options.dataDirectory, "plugin-data"),
+		Settings: hostapi.Settings{Store: store},
+		Services: plugin.Services{
+			Fetcher:  &hostapi.Fetcher{Credentials: store},
+			Store:    hostapi.Store{Values: store},
+			Metadata: hostapi.Metadata{Store: store},
+		},
+	})
+	// The tasks of task plugins go through providers of kind plugin and
+	// are polled in the background; a result a vendor returns inline is
+	// kept in <data-dir>/plugin-tasks.
+	taskEngine := taskplugin.New(taskplugin.Options{
+		Plugins: pluginManager, Store: store, Services: store, Secrets: store, ProxyCredentials: store,
+		Send: transport.New(nil).RoundTrip, Dir: filepath.Join(options.dataDirectory, "plugin-tasks"),
+		SigningKey: taskKey, Logf: logf,
+	})
+	gatewayDependencies.Tasks = taskEngine
+	pluginHost := pluginhost.New(pluginhost.Options{
+		Plugins: pluginManager, Metadata: requestMetadata, Bindings: store, Store: store, Records: store,
+		WorkspaceKey: workspaceKey, Logf: logf, Credentials: serviceCredentials{store: store},
+		Send: transport.New(nil).RoundTrip, ProxyCredentials: store,
+	})
+	// Plugins keep their providers' accounts up while Core runs.
+	pluginHost.StartMaintenance(ctx, func(ctx context.Context) ([]contract.Service, error) {
+		kind := contract.ServiceKindPlugin
+		var services []contract.Service
+		cursor := ""
+		for {
+			page, err := store.ListServices(ctx, storage.ServiceListOptions{Limit: 200, Cursor: cursor, Kind: &kind})
+			if err != nil {
+				return nil, err
+			}
+			for _, record := range page.Items {
+				services = append(services, record.Service)
+			}
+			if page.NextCursor == "" {
+				return services, nil
+			}
+			cursor = page.NextCursor
+		}
+	})
+	if err := pluginHost.LoadSettings(ctx); err != nil {
+		logf("load the settings of the plugins: %v", err)
+	}
+	// Plugins installed from source come through the outbound proxy, with
+	// their packages from the registry the plugin page names, else npm,
+	// then npmmirror.
+	pluginInstaller := plugininstall.New(plugininstall.Options{
+		Dir:    pluginDirectory,
+		Client: networkproxy.WrapClient(&http.Client{}),
+		Registries: func() []string {
+			registries := []string{contract.DefaultNpmRegistry, contract.FallbackNpmRegistry}
+			if registry := pluginHost.Settings().NpmRegistry; registry != "" {
+				registries = append([]string{registry}, registries...)
+			}
+			return registries
+		},
+		Version:  buildinfo.Version,
+		Language: func() string { return pluginHost.Settings().Language },
+	})
+	gatewayDependencies.Plugins = pluginHost
+	gatewayTester := ingress.NewWithDependencies(gatewayDependencies)
+	serviceTester := servicetest.NewWithDependencies(gatewayDependencies, subscriptionManager.APIBaseURLFor)
 	handler, err := controlapi.NewWithDependencies(options.version, controlapi.Dependencies{
 		ServiceStore: store,
 		PricingStore: store, PricingManager: pricingManager,
@@ -314,30 +414,63 @@ func openPersistentCore(ctx context.Context, options persistentOptions) (*persis
 		RateLimits:         resolver,
 		ServicePackages:    resolver,
 		CodingPlans:        codingplan.New(store, nil),
-		ServiceModels:      servicemodel.New(store, subscriptionManager, nil).WithVertexTokens(vertexTokens).WithOfficialClaudeModels(claudeOfficial.models()),
-		ServiceTester:      servicetest.NewWithDependencies(gatewayDependencies, subscriptionManager.APIBaseURLFor),
-		BuiltinToolTester:  ingress.NewWithDependencies(gatewayDependencies),
+		ServiceModels:      servicemodel.New(store, subscriptionManager, nil).WithVertexTokens(vertexTokens).WithOfficialClaudeModels(claudeOfficial.models()).WithPluginProviders(pluginHost),
+		ServiceTester:      serviceTester,
+		BuiltinToolTester:  gatewayTester,
 		ControlToken:       options.controlToken,
 		ObserverToken:      options.observerToken,
 		ConversionEngine:   conversionEngine,
 		Shutdown:           options.shutdown,
 		ConsoleSessions:    options.consoleSessions,
 		Sync:               syncEngine,
+		Plugins:            pluginManager,
+		PluginStore:        store,
+		Metadata:           requestMetadata,
+		MetadataStore:      store,
+		PluginHost:         pluginHost,
+		PluginInstaller:    pluginInstaller,
+		PluginTasks:        taskEngine,
 	})
 	if err != nil {
 		return fail("configure persistent control API: %w", err)
 	}
 	monitorCtx, stopMonitors := context.WithCancel(ctx)
 	var monitors sync.WaitGroup
-	monitors.Add(4)
+	monitors.Add(7)
+	go func() {
+		defer monitors.Done()
+		if err := pluginManager.Reload(monitorCtx); err != nil {
+			logf("load plugins: %v", err)
+			return
+		}
+		// An enabled plugin's manifest may have changed since it registered
+		// its attributes.
+		registerAttributes := func() {
+			for _, loaded := range pluginManager.Current().Plugins() {
+				if !loaded.Enabled() {
+					continue
+				}
+				if err := requestMetadata.RegisterPlugin(monitorCtx, loaded.Key, loaded.Attributes()); err != nil {
+					logf("register metadata of plugin %s: %v", loaded.Key, err)
+				}
+			}
+		}
+		registerAttributes()
+		// A plugin astrlink plugin dev keeps built reloads as it changes.
+		pluginManager.WatchDevelopment(monitorCtx, time.Second, registerAttributes)
+	}()
 	go func() { defer monitors.Done(); pricingManager.Run(monitorCtx, logf) }()
+	go func() { defer monitors.Done(); pluginHost.RunSchedules(monitorCtx) }()
 	go func() { defer monitors.Done(); subscriptionManager.RunUsageMonitor(monitorCtx) }()
 	go func() { defer monitors.Done(); rawVault.Run(monitorCtx) }()
 	go func() { defer monitors.Done(); syncEngine.Run(monitorCtx, logf) }()
+	go func() { defer monitors.Done(); taskEngine.Run(monitorCtx) }()
 	return &persistentCore{
 		control:        handler,
 		rawVault:       rawVault,
 		gateway:        gatewayDependencies,
+		serviceTester:  serviceTester,
+		pluginHost:     pluginHost,
 		claudeOfficial: claudeOfficial,
 		retentionSweep: func(ctx context.Context) error {
 			_, err := store.SweepExpiredAuditData(ctx)
@@ -350,9 +483,34 @@ func openPersistentCore(ctx context.Context, options persistentOptions) (*persis
 			claudeOfficial.close()
 			stopMonitors()
 			monitors.Wait()
+			pluginHost.Close()
 			err := store.Close()
 			privacyWorker.Close()
 			return err
 		},
 	}, nil
+}
+
+// serviceCredentials keeps the credentials plugins log providers in with
+// where providers keep their keys.
+type serviceCredentials struct{ store *sqlite.Store }
+
+func (credentials serviceCredentials) ReadServiceSecret(ctx context.Context, service contract.Service) ([]byte, error) {
+	record, err := credentials.store.GetService(ctx, service.ID)
+	if err != nil {
+		return nil, err
+	}
+	if record.Service.HTTP == nil || record.Service.HTTP.CredentialRef == "" {
+		return nil, errors.New("the provider keeps no credential")
+	}
+	return credentials.store.Get(ctx, secretstore.Ref(record.Service.HTTP.CredentialRef))
+}
+
+func (credentials serviceCredentials) WriteServiceSecret(ctx context.Context, id contract.ServiceID, secret []byte) error {
+	record, err := credentials.store.GetService(ctx, id)
+	if err != nil {
+		return err
+	}
+	_, err = credentials.store.UpdateService(ctx, record.Service, storage.CredentialMutation{Present: true, Secret: secret}, record.ETag)
+	return err
 }

@@ -136,6 +136,11 @@ func isAuditReadPath(path string) bool {
 	return strings.HasPrefix(path, controlapi.RequestsPath+"/") && strings.HasSuffix(path, "/audit")
 }
 
+// Get reads a Control API path, for astrlink plugin.
+func (client *Client) Get(ctx context.Context, path string, query url.Values) (json.RawMessage, error) {
+	return client.get(ctx, path, query)
+}
+
 // isSessionReadPath reports whether path reads one conversation.
 func isSessionReadPath(path string) bool {
 	id, ok := strings.CutPrefix(path, controlapi.RequestSessionsPath+"/")

@@ -155,13 +155,37 @@ func Timeout(method, path string) time.Duration {
 			return 195 * time.Second
 		}
 		return 45 * time.Second
+	// Core gives a provider's test a minute, and the test of a task
+	// plugin's provider five, as it waits for the media generated.
 	case post && strings.HasPrefix(path, ServicesPath+"/") && strings.HasSuffix(path, "/test"):
-		return 75 * time.Second
+		return 320 * time.Second
 	case post && strings.HasPrefix(path, "/control/v1/pricing/"):
 		return 150 * time.Second
 	// A sync run does several remote round trips and may retry the merge.
 	case post && path == "/control/v1/sync/run":
 		return 320 * time.Second
+	// Core gives fetching, building and checking a plugin from source three
+	// minutes; an install, an update check or a rollback a minute.
+	case post && path == pluginsPath+"/sources/preview":
+		return 200 * time.Second
+	// Core gives reading a marketplace a minute: its index, from a mirror
+	// when GitHub does not answer, then the icons of its plugins.
+	case method == http.MethodGet && path == pluginsPath+"/market":
+		return 75 * time.Second
+	// A page of a task plugin's tasks, or clearing the finished ones and the
+	// files kept for them.
+	case strings.HasPrefix(path, pluginsPath+"/") && strings.HasSuffix(path, "/tasks") &&
+		(method == http.MethodGet || method == http.MethodDelete):
+		return 20 * time.Second
+	case strings.HasPrefix(path, pluginsPath+"/") &&
+		(strings.Contains(path, "/source") || strings.HasSuffix(path, "/ui-call")):
+		return 75 * time.Second
+	// Core gives a plugin page hook 10 seconds, and a rescan compiles every
+	// changed plugin.
+	case strings.HasPrefix(path, pluginsPath+"/") &&
+		(post && (strings.HasSuffix(path, "/test") || strings.HasSuffix(path, "/reload") || strings.HasSuffix(path, "/actions")) ||
+			method == http.MethodGet && strings.HasSuffix(path, "/status")):
+		return 20 * time.Second
 	case post && (path == ServiceModelProbesPath || path == ServiceProxyProbesPath ||
 		(strings.HasPrefix(path, ServicesPath+"/") && strings.HasSuffix(path, "/probe-models"))):
 		return ServiceModelProbeTimeout

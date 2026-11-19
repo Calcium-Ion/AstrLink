@@ -204,10 +204,22 @@ const components: Components = {
     ) : (
       <span>{children}</span>
     ),
-  // Model output must not fetch remote resources merely by being displayed.
-  img: ({ alt, src }) => (
-    <span className="text-muted-foreground">{alt || src}</span>
-  ),
+  // Model output must not fetch remote resources merely by being displayed:
+  // an image is a link to it, which the system browser opens on a click.
+  img: ({ alt, src }) =>
+    typeof src === "string" && src ? (
+      <a
+        href={src}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="text-primary underline underline-offset-2"
+        onClick={(event) => openInSystemBrowser(event, src)}
+      >
+        {alt || src}
+      </a>
+    ) : (
+      <span className="text-muted-foreground">{alt}</span>
+    ),
   input: ({ checked }) => (
     <Checkbox
       checked={checked ?? false}

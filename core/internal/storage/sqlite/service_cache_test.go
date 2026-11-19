@@ -117,6 +117,8 @@ func fillServiceCloneFixture(value reflect.Value) {
 		value.SetBool(true)
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 		value.SetInt(1)
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		value.SetUint(1)
 	default:
 		panic("extend service clone fixture for " + value.Type().String())
 	}

@@ -167,6 +167,8 @@ func serve(
 		ControlHandler:   core.control,
 		RetentionSweep:   core.retentionSweep,
 		Listening: func(address net.Addr) {
+			// The console shares the inference port, so a provider test's links
+			// stay relative to it: the tester learns no address here.
 			core.claudeOfficial.listening(address.String())
 			logf("listening on %s for the client API and the web console", address)
 			if status, err := core.rawVault.Status(ctx); err == nil && !status.PasswordSet {

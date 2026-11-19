@@ -40,7 +40,9 @@ export type HTTPServiceKind =
   | "doubao"
   | "xai"
   | "openai_compatible"
-  | "custom";
+  | "custom"
+  /** A provider a plugin adapts; Service.plugin names the plugin. */
+  | "plugin";
 
 export type ServiceAuthScheme =
   | "none"
@@ -379,8 +381,20 @@ export interface Service {
   capabilities: ServiceCapability[];
   http?: HTTPServiceConnection;
   subscription?: SubscriptionServiceConnection;
+  /** The plugin that adapts a provider of kind plugin. */
+  plugin?: ServicePlugin;
   created_at: string;
   updated_at: string;
+}
+
+/** A plugin that adapts a provider, and which of its providers this is. */
+export interface ServicePlugin {
+  key: string;
+  provider: string;
+  /** new_api for a task plugin's provider that is another new-api gateway with the plugin installed. */
+  upstream?: "new_api";
+  /** What a task plugin reads as the provider's own settings, such as vertexRegion. */
+  settings?: Record<string, unknown>;
 }
 
 export type RoutableService = Pick<
@@ -441,6 +455,8 @@ export type HTTPServiceCreateInput = {
     model_list_path?: string;
   };
   capabilities: ServiceCapability[];
+  /** Required for kind plugin. */
+  plugin?: ServicePlugin;
 };
 
 export type ServiceCreateInput =
@@ -524,6 +540,7 @@ const httpKinds = new Set<HTTPServiceKind>([
   "xai",
   "openai_compatible",
   "custom",
+  "plugin",
 ]);
 const authSchemes = new Set<ServiceAuthScheme>([
   "none",
@@ -1059,6 +1076,27 @@ function parseSubscriptionConnection(
   return result;
 }
 
+const pluginKeyPattern = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+const pluginNamePattern = /^[a-z][a-z0-9-]{0,31}$/;
+
+function parseServicePlugin(value: unknown, path: string): ServicePlugin {
+  const plugin = objectAt(value, path);
+  keysAt(plugin, ["key", "provider"], ["upstream", "settings"], path);
+  const key = stringAt(plugin.key, `${path}.key`, 1, 64);
+  const provider = stringAt(plugin.provider, `${path}.provider`, 1, 32);
+  if (!pluginKeyPattern.test(key) || !pluginNamePattern.test(provider))
+    invalid(path, "invalid plugin provider");
+  const parsed: ServicePlugin = { key, provider };
+  if (plugin.upstream !== undefined) {
+    if (plugin.upstream !== "new_api")
+      invalid(`${path}.upstream`, "unknown upstream");
+    parsed.upstream = "new_api";
+  }
+  if (plugin.settings !== undefined)
+    parsed.settings = objectAt(plugin.settings, `${path}.settings`);
+  return parsed;
+}
+
 export function parseService(value: unknown, path = "$"): Service {
   const service = objectAt(value, path);
   keysAt(
@@ -1082,6 +1120,7 @@ export function parseService(value: unknown, path = "$"): Service {
       "model_redirects",
       "model_protocols",
       "proxy",
+      "plugin",
     ],
     path,
   );
@@ -1247,6 +1286,9 @@ export function parseService(value: unknown, path = "$"): Service {
     models,
     capabilities,
     http,
+    ...(service.kind === "plugin"
+      ? { plugin: parseServicePlugin(service.plugin, `${path}.plugin`) }
+      : {}),
     created_at: createdAt,
     updated_at: updatedAt,
     ...(Object.hasOwn(service, "failure_policy")
@@ -1379,13 +1421,15 @@ export function subscriptionRiskLabel(
 }
 
 export function supportsResponsesWebSocket(
-  service: Pick<Service, "kind" | "capabilities">,
+  service: Pick<Service, "kind" | "capabilities" | "plugin">,
 ): boolean {
-  // Copilot, Droid and Vertex do not expose native Responses WebSockets.
+  // Copilot, Droid and Vertex do not expose native Responses WebSockets, and
+  // a task plugin's provider answers Responses through its tasks.
   if (
     service.kind === "copilot_subscription" ||
     service.kind === "droid_subscription" ||
-    service.kind === "vertex"
+    service.kind === "vertex" ||
+    service.plugin?.provider === "task"
   )
     return false;
   return (

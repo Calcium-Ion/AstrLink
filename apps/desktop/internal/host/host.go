@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log"
+	"net/url"
 	"runtime"
 	"strings"
 	"sync"
@@ -268,6 +269,21 @@ func (h *Host) RegisterServiceTest(owner, serviceID, testID string, cancel func(
 
 func (h *Host) CancelServiceTest(owner, serviceID, testID string) bool {
 	return h.core != nil && h.core.CancelServiceTest(owner, serviceID, testID)
+}
+
+// GatewayFile is the link of a file the running gateway serves for a task,
+// such as a generated image or video, parsed; false for any other link.
+func (h *Host) GatewayFile(raw string) (*url.URL, bool) {
+	if h.core == nil {
+		return nil, false
+	}
+	return h.core.GatewayFileURL(raw)
+}
+
+// IsGatewayFile reports a link of a file the running gateway serves.
+func (h *Host) IsGatewayFile(raw string) bool {
+	_, ok := h.GatewayFile(raw)
+	return ok
 }
 
 // OpenURL opens a link in the system browser.

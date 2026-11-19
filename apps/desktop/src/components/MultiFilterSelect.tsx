@@ -25,12 +25,16 @@ export function MultiFilterSelect({
   clearLabel,
   disabled,
   emptyMessage,
+  everyLabel,
   label,
+  noneLabel,
   onChange,
   options,
+  searchable = true,
   searchPlaceholder,
   selectAllLabel,
   selectedCountLabel,
+  selectedText,
   value,
 }: {
   allLabel: string;
@@ -39,18 +43,33 @@ export function MultiFilterSelect({
   clearLabel: string;
   disabled?: boolean;
   emptyMessage: string;
+  /** The trigger's text with every option selected; the count without it. */
+  everyLabel?: string;
   label: string;
+  /**
+   * The trigger's text with nothing selected, where that means none rather
+   * than all; allLabel without it.
+   */
+  noneLabel?: string;
   onChange: (value: string[]) => void;
   options: readonly MultiFilterOption[];
-  searchPlaceholder: string;
+  /** A short list leaves the search out; the panel opens on its first box. */
+  searchable?: boolean;
+  searchPlaceholder?: string;
   /** Offers selecting every option; without it the panel only clears. */
   selectAllLabel?: string;
   selectedCountLabel: (count: number) => string;
+  /**
+   * The trigger's text for some of the options, such as their names; the
+   * count, or the one option's name, without it.
+   */
+  selectedText?: (selected: MultiFilterOption[]) => string;
   value: string[];
 }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const searchRef = useRef<HTMLInputElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
   const selected = useMemo(() => new Set(value), [value]);
   const filtered = useMemo(() => {
     const query = search.trim().toLocaleLowerCase();
@@ -63,11 +82,15 @@ export function MultiFilterSelect({
     options.length > 0 && options.every((option) => selected.has(option.value));
   const triggerText =
     value.length === 0
-      ? allLabel
-      : value.length === 1
-        ? (options.find((option) => option.value === value[0])?.label ??
-          selectedCountLabel(1))
-        : selectedCountLabel(value.length);
+      ? (noneLabel ?? allLabel)
+      : allSelected && everyLabel !== undefined
+        ? everyLabel
+        : selectedText
+          ? selectedText(options.filter((option) => selected.has(option.value)))
+          : value.length === 1
+            ? (options.find((option) => option.value === value[0])?.label ??
+              selectedCountLabel(1))
+            : selectedCountLabel(value.length);
 
   function toggle(option: string): void {
     onChange(
@@ -101,7 +124,9 @@ export function MultiFilterSelect({
           type="button"
         >
           <span className="flex min-w-0 items-center gap-2">
-            <span className="shrink-0 text-muted-foreground">{label}</span>
+            {label ? (
+              <span className="shrink-0 text-muted-foreground">{label}</span>
+            ) : null}
             <span className="min-w-0 truncate" title={triggerText}>
               {triggerText}
             </span>
@@ -117,18 +142,25 @@ export function MultiFilterSelect({
         // input instead. Otherwise Tab would walk out to the trigger's siblings.
         onOpenAutoFocus={(event) => {
           event.preventDefault();
-          searchRef.current?.focus();
+          if (searchable) searchRef.current?.focus();
+          else
+            listRef.current
+              ?.querySelector<HTMLElement>('[role="checkbox"]')
+              ?.focus();
         }}
       >
-        <Input
-          aria-label={`${ariaLabel} search`}
-          autoComplete="off"
-          onChange={(event) => setSearch(event.currentTarget.value)}
-          placeholder={searchPlaceholder}
-          ref={searchRef}
-          value={search}
-        />
-        <div className="mt-2 flex items-center justify-between gap-2 border-b pb-2">
+        {searchable ? (
+          <Input
+            aria-label={`${ariaLabel} search`}
+            autoComplete="off"
+            className="mb-2"
+            onChange={(event) => setSearch(event.currentTarget.value)}
+            placeholder={searchPlaceholder}
+            ref={searchRef}
+            value={search}
+          />
+        ) : null}
+        <div className="flex items-center justify-between gap-2 border-b pb-2">
           {selectAllLabel === undefined ? (
             <Button
               className="px-1.5 text-xs"
@@ -158,6 +190,7 @@ export function MultiFilterSelect({
         </div>
         <div
           className="mt-1 max-h-56 overflow-y-auto"
+          ref={listRef}
           role="listbox"
           aria-label={ariaLabel}
         >

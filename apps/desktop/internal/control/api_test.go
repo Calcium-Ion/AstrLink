@@ -30,6 +30,8 @@ type fakeCore struct {
 
 type seenRequest struct {
 	method, path, ifMatch, contentType, auth, body string
+	// approval is the plugin confirmation header.
+	approval string
 }
 
 func newFakeCore(t *testing.T) *fakeCore {
@@ -44,6 +46,7 @@ func newFakeCore(t *testing.T) *fakeCore {
 			contentType: r.Header.Get("Content-Type"),
 			auth:        r.Header.Get("Authorization"),
 			body:        string(body),
+			approval:    r.Header.Get("X-AstrLink-Plugin-Approval"),
 		})
 		reply := f.reply
 		f.mu.Unlock()
@@ -254,7 +257,7 @@ func (b *bridge) cases() []bridgeCase {
 		{name: "test_service", call: func(ctx context.Context) (any, error) {
 			return s.TestService(ctx, "service_a", raw(`{"protocol":"openai.chat"}`), nil)
 		}, method: post, path: "/control/v1/services/service_a/test", body: `{"protocol":"openai.chat"}`,
-			timeout: 75 * time.Second, limit: normal, reply: `{"ok":true}`},
+			timeout: 320 * time.Second, limit: normal, reply: `{"ok":true}`},
 		{name: "probe_service_models", call: func(ctx context.Context) (any, error) {
 			return s.ProbeServiceModels(ctx, "service_a", raw(`{"protocol":"openai.models"}`))
 		}, method: post, path: "/control/v1/services/service_a/probe-models", body: `{"protocol":"openai.models"}`,

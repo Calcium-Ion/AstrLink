@@ -225,6 +225,7 @@ export function BatchModelTest({
               cancelling={stopping && current?.state === "running"}
               cancelled={current?.state === "cancelled"}
               stream={current?.result?.stream ?? input.stream}
+              generates={service.plugin?.provider === "task"}
               leading={
                 <>
                   <Button

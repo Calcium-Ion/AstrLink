@@ -14,6 +14,7 @@ import {
   inspectorChainRows,
   recordTrajectoryRows,
   type TrajectoryRow,
+  trajectoryChipLabel,
 } from "./request-trajectory-model";
 import { buildSkillDiagnosticPayload } from "./skill-diagnostic";
 
@@ -197,7 +198,7 @@ function trajectorySection(
       bullet(
         [
           `+${offset}`,
-          i18n.t(`trajectory.chips.${row.chip}`),
+          trajectoryChipLabel(row.chip, row.title),
           row.result,
           rowDuration(row, nowMs),
           row.summary,

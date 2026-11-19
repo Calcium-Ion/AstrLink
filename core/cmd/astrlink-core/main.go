@@ -153,6 +153,8 @@ func main() {
 		dependencies.ControlHandler = core.control
 		dependencies.RetentionSweep = core.retentionSweep
 		dependencies.NewInferenceHandler = func(address string, networkExposed bool) (http.Handler, error) {
+			core.serviceTester.UseGatewayAddress(address)
+			core.pluginHost.UseGatewayAddress(address)
 			core.claudeOfficial.listening(address)
 			production := core.gateway
 			if networkExposed {

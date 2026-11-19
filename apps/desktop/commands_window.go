@@ -16,7 +16,8 @@ import (
 // system: window chrome, the tray popover, trajectory inspectors, files and
 // the display currency (src/native-host/commands-window.ts). It makes this
 // the only instance of the app, which a second launch hands its links to.
-func registerWindowCommands(h *host.Host) {
+// It returns the window runtime, which other areas open their windows with.
+func registerWindowCommands(h *host.Host) *ui.App {
 	generating := os.Getenv("MYGO_GENERATE") != ""
 	if !mygo.App.RequestSingleInstanceLock() {
 		// The running instance shows its window and takes the links.
@@ -32,4 +33,5 @@ func registerWindowCommands(h *host.Host) {
 	}
 	app := ui.New(h)
 	mygo.Bind(append([]any{h.WindowService()}, app.Services()...)...)
+	return app
 }

@@ -15,6 +15,61 @@ export interface ServiceTestInput {
   stream: boolean;
   prompt?: string;
 }
+/** A file a test produced, as a task plugin's provider generates one. */
+export interface ServiceTestMedia {
+  kind: "image" | "video" | "audio" | "file";
+  /** The gateway's link to it, relative in the web console. */
+  url: string;
+  mime_type?: string;
+  /** The plugin's key for the file, such as image-1. */
+  name: string;
+}
+
+const mediaKinds = ["image", "video", "audio", "file"] as const;
+
+/**
+ * Whether a link is a task's file on the gateway: an http address, or a
+ * path, under /v1/tasks/<id>/artifacts/. Nothing else loads in a preview.
+ */
+function gatewayFileLink(url: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(url, "http://gateway.invalid");
+  } catch {
+    return false;
+  }
+  return (
+    (parsed.protocol === "http:" || parsed.protocol === "https:") &&
+    !parsed.username &&
+    !parsed.password &&
+    parsed.pathname.startsWith("/v1/tasks/") &&
+    parsed.pathname.includes("/artifacts/")
+  );
+}
+
+function parseMedia(value: unknown): ServiceTestMedia[] {
+  if (!Array.isArray(value)) throw new Error("Invalid provider test media");
+  return value.map((entry) => {
+    const item = (entry ?? {}) as Record<string, unknown>;
+    if (
+      !mediaKinds.includes(item.kind as ServiceTestMedia["kind"]) ||
+      typeof item.url !== "string" ||
+      !gatewayFileLink(item.url) ||
+      typeof item.name !== "string" ||
+      (item.mime_type !== undefined && typeof item.mime_type !== "string")
+    )
+      throw new Error("Invalid provider test media");
+    return {
+      kind: item.kind as ServiceTestMedia["kind"],
+      url: item.url,
+      name: item.name,
+      ...(typeof item.mime_type === "string" && item.mime_type
+        ? { mime_type: item.mime_type }
+        : {}),
+    };
+  });
+}
+
 export interface ServiceTestResult extends ServiceTestInput {
   service_id: string;
   ok: boolean;
@@ -28,6 +83,8 @@ export interface ServiceTestResult extends ServiceTestInput {
   response_content_type?: string;
   error_code?: string;
   message?: string;
+  /** What a task plugin's provider generated: images, videos, music. */
+  media?: ServiceTestMedia[];
 }
 
 export function testableCapabilities(
@@ -121,5 +178,8 @@ export function parseServiceTestResult(value: unknown): ServiceTestResult {
   ) {
     throw new Error("Invalid provider test timing");
   }
-  return item as unknown as ServiceTestResult;
+  const result = item as unknown as ServiceTestResult;
+  return item.media === undefined
+    ? result
+    : { ...result, media: parseMedia(item.media) };
 }

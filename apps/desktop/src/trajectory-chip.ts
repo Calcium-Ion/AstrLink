@@ -19,6 +19,7 @@ const chipClass: Record<TrajectoryChip, string> = {
   RETRY: "bg-warning-wash text-warning-foreground",
   RESTORE: "bg-violet text-primary-foreground",
   RESULT: "bg-success text-primary-foreground",
+  PLUGIN: "bg-violet text-primary-foreground",
 };
 
 const subtleChipClass: Record<TrajectoryChip, string> = {
@@ -32,6 +33,7 @@ const subtleChipClass: Record<TrajectoryChip, string> = {
   RETRY: "bg-warning-wash text-warning-foreground",
   RESTORE: "bg-violet-wash text-violet-foreground",
   RESULT: "bg-success-wash text-success-foreground",
+  PLUGIN: "bg-violet-wash text-violet-foreground",
 };
 
 /** The solid scale's fills, for marks too small to carry a wash. */
@@ -46,6 +48,7 @@ const chipDotFill: Record<TrajectoryChip, string> = {
   RETRY: "bg-warning",
   RESTORE: "bg-violet",
   RESULT: "bg-success",
+  PLUGIN: "bg-violet",
 };
 
 const failedPhaseChips = new Set<TrajectoryChip>([
