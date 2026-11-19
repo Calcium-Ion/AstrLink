@@ -5487,16 +5487,12 @@
     "market": {
       "failed": "Could not read the marketplace.",
       "source": "Marketplace source",
-      "official": "Official marketplace",
-      "custom": "Another marketplace",
+      "official": "Official",
       "kind": "Plugin type",
       "allKinds": "All",
       "otherKind": "Other",
-      "indexLabel": "Address of the marketplace's index.json",
       "open": "Open",
       "search": "Search plugins, models or codes",
-      "count_one": "{{name}} · {{count}} plugin",
-      "count_other": "{{name}} · {{count}} plugins",
       "loading": "Reading the marketplace…",
       "noMatch": "No plugin matches",
       "empty": "This marketplace has no plugins yet",
@@ -5522,7 +5518,7 @@
         "other": "{{part}} part"
       },
       "partSeparator": ", ",
-      "community": "Community marketplace",
+      "community": "Community",
       "recommended": "Recommended",
       "by": "by {{author}}",
       "author": "Author",
@@ -5541,7 +5537,17 @@
       "revokedNoReason": "The marketplace took down the version you installed. Update to another version or uninstall it.",
       "finding": "Looking up plugin {{code}}…",
       "foundByCode": "Plugin with code {{code}}",
-      "noCode": "No plugin has the code {{code}}"
+      "noCode": "No plugin has the code {{code}}",
+      "openPlugin": "Open plugin",
+      "provenance": "New API Marketplace",
+      "provenanceHelpLabel": "About the marketplace",
+      "provenanceHelp": "AstrLink and New API share one plugin interface. These are the plugins of the New API Marketplace, and they run in AstrLink once installed.",
+      "officialHelp": "Official plugins are listed after the maintainers review their source.",
+      "communityHelp": "Community plugins are published by their authors. Each has an 8-digit plugin code; type it in the search box to find the plugin.",
+      "customTitle": "Self-hosted marketplace",
+      "customHelp": "A plugin marketplace your team runs. Enter the address of its index.json and it gets a tab in the Marketplace; clear it and save to remove the tab.",
+      "customAdd": "Add",
+      "customRemove": "Remove"
     },
     "task": {
       "protocols": {
@@ -5615,13 +5621,10 @@
       "recent": "Recent tasks"
     },
     "developHome": {
-      "commands": "Command line",
       "command": {
         "new": "Start a plugin project from a template",
         "dev": "Watch, build and install into AstrLink here, with live logs",
-        "check": "Build and check the manifest, capabilities and APIs",
-        "test": "Run the hooks against the cases in tests/",
-        "build": "Build plugin.js and client.js"
+        "check": "Build and check the manifest, capabilities and APIs"
       },
       "title": "Build plugins"
     },
@@ -5636,7 +5639,6 @@
       "remove": "Delete",
       "removeTitle": "Delete this rule?",
       "removeConfirm": "After “{{name}}” is deleted it no longer checks requests. The plugin stays installed.",
-      "empty": "No rules yet. A rule checks requests once you add it.",
       "enabled": "Enabled",
       "name": "Name",
       "models": "Models",
@@ -5672,7 +5674,10 @@
         "openai_responses": "Responses",
         "claude": "Claude Messages",
         "gemini": "Gemini"
-      }
+      },
+      "emptyTitle": "No rules yet, so {{name}} does not handle any requests",
+      "emptyHint": "Rules choose which models’ requests it checks and what it does with what it finds.",
+      "addFirst": "Add the first rule"
     },
     "health": {
       "tasks": "Generation tasks",
@@ -5696,7 +5701,10 @@
       "reload": "Reload",
       "times_one": "{{count}} time",
       "times_other": "{{count}} times",
-      "trend": "Handled per day over 7 days"
+      "trend": "Handled per day over 7 days",
+      "noRules": "No rules yet, so it handles no requests",
+      "rules_one": "{{count}} rule",
+      "rules_other": "{{count}} rules"
     },
     "runLog": {
       "days": "By day",
@@ -5705,6 +5713,22 @@
       "sinceStart": "Since start",
       "memoryLimits_one": "Memory limit hit {{count}} time",
       "memoryLimits_other": "Memory limit hit {{count}} times"
+    },
+    "publish": {
+      "open": "Publish a plugin",
+      "title": "Publish a plugin",
+      "write": "Write it",
+      "docs": "Plugin API docs",
+      "share": "Publish it",
+      "community": {
+        "title": "Publish to the community marketplace",
+        "body": "Upload the plugin on the New API site to get an 8-digit plugin code. Others search the Marketplace for that code to install it.",
+        "action": "Publish"
+      },
+      "github": {
+        "title": "Share a GitHub link",
+        "body": "Put the plugin in a public repository. Others paste the link into Install from GitHub. Plugins under Features can only be shared this way."
+      }
     }
   },
   "pluginRecords": {

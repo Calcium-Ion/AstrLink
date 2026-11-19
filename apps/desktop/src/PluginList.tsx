@@ -1,3 +1,5 @@
+import { useState } from "react";
+
 import { CopyableValue } from "@/components/CopyableValue";
 import { HelpPopover } from "@/components/HelpPopover";
 import { ChevronRight, RefreshCw } from "@/components/icons";
@@ -21,10 +23,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Input, verbatimTextInput } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 
 import { useT } from "./i18n";
+import { isMarketAddress } from "./PluginMarket";
 import { taskSurfaceLabels } from "./plugin-task-labels";
 import type {
   PluginHostSettings,
@@ -130,6 +134,7 @@ function pluginPurpose(plugin: PluginSummary, t: Translate): string {
 export function PluginRows({
   plugins,
   recent,
+  rules,
   busyKey,
   disabled,
   onOpen,
@@ -138,6 +143,8 @@ export function PluginRows({
 }: {
   plugins: PluginSummary[];
   recent?: UsageSummary | null;
+  /** How many rules each request plugin has, by key; absent until read. */
+  rules?: Record<string, number> | null;
   /** The plugin whose switch is being saved. */
   busyKey?: string | null;
   disabled?: boolean;
@@ -184,6 +191,7 @@ export function PluginRows({
                     onReload={onReload}
                     plugin={plugin}
                     recent={recent}
+                    rules={rules ? (rules[plugin.key] ?? 0) : undefined}
                   />
                 ))}
               </ul>
@@ -198,6 +206,7 @@ export function PluginRows({
 function PluginRow({
   plugin,
   recent,
+  rules,
   busy,
   disabled,
   onOpen,
@@ -206,6 +215,7 @@ function PluginRow({
 }: {
   plugin: PluginSummary;
   recent?: UsageSummary | null;
+  rules?: number;
   busy: boolean;
   disabled?: boolean;
   onOpen: () => void;
@@ -223,15 +233,23 @@ function PluginRow({
     plugin.kind === "provider" || plugin.kind === "task"
       ? (plugin.providers?.length ?? 0)
       : 0;
+  // A request plugin does nothing until it has a rule.
+  const idle =
+    plugin.kind === "request" && plugin.state === "loaded" && rules === 0;
   const subtitle = plugin.error
     ? t("plugins.row.failed", { reason: loadErrorText(plugin.error, t) })
-    : [
-        pluginPurpose(plugin, t),
-        providers > 0 ? t("plugins.row.providers", { count: providers }) : "",
-        pluginOrigin(plugin, t),
-      ]
-        .filter(Boolean)
-        .join(" · ");
+    : idle
+      ? t("plugins.row.noRules")
+      : [
+          pluginPurpose(plugin, t),
+          providers > 0 ? t("plugins.row.providers", { count: providers }) : "",
+          plugin.kind === "request" && rules
+            ? t("plugins.row.rules", { count: rules })
+            : "",
+          pluginOrigin(plugin, t),
+        ]
+          .filter(Boolean)
+          .join(" · ");
   const meta = plugin.running_tasks
     ? t("plugins.task.runningCount", { count: plugin.running_tasks })
     : days
@@ -283,7 +301,11 @@ function PluginRow({
           <span
             className={cn(
               "truncate text-xs",
-              plugin.error ? "text-danger-foreground" : "text-text-secondary",
+              plugin.error
+                ? "text-danger-foreground"
+                : idle
+                  ? "text-warning-foreground"
+                  : "text-text-secondary",
             )}
             title={plugin.error?.message ?? subtitle}
           >
@@ -336,19 +358,58 @@ function PluginRow({
 const INJECTION_BUDGETS_KIB = [4, 8, 16, 32, 64];
 
 /** The commands a plugin project is built and tried with. */
-const COMMANDS = [
-  { command: "astrlink plugin new <key>", key: "new" },
-  { command: "astrlink plugin dev", key: "dev" },
-  { command: "astrlink plugin check", key: "check" },
-  { command: "astrlink plugin test", key: "test" },
-  { command: "astrlink plugin build", key: "build" },
-];
+/**
+ * The address of a marketplace the user adds, whose tab then joins New
+ * API's two: saved as typed, removed when cleared.
+ */
+function CustomMarketField({
+  value,
+  onSave,
+}: {
+  value: string;
+  onSave: (index: string) => void;
+}) {
+  const t = useT();
+  const [draft, setDraft] = useState(value);
+  const next = draft.trim();
+  return (
+    <form
+      className="flex min-w-0 flex-1 items-center gap-2"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (next === value || (next && !isMarketAddress(next))) return;
+        onSave(next);
+      }}
+    >
+      <Input
+        {...verbatimTextInput}
+        className="h-8 min-w-0 flex-1 font-mono text-xs"
+        id="plugin-custom-market"
+        onChange={(event) => setDraft(event.target.value)}
+        placeholder="https://…/index.json"
+        value={draft}
+      />
+      <Button
+        disabled={next === value || (next !== "" && !isMarketAddress(next))}
+        size="sm"
+        type="submit"
+        variant="outline"
+      >
+        {!value
+          ? t("plugins.market.customAdd")
+          : next
+            ? t("common.save")
+            : t("plugins.market.customRemove")}
+      </Button>
+    </form>
+  );
+}
 
 /**
  * The settings of every plugin at once, behind the header's 插件设置: the
  * pause of them all, their interfaces, how much they may add to one request
- * together and the order they run in; then what building plugins needs: the
- * plugin directory, its rescan, and the command line.
+ * together and the order they run in; the marketplace the user added; then
+ * what building plugins needs: the plugin directory and its rescan.
  */
 export function PluginHostDialog({
   open,
@@ -364,6 +425,8 @@ export function PluginHostDialog({
   onOrder,
   onRescan,
   uiHelp,
+  customMarket,
+  onCustomMarket,
 }: {
   open: boolean;
   host: PluginHostSettings | null;
@@ -379,6 +442,9 @@ export function PluginHostDialog({
   onOrder: () => void;
   onRescan: () => void;
   uiHelp: string;
+  /** The marketplace the user added, "" for none. */
+  customMarket: string;
+  onCustomMarket: (index: string) => void;
 }) {
   const t = useT();
   const budgetKib = host ? Math.round(host.injection_budget_bytes / 1024) : 16;
@@ -488,6 +554,19 @@ export function PluginHostDialog({
               ) : null}
             </SettingGroup>
           ) : null}
+          <SettingGroup title={t("plugins.list.market")}>
+            <SettingRow
+              inDialog
+              helpLabel={t("plugins.host.helpLabel", {
+                label: t("plugins.market.customTitle"),
+              })}
+              help={t("plugins.market.customHelp")}
+              htmlFor="plugin-custom-market"
+              label={t("plugins.market.customTitle")}
+            >
+              <CustomMarketField onSave={onCustomMarket} value={customMarket} />
+            </SettingRow>
+          </SettingGroup>
           <SettingGroup title={t("plugins.developHome.title")}>
             {directory !== null ? (
               <SettingRow
@@ -525,23 +604,6 @@ export function PluginHostDialog({
                 </div>
               </SettingRow>
             ) : null}
-            <SettingRow inDialog label={t("plugins.developHome.commands")}>
-              <dl
-                className="grid min-w-0 flex-1 gap-1.5 text-xs"
-                data-testid="plugin-commands"
-              >
-                {COMMANDS.map((entry) => (
-                  <div className="grid min-w-0 gap-0.5" key={entry.key}>
-                    <dt>
-                      <code className="font-mono">{entry.command}</code>
-                    </dt>
-                    <dd className="text-muted-foreground">
-                      {t(`plugins.developHome.command.${entry.key}`)}
-                    </dd>
-                  </div>
-                ))}
-              </dl>
-            </SettingRow>
           </SettingGroup>
         </div>
       </DialogContent>

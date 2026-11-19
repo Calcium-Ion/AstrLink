@@ -51,7 +51,11 @@ import {
   PluginRows,
 } from "./PluginList";
 import { useRecentPluginUsage } from "./plugin-usage";
-import { PluginMarketView } from "./PluginMarket";
+import {
+  PluginMarketView,
+  readCustomMarket,
+  saveCustomMarket,
+} from "./PluginMarket";
 import { ProviderPluginOverview, TaskPluginTasks } from "./PluginTaskDetail";
 import {
   installFailureText,
@@ -151,6 +155,8 @@ export function PluginManager({
   const [switching, setSwitching] = useState<string | null>(null);
   const [switchError, setSwitchError] = useState<string | null>(null);
   const [hostOpen, setHostOpen] = useState(false);
+  // The marketplace the user added in 插件设置, beside New API's two.
+  const [customMarket, setCustomMarket] = useState(readCustomMarket);
   const [listError, setListError] = useState<string | null>(null);
   const [rescanning, setRescanning] = useState(false);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
@@ -643,6 +649,16 @@ export function PluginManager({
   const plugins = orderedPlugins(list?.plugins ?? [], host?.order);
   const recent = useRecentPluginUsage(isReady && list !== null, plugins);
   const shown = plugins.filter((plugin) => pluginMatches(plugin, query, t));
+  // How many rules each request plugin has, once the host settings are read.
+  const rules = host
+    ? (host.request_plugins ?? []).reduce<Record<string, number>>(
+        (counts, rule) => {
+          counts[rule.plugin] = (counts[rule.plugin] ?? 0) + 1;
+          return counts;
+        },
+        {},
+      )
+    : null;
   const listed = plugins.find((plugin) => plugin.key === selectedKey) ?? null;
   // The page of a plugin shows it as its detail has it, once read.
   const selected =
@@ -915,8 +931,15 @@ export function PluginManager({
             <LoadingState className="flex-1" label={t("plugins.loading")} />
           ) : list !== null && listTab === "market" ? (
             <PluginMarketView
+              customIndex={customMarket}
               isReady={isReady}
               onInstall={(link) => setInstalling({ link })}
+              onOpenInstalled={(key) => {
+                setSelectedKey(key);
+                // The list read before the plugin was installed lacks it.
+                if (!plugins.some((plugin) => plugin.key === key))
+                  void loadList();
+              }}
               query={marketQuery}
             />
           ) : list !== null && plugins.length === 0 ? (
@@ -962,6 +985,7 @@ export function PluginManager({
                     onReload={() => void rescan()}
                     plugins={shown}
                     recent={recent}
+                    rules={rules}
                   />
                 )}
               </div>
@@ -971,10 +995,15 @@ export function PluginManager({
       )}
       <PluginHostDialog
         canOrder={plugins.length > 1 && host !== null}
+        customMarket={customMarket}
         directory={list?.directory ?? null}
         disabled={!isReady}
         host={host}
         onChange={(update) => void changeHost(update)}
+        onCustomMarket={(index) => {
+          saveCustomMarket(index);
+          setCustomMarket(index);
+        }}
         onOpenChange={setHostOpen}
         onOrder={() => {
           setHostOpen(false);
@@ -1312,10 +1341,7 @@ function PluginDetailPane({
                     {detail.request.description}
                   </p>
                 ) : null}
-                <RequestPluginInstances
-                  detail={detail}
-                  disabled={!detail.enabled}
-                />
+                <RequestPluginInstances detail={detail} />
                 <PluginHealth detail={detail} revision={revision} />
               </div>
             ) : (

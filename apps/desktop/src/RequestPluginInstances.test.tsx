@@ -134,13 +134,18 @@ describe("RequestPluginInstances", () => {
     const panel = document.querySelector(
       '[data-testid="request-plugin-instances"]',
     ) as HTMLElement;
-    expect(panel.textContent).toContain("入口检查");
-    expect(panel.textContent).toContain("回复检查");
+    expect(panel.textContent).toContain("收到请求");
+    expect(panel.textContent).toContain("回复返回前");
     // Another plugin's instance is not this plugin's.
     expect(
       panel.querySelectorAll('[data-testid="request-plugin-instance"]'),
     ).toHaveLength(0);
-    await act(async () => button("添加实例").click());
+    // With no rule it does nothing yet, and says so where it is added.
+    expect(panel.textContent).toContain(
+      "还没有规则，Request filter 还不会处理请求",
+    );
+    expect(() => button("添加规则")).toThrow();
+    await act(async () => button("添加第一条规则").click());
     const editor = document.querySelector(
       '[data-testid="request-plugin-editor"]',
     ) as HTMLElement;
@@ -175,6 +180,9 @@ describe("RequestPluginInstances", () => {
       panel.querySelectorAll('[data-testid="request-plugin-instance"]'),
     ).toHaveLength(1);
     expect(panel.textContent).toContain("gpt-4o, gpt-4o-mini");
+    // With a rule, the next one is added from the header.
+    expect(panel.textContent).not.toContain("添加第一条规则");
+    expect(button("添加规则")).toBeTruthy();
   });
 
   it("runs a sample through the instance being edited without sending it", async () => {
@@ -218,7 +226,7 @@ describe("RequestPluginInstances", () => {
     await act(async () => {
       root.render(<RequestPluginInstances detail={withSamples} />);
     });
-    await act(async () => button("添加实例").click());
+    await act(async () => button("添加第一条规则").click());
     await act(async () => button("试运行").click());
     expect(bridgeMocks.dryRunRequestPlugin).toHaveBeenCalledWith(
       "request-filter",
@@ -235,6 +243,6 @@ describe("RequestPluginInstances", () => {
     expect(result.textContent).toContain(
       "Not allowed (code: request_filtered)",
     );
-    expect(result.textContent).toContain("入口检查");
+    expect(result.textContent).toContain("收到请求");
   });
 });

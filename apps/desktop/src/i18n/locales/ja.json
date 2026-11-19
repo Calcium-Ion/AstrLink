@@ -5487,16 +5487,12 @@
     "market": {
       "failed": "マーケットプレイスを読み込めませんでした。",
       "source": "マーケットプレイスの提供元",
-      "official": "公式マーケットプレイス",
-      "custom": "ほかのマーケットプレイス",
+      "official": "公式",
       "kind": "プラグインの種類",
       "allKinds": "すべて",
       "otherKind": "その他",
-      "indexLabel": "マーケットプレイスの index.json のアドレス",
       "open": "開く",
       "search": "プラグイン、モデル、コードで検索",
-      "count_one": "{{name}} · {{count}} 個のプラグイン",
-      "count_other": "{{name}} · {{count}} 個のプラグイン",
       "loading": "マーケットプレイスを読み込んでいます…",
       "noMatch": "一致するプラグインがありません",
       "empty": "このマーケットプレイスにはまだプラグインがありません",
@@ -5541,7 +5537,17 @@
       "revokedNoReason": "インストール中のこのバージョンはマーケットで公開停止になりました。別のバージョンに更新するか、アンインストールしてください。",
       "finding": "コード {{code}} のプラグインを探しています…",
       "foundByCode": "コード {{code}} のプラグイン",
-      "noCode": "コード {{code}} のプラグインは見つかりません"
+      "noCode": "コード {{code}} のプラグインは見つかりません",
+      "openPlugin": "プラグインを開く",
+      "provenance": "New API マーケットプレイス",
+      "provenanceHelpLabel": "マーケットプレイスについて",
+      "provenanceHelp": "AstrLink と New API は同じプラグインインターフェースを使います。ここに並ぶのは New API マーケットプレイスのプラグインで、インストールすれば AstrLink で使えます。",
+      "officialHelp": "公式プラグインは、メンテナーがソースを審査してから掲載されます。",
+      "communityHelp": "コミュニティプラグインは作者が自分で公開します。各プラグインには 8 桁のプラグインコードがあり、検索欄に入力すると見つかります。",
+      "customTitle": "独自マーケットプレイス",
+      "customHelp": "チームで運用しているプラグインマーケットプレイスです。index.json のアドレスを入力すると、マーケットプレイスにそのタブが加わります。空にして保存するとタブが消えます。",
+      "customAdd": "追加",
+      "customRemove": "削除"
     },
     "task": {
       "protocols": {
@@ -5615,13 +5621,10 @@
       "recent": "最近のタスク"
     },
     "developHome": {
-      "commands": "コマンドライン",
       "command": {
         "new": "テンプレートからプラグインプロジェクトを作成",
         "dev": "変更を監視してビルドし、このコンピューターの AstrLink に入れてログを表示",
-        "check": "ビルドしてマニフェスト・権限・API を確認",
-        "test": "tests/ のケースでフックを実行",
-        "build": "plugin.js と client.js をビルド"
+        "check": "ビルドしてマニフェスト・権限・API を確認"
       },
       "title": "プラグインを開発"
     },
@@ -5636,7 +5639,6 @@
       "remove": "削除",
       "removeTitle": "このルールを削除しますか？",
       "removeConfirm": "「{{name}}」を削除すると、リクエストを確認しなくなります。プラグイン自体はアンインストールされません。",
-      "empty": "ルールはまだありません。ルールを追加するとリクエストをチェックします。",
       "enabled": "有効",
       "name": "名前",
       "models": "対象モデル",
@@ -5672,7 +5674,10 @@
         "openai_responses": "Responses",
         "claude": "Claude Messages",
         "gemini": "Gemini"
-      }
+      },
+      "emptyTitle": "ルールがまだないため、{{name}} はリクエストを処理しません",
+      "emptyHint": "ルールで、どのモデルへのリクエストをチェックするか、見つかった内容をどう扱うかを決めます。",
+      "addFirst": "最初のルールを追加"
     },
     "health": {
       "tasks": "生成タスク",
@@ -5696,7 +5701,10 @@
       "reload": "再読み込み",
       "times_one": "{{count}} 回",
       "times_other": "{{count}} 回",
-      "trend": "7 日間の 1 日ごとの処理回数"
+      "trend": "7 日間の 1 日ごとの処理回数",
+      "noRules": "ルールがまだないため、リクエストを処理しません",
+      "rules_one": "ルール {{count}} 件",
+      "rules_other": "ルール {{count}} 件"
     },
     "runLog": {
       "days": "日別",
@@ -5705,6 +5713,22 @@
       "sinceStart": "起動後",
       "memoryLimits_one": "メモリ上限 {{count}} 回",
       "memoryLimits_other": "メモリ上限 {{count}} 回"
+    },
+    "publish": {
+      "open": "プラグインを公開",
+      "title": "プラグインを公開",
+      "write": "プラグインを書く",
+      "docs": "プラグイン API ドキュメント",
+      "share": "公開する",
+      "community": {
+        "title": "コミュニティに公開",
+        "body": "New API のサイトでプラグインをアップロードすると、8 桁のプラグインコードが発行されます。ほかの人はそのコードをマーケットプレイスで検索してインストールできます。",
+        "action": "公開ページへ"
+      },
+      "github": {
+        "title": "GitHub のリンクを共有",
+        "body": "プラグインを公開リポジトリに置けば、ほかの人は「GitHub からインストール」にリンクを貼るだけでインストールできます。機能拡張プラグインはこの方法でしか共有できません。"
+      }
     }
   },
   "pluginRecords": {

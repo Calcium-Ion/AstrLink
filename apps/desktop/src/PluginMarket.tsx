@@ -1,11 +1,18 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { EmptyState } from "@/components/EmptyState";
-import { ExternalLink } from "@/components/ExternalLink";
+import { ExternalLink, openInSystemBrowser } from "@/components/ExternalLink";
 import { FormMessage } from "@/components/FormMessage";
 import { HelpDisclosure } from "@/components/HelpDisclosure";
+import { HelpPopover } from "@/components/HelpPopover";
 import { IconButton } from "@/components/IconButton";
-import { Boxes, RefreshCw } from "@/components/icons";
+import {
+  ArrowUpRight,
+  Boxes,
+  Check,
+  ChevronRight,
+  RefreshCw,
+} from "@/components/icons";
 import { LoadingState } from "@/components/LoadingState";
 import { MarkdownContent } from "@/components/MarkdownContent";
 import { Panel } from "@/components/Panel";
@@ -22,7 +29,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Input, verbatimTextInput } from "@/components/ui/input";
 
 import {
   findPluginByCode,
@@ -31,7 +37,7 @@ import {
   pluginInstallFailureOf,
 } from "./bridge";
 import { controlErrorMessage } from "./control-error";
-import { useT } from "./i18n";
+import { useLocale, useT } from "./i18n";
 import { installFailureText } from "./PluginInstallReview";
 import { ModelChips, TaskEndpoints } from "./PluginTaskParts";
 import { taskAuthLabel } from "./plugin-task-labels";
@@ -51,12 +57,10 @@ export const COMMUNITY_MARKET_INDEX =
 /** A plugin's code on the New API site, which finds it in any marketplace. */
 const PLUGIN_CODE = /^\d{8}$/;
 
-type MarketSource = "official" | "community" | "custom";
+/** The address of a marketplace the user added, kept for this computer. */
+const CUSTOM_MARKET_KEY = "astrlink.plugins.customMarket";
 
-function sourceOf(index: string): MarketSource {
-  if (!index) return "official";
-  return index === COMMUNITY_MARKET_INDEX ? "community" : "custom";
-}
+type MarketSource = "official" | "community" | "custom";
 
 function rememberedIndex(): string {
   try {
@@ -65,6 +69,69 @@ function rememberedIndex(): string {
     return "";
   }
 }
+
+/**
+ * The marketplace the user added in 插件设置, "" for none. One opened by
+ * its address before it had its own setting becomes it.
+ */
+export function readCustomMarket(): string {
+  try {
+    const stored = window.localStorage.getItem(CUSTOM_MARKET_KEY);
+    if (stored !== null) return stored;
+    const last = rememberedIndex();
+    if (!last || last === COMMUNITY_MARKET_INDEX) return "";
+    window.localStorage.setItem(CUSTOM_MARKET_KEY, last);
+    return last;
+  } catch {
+    return "";
+  }
+}
+
+/** Keeps the marketplace the user added, or forgets it for "". */
+export function saveCustomMarket(index: string) {
+  try {
+    window.localStorage.setItem(CUSTOM_MARKET_KEY, index);
+    const last = rememberedIndex();
+    if (!index && last && last !== COMMUNITY_MARKET_INDEX)
+      window.localStorage.removeItem(MARKET_INDEX_KEY);
+  } catch {
+    // Without storage the marketplace lasts until the window closes.
+  }
+}
+
+/** Whether text is the address of a marketplace's index: http(s). */
+export function isMarketAddress(text: string): boolean {
+  try {
+    const parsed = new URL(text);
+    return parsed.protocol === "https:" || parsed.protocol === "http:";
+  } catch {
+    return false;
+  }
+}
+
+function hostOf(index: string): string {
+  try {
+    return new URL(index).host;
+  } catch {
+    return index;
+  }
+}
+
+/** New API's plugin pages, in Chinese or English. */
+function newAPIPage(locale: string, page: "plugins" | "community"): string {
+  return `https://www.newapi.ai/${locale.startsWith("zh") ? "zh" : "en"}/${page}`;
+}
+
+/** New API's plugin API, which the marketplaces' plugins are written for. */
+const PLUGIN_API_DOCS =
+  "https://github.com/QuantumNous/new-api/blob/main/docs/plugin-api/v1.md";
+
+/** The commands that start, run and check a plugin, in the publish dialog. */
+const PUBLISH_COMMANDS = [
+  { command: "astrlink plugin new <key>", key: "new" },
+  { command: "astrlink plugin dev", key: "dev" },
+  { command: "astrlink plugin check", key: "check" },
+] as const;
 
 function rememberIndex(index: string) {
   try {
@@ -134,8 +201,8 @@ function incompatibleReason(
 }
 
 /**
- * A plugin marketplace in new-api's index format: official, community or
- * another one, its plugins as rows, a row opening what the plugin serves,
+ * A plugin marketplace in new-api's index format: New API's official or
+ * community one, or one the user added in 插件设置, its plugins as rows, a row opening what the plugin serves,
  * its usage guide and its versions. Installing hands the link of a version
  * to the install dialog, which reviews it first. The page header's search
  * filters the rows, and an 8-digit code finds the plugin of that code in any
@@ -144,18 +211,41 @@ function incompatibleReason(
 export function PluginMarketView({
   isReady,
   query,
+  customIndex,
   onInstall,
+  onOpenInstalled,
 }: {
   isReady: boolean;
+  /** The marketplace the user added in 插件设置, "" for none. */
+  customIndex: string;
   /** The page header's search. */
   query: string;
   /** Reviews the install of the version a link names. */
   onInstall: (link: string) => void;
+  /** Opens an installed plugin's own page. */
+  onOpenInstalled?: (key: string) => void;
 }) {
   const t = useT();
-  const [index, setIndex] = useState(rememberedIndex);
-  const [source, setSource] = useState<MarketSource>(() => sourceOf(index));
-  const [draft, setDraft] = useState(source === "custom" ? index : "");
+  const locale = useLocale();
+  const [source, setSource] = useState<MarketSource>(() => {
+    const last = rememberedIndex();
+    if (last === COMMUNITY_MARKET_INDEX) return "community";
+    return last && last === customIndex ? "custom" : "official";
+  });
+  // The tab of a marketplace the user removed goes with it.
+  const shownSource = source === "custom" && !customIndex ? "official" : source;
+  const index =
+    shownSource === "official"
+      ? ""
+      : shownSource === "community"
+        ? COMMUNITY_MARKET_INDEX
+        : customIndex;
+  // What the added marketplace calls itself, once it was read.
+  const [customName, setCustomName] = useState<{
+    index: string;
+    name: string;
+  } | null>(null);
+  const [publishing, setPublishing] = useState(false);
   const [market, setMarket] = useState<PluginMarket | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -173,7 +263,10 @@ export function PluginMarketView({
       setLoading(true);
       setError(null);
       try {
-        setMarket(await getPluginMarket(target || undefined));
+        const next = await getPluginMarket(target || undefined);
+        setMarket(next);
+        if (target && target !== COMMUNITY_MARKET_INDEX && next.name)
+          setCustomName({ index: target, name: next.name });
       } catch (cause) {
         const failure = pluginInstallFailureOf(cause);
         setMarket(null);
@@ -190,8 +283,9 @@ export function PluginMarketView({
   );
 
   useEffect(() => {
-    if (isReady && sourceOf(index) === source) void load(index);
-  }, [index, isReady, load, source]);
+    rememberIndex(index);
+    if (isReady) void load(index);
+  }, [index, isReady, load]);
 
   const [group, setGroup] = useState<EntryGroup | "all">("all");
   const needle = query.trim().toLowerCase();
@@ -261,11 +355,6 @@ export function PluginMarketView({
   const shown = found && code ? found.plugins : listed;
   const shownIndex = found && code ? found.index : (market?.index ?? index);
 
-  const choose = (next: string) => {
-    rememberIndex(next);
-    setIndex(next);
-  };
-
   return (
     <div
       className="flex min-h-0 min-w-0 flex-1 flex-col gap-3"
@@ -275,61 +364,60 @@ export function PluginMarketView({
         <SegmentedControl
           disabled={!isReady}
           label={t("plugins.market.source")}
-          onValueChange={(next) => {
-            setSource(next);
-            if (next === "official") choose("");
-            else if (next === "community") choose(COMMUNITY_MARKET_INDEX);
-            else if (draft.trim()) choose(draft.trim());
-            else setMarket(null);
-          }}
+          onValueChange={setSource}
           options={[
             { value: "official", label: t("plugins.market.official") },
             { value: "community", label: t("plugins.market.community") },
-            { value: "custom", label: t("plugins.market.custom") },
+            ...(customIndex
+              ? [
+                  {
+                    value: "custom" as const,
+                    label:
+                      customName?.index === customIndex
+                        ? customName.name
+                        : hostOf(customIndex),
+                  },
+                ]
+              : []),
           ]}
-          value={source}
+          value={shownSource}
           variant="line"
         />
-        {source === "custom" ? (
-          <form
-            className="flex min-w-0 flex-[1_1_18rem] items-center gap-2"
-            onSubmit={(event) => {
-              event.preventDefault();
-              choose(draft.trim());
-            }}
-          >
-            <Input
-              {...verbatimTextInput}
-              aria-label={t("plugins.market.indexLabel")}
-              className="h-8 min-w-0 flex-1 font-mono text-xs"
-              onChange={(event) => setDraft(event.target.value)}
-              placeholder="https://…/index.json"
-              value={draft}
-            />
-            <Button
-              disabled={!draft.trim() || !isReady}
-              size="sm"
-              type="submit"
-              variant="outline"
-            >
-              {t("plugins.market.open")}
-            </Button>
-          </form>
-        ) : (
-          <span className="flex-1" />
-        )}
-        {market ? (
+        <span className="flex-1" />
+        {found && code ? (
           <span className="text-micro text-muted-foreground">
-            {found && code
-              ? t("plugins.market.foundByCode", { code })
-              : t("plugins.market.count", {
-                  name: market.name || t("plugins.market.official"),
-                  count: market.plugins.length,
-                })}
+            {t("plugins.market.foundByCode", { code })}
+          </span>
+        ) : shownSource !== "custom" ? (
+          <span className="inline-flex items-center gap-1 text-micro">
+            <ExternalLink
+              className="text-micro"
+              href={newAPIPage(locale, "plugins")}
+            >
+              {t("plugins.market.provenance")}
+            </ExternalLink>
+            <HelpPopover label={t("plugins.market.provenanceHelpLabel")}>
+              <div className="grid gap-2">
+                <p>{t("plugins.market.provenanceHelp")}</p>
+                <p>
+                  {shownSource === "official"
+                    ? t("plugins.market.officialHelp")
+                    : t("plugins.market.communityHelp")}
+                </p>
+              </div>
+            </HelpPopover>
           </span>
         ) : null}
+        <Button
+          onClick={() => setPublishing(true)}
+          size="sm"
+          type="button"
+          variant="outline"
+        >
+          {t("plugins.publish.open")}
+        </Button>
         <IconButton
-          disabled={!isReady || loading || (source === "custom" && !index)}
+          disabled={!isReady || loading}
           label={t("common.refresh")}
           onClick={() => void load(index)}
           size="icon-sm"
@@ -403,6 +491,7 @@ export function PluginMarketView({
                     entry={entry}
                     onInstall={onInstall}
                     onOpen={() => setOpen({ entry, index: shownIndex })}
+                    onOpenInstalled={onOpenInstalled}
                   />
                 </li>
               ))}
@@ -410,11 +499,22 @@ export function PluginMarketView({
           </Panel>
         </div>
       ) : null}
+      {publishing ? (
+        <PublishDialog locale={locale} onClose={() => setPublishing(false)} />
+      ) : null}
       {open ? (
         <MarketEntryDialog
           entry={open.entry}
           index={open.index}
           onClose={() => setOpen(null)}
+          onOpenInstalled={
+            onOpenInstalled
+              ? (key) => {
+                  setOpen(null);
+                  onOpenInstalled(key);
+                }
+              : undefined
+          }
           onInstall={(link) => {
             setOpen(null);
             onInstall(link);
@@ -428,19 +528,31 @@ export function PluginMarketView({
 function EntryAction({
   entry,
   onInstall,
+  onOpenInstalled,
   size = "xs",
 }: {
   entry: PluginMarketEntry;
   onInstall: (link: string) => void;
+  onOpenInstalled?: (key: string) => void;
   size?: "xs" | "sm";
 }) {
   const t = useT();
   const state = entryState(entry);
   if (state === "installed")
     return (
-      <span className="shrink-0 text-xs text-muted-foreground">
-        {t("plugins.market.installed")}
-      </span>
+      <Button
+        className="shrink-0"
+        onClick={(event) => {
+          event.stopPropagation();
+          onOpenInstalled?.(entry.key);
+        }}
+        size={size}
+        type="button"
+        variant="ghost"
+      >
+        {t("plugins.market.open")}
+        <ChevronRight />
+      </Button>
     );
   if (state === "revoked")
     return (
@@ -470,7 +582,7 @@ function EntryAction({
       }}
       size={size}
       type="button"
-      variant="outline"
+      variant={state === "update" ? "default" : "outline"}
     >
       {state === "update"
         ? t("plugins.market.update", { version: entry.latest })
@@ -509,10 +621,12 @@ function MarketRow({
   entry,
   onInstall,
   onOpen,
+  onOpenInstalled,
 }: {
   entry: PluginMarketEntry;
   onInstall: (link: string) => void;
   onOpen: () => void;
+  onOpenInstalled?: (key: string) => void;
 }) {
   const t = useT();
   const kind = entryKind(entry, t);
@@ -566,17 +680,27 @@ function MarketRow({
               {t("plugins.market.recommended")}
             </Badge>
           ) : null}
+          {entry.installed ? (
+            <span className="inline-flex shrink-0 items-center gap-1 text-micro text-success-foreground">
+              <Check className="size-3" />
+              {state === "update"
+                ? t("plugins.market.installedVersion", {
+                    version: entry.installed,
+                  })
+                : t("plugins.market.installed")}
+            </span>
+          ) : null}
         </span>
         <span className="truncate text-xs text-text-secondary" title={subtitle}>
           {subtitle}
         </span>
       </span>
-      {state === "update" && entry.installed ? (
-        <span className="hidden shrink-0 text-micro text-muted-foreground @[560px]:inline">
-          {t("plugins.market.installedVersion", { version: entry.installed })}
-        </span>
-      ) : null}
-      <EntryAction entry={entry} onInstall={onInstall} size="sm" />
+      <EntryAction
+        entry={entry}
+        onInstall={onInstall}
+        onOpenInstalled={onOpenInstalled}
+        size="sm"
+      />
     </div>
   );
 }
@@ -620,12 +744,14 @@ function MarketEntryDialog({
   index,
   onClose,
   onInstall,
+  onOpenInstalled,
 }: {
   entry: PluginMarketEntry;
   /** The marketplace the entry came from, which its documents are read from. */
   index: string;
   onClose: () => void;
   onInstall: (link: string) => void;
+  onOpenInstalled?: (key: string) => void;
 }) {
   const t = useT();
   const latest = entry.versions.find(
@@ -876,8 +1002,110 @@ function MarketEntryDialog({
                 ? t("plugins.market.update", { version: entry.latest })
                 : t("plugins.market.install")}
             </Button>
+          ) : entry.installed && onOpenInstalled ? (
+            <Button
+              onClick={() => onOpenInstalled(entry.key)}
+              size="sm"
+              type="button"
+            >
+              {t("plugins.market.openPlugin")}
+            </Button>
           ) : null}
         </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/**
+ * How a plugin reaches other people: the commands that write it, then New
+ * API's community marketplace, where an upload gets a plugin code, or a
+ * GitHub link anyone can install from.
+ */
+function PublishDialog({
+  locale,
+  onClose,
+}: {
+  locale: string;
+  onClose: () => void;
+}) {
+  const t = useT();
+  const publish = newAPIPage(locale, "community");
+  return (
+    <Dialog open onOpenChange={(next) => !next && onClose()}>
+      <DialogContent
+        className="flex max-h-[85vh] flex-col overflow-hidden sm:max-w-xl"
+        data-testid="plugin-publish-dialog"
+      >
+        <DialogHeader className="text-left">
+          <DialogTitle>{t("plugins.publish.title")}</DialogTitle>
+        </DialogHeader>
+        <div className="grid min-h-0 gap-5 overflow-y-auto overscroll-contain">
+          <section className="grid gap-2">
+            <h3 className="text-xs font-medium text-muted-foreground">
+              {t("plugins.publish.write")}
+            </h3>
+            <dl className="grid gap-1.5 text-xs">
+              {PUBLISH_COMMANDS.map((entry) => (
+                <div
+                  className="grid gap-x-3 gap-y-0.5 sm:grid-cols-[13rem_1fr] sm:items-baseline"
+                  key={entry.key}
+                >
+                  <dt>
+                    <code className="font-mono">{entry.command}</code>
+                  </dt>
+                  <dd className="text-muted-foreground">
+                    {t(`plugins.developHome.command.${entry.key}`)}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+            <ExternalLink
+              className="justify-self-start text-xs"
+              href={PLUGIN_API_DOCS}
+            >
+              {t("plugins.publish.docs")}
+            </ExternalLink>
+          </section>
+          <section className="grid gap-2">
+            <h3 className="text-xs font-medium text-muted-foreground">
+              {t("plugins.publish.share")}
+            </h3>
+            <Panel asChild>
+              <ul>
+                <li className="flex items-center gap-3 border-b px-3 py-2.5">
+                  <div className="grid min-w-0 flex-1 gap-0.5">
+                    <span className="text-sm font-medium">
+                      {t("plugins.publish.community.title")}
+                    </span>
+                    <span className="text-xs text-muted-foreground">
+                      {t("plugins.publish.community.body")}
+                    </span>
+                  </div>
+                  <Button asChild size="sm" variant="outline">
+                    <a
+                      href={publish}
+                      onClick={(event) => openInSystemBrowser(event, publish)}
+                      rel="noopener noreferrer"
+                      target="_blank"
+                    >
+                      {t("plugins.publish.community.action")}
+                      <ArrowUpRight />
+                    </a>
+                  </Button>
+                </li>
+                <li className="grid gap-0.5 px-3 py-2.5">
+                  <span className="text-sm font-medium">
+                    {t("plugins.publish.github.title")}
+                  </span>
+                  <span className="text-xs text-muted-foreground">
+                    {t("plugins.publish.github.body")}
+                  </span>
+                </li>
+              </ul>
+            </Panel>
+          </section>
+        </div>
       </DialogContent>
     </Dialog>
   );

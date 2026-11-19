@@ -92,15 +92,27 @@ func (fake *fakeInstaller) CheckUpdate(_ context.Context, record contract.Plugin
 	return contract.PluginUpdateCheck{Available: true, Ref: "v1.2.0", RefKind: contract.PluginRefTag, URL: "https://github.com/" + record.Source.Repository + "/tree/v1.2.0"}, nil
 }
 
+// marketKeys are the plugins the fake marketplace offers, and marketCodes
+// the plugin codes it knows.
+var (
+	marketKeys  = []string{"sora", "request-filter", "relay"}
+	marketCodes = map[string]string{"12345678": "someone_sora", "22222222": "request-filter"}
+)
+
 func (fake *fakeInstaller) Market(_ context.Context, index string, installed func(string) plugininstall.Installed) (contract.PluginMarket, error) {
-	return contract.PluginMarket{Index: index, Name: "Test", Plugins: []contract.PluginMarketEntry{{Key: "sora", Name: "Sora", Latest: "1.1.0", Installed: installed("sora").Version}}}, nil
+	market := contract.PluginMarket{Index: index, Name: "Test"}
+	for _, key := range marketKeys {
+		market.Plugins = append(market.Plugins, contract.PluginMarketEntry{Key: key, Name: key, Latest: "1.1.0", Installed: installed(key).Version})
+	}
+	return market, nil
 }
 
 func (fake *fakeInstaller) FindByCode(_ context.Context, code string, installed func(string) plugininstall.Installed) (contract.PluginMarket, error) {
-	if code != "12345678" {
+	key, ok := marketCodes[code]
+	if !ok {
 		return contract.PluginMarket{}, &plugininstall.Failure{PluginInstallFailure: contract.PluginInstallFailure{Reason: contract.PluginInstallNoPlugin}}
 	}
-	return contract.PluginMarket{Index: contract.CommunityPluginResolve + "?code=" + code, Plugins: []contract.PluginMarketEntry{{Key: "someone_sora", Code: code, Installed: installed("someone_sora").Version}}}, nil
+	return contract.PluginMarket{Index: contract.CommunityPluginResolve + "?code=" + code, Plugins: []contract.PluginMarketEntry{{Key: key, Code: code, Installed: installed(key).Version}}}, nil
 }
 
 func (fake *fakeInstaller) MarketDoc(_ context.Context, index, key, version, doc string) (contract.PluginMarketDoc, error) {
@@ -241,5 +253,51 @@ func TestPluginMarketFindsByCodeAndAnswersDocs(t *testing.T) {
 		if response := controlRequest(t, handler, http.MethodGet, PluginsPath+"/market/doc?"+query, "", "", ""); response.Code != http.StatusBadRequest {
 			t.Fatalf("doc?%s = %d %s", query, response.Code, response.Body.String())
 		}
+	}
+}
+
+func TestPluginMarketKnowsAPluginInstalledWithoutATaskPart(t *testing.T) {
+	_, handler, manager, directory := newPluginHandler(t)
+	handler.pluginInstaller = &fakeInstaller{t: t, directory: directory}
+	text, err := os.ReadFile("../ingress/testdata/newapi/request-filter/plugin.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A request plugin from the market, and a plugin of it that does not
+	// load: neither has a task part.
+	writePlugin(t, directory, "request-filter", "plugin.js", string(text))
+	writePlugin(t, directory, "relay", "plugin.js", "export const meta = {")
+	for key, version := range map[string]string{"request-filter": "1.0.0", "relay": "1.0.2"} {
+		record, _ := json.Marshal(contract.PluginInstallRecord{Source: contract.PluginInstallSource{Kind: contract.PluginSourceMarket, Repository: "someone/" + key, Commit: "abc"}, Version: version, InstalledAt: "2026-11-19T12:00:00Z"})
+		if err := os.WriteFile(filepath.Join(directory, key, plugin.InstallRecord), record, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := manager.Reload(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if filter := manager.Current().Plugin("request-filter"); filter == nil || filter.Task() != nil || filter.NewAPI() == nil {
+		t.Fatal("request-filter is not a new-api plugin without a task part")
+	}
+	if relay := manager.Current().Plugin("relay"); relay == nil || relay.Err == nil {
+		t.Fatal("relay loaded")
+	}
+
+	response := controlRequest(t, handler, http.MethodGet, PluginsPath+"/market", "", "", "")
+	market := decodeBody[contract.PluginMarket](t, response)
+	installed := map[string]string{}
+	for _, entry := range market.Plugins {
+		installed[entry.Key] = entry.Installed
+	}
+	if response.Code != http.StatusOK || len(installed) != 3 || installed["request-filter"] != "1.0.0" || installed["relay"] != "1.0.2" || installed["sora"] != "" {
+		t.Fatalf("market = %d %v", response.Code, installed)
+	}
+	response = controlRequest(t, handler, http.MethodGet, PluginsPath+"/market?code=22222222", "", "", "")
+	if market := decodeBody[contract.PluginMarket](t, response); response.Code != http.StatusOK || len(market.Plugins) != 1 || market.Plugins[0].Installed != "1.0.0" {
+		t.Fatalf("request-filter by code = %d %s", response.Code, response.Body.String())
+	}
+	response = controlRequest(t, handler, http.MethodGet, PluginsPath+"/market?code=12345678", "", "", "")
+	if market := decodeBody[contract.PluginMarket](t, response); response.Code != http.StatusOK || len(market.Plugins) != 1 || market.Plugins[0].Installed != "" {
+		t.Fatalf("a plugin not installed by code = %d %s", response.Code, response.Body.String())
 	}
 }

@@ -257,13 +257,25 @@ func (handler *Handler) pluginMarket(writer http.ResponseWriter, request *http.R
 		writeError(writer, http.StatusServiceUnavailable, "unavailable", "installing plugins is unavailable")
 		return
 	}
+	// installed tells what of a key is here whatever the plugin's parts: a
+	// request or relay plugin has no task part, and one that did not load
+	// still has the record its install left.
 	installed := func(key string) plugininstall.Installed {
 		target := handler.plugins.Current().Plugin(key)
-		if target == nil || target.Task() == nil {
+		if target == nil {
 			return plugininstall.Installed{}
 		}
-		now := plugininstall.Installed{Version: target.Task().Version}
-		if record := target.Installed; record != nil && record.Source.Kind == contract.PluginSourceMarket {
+		record := target.Installed
+		var now plugininstall.Installed
+		if meta := target.NewAPI(); meta != nil {
+			now.Version = meta.Version
+		} else if record != nil {
+			now.Version = record.Version
+		}
+		if now.Version == "" {
+			return plugininstall.Installed{}
+		}
+		if record != nil && record.Source.Kind == contract.PluginSourceMarket {
 			now.SHA256 = record.Source.Commit
 		}
 		return now

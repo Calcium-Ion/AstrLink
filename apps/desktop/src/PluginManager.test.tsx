@@ -1383,9 +1383,11 @@ describe("PluginManager", () => {
     );
     expect(controls?.textContent).toContain("暂停所有插件");
     expect(controls?.textContent).toContain("插件加的内容上限");
-    // Building plugins has its place here too.
+    // A team's own marketplace and the plugin directory have their place
+    // here too; the commands that write a plugin are in 发布插件.
+    expect(controls?.textContent).toContain("自建市场");
     expect(controls?.textContent).toContain("/data/plugins");
-    expect(controls?.textContent).toContain("astrlink plugin dev");
+    expect(controls?.textContent).not.toContain("astrlink plugin dev");
     // No explanation under the controls: each is behind its ?.
     expect(controls?.textContent).not.toContain("暂停期间所有插件都不运行");
     const help = controls?.querySelector<HTMLButtonElement>(
@@ -2060,6 +2062,87 @@ describe("PluginManager", () => {
       expect(row("powercontext")).toContain("2 次出错");
       expect(row("sora")).toContain("近 7 天 5 次");
     });
+
+    it("says which request plugin has no rules yet, and how many the others have", async () => {
+      const guard = (key: string, name: string) => ({
+        ...emptyDetail,
+        key,
+        name,
+        version: "1.0.0",
+        source: "directory" as const,
+        file: "plugin.js",
+        enabled: true,
+        state: "loaded" as const,
+        kind: "request" as const,
+        requested_capabilities: [],
+        granted_capabilities: [],
+        needs_network: false,
+      });
+      const rule = (plugin: string, id: string) => ({
+        id,
+        name: plugin,
+        plugin,
+        enabled: true,
+        models: [],
+      });
+      bridgeMocks.getPluginHostSettings.mockResolvedValue({
+        paused: false,
+        injection_budget_bytes: 16384,
+        language: "zh-CN",
+        request_plugins: [
+          rule("filter", "rpi_1"),
+          rule("filter", "rpi_2"),
+          rule("other", "rpi_3"),
+        ],
+      });
+      await renderList([
+        guard("filter", "关键词拦截"),
+        guard("content-guard", "Content Guard"),
+      ]);
+      const row = (key: string) =>
+        document.querySelector<HTMLElement>(
+          `[data-testid="plugin-row"][data-plugin-key="${key}"]`,
+        )!;
+      expect(row("filter").textContent).toContain("2 条规则");
+      expect(row("filter").textContent).not.toContain("还没有规则");
+      expect(row("content-guard").textContent).toContain(
+        "还没有规则，不会处理请求",
+      );
+    });
+
+    it("lets a stopped request plugin take its rules", async () => {
+      const guard = {
+        ...emptyDetail,
+        key: "content-guard",
+        name: "Content Guard",
+        version: "1.0.1",
+        source: "directory" as const,
+        file: "plugin.js",
+        enabled: false,
+        state: "loaded" as const,
+        kind: "request" as const,
+        requested_capabilities: [],
+        granted_capabilities: [],
+        needs_network: false,
+        request: { stages: ["request"], optional: false },
+      };
+      bridgeMocks.getPluginHostSettings.mockResolvedValue({
+        paused: false,
+        injection_budget_bytes: 16384,
+        language: "zh-CN",
+        request_plugins: [],
+      });
+      bridgeMocks.getPlugin.mockResolvedValue(guard);
+      await renderList([guard]);
+      const row = document.querySelector<HTMLElement>(
+        '[data-testid="plugin-row"][data-plugin-key="content-guard"]',
+      )!;
+      await click(row);
+      const add = button("添加第一条规则");
+      expect(add.disabled).toBe(false);
+      await click(add);
+      expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+    });
   });
 
   describe("task plugins and the marketplace", () => {
@@ -2316,6 +2399,8 @@ describe("PluginManager", () => {
       expect(cards()).toHaveLength(2);
       // An installed version says so instead of offering itself again.
       expect(cards()[1].textContent).toContain("已安装");
+      expect(button("打开", cards()[1])).toBeTruthy();
+      expect(button("安装", cards()[0])).toBeTruthy();
       // The search reaches the models too.
       await type(
         document.querySelector<HTMLInputElement>(
@@ -2356,6 +2441,67 @@ describe("PluginManager", () => {
       expect(bridgeMocks.installPlugin).toHaveBeenCalledWith(
         "token-market",
         false,
+      );
+    });
+
+    const marketRow = (name: string) =>
+      [
+        ...document.querySelectorAll<HTMLElement>(
+          '[data-testid="plugin-market-row"]',
+        ),
+      ].find((card) => card.querySelector("strong")?.textContent === name)!;
+
+    it("opens an installed plugin's page from its marketplace row", async () => {
+      await renderTasks();
+      await chooseSegment("插件市场");
+      await click(button("打开", marketRow("Sora")));
+      // The page of the plugin, not the marketplace's dialog of it.
+      expect(
+        document.querySelector('[data-testid="plugin-market-entry"]'),
+      ).toBe(null);
+      expect(document.querySelector('[data-testid="plugin-market"]')).toBe(
+        null,
+      );
+      expect(
+        document.querySelector('[data-testid="plugin-task-overview"]'),
+      ).not.toBe(null);
+    });
+
+    it("opens an installed plugin's page from its marketplace dialog", async () => {
+      await renderTasks();
+      await chooseSegment("插件市场");
+      await click(marketRow("Sora"));
+      const entry = document.querySelector(
+        '[data-testid="plugin-market-entry"]',
+      ) as HTMLElement;
+      expect(() => button("安装", entry)).toThrow();
+      await click(button("打开插件", entry));
+      await finishExitAnimations();
+      expect(
+        document.querySelector('[data-testid="plugin-market-entry"]'),
+      ).toBe(null);
+      expect(
+        document.querySelector('[data-testid="plugin-task-overview"]'),
+      ).not.toBe(null);
+    });
+
+    it("offers the update of an older version installed", async () => {
+      bridgeMocks.getPluginMarket.mockResolvedValue({
+        ...market,
+        plugins: [
+          market.plugins[0],
+          { ...market.plugins[1], installed: "1.0.0" },
+        ],
+      });
+      await renderTasks();
+      await chooseSegment("插件市场");
+      const card = marketRow("Sora");
+      expect(card.textContent).toContain("已装 1.0.0");
+      expect(() => button("打开", card)).toThrow();
+      await click(button("更新到 1.1.0", card));
+      await finishExitAnimations();
+      expect(bridgeMocks.previewPluginInstall).toHaveBeenCalledWith(
+        market.plugins[1].link,
       );
     });
 
@@ -2422,7 +2568,7 @@ describe("PluginManager", () => {
       try {
         await renderTasks();
         await chooseSegment("插件市场");
-        await chooseSegment("社区市场");
+        await chooseSegment("社区");
         expect(bridgeMocks.getPluginMarket).toHaveBeenLastCalledWith(
           communityIndex,
         );
@@ -2476,6 +2622,107 @@ describe("PluginManager", () => {
           hidden.link,
         );
       } finally {
+        localStorage.removeItem("astrlink.plugins.marketIndex");
+      }
+    });
+
+    it("says whose marketplace it is and how to publish to it", async () => {
+      await renderTasks();
+      await chooseSegment("插件市场");
+      const marketplace = document.querySelector(
+        '[data-testid="plugin-market"]',
+      ) as HTMLElement;
+      const source = [...marketplace.querySelectorAll("a")].find(
+        (link) => link.textContent === "New API 插件市场",
+      );
+      expect(source?.getAttribute("href")).toBe(
+        "https://www.newapi.ai/zh/plugins",
+      );
+      // The market's name is not repeated beside the tabs.
+      expect(marketplace.textContent).not.toContain("New API Official Plugins");
+      await click(button("发布插件"));
+      const dialog = document.querySelector(
+        '[data-testid="plugin-publish-dialog"]',
+      ) as HTMLElement;
+      expect(dialog.textContent).toContain("astrlink plugin new <key>");
+      expect(dialog.textContent).toContain("发布到社区市场");
+      expect(dialog.textContent).toContain("分享 GitHub 链接");
+      // The official marketplace takes no submissions.
+      expect(dialog.textContent).not.toContain("官方");
+      const publish = [...dialog.querySelectorAll("a")].find((link) =>
+        link.textContent?.includes("去发布"),
+      );
+      expect(publish?.getAttribute("href")).toBe(
+        "https://www.newapi.ai/zh/community",
+      );
+    });
+
+    it("adds a team's own marketplace in the settings as a tab of its name", async () => {
+      const own = "https://plugins.example.com/index.json";
+      bridgeMocks.getPluginMarket.mockImplementation(async (index?: string) =>
+        index === own
+          ? {
+              index: own,
+              name: "团队插件",
+              plugins: market.plugins.slice(0, 1),
+            }
+          : market,
+      );
+      const tabs = () =>
+        [
+          ...document.querySelectorAll<HTMLElement>(
+            '[data-testid="plugin-market"] [data-slot="segmented-control-item"]',
+          ),
+        ].map((tab) => tab.textContent?.trim());
+      try {
+        await renderTasks();
+        await chooseSegment("插件市场");
+        expect(tabs()).toEqual(["官方", "社区"]);
+        const settings = await openHostSettings();
+        const address = settings.querySelector<HTMLInputElement>(
+          "#plugin-custom-market",
+        )!;
+        await type(address, "not an address");
+        expect(button("添加", settings).disabled).toBe(true);
+        await type(address, own);
+        await click(button("添加", settings));
+        expect(localStorage.getItem("astrlink.plugins.customMarket")).toBe(own);
+        await act(async () => {
+          document.dispatchEvent(
+            new KeyboardEvent("keydown", { bubbles: true, key: "Escape" }),
+          );
+        });
+        await finishExitAnimations();
+        // Until it is read, the tab goes by the marketplace's host.
+        expect(tabs()).toEqual(["官方", "社区", "plugins.example.com"]);
+        await chooseSegment("plugins.example.com");
+        expect(bridgeMocks.getPluginMarket).toHaveBeenLastCalledWith(own);
+        expect(tabs()).toEqual(["官方", "社区", "团队插件"]);
+        // Cleared and saved, the tab goes and the official one opens.
+        const again = await openHostSettings();
+        await type(
+          again.querySelector<HTMLInputElement>("#plugin-custom-market")!,
+          "",
+        );
+        await click(button("移除", again));
+        expect(tabs()).toEqual(["官方", "社区"]);
+        expect(bridgeMocks.getPluginMarket).toHaveBeenLastCalledWith(undefined);
+      } finally {
+        localStorage.removeItem("astrlink.plugins.customMarket");
+        localStorage.removeItem("astrlink.plugins.marketIndex");
+      }
+    });
+
+    it("keeps a marketplace opened by its address before it had a setting", async () => {
+      const own = "https://plugins.example.com/index.json";
+      localStorage.setItem("astrlink.plugins.marketIndex", own);
+      try {
+        await renderTasks();
+        await chooseSegment("插件市场");
+        expect(bridgeMocks.getPluginMarket).toHaveBeenLastCalledWith(own);
+        expect(localStorage.getItem("astrlink.plugins.customMarket")).toBe(own);
+      } finally {
+        localStorage.removeItem("astrlink.plugins.customMarket");
         localStorage.removeItem("astrlink.plugins.marketIndex");
       }
     });

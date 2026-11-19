@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useId, useMemo, useState } from "react";
 
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { EmptyState } from "@/components/EmptyState";
 import { Field } from "@/components/Field";
 import { FormMessage } from "@/components/FormMessage";
 import { IconButton } from "@/components/IconButton";
-import { Plus, SquarePen, X } from "@/components/icons";
+import { Plus, ScanText, SquarePen, X } from "@/components/icons";
 import { Panel } from "@/components/Panel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -144,13 +145,7 @@ function visible(field: SchemaField, config: Record<string, unknown>): boolean {
  * that checks and changes requests, its answers or hears of them, for every
  * model or the models it lists. They run in the order they were added.
  */
-export function RequestPluginInstances({
-  detail,
-  disabled,
-}: {
-  detail: PluginDetail;
-  disabled?: boolean;
-}) {
+export function RequestPluginInstances({ detail }: { detail: PluginDetail }) {
   const t = useT();
   const [host, setHost] = useState<PluginHostSettings | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -203,6 +198,18 @@ export function RequestPluginInstances({
     .map((instance, index) => ({ instance, index }))
     .filter(({ instance }) => instance.plugin === detail.key);
 
+  const addRule = () =>
+    setEditing({
+      index: null,
+      draft: {
+        name: detail.name,
+        plugin: detail.key,
+        enabled: true,
+        models: [],
+        config: startingConfig(schema, undefined),
+      },
+    });
+
   const toggle = async (index: number, enabled: boolean) => {
     const list = all.map((instance, at) =>
       at === index ? { ...instance, enabled } : instance,
@@ -232,33 +239,32 @@ export function RequestPluginInstances({
             ))}
           </span>
         </div>
-        <Button
-          disabled={disabled || host === null || saving}
-          onClick={() =>
-            setEditing({
-              index: null,
-              draft: {
-                name: detail.name,
-                plugin: detail.key,
-                enabled: true,
-                models: [],
-                config: startingConfig(schema, undefined),
-              },
-            })
-          }
-          size="sm"
-          type="button"
-          variant="outline"
-        >
-          <Plus />
-          {t("plugins.requestPlugins.add")}
-        </Button>
+        {mine.length > 0 ? (
+          <Button
+            disabled={host === null || saving}
+            onClick={addRule}
+            size="sm"
+            type="button"
+            variant="outline"
+          >
+            <Plus />
+            {t("plugins.requestPlugins.add")}
+          </Button>
+        ) : null}
       </div>
       {error ? <FormMessage tone="error">{error}</FormMessage> : null}
       {host !== null && mine.length === 0 ? (
-        <p className="text-xs text-muted-foreground">
-          {t("plugins.requestPlugins.empty")}
-        </p>
+        <EmptyState
+          action={
+            <Button disabled={saving} onClick={addRule} size="sm" type="button">
+              <Plus />
+              {t("plugins.requestPlugins.addFirst")}
+            </Button>
+          }
+          description={t("plugins.requestPlugins.emptyHint")}
+          illustration={<ScanText className="size-5" />}
+          title={t("plugins.requestPlugins.emptyTitle", { name: detail.name })}
+        />
       ) : null}
       <ul className="grid gap-2">
         {mine.map(({ instance, index }) => (
@@ -280,11 +286,11 @@ export function RequestPluginInstances({
             <Switch
               aria-label={t("plugins.requestPlugins.enabled")}
               checked={instance.enabled}
-              disabled={disabled || saving}
+              disabled={saving}
               onCheckedChange={(checked) => void toggle(index, checked)}
             />
             <IconButton
-              disabled={disabled || saving}
+              disabled={saving}
               label={t("plugins.requestPlugins.edit")}
               onClick={() =>
                 setEditing({
@@ -301,7 +307,7 @@ export function RequestPluginInstances({
               <SquarePen />
             </IconButton>
             <IconButton
-              disabled={disabled || saving}
+              disabled={saving}
               label={t("plugins.requestPlugins.remove")}
               onClick={() => setRemoving(index)}
               type="button"

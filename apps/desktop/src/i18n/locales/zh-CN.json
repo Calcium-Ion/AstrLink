@@ -5487,16 +5487,12 @@
     "market": {
       "failed": "无法读取插件市场。",
       "source": "插件市场来源",
-      "official": "官方市场",
-      "custom": "其他市场",
+      "official": "官方",
       "kind": "插件类型",
       "allKinds": "全部",
       "otherKind": "其他",
-      "indexLabel": "市场的 index.json 地址",
       "open": "打开",
       "search": "搜索插件、模型或插件码",
-      "count_one": "{{name}} · {{count}} 个插件",
-      "count_other": "{{name}} · {{count}} 个插件",
       "loading": "正在读取插件市场…",
       "noMatch": "没有找到匹配的插件",
       "empty": "这个市场还没有插件",
@@ -5522,7 +5518,7 @@
         "other": "{{part}}"
       },
       "partSeparator": "、",
-      "community": "社区市场",
+      "community": "社区",
       "recommended": "推荐",
       "by": "作者 {{author}}",
       "author": "作者",
@@ -5541,7 +5537,17 @@
       "revokedNoReason": "市场已经下架了你装的这个版本。建议更新到其他版本，或者卸载。",
       "finding": "正在查找插件码 {{code}} 的插件…",
       "foundByCode": "插件码 {{code}} 的插件",
-      "noCode": "没有找到插件码为 {{code}} 的插件"
+      "noCode": "没有找到插件码为 {{code}} 的插件",
+      "openPlugin": "打开插件",
+      "provenance": "New API 插件市场",
+      "provenanceHelpLabel": "关于插件市场",
+      "provenanceHelp": "AstrLink 和 New API 用同一套插件接口，这里列的是 New API 插件市场里的插件，装上就能在 AstrLink 里用。",
+      "officialHelp": "官方插件由维护者审核源码后上架。",
+      "communityHelp": "社区插件由作者自己发布，每个插件有一个 8 位插件码，在搜索框输入就能找到。",
+      "customTitle": "自建市场",
+      "customHelp": "团队自己搭的插件市场。填上它的 index.json 地址，插件市场里会多出一个它的页签；清空后保存就去掉。",
+      "customAdd": "添加",
+      "customRemove": "移除"
     },
     "task": {
       "protocols": {
@@ -5615,13 +5621,10 @@
       "recent": "最近的任务"
     },
     "developHome": {
-      "commands": "命令行",
       "command": {
         "new": "从模板新建插件项目",
         "dev": "监听改动、构建并装进本机 AstrLink，实时输出日志",
-        "check": "构建并检查清单、能力和不该用的 API",
-        "test": "按 tests/ 里的用例跑钩子",
-        "build": "构建出 plugin.js 和 client.js"
+        "check": "构建并检查清单、能力和不该用的 API"
       },
       "title": "开发插件"
     },
@@ -5636,7 +5639,6 @@
       "remove": "删除",
       "removeTitle": "删除这条规则？",
       "removeConfirm": "删除「{{name}}」后，它不再检查请求。插件本身不会卸载。",
-      "empty": "还没有规则。添加一条规则后，它才会检查请求。",
       "enabled": "启用",
       "name": "名称",
       "models": "限定模型",
@@ -5672,7 +5674,10 @@
         "openai_responses": "Responses",
         "claude": "Claude Messages",
         "gemini": "Gemini"
-      }
+      },
+      "emptyTitle": "还没有规则，{{name}} 还不会处理请求",
+      "emptyHint": "规则决定它检查哪些模型的请求、怎么处理命中的内容。",
+      "addFirst": "添加第一条规则"
     },
     "health": {
       "tasks": "生成任务",
@@ -5696,7 +5701,10 @@
       "reload": "重新加载",
       "times_one": "{{count}} 次",
       "times_other": "{{count}} 次",
-      "trend": "近 7 天每天处理的次数"
+      "trend": "近 7 天每天处理的次数",
+      "noRules": "还没有规则，不会处理请求",
+      "rules_one": "{{count}} 条规则",
+      "rules_other": "{{count}} 条规则"
     },
     "runLog": {
       "days": "按天统计",
@@ -5705,6 +5713,22 @@
       "sinceStart": "本次启动后",
       "memoryLimits_one": "内存超限 {{count}} 次",
       "memoryLimits_other": "内存超限 {{count}} 次"
+    },
+    "publish": {
+      "open": "发布插件",
+      "title": "发布插件",
+      "write": "写插件",
+      "docs": "插件接口文档",
+      "share": "发布出去",
+      "community": {
+        "title": "发布到社区市场",
+        "body": "在 New API 网站上传插件，会得到一个 8 位插件码，别人在插件市场搜这个码就能装。",
+        "action": "去发布"
+      },
+      "github": {
+        "title": "分享 GitHub 链接",
+        "body": "把插件放在公开仓库里，别人在「从 GitHub 安装」里粘贴链接就能装。功能扩展类插件只能这样分享。"
+      }
     }
   },
   "pluginRecords": {
