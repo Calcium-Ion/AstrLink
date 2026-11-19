@@ -1,5 +1,7 @@
 // What the big pet wears on her head as today's tokens grow: a star clip, a
-// flower, a bow, then a crown, pinned to her drawn picture.
+// flower, a bow, then a crown. They are props in the rig's units, worn on
+// her head so they nod and lean with it.
+import { CX, prop, type Prop } from "../live-crew-rig";
 import type { Badge } from "./pet-kit";
 
 const INK: Record<string, string> = {
@@ -33,9 +35,41 @@ export type Gear = (typeof GEAR)[keyof typeof GEAR];
 export const gearAt = (stage: number): Gear | null =>
   GEAR[stage as keyof typeof GEAR] ?? null;
 
+/** A little pixel picture centred at (x, y), one fine cell (2/3 unit) a pixel. */
+function badge(rows: string[], x: number, y: number): Prop {
+  const c = 2 / 3;
+  const w = rows[0].length * c;
+  const h = rows.length * c;
+  const x0 = x - w / 2;
+  const y0 = y - h / 2;
+  return prop(
+    (px, py) =>
+      INK[rows[Math.floor((py - y0) / c)]?.[Math.floor((px - x0) / c)] ?? ""] ??
+      null,
+    [x0, y0, x0 + w, y0 + h],
+  );
+}
+
+const WORN = {
+  star: badge(STAR, CX - 7.4, 6.4),
+  flower: badge(FLOWER, CX + 8.6, 8.6),
+  bow: badge(BOW, CX, 1.4),
+  crown: badge(CROWN, CX, 0.4),
+};
+
+/** What she has on by today's stage; the crown replaces the bow. */
+export function gearOf(stage: number): Prop[] {
+  const out: Prop[] = [];
+  if (stage >= 1) out.push(WORN.star);
+  if (stage >= 3) out.push(WORN.flower);
+  if (stage >= 7) out.push(WORN.crown);
+  else if (stage >= 5) out.push(WORN.bow);
+  return out;
+}
+
 /**
- * Where each sits on her drawn picture: one grid pixel a pixel, from the top
- * of her head. Both clips go on her left, clear of the daisy in her hair.
+ * The same, on her drawn picture: one grid pixel a pixel, from the top of her
+ * head. Both clips go on her left, clear of the daisy in her hair.
  */
 const PINNED = {
   star: { rows: STAR, ink: INK, x: -8, y: 7 },
@@ -44,7 +78,6 @@ const PINNED = {
   crown: { rows: CROWN, ink: INK, x: 2, y: -2 },
 } satisfies Record<Gear, Badge>;
 
-/** What she has on by today's stage; the crown replaces the bow. */
 export function badgesOf(stage: number): Badge[] {
   const out: Badge[] = [];
   if (stage >= 1) out.push(PINNED.star);

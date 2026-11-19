@@ -7,7 +7,11 @@ import { hasNativeHost } from "../native-host/presence";
 import { applyLocale, isLocale } from "../i18n";
 import { readCrew, stagePassed } from "../live-crew-model";
 import { parseDesktopToys } from "../preferences-model";
-import { parseRequestActivity } from "../request-record-model";
+import {
+  CLIENT_TYPES,
+  parseRequestActivity,
+  type ClientType,
+} from "../request-record-model";
 import { cfg } from "./toy-config";
 import { syncPace } from "./toy-kit";
 import { Sample } from "./toy-sample";
@@ -19,8 +23,44 @@ export const FRAMES_EVENT = "toys:frames";
 export const IDLE_EVENT = "toys:idle";
 export const SCREEN_EVENT = "toys:screen";
 
-/** Today's tokens as last read; null until the first read. */
-export const feed: { tokens: number | null } = { tokens: null };
+/** The day's usage as the host reads it; mirrors `Today` in `internal/toys`. */
+export interface Today {
+  tokens: number;
+  /** Tokens of each local hour, 0 to 23; empty without them. */
+  hours: number[];
+  /** The model and the client that used the most tokens. */
+  model: string | null;
+  client: ClientType | null;
+}
+
+/** Today's tokens and usage as last read; null until the first read. */
+export const feed: { tokens: number | null; today: Today | null } = {
+  tokens: null,
+  today: null,
+};
+
+const count = (v: unknown): v is number =>
+  typeof v === "number" && Number.isFinite(v) && v >= 0;
+
+/** The host's day of usage, or null if it is not one. */
+export function readToday(payload: unknown): Today | null {
+  if (typeof payload !== "object" || payload === null) return null;
+  const { tokens, hours, model, client } = payload as Partial<
+    Record<keyof Today, unknown>
+  >;
+  if (!count(tokens) || !Array.isArray(hours) || !hours.every(count))
+    return null;
+  return {
+    tokens,
+    hours: hours.length === 24 ? hours : [],
+    model: typeof model === "string" && model ? model : null,
+    client:
+      typeof client === "string" &&
+      (CLIENT_TYPES as readonly string[]).includes(client)
+        ? (client as ClientType)
+        : null,
+  };
+}
 
 export interface FeedHandlers {
   /** Today's tokens passed a stage, with milestones on. */
@@ -76,6 +116,7 @@ function playSample(on: boolean, handlers: FeedHandlers) {
     const passed = stagePassed(lastTokens, tokens);
     lastTokens = tokens;
     feed.tokens = tokens;
+    feed.today = { tokens, hours: [], model: null, client: null };
     if (passed !== null && cfg.prefs.milestone) handlers.milestone?.(passed);
   }, 250);
 }
@@ -84,11 +125,11 @@ function acceptFeed(payload: unknown, handlers: FeedHandlers) {
   if (typeof payload !== "object" || payload === null) return;
   const {
     activity,
-    tokens,
+    today: reading,
     sample: wantSample,
   } = payload as {
     activity?: unknown;
-    tokens?: unknown;
+    today?: unknown;
     sample?: unknown;
   };
   playSample(wantSample === true, handlers);
@@ -100,10 +141,12 @@ function acceptFeed(payload: unknown, handlers: FeedHandlers) {
       console.error("Ignoring unreadable desktop toy activity", error);
     }
   }
-  if (typeof tokens === "number" && Number.isFinite(tokens)) {
-    const passed = stagePassed(lastTokens, tokens);
-    lastTokens = tokens;
-    feed.tokens = tokens;
+  const today = readToday(reading);
+  if (today) {
+    const passed = stagePassed(lastTokens, today.tokens);
+    lastTokens = today.tokens;
+    feed.tokens = today.tokens;
+    feed.today = today;
     if (passed !== null && cfg.prefs.milestone) handlers.milestone?.(passed);
   }
 }

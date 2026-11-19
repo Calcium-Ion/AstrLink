@@ -28,12 +28,17 @@ export const FONT = '"IBM Plex Sans Variable", "PingFang SC", sans-serif';
 export const clamp = (v: number, lo = 0, hi = 1) =>
   Math.min(hi, Math.max(lo, v));
 
-/** Waving after its reply, for as long as the level says, before it dozes off. */
+/**
+ * Waving after its reply, for as long as the level says, before it dozes off.
+ * A conversation that ended in an error or was stopped got no reply, and
+ * one whose subagents still work has not answered yet.
+ */
 export const waving = (m: CrewMember) =>
   m.act === "wait" &&
   m.arrived &&
   !m.leaving &&
   !m.failed &&
+  !m.clones.some((clone) => clone.phase !== "gone") &&
   m.t < motion().wave;
 
 /**

@@ -1,6 +1,5 @@
 import {
   Act,
-  arm,
   body,
   clamp,
   type CrewColor,
@@ -1750,19 +1749,15 @@ function site(W: number): CrewScene {
     const carrying = ph >= 0.46 && ph < 0.96;
     const face = ch.face;
     if (ph < 0.42) ch.face = face > 0 ? -1 : 1;
-    body(pen, ch, { legs: walking ? Math.floor(member.t * 6) % 2 : -1 });
+    const walk = walking ? member.t * 6 : undefined;
+    if (carrying)
+      Act.carry(pen, ch, walk, (hx, hy) => {
+        const p = pen.palette;
+        pen.rect(Math.round(hx - 8), Math.round(hy - 6), 16, 8, p.brick);
+        pen.rect(Math.round(hx - 8), Math.round(hy - 2), 16, 2, p.brickEdge);
+      });
+    else body(pen, ch, { walk });
     ch.face = face;
-    if (carrying) {
-      const [hx, hy] = arm(pen, ch, 1, 5);
-      pen.rect(Math.round(hx), Math.round(hy - 8), 16, 8, pen.palette.brick);
-      pen.rect(
-        Math.round(hx),
-        Math.round(hy - 4),
-        16,
-        2,
-        pen.palette.brickEdge,
-      );
-    }
     ch.dx = undefined;
     const beat = Math.floor(member.t * pace);
     if (ph > 0.94 && member.beat !== beat && pen.dt > 0) {

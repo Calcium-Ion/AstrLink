@@ -156,7 +156,7 @@ func newFixture(t *testing.T, on bool) *fixture {
 	f.r = newRuntime(ctx, f.sys, Deps{
 		Prefs:     f.currentPrefs,
 		Activity:  func(context.Context, string) (json.RawMessage, bool) { return nil, false },
-		Tokens:    func(context.Context) (*int64, bool) { return nil, false },
+		Today:     func(context.Context) (*Today, bool) { return nil, false },
 		ConfigDir: f.dir,
 	})
 	return f
@@ -355,10 +355,9 @@ func TestTheFeedReadsTokensEveryTwentySeconds(t *testing.T) {
 		since = append(since, from)
 		return json.RawMessage(`{"now":"x","calls":[]}`), true
 	}
-	f.r.deps.Tokens = func(context.Context) (*int64, bool) {
+	f.r.deps.Today = func(context.Context) (*Today, bool) {
 		tokens++
-		n := int64(tokens * 1000)
-		return &n, true
+		return &Today{Tokens: int64(tokens * 1000), Hours: []int64{}}, true
 	}
 	f.r.feedOnce()
 	now = now.Add(10 * time.Second)
@@ -369,11 +368,11 @@ func TestTheFeedReadsTokensEveryTwentySeconds(t *testing.T) {
 		t.Fatal(tokens, since)
 	}
 	feeds := pet.take(FeedEvent)
-	if len(feeds) != 3 || *feeds[1].(Feed).Tokens != 1000 || *feeds[2].(Feed).Tokens != 2000 {
+	if len(feeds) != 3 || feeds[1].(Feed).Today.Tokens != 1000 || feeds[2].(Feed).Today.Tokens != 2000 {
 		t.Fatal(feeds)
 	}
 	data, err := json.Marshal(feeds[0])
-	if err != nil || string(data) != `{"activity":{"now":"x","calls":[]},"tokens":1000,"sample":false}` {
+	if err != nil || string(data) != `{"activity":{"now":"x","calls":[]},"today":{"tokens":1000,"hours":[],"model":null,"client":null},"sample":false}` {
 		t.Fatal(string(data), err)
 	}
 }

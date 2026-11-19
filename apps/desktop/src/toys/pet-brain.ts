@@ -1,20 +1,28 @@
 // The big desktop pet's mind: one girl who floats wherever you leave her,
-// over every window and full-screen app. Every conversation in progress is an
-// orb beside her; she does what the busiest one does, says what happened in a
-// bubble, dozes off when nothing happens, and can be patted, poked, picked up
-// and thrown.
+// over every window and full-screen app. Every conversation in progress is a
+// winged orb beside her; she does what the busiest one does, says what
+// happened in a bubble, dozes off when nothing happens, and can be patted,
+// poked, picked up and thrown.
 // Everything here is plain state stepped by the window's loop on its own
 // clock, so tests drive it the same way.
 import type { Pixel } from "../live-crew-draw";
 import { CREW_STAGES, crewGrowth, type CrewMember } from "../live-crew-model";
+import { isGirl } from "../live-crew-rig";
+import { spriteOf } from "../live-crew-sprites";
 import type { ClientType } from "../request-record-model";
 import { gearAt, type Gear } from "./pet-gear";
-import { hasKit, kitOf, kitSize, type Face, type Kit } from "./pet-kit";
+import { kitOf, kitSize, type Face } from "./pet-kit";
 import { cfg, motion } from "./toy-config";
 import type { IdleReading } from "./toy-feed";
 import type { Frames } from "./toy-frames";
 import { clamp, live, pace, puff, waving } from "./toy-kit";
 
+/** The rig's unit in px: 178 px tall, her cells on half pixels. */
+export const U = 5.25;
+/** Her height in units, standing. */
+export const TALL = 34;
+/** Units the rig's legs hang below her seat while she floats. */
+export const HANG = 5;
 /** The orbs are drawn half again as big as on the small pets. */
 export const ORB_SCALE = 1.5;
 /** How fast a throw slows down in the air, per second. */
@@ -49,8 +57,30 @@ export type Say =
       tokens: number | null;
       waiting: number;
     }
-  | { kind: "greet"; replies: number; tokens: number | null; pats: number }
+  | ({ kind: "greet" } & DaySum)
   | { kind: "poked" };
+
+/** What she sums up of the day. */
+export interface DaySum {
+  replies: number;
+  pats: number;
+  tokens: number | null;
+  /** Today's milestones passed so far: the amount and when, oldest first. */
+  marks: Mark[];
+  /** Tokens of each local hour, 0 to 23; empty without them. */
+  hours: number[];
+  model: string | null;
+  client: ClientType | null;
+  /** The local hour now, 0 to 23. */
+  hour: number;
+}
+
+/** A milestone of today's tokens, and when she saw it passed. */
+export interface Mark {
+  tokens: number;
+  /** Local time, minutes after midnight. */
+  at: number;
+}
 
 export interface Bubble {
   say: Say;
@@ -85,6 +115,8 @@ export interface PetMemo {
   day: string;
   replies: number;
   pats: number;
+  /** Today's milestones passed, oldest first. */
+  marks?: Mark[];
   quiet: boolean;
   client: ClientType;
   /** Her spot as shares of the screen's width and height, once you move her. */
@@ -102,6 +134,8 @@ export interface PetOptions {
   members?: () => CrewMember[];
   /** Today's tokens, or null before the first read. */
   tokens?: () => number | null;
+  /** Today's hours and busiest model and client, or null before a read. */
+  today?: () => Pick<DaySum, "hours" | "model" | "client"> | null;
   /** Wall clock in ms, for the day and time away. */
   clock?: () => number;
   rand?: () => number;
@@ -124,7 +158,7 @@ export function parseMemo(raw: string | null): PetMemo | null {
       typeof v.pats !== "number" ||
       typeof v.quiet !== "boolean" ||
       typeof v.client !== "string" ||
-      !hasKit(v.client)
+      !isGirl(v.client)
     )
       return null;
     const memo: PetMemo = {
@@ -137,10 +171,26 @@ export function parseMemo(raw: string | null): PetMemo | null {
     const spot = v.spot as Partial<PetMemo["spot"]> | undefined;
     if (spot && isShare(spot.x) && isShare(spot.y))
       memo.spot = { x: spot.x, y: spot.y };
+    if (Array.isArray(v.marks)) {
+      const marks = v.marks.filter(
+        (m: Partial<Mark> | null): m is Mark =>
+          typeof m?.tokens === "number" &&
+          typeof m.at === "number" &&
+          m.at >= 0 &&
+          m.at < 24 * 60,
+      );
+      if (marks.length) memo.marks = marks.map((m) => ({ ...m }));
+    }
     return memo;
   } catch {
     return null;
   }
+}
+
+/** Minutes after local midnight at `ms`. */
+export function minuteOf(ms: number): number {
+  const d = new Date(ms);
+  return d.getHours() * 60 + d.getMinutes();
 }
 
 /** The local day of `ms`, for today's counts. */
@@ -154,6 +204,7 @@ export class PetBrain {
   H: number;
   members: () => CrewMember[];
   tokens: () => number | null;
+  today: () => Pick<DaySum, "hours" | "model" | "client"> | null;
   clock: () => number;
   rand: () => number;
   fx: { pet: Pixel[]; orbs: Pixel[] };
@@ -228,12 +279,13 @@ export class PetBrain {
     this.H = o.H;
     this.members = o.members ?? live;
     this.tokens = o.tokens ?? (() => null);
+    this.today = o.today ?? (() => null);
     this.clock = o.clock ?? Date.now;
     this.rand = o.rand ?? pace.rand;
     this.fx = o.fx ?? { pet: [], orbs: [] };
     const day = dayOf(this.clock());
     this.memo =
-      o.memo && hasKit(o.memo.client)
+      o.memo && isGirl(o.memo.client)
         ? { ...o.memo }
         : { day, replies: 0, pats: 0, quiet: false, client: FIRST_GIRL };
     this.client = this.memo.client;
@@ -353,14 +405,14 @@ export class PetBrain {
     return foot - this.shape().tall;
   }
 
-  /** Her drawn picture. */
-  kit(): Kit {
-    return kitOf(this.client) ?? kitOf(FIRST_GIRL)!;
-  }
-
-  /** Her height in px from the top of her head to her soles, and half her width. */
+  /**
+   * Her height in px from the top of her head to her soles, and half her
+   * width: by her drawn picture, or by the shape rig.
+   */
   shape() {
-    return kitSize(this.kit());
+    const kit = kitOf(this.client);
+    if (kit) return kitSize(kit);
+    return { tall: TALL * U, half: (spriteOf(this.client).w * U) / 2 };
   }
 
   half() {
@@ -445,7 +497,7 @@ export class PetBrain {
   roll() {
     const day = dayOf(this.clock());
     if (day !== this.memo.day)
-      this.memo = { ...this.memo, day, replies: 0, pats: 0 };
+      this.memo = { ...this.memo, day, replies: 0, pats: 0, marks: [] };
   }
 
   countPat() {
@@ -492,6 +544,10 @@ export class PetBrain {
 
   /** Today's tokens passed `stage`: a little hop, hands clasped. */
   milestone(stage: number) {
+    this.roll();
+    const tokens = CREW_STAGES[stage] ?? 0;
+    const marks = (this.memo.marks ?? []).filter((m) => m.tokens < tokens);
+    this.memo.marks = [...marks, { tokens, at: minuteOf(this.clock()) }];
     if (this.away()) return;
     this.hop = 1;
     this.hopBig = true;
@@ -505,14 +561,7 @@ export class PetBrain {
       "violet",
     ] as const)
       puff(this.fx.pet, this.rand, this.x, top + 10, 8, ink, 300, 260, 1.6, 4);
-    this.say(
-      {
-        kind: "milestone",
-        tokens: CREW_STAGES[stage] ?? 0,
-        gear: gearAt(stage),
-      },
-      5,
-    );
+    this.say({ kind: "milestone", tokens, gear: gearAt(stage) }, 5);
   }
 
   away() {
@@ -588,14 +637,21 @@ export class PetBrain {
     this.bang = 0;
     this.pokes = [];
     this.wave = 2.4;
+    const today = this.today();
+    this.whim = { face: "happy", t: 2.4 };
     this.say(
       {
         kind: "greet",
         replies: this.memo.replies,
-        tokens: this.tokens(),
         pats: this.memo.pats,
+        tokens: this.tokens(),
+        marks: this.memo.marks ?? [],
+        hours: today?.hours ?? [],
+        model: today?.model ?? null,
+        client: today?.client ?? null,
+        hour: Math.floor(minuteOf(this.clock()) / 60),
       },
-      6,
+      9,
     );
   }
 
@@ -655,7 +711,7 @@ export class PetBrain {
     if (!best) {
       const counts = new Map<ClientType, number>();
       for (const m of this.members())
-        if (hasKit(m.client))
+        if (isGirl(m.client))
           counts.set(m.client, (counts.get(m.client) ?? 0) + 1);
       let most = 0;
       for (const [client, n] of counts)

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { seededRandom, type CrewMember } from "../live-crew-model";
+import { CX, type Pose } from "../live-crew-rig";
 import {
   DOZE_AFTER,
   PetBrain,
@@ -9,13 +10,14 @@ import {
   type PetMemo,
   type Say,
 } from "./pet-brain";
-import { actOf, faceOf, moodOf } from "./pet-draw";
-import { badgesOf, gearAt } from "./pet-gear";
+import { actOf, faceOf, moodOf, poseOf } from "./pet-draw";
+import { gearAt, gearOf } from "./pet-gear";
 import { build, kitOf, kitPx, onScreen } from "./pet-kit";
 import { petWords } from "./pet-words";
 import { cfg } from "./toy-config";
 import { readIdle, readScreenMove } from "./toy-feed";
 import type { Frames } from "./toy-frames";
+import type { Pen } from "../live-crew-draw";
 import { defaultDesktopToys } from "../preferences-model";
 
 const W = 1440;
@@ -114,6 +116,7 @@ function setup(
 }
 
 const kinds = (brain: PetBrain) => brain.bubbles.map((b) => b.say.kind);
+const pen = { palette: new Proxy({}, { get: () => "#000" }) } as unknown as Pen;
 
 afterEach(() => {
   cfg.prefs = defaultDesktopToys();
@@ -307,6 +310,7 @@ describe("what happens in the conversations", () => {
     expect(brain.orbs.get("a")?.hold).toBeGreaterThan(0);
     expect(kinds(brain)).toEqual(["reply"]);
     expect(brain.memo.replies).toBe(1);
+    expect(poseOf(brain, undefined, pen).pose.near?.front).toBe(true);
     expect(actOf(brain, undefined)).toBe("greet");
   });
 
@@ -318,6 +322,41 @@ describe("what happens in the conversations", () => {
     expect(brain.wave).toBe(0);
     expect(kinds(brain)).toEqual([]);
     expect(brain.memo.replies).toBe(0);
+  });
+
+  it("does not count a reply while its subagents still work", () => {
+    const clone = {
+      id: "sub",
+      act: "bash",
+      tool: "Bash",
+      phase: "work",
+      home: false,
+      goal: null,
+      next: 0,
+      slot: 0,
+      x: 100,
+      level: 0,
+      fy: 0,
+      face: 1,
+      walk: 0,
+      t: 0,
+      move: null,
+      climb: false,
+      u: 1.5,
+    } as CrewMember["clones"][number];
+    const { brain, list, run } = setup([member()]);
+    run(0.5);
+    list.now = [member({ act: "wait", t: 0, clones: [clone] })];
+    run(0.1);
+    expect(brain.wave).toBe(0);
+    expect(kinds(brain)).toEqual([]);
+    expect(brain.memo.replies).toBe(0);
+    list.now = [
+      member({ act: "wait", t: 0.2, clones: [{ ...clone, phase: "gone" }] }),
+    ];
+    run(0.1);
+    expect(kinds(brain)).toEqual(["reply"]);
+    expect(brain.memo.replies).toBe(1);
   });
 
   it("counts a reply without calling when her reply bubble is off", () => {
@@ -362,6 +401,9 @@ describe("what happens in the conversations", () => {
     const { brain } = setup();
     brain.milestone(3);
     expect(brain.hopBig).toBe(true);
+    expect(poseOf(brain, undefined, pen).pose).toMatchObject({
+      look: { eyes: "happy", mouth: "cat" },
+    });
     expect(actOf(brain, undefined)).toBe("glad");
     expect(brain.bubbles[0].say).toEqual({
       kind: "milestone",
@@ -373,11 +415,11 @@ describe("what happens in the conversations", () => {
   });
 
   it("wears what today's tokens have earned", () => {
-    expect(badgesOf(0)).toHaveLength(0);
-    expect(badgesOf(3)).toHaveLength(2);
-    expect(badgesOf(5)).toHaveLength(3);
+    expect(gearOf(0)).toHaveLength(0);
+    expect(gearOf(3)).toHaveLength(2);
+    expect(gearOf(5)).toHaveLength(3);
     // The crown takes the bow's place.
-    expect(badgesOf(7)).toHaveLength(3);
+    expect(gearOf(7)).toHaveLength(3);
     expect(gearAt(7)).toBe("crown");
     const { brain, setTokens } = setup();
     expect(brain.stage()).toBe(0);
@@ -520,6 +562,7 @@ describe("naps and time away", () => {
     run(0.1);
     expect(brain.sleeping).toBe(false);
     expect(brain.stretch).toBeGreaterThan(0);
+    expect(poseOf(brain, undefined, pen).pose.look?.mouth).toBe("o");
     expect(actOf(brain, undefined)).toBe("stretch");
   });
 
@@ -614,6 +657,7 @@ describe("play", () => {
     expect(brain.pressAt(x, y)).toBe(true);
     brain.dragTo(x - 10, y - 10);
     expect(brain.mode).toBe("held");
+    expect(poseOf(brain, undefined, pen).pose.legs).toBeDefined();
     expect(actOf(brain, undefined)).toBe("held");
     brain.dragTo(x - 40, y - 10);
     expect(brain.x).toBe(x - 30);
@@ -642,13 +686,69 @@ describe("play", () => {
     brain.patHead();
     brain.greet();
     expect(brain.wave).toBeGreaterThan(0);
-    expect(brain.bubbles.at(-1)?.say).toEqual({
+    expect(brain.whim?.face).toBe("happy");
+    expect(brain.bubbles.at(-1)?.say).toMatchObject({
       kind: "greet",
       replies: 0,
       tokens: 3_200_000,
       pats: 1,
+      marks: [],
+      hours: [],
+      model: null,
+      client: null,
     });
-    expect(petWords(brain.bubbles.at(-1)!.say).title).toBe("今天写完 0 次回复");
+    const words = petWords(brain.bubbles.at(-1)!.say);
+    expect(words.title).toBe("今天还没有写完的回复");
+    expect(words.text).toBe("用掉 320万 Token · 摸了 1 次头");
+    expect(words.day?.lines).toEqual(["离 1000万 还差 680万"]);
+  });
+
+  it("tells when today's milestones passed and how the day went", () => {
+    const at = new Date(2026, 10, 16, 14, 32).getTime();
+    const hours = Array.from({ length: 24 }, (_, h) =>
+      h === 10 ? 9e6 : h < 14 ? 1e6 : 0,
+    );
+    const { brain, clock, setTokens } = setup([], {
+      tokens: 60_760_000,
+      clock: at,
+    });
+    brain.today = () => ({
+      hours,
+      model: "claude-opus-5-5",
+      client: "claude_code",
+    });
+    brain.milestone(4);
+    clock.now = at + 60_000;
+    brain.milestone(5);
+    clock.now = at + 3_600_000;
+    brain.reply(member({ id: "a", client: "claude_code" }));
+    setTokens(60_760_000);
+    brain.greet();
+    const say = brain.bubbles.at(-1)!.say;
+    expect(say).toMatchObject({
+      kind: "greet",
+      marks: [
+        { tokens: 10_000_000, at: 14 * 60 + 32 },
+        { tokens: 50_000_000, at: 14 * 60 + 33 },
+      ],
+      hour: 15,
+    });
+    const words = petWords(say);
+    expect(words.title).toBe("今天写完 1 次回复");
+    expect(words.day?.lines).toEqual([
+      "14:33 冲过了 5000万 Token ✨",
+      "离 2亿 还差 1.39亿",
+      "10–11 点最忙，用了 900万",
+      "Claude Code 最勤快，主要在用 claude-opus-5-5",
+    ]);
+    expect(words.day?.hours).toBe(hours);
+    // A restart keeps today's milestones; a new day drops them.
+    expect(parseMemo(JSON.stringify(brain.memo))?.marks).toEqual(
+      brain.memo.marks,
+    );
+    clock.now += 24 * 3600_000;
+    brain.roll();
+    expect(brain.memo.marks).toEqual([]);
   });
 
   it("says nothing while quiet", () => {
@@ -670,14 +770,15 @@ describe("play", () => {
 });
 
 describe("her own poses", () => {
-  it("dangles while held and naps with her eyes shut", () => {
+  it("dangles slowly while held and naps with her eyes shut", () => {
     const { brain } = setup();
     brain.mode = "held";
-    expect(actOf(brain, undefined)).toBe("held");
+    const held: Pose = poseOf(brain, undefined, pen).pose;
+    expect(held.near?.open && held.far?.open).toBe(true);
     brain.mode = "float";
     brain.sleeping = true;
+    expect(poseOf(brain, "wait", pen).pose.look?.eyes).toBe("closed");
     expect(actOf(brain, "wait")).toBe("doze");
-    expect(moodOf(brain)).toBe("blink");
   });
 
   it("makes a face for what happens to her", () => {
@@ -727,6 +828,14 @@ describe("her own poses", () => {
       busy.step(1 / 20);
       expect(busy.whim).toBeNull();
     }
+  });
+
+  it("waves by her cheek, not over her head", () => {
+    const { brain } = setup();
+    brain.wave = 2;
+    const near = poseOf(brain, undefined, pen).pose.near!;
+    expect(near.y).toBeGreaterThan(16);
+    expect(Math.abs(near.x - CX)).toBeLessThan(8);
   });
 
   it("is as tall as her drawn picture, crown to soles", () => {

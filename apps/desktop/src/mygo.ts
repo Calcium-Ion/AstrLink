@@ -424,7 +424,8 @@ export type DownloadSource = "github" | "download_site";
 /** Feed is the activity every toy window reads. */
 export interface Feed {
   activity: unknown;
-  tokens: number | null;
+  /** Today is the day's usage; nil before the first read. */
+  today: Today | null;
   /**
    * Sample is debug builds only: the toys play the sample conversations
    * instead.
@@ -970,6 +971,19 @@ export type TerminalClient = "claude" | "codex";
 
 /** ThemePreference is the theme the user chose. */
 export type ThemePreference = "system" | "light" | "dark";
+
+/** Today is the day's usage the pet shows and celebrates. */
+export interface Today {
+  tokens: number;
+  /**
+   * Hours are the tokens of each local hour, 0 to 23; empty when the
+   * summary had none.
+   */
+  hours: number[];
+  /** Model and Client used the most tokens; nil when unknown. */
+  model: string | null;
+  client: string | null;
+}
 
 /** Tool is an agent tool whose config files the import reads. */
 export type Tool = "claude" | "codex" | "pi";

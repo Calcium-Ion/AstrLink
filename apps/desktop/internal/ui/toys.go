@@ -32,7 +32,7 @@ func (a *App) startToys(ctx context.Context) {
 			activity, err := control.Records{API: api}.GetRequestActivity(ctx, since)
 			return activity, err == nil
 		},
-		Tokens: func(ctx context.Context) (*int64, bool) {
+		Today: func(ctx context.Context) (*toys.Today, bool) {
 			windows := localWindowsAt(time.Now(), localTimeZone())
 			raw, err := control.Usage{API: api}.GetUsageSummary(ctx, windows.todayFrom, windows.todayTo, windows.timeZone, "hour")
 			if err != nil {
@@ -42,10 +42,7 @@ func (a *App) startToys(ctx context.Context) {
 			if !ok {
 				return nil, true
 			}
-			if totals := totalsFrom(summary); totals != nil {
-				return &totals.TotalTokens, true
-			}
-			return nil, true
+			return todayFrom(summary), true
 		},
 		ConfigDir: a.h.Directories().Config,
 		Debug:     mygo.IsDev(),
@@ -53,6 +50,37 @@ func (a *App) startToys(ctx context.Context) {
 	})
 	a.toys.Store(runtime)
 	go runtime.Apply()
+}
+
+// todayFrom is the day's usage in a usage summary for today, or nil
+// without its totals.
+func todayFrom(summary object) *toys.Today {
+	totals := totalsFrom(summary)
+	if totals == nil {
+		return nil
+	}
+	today := &toys.Today{Tokens: totals.TotalTokens, Hours: hourlyFrom(summary)}
+	if top := topGroup(summary, totals.TotalTokens); top != nil {
+		today.Model = &top.Name
+	}
+	today.Client = topClient(summary)
+	return today
+}
+
+// topClient is the client that used the most tokens, or nil when
+// unknown clients did or nothing was used.
+func topClient(summary object) *string {
+	groups, ok := field[[]object](summary, "by_client")
+	if !ok || len(groups) == 0 {
+		return nil
+	}
+	if tokens, _ := field[int64](groups[0], "total_tokens"); tokens <= 0 {
+		return nil
+	}
+	if id, ok := field[string](groups[0], "id"); ok && id != "" && id != "unknown" {
+		return &id
+	}
+	return nil
 }
 
 func (a *App) toyPrefs() toys.Prefs {

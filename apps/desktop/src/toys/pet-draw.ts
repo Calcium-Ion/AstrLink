@@ -4,8 +4,18 @@
 // costs little to draw.
 import { drawPixels, pixStar, tintOf, type Pen } from "../live-crew-draw";
 import type { CrewMember } from "../live-crew-model";
-import { ORB_SCALE, type PetBrain } from "./pet-brain";
-import { badgesOf, gearRise } from "./pet-gear";
+import {
+  coffeePose,
+  lensPose,
+  notePose,
+  readPose,
+  standPose,
+  thinkPose,
+  typePose,
+} from "../live-crew-poses";
+import { drawGirl, plainLook, type Look, type Pose } from "../live-crew-rig";
+import { HANG, ORB_SCALE, TALL, U, type PetBrain } from "./pet-brain";
+import { badgesOf, gearOf, gearRise } from "./pet-gear";
 import {
   bobOf,
   build,
@@ -16,16 +26,23 @@ import {
   type Face,
   type Kit,
 } from "./pet-kit";
+import {
+  danglePose,
+  dozePose,
+  gladPose,
+  greetPose,
+  stretchPose,
+} from "./pet-poses";
 import { cfg, motion } from "./toy-config";
 import { DPR, pace, throughput, waving, type Board } from "./toy-kit";
 import { HIDDEN } from "./toy-words";
 
 /** How much of the screen the canvases cover around her, in points. */
 export const BOX = { w: 640, h: 600 } as const;
-/** Room in the box for her from her soles up, at the largest size. */
-const TALL = 178;
 /** Room over her head in the box: hearts, confetti, a snore. */
 const HEADROOM = 300;
+/** Every girl keeps her own beat in the shared poses; hers is fixed. */
+const SEED = 7;
 
 const HEART = [
   ".XX.XX.",
@@ -42,7 +59,7 @@ const VEIN = [".R.R.", "RR.RR", ".....", "RR.RR", ".R.R."];
 export function boxAt(x: number, foot: number) {
   return {
     x: Math.round(x - BOX.w / 2),
-    y: Math.round(foot - TALL - HEADROOM),
+    y: Math.round(foot - TALL * U - HEADROOM),
   };
 }
 
@@ -109,6 +126,32 @@ function cloud(pen: Pen, x: number, y: number, t: number, face: number) {
 /** A cup now and then while she waits. */
 const coffee = (t: number) => Math.floor(t / 9) % 3 === 1;
 
+/** What she is doing as a whole-body pose of the shape rig, and how many fine cells it lifts her. */
+export function poseOf(
+  brain: PetBrain,
+  act: string | undefined,
+  pen: Pen,
+): { pose: Pose; lift: number } {
+  const p = pen.palette;
+  const t = brain.t;
+  const flat = { lift: 0 };
+  if (brain.mode === "held" || brain.mode === "fly")
+    return { ...flat, pose: danglePose(t) };
+  if (brain.stretch > 0) return { ...flat, pose: stretchPose() };
+  if (brain.hop > 0 && brain.hopBig) return { ...flat, pose: gladPose() };
+  if (brain.wave > 0) return { ...flat, pose: greetPose(t) };
+  if (brain.sleeping) return { ...flat, pose: dozePose(t, true) };
+  if (act === "write" || act === "bash")
+    return { ...flat, pose: typePose(t, SEED, p, true) };
+  if (act === "read") return { ...flat, pose: readPose(t, SEED, p) };
+  if (act === "edit") return { ...flat, pose: notePose(t, SEED, p) };
+  if (act === "search") return { ...flat, pose: lensPose(t, SEED, p) };
+  if (act === "think") return { ...flat, pose: thinkPose(t, SEED, true) };
+  if (act === "wait" && !brain.busyFace() && coffee(t))
+    return { ...flat, pose: coffeePose(t, SEED, p).pose };
+  return { ...flat, pose: standPose(t, SEED, true) };
+}
+
 /** What she is doing, as the clip of her drawn picture to play. */
 export function actOf(brain: PetBrain, act: string | undefined): string {
   if (brain.mode === "held" || brain.mode === "fly") return "held";
@@ -142,6 +185,42 @@ export function moodOf(brain: PetBrain): Face | null {
   const p = brain.pointer;
   if (p && brain.floating() && brain.hitBody(p.x, p.y)) return "happy";
   return null;
+}
+
+/** Her face: the pose's own, turned to the mouse and to whatever just happened. */
+export function lookOf(
+  brain: PetBrain,
+  base: Look | undefined,
+  act: string | undefined,
+  top: number,
+  face: 1 | -1,
+): Look {
+  const look = { ...(base ?? plainLook()) };
+  const p = brain.pointer;
+  const near = act && act !== "wait" ? 260 : 700;
+  if (p && Math.hypot(p.x - brain.x, p.y - (top + 80)) < near) {
+    // The rig's glance is toward the side she faces, not the screen's.
+    look.lx =
+      Math.abs(p.x - brain.x) > 30 ? Math.sign(p.x - brain.x) * face : 0;
+    look.ly = p.y < top + 20 ? -1 : p.y > top + 160 ? 1 : 0;
+    look.wink = false;
+  }
+  if (brain.blink > 0) look.eyes = "closed";
+  if (brain.pat > 0 || brain.wave > 0 || brain.whim?.face === "happy")
+    look.eyes = "happy";
+  // Sulking, she shuts her eyes even at good news.
+  if (brain.sleeping || brain.pout > 0) look.eyes = "closed";
+  if (brain.dizzy > 0) look.eyes = "dizzy";
+  if (brain.pat > 0 || brain.wave > 0) look.mouth = "smile";
+  if (
+    brain.bang > 0 ||
+    brain.mode === "held" ||
+    brain.mode === "fly" ||
+    brain.dizzy > 0
+  )
+    look.mouth = "o";
+  look.blush = Math.max(look.blush, brain.blush);
+  return look;
 }
 
 /**
@@ -219,8 +298,6 @@ function orbViews(brain: PetBrain): CrewMember[] {
       slip: 0,
       jump: 0,
       climb: false,
-      // She has no door to queue at: every orb shows at once.
-      waiting: false,
       alpha: 1,
       orb: {
         x: o.x / ORB_SCALE,
@@ -273,6 +350,56 @@ function drawnFigure(
   };
 }
 
+/** The shape rig's girl, for clients without a drawn picture yet. */
+function riggedFigure(
+  brain: PetBrain,
+  pen: Pen,
+  act: string | undefined,
+  face: 1 | -1,
+  swing: number,
+  hopLift: number,
+): Figure {
+  const chosen = poseOf(brain, act, pen);
+  const lift = hopLift + (chosen.lift * U) / 1.5;
+  const top = brain.top(brain.feet()) - lift;
+  const stage = brain.stage();
+  // Floating, her legs hang from her seat with her soles on her foot line.
+  const perch = Boolean(chosen.pose.sit);
+  const pose: Pose = {
+    ...chosen.pose,
+    perch,
+    look: lookOf(brain, chosen.pose.look, act, top, face),
+    onHead: gearOf(stage),
+    key: `${chosen.pose.key ?? ""}|gear${stage}`,
+  };
+  if (swing && !pose.legs)
+    pose.legs = (
+      [
+        [1, 0],
+        [0, 0],
+        [0, 1],
+        [0, 0],
+      ] as const
+    )[Math.floor(brain.t * swing) % 4];
+  return {
+    lift,
+    sig: [
+      { ...pose, props: 0, held: 0, over: 0, onHead: 0 },
+      pose.look && pose.look.blush > 0.5,
+    ],
+    draw: (pen, x, foot) =>
+      drawGirl(
+        pen,
+        brain.client,
+        x,
+        foot - (perch ? HANG * U : 0),
+        U,
+        face,
+        pose,
+      ).near,
+  };
+}
+
 export interface Painted {
   /** The box the canvases cover, in screen points. */
   box: { x: number; y: number };
@@ -302,8 +429,9 @@ export function paint(
   const box = boxAt(brain.x, foot);
   const pen = b.pen;
   const p = pen.palette;
+  const kit = kitOf(brain.client);
   // Floating, she rises and falls a pixel or two; a hop goes on top of it.
-  const bob = brain.floating() ? bobOf(brain.t) * kitPx() : 0;
+  const bob = brain.floating() ? bobOf(brain.t) * (kit ? kitPx() : 1.5) : 0;
   const hopLift =
     bob +
     (brain.hop > 0
@@ -323,13 +451,9 @@ export function paint(
     (!act || act === "wait" || act === "think") &&
     !brain.sleeping &&
     brain.dizzy <= 0;
-  const figure = drawnFigure(
-    brain,
-    brain.kit(),
-    act,
-    swing ? kick : 0,
-    hopLift,
-  );
+  const figure = kit
+    ? drawnFigure(brain, kit, act, swing ? kick : 0, hopLift)
+    : riggedFigure(brain, pen, act, face, swing ? kick : 0, hopLift);
   const top = brain.top(foot) - figure.lift;
   const half = brain.half();
   const chipY = top - 16 - gearRise(stage);

@@ -68,6 +68,65 @@
   color: var(--text-secondary);
 }
 
+/* The day's summary: its lines, then a bar for each hour. */
+.toy-pet-bubble[data-day="true"] {
+  width: max-content;
+  max-width: 320px;
+  gap: 3px;
+  padding: 10px 16px 11px;
+}
+
+.toy-pet-day {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 3px 0 0;
+  padding: 6px 0 0;
+  border-top: 1px dashed var(--border);
+  color: var(--text-secondary);
+  font-size: 12px;
+  list-style: none;
+}
+
+.toy-pet-hours {
+  display: flex;
+  width: 100%;
+  min-width: 200px;
+  height: 22px;
+  align-items: flex-end;
+  gap: 1px;
+  margin: 4px 0 5px;
+}
+
+.toy-pet-hours i {
+  position: relative;
+  min-width: 0;
+  flex: 1;
+  border-radius: 1px;
+  background: var(--border);
+}
+
+.toy-pet-hours i[data-at="used"] {
+  background: color-mix(in srgb, var(--primary) 40%, transparent);
+}
+
+.toy-pet-hours i[data-at="peak"] {
+  background: var(--primary);
+}
+
+/* The hour now: a dot under its bar. */
+.toy-pet-hours i[data-now]::after {
+  position: absolute;
+  bottom: -5px;
+  left: 50%;
+  width: 3px;
+  height: 3px;
+  margin-left: -1.5px;
+  border-radius: 50%;
+  background: var(--primary);
+  content: "";
+}
+
 .toy-pet-bubble a {
   margin-top: 2px;
   color: var(--primary);

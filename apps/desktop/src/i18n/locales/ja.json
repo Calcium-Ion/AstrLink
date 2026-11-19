@@ -6107,6 +6107,14 @@
       "today_other": "今日の返信 {{count}} 回",
       "pats_one": "なでた回数 {{count}} 回",
       "pats_other": "なでた回数 {{count}} 回",
+      "day": {
+        "none": "今日はまだ返信が終わっていません",
+        "passed": "{{time}} に {{amount}} トークン突破 ✨",
+        "next": "{{target}} まで あと {{amount}}",
+        "peak": "{{from}}〜{{to}} 時がいちばん忙しく {{amount}}",
+        "busiest": "{{name}} がいちばん働きもの、おもに {{model}}",
+        "model": "おもに {{model}}"
+      },
       "poked": "つつかないで",
       "menu": {
         "pat": "頭をなでる",

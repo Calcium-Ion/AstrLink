@@ -6107,6 +6107,14 @@
       "today_other": "今天写完 {{count}} 次回复",
       "pats_one": "摸了 {{count}} 次头",
       "pats_other": "摸了 {{count}} 次头",
+      "day": {
+        "none": "今天还没有写完的回复",
+        "passed": "{{time}} 冲过了 {{amount}} Token ✨",
+        "next": "离 {{target}} 还差 {{amount}}",
+        "peak": "{{from}}–{{to}} 点最忙，用了 {{amount}}",
+        "busiest": "{{name}} 最勤快，主要在用 {{model}}",
+        "model": "主要在用 {{model}}"
+      },
       "poked": "别戳啦",
       "menu": {
         "pat": "摸摸头",

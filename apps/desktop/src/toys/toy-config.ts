@@ -28,6 +28,6 @@ export const cfg: { prefs: DesktopToysPreferences } = {
 
 export const motion = (): Motion => MOTION[cfg.prefs.level];
 
-/** Must match the labels in `src-tauri/src/toys.rs`. */
+/** Must match the labels in `internal/toys`. */
 export const TOY_LABELS = { pet: "toy-pet" } as const;
 export type ToyLabel = (typeof TOY_LABELS)[keyof typeof TOY_LABELS];

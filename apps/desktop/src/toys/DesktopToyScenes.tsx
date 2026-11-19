@@ -15,6 +15,7 @@ import { cn } from "@/lib/utils";
 import type { ClientType } from "../request-record-model";
 import { ORB_SCALE, PetBrain, type Bubble } from "./pet-brain";
 import { fitBox, paint, type PaintCache } from "./pet-draw";
+import { BubbleParts, fillBubble } from "./PetBubble";
 import { petWords } from "./pet-words";
 import { cfg } from "./toy-config";
 import {
@@ -168,14 +169,7 @@ export function PetScene() {
         }
         if (head !== shown) {
           shown = head;
-          const words = petWords(head.say);
-          const [title, text, action] =
-            bubble.children as unknown as HTMLElement[];
-          title.textContent = words.title;
-          text.textContent = words.text;
-          text.hidden = !words.text;
-          action.textContent = words.action ?? "";
-          action.hidden = !words.action;
+          fillBubble(bubble, petWords(head.say));
         }
         // Beside her head, so even the large size fits the picture.
         bubble.style.left = `${brain.x - brain.half() - 4}px`;
@@ -200,9 +194,7 @@ export function PetScene() {
       <canvas className="absolute top-0 left-0" ref={petRef} />
       <canvas className="absolute top-0 left-0" ref={orbRef} />
       <div className="toy-pet-bubble" data-side="left" hidden ref={bubbleRef}>
-        <b />
-        <span />
-        <a />
+        <BubbleParts />
       </div>
     </div>
   );

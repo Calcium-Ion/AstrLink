@@ -7,7 +7,33 @@ import type {
   CrewMember,
   CrewWalker,
 } from "./live-crew-model";
-import { crownOf, SKIN, spriteOf } from "./live-crew-sprites";
+import {
+  blueprintPose,
+  carryPose,
+  cheerPose,
+  climbPose,
+  coffeePose,
+  hammerPose,
+  lyingPose,
+  penmarkPose,
+  readPose,
+  scopePose,
+  scribblePose,
+  seedOf,
+  standPose,
+  thinkPose,
+  typePose,
+  walkPose,
+  wrenchPose,
+} from "./live-crew-poses";
+import {
+  drawGirl,
+  hardHat,
+  isGirl,
+  unitPx,
+  type Pose as GirlPose,
+} from "./live-crew-rig";
+import { crownOf, spriteOf } from "./live-crew-sprites";
 import type { ClientType } from "./request-record-model";
 import { clientSeriesSlot } from "./series-colors";
 
@@ -846,24 +872,74 @@ export function figureOf(
   return figure;
 }
 
-const widthOf = (figure: Figure) => spriteOf(figure.client).rows[0].length;
+const widthOf = (figure: Figure) => spriteOf(figure.client).w;
 
-/** The sleeve color: a girl's own, a critter's from its tint. */
-function armColor(palette: CrewPalette, client: ClientType): string {
-  return spriteOf(client).arm ?? tintOf(palette, client).arm;
+/** Where an act's seed comes from: each clone on its own beat. */
+const seedFor = (ch: Figure) =>
+  seedOf(`${ch.client}${(ch as { id?: string }).id ?? ""}`);
+
+/** Logical px of a girl's pose lift, given in fine cells. */
+const lifted = (ch: Figure, cells: number) => (cells * ch.u) / 1.5;
+
+/** Draws a musume in a pose, `lift` px up; returns where her hands are. */
+function girl(pen: Pen, ch: Figure, pose: GirlPose, lift = 0, lie = false) {
+  const p = pen.palette;
+  const worn: GirlPose =
+    ch.hat && !lie
+      ? {
+          ...pose,
+          onHead: [
+            hardHat({
+              color: p.yellow,
+              light: p.yellowLight,
+              dark: mix(p.yellow, p.shade, 0.3),
+            }),
+          ],
+          key: `${pose.key ?? ""}|hat`,
+        }
+      : pose;
+  return drawGirl(
+    pen,
+    ch.client,
+    ch.dx ?? ch.x,
+    ch.fy - lift,
+    ch.u,
+    ch.face,
+    worn,
+    lie,
+  );
 }
+
+/** Logical px of a point on a girl, in her units. */
+const girlAt = (ch: Figure, x: number, y: number, lift = 0) =>
+  unitPx(ch.dx ?? ch.x, ch.fy - lift, ch.u, ch.face, x, y);
 
 type Pose = "stand" | "sit" | "lie";
 
-/** The body, on its feet (legs: -1 still, 0/1 walking), sitting, or lying. */
+/**
+ * The body, on its feet (walking when given `walk`, the step count), sitting,
+ * or lying.
+ */
 export function body(
   pen: Pen,
   ch: Figure,
-  opt: { lift?: number; legs?: number; sit?: boolean; lie?: boolean } = {},
+  opt: { lift?: number; walk?: number; sit?: boolean; lie?: boolean } = {},
 ) {
+  const lift = opt.lift ?? 0;
+  if (isGirl(ch.client)) {
+    const seed = seedFor(ch);
+    if (opt.lie) girl(pen, ch, lyingPose(ch.t, false), lift, true);
+    else if (opt.walk === undefined || opt.sit)
+      girl(pen, ch, standPose(ch.t, seed, opt.sit), lift);
+    else {
+      const w = walkPose(opt.walk, ch.t, seed);
+      girl(pen, ch, w.pose, lift + lifted(ch, w.lift));
+    }
+    return;
+  }
   const pose: Pose = opt.lie ? "lie" : opt.sit ? "sit" : "stand";
   const legs =
-    pose === "stand" && (opt.legs === 0 || opt.legs === 1) ? opt.legs : -1;
+    pose === "stand" && opt.walk !== undefined ? Math.floor(opt.walk) % 2 : -1;
   const hat = pose !== "lie" && Boolean(ch.hat);
   const face = ch.face > 0 ? 1 : -1;
   const rows = spriteOf(ch.client).rows;
@@ -872,13 +948,13 @@ export function body(
   pen.stamp(
     `body|${ch.client}|${u}|${face}|${hat}|${pose}|${legs}`,
     ch.dx ?? ch.x,
-    ch.fy - (opt.lift ?? 0),
+    ch.fy - lift,
     [-reach, -(rows.length + 5) * u, reach, u],
     (at) => paintBody(at, ch.client, u, face, hat, pose, legs),
   );
 }
 
-/** Draws a body with its feet at the origin, one rect per art pixel. */
+/** Draws a critter with its feet at the origin, one rect per art pixel. */
 function paintBody(
   pen: Pen,
   client: ClientType,
@@ -890,7 +966,7 @@ function paintBody(
 ) {
   const sprite = spriteOf(client);
   const tint = tintOf(pen.palette, client);
-  const colors = sprite.pal ?? (tint as unknown as Record<string, string>);
+  const colors = tint as unknown as Record<string, string>;
   const w = sprite.rows[0].length;
   const h = sprite.rows.length;
   if (pose === "lie") {
@@ -919,16 +995,10 @@ function paintBody(
     pen.rect(-2.5 * u, -u, u / 2 + 1, u, seat);
     pen.rect(2 * u, -u, u / 2 + 1, u, seat);
   }
-  // A girl stands on her own feet: sitting hides them, walking bobs.
-  const crop = sit ? sprite.crop : 0;
-  const rows = crop ? sprite.rows.slice(0, h - crop) : sprite.rows;
-  const legRow = sit || sprite.feet ? 0 : 2;
-  const bob = sprite.feet && legs === 1 ? u : 0;
+  const legRow = sit ? 0 : 2;
   const ox = -(w * u) / 2;
-  const oy = -(rows.length + legRow) * u - (sit ? u : 0) - bob;
-  // Cells at 1.5 px land on whole device pixels only unrounded: the pen
-  // snaps each edge, so neighbours meet without a seam.
-  rows.forEach((row, r) => {
+  const oy = -(h + legRow) * u - (sit ? u : 0);
+  sprite.rows.forEach((row, r) => {
     for (let q = 0; q < row.length; q += 1) {
       const value = row[q];
       if (value === ".") continue;
@@ -942,51 +1012,40 @@ function paintBody(
     }
   });
   if (hat) {
-    const half = sprite.feet ? Math.round(w * 0.32) : 4;
-    const top = Math.round(oy + (sprite.hatTop - 2) * u);
-    pen.rect(-half * u, top, half * 2 * u, 2 * u, pen.palette.yellow);
-    pen.rect(
-      -(half + 1) * u,
-      top + 2 * u,
-      (half + 1) * 2 * u,
-      u,
-      pen.palette.yellow,
-    );
+    const top = Math.round(oy - 2 * u);
+    pen.rect(-4 * u, top, 8 * u, 2 * u, pen.palette.yellow);
+    pen.rect(-5 * u, top + 2 * u, 10 * u, u, pen.palette.yellow);
   }
-  if (!sit && !sprite.feet) {
+  if (!sit) {
     [-3 * u, 2 * u].forEach((leg, n) =>
       pen.rect(leg, -2 * u, u, legs === n ? u : 2 * u, tint.legs),
     );
   }
 }
 
-/**
- * A hand at (dx past the body edge, dy up from the feet). Poses are written
- * for an 11-row critter; taller sprites reach proportionally higher.
- */
+/** A critter's hand at (dx past the body edge, dy up from the feet). */
 export function handAt(ch: Figure, dx: number, dy: number): [number, number] {
   return [
     (ch.dx ?? ch.x) + ch.face * ((widthOf(ch) / 2) * ch.u + dx * ch.u),
-    ch.fy - dy * spriteOf(ch.client).reach * ch.u,
+    ch.fy - dy * ch.u,
   ];
 }
 
-/** Draws the arm out to a hand and returns where the hand is. */
+/** Draws a critter's arm out to a hand and returns where the hand is. */
 export function arm(
   pen: Pen,
   ch: Figure,
   dx: number,
   dy: number,
 ): [number, number] {
-  const sprite = spriteOf(ch.client);
   const [x, y] = handAt(ch, dx, dy);
   const u = ch.u;
   const root = (ch.dx ?? ch.x) + ch.face * ((widthOf(ch) / 2 - 1) * u);
-  const color = armColor(pen.palette, ch.client);
+  const color = tintOf(pen.palette, ch.client).arm;
   const lo = Math.min(root, x);
   const hi = Math.max(root, x);
   pen.rect(Math.round(lo), Math.round(y), Math.round(hi - lo + u), u, color);
-  const ry = ch.fy - sprite.shoulder * u;
+  const ry = ch.fy - 5 * u;
   pen.rect(
     Math.round(root),
     Math.round(Math.min(y, ry)),
@@ -994,26 +1053,49 @@ export function arm(
     Math.round(Math.abs(y - ry) + u),
     color,
   );
-  if (sprite.feet) pen.rect(Math.round(x), Math.round(y), u, u, SKIN);
   return [x, y];
 }
 
-/** What a character does at a station. */
+/**
+ * What a character does at a station. A musume takes a whole-body pose from
+ * `live-crew-poses`; a critter waves a stub arm.
+ */
 export const Act = {
+  /** At a keyboard at her side. */
   type(pen: Pen, ch: Figure) {
+    if (isGirl(ch.client))
+      return void girl(
+        pen,
+        ch,
+        typePose(ch.t, seedFor(ch), pen.palette, false),
+      );
     body(pen, ch, { sit: true });
     const k = Math.floor(ch.t * 5) % 2;
     arm(pen, ch, 2 + k, 3 + k * 0.5);
     arm(pen, ch, 4 - k, 3 + (1 - k) * 0.5);
   },
+  /** At a bench, or (`low`) on a crate at her feet. */
   hammer(
     pen: Pen,
     ch: Figure,
     fx: Pixel[],
     rand: () => number,
     onHit?: () => void,
+    low = false,
   ) {
-    body(pen, ch, { legs: -1 });
+    const strike = (x: number, y: number) => {
+      if (ch.hit === Math.floor(ch.t) || pen.dt <= 0) return;
+      ch.hit = Math.floor(ch.t);
+      spawn(fx, rand, x, y, 7, "yellow", 90, 60, 0.45, 3);
+      onHit?.();
+    };
+    if (isGirl(ch.client)) {
+      const h = hammerPose(ch.t, seedFor(ch), pen.palette, low);
+      girl(pen, ch, h.pose);
+      if (h.strike) strike(...girlAt(ch, h.head.x, h.head.y));
+      return;
+    }
+    body(pen, ch);
     const f = Math.floor(ch.t * 4) % 4;
     const pose = (
       [
@@ -1040,29 +1122,36 @@ export const Act = {
       2 * u,
       pen.palette.steel,
     );
-    if (f === 2 && ch.hit !== Math.floor(ch.t) && pen.dt > 0) {
-      ch.hit = Math.floor(ch.t);
-      spawn(fx, rand, x + ch.face * 2 * u, y + u, 7, "yellow", 90, 60, 0.45, 3);
-      onHit?.();
-    }
+    if (f === 2) strike(x + ch.face * 2 * u, y + u);
   },
   wrench(pen: Pen, ch: Figure, fx: Pixel[], rand: () => number) {
-    body(pen, ch, { legs: -1 });
-    const a = ch.t * 2.6;
-    const [x, y] = arm(pen, ch, 2 + Math.cos(a) * 1.5, 6 + Math.sin(a) * 1.5);
-    const u = ch.u;
-    pen.rect(Math.round(x), Math.round(y - u), 3 * u, u, pen.palette.slate);
-    pen.rect(
-      Math.round(x + 2 * u),
-      Math.round(y - 2 * u),
-      u,
-      3 * u,
-      pen.palette.slate,
-    );
+    let x: number;
+    let y: number;
+    if (isGirl(ch.client)) {
+      const w = wrenchPose(ch.t, seedFor(ch), pen.palette);
+      girl(pen, ch, w.pose);
+      [x, y] = girlAt(ch, w.tip.x, w.tip.y);
+    } else {
+      body(pen, ch);
+      const a = ch.t * 2.6;
+      [x, y] = arm(pen, ch, 2 + Math.cos(a) * 1.5, 6 + Math.sin(a) * 1.5);
+      const u = ch.u;
+      pen.rect(Math.round(x), Math.round(y - u), 3 * u, u, pen.palette.slate);
+      pen.rect(
+        Math.round(x + 2 * u),
+        Math.round(y - 2 * u),
+        u,
+        3 * u,
+        pen.palette.slate,
+      );
+      x += 3 * u;
+    }
     if (pen.chance(rand, 0.08))
-      spawn(fx, rand, x + 3 * u, y, 3, "yellow", 80, 40, 0.4, 2);
+      spawn(fx, rand, x, y, 3, "yellow", 80, 40, 0.4, 2);
   },
   read(pen: Pen, ch: Figure) {
+    if (isGirl(ch.client))
+      return void girl(pen, ch, readPose(ch.t, seedFor(ch), pen.palette));
     const nod = Math.floor(ch.t * 1.2) % 2;
     body(pen, ch, { sit: true, lift: nod });
     const [x, y] = arm(pen, ch, 2, 5);
@@ -1091,7 +1180,9 @@ export const Act = {
     }
   },
   blueprint(pen: Pen, ch: Figure) {
-    body(pen, ch, { legs: -1 });
+    if (isGirl(ch.client))
+      return void girl(pen, ch, blueprintPose(ch.t, seedFor(ch), pen.palette));
+    body(pen, ch);
     const [x, y] = arm(pen, ch, 1, 6);
     const u = ch.u;
     const bx = x + (ch.face > 0 ? 0 : -11 * u);
@@ -1116,16 +1207,28 @@ export const Act = {
     );
   },
   scope(pen: Pen, ch: Figure) {
+    if (isGirl(ch.client)) {
+      const s = scopePose(ch.t, pen.palette);
+      return void girl(pen, ch, s.pose, lifted(ch, s.lift));
+    }
     const tip = Math.floor(ch.t * 1.5) % 2;
-    body(pen, ch, { legs: -1, lift: tip * 2 });
+    body(pen, ch, { lift: tip * 2 });
     arm(pen, ch, 0.5, 8 + tip * 0.5);
   },
   think(pen: Pen, ch: Figure, sit = true) {
-    body(pen, ch, { sit, legs: -1 });
+    if (isGirl(ch.client))
+      return void girl(pen, ch, thinkPose(ch.t, seedFor(ch), sit));
+    body(pen, ch, { sit });
     arm(pen, ch, -0.5, 5 + (Math.floor(ch.t * 1.2) % 2) * 0.5);
   },
   scribble(pen: Pen, ch: Figure) {
-    body(pen, ch, { legs: -1 });
+    if (isGirl(ch.client))
+      return void girl(
+        pen,
+        ch,
+        scribblePose(ch.t, seedFor(ch), pen.palette).pose,
+      );
+    body(pen, ch);
     const sweep = Math.sin(ch.t * 2.4) * 2.5 + 4;
     const [x, y] = arm(pen, ch, sweep, 9 + Math.sin(ch.t * 6) * 1.2);
     pen.rect(
@@ -1137,6 +1240,8 @@ export const Act = {
     );
   },
   penmark(pen: Pen, ch: Figure) {
+    if (isGirl(ch.client))
+      return void girl(pen, ch, penmarkPose(ch.t, seedFor(ch), pen.palette));
     body(pen, ch, { sit: true });
     const sweep = Math.sin(ch.t * 2.2) * 2 + 3;
     const [x, y] = arm(pen, ch, sweep, 4 + Math.sin(ch.t * 7) * 0.5);
@@ -1149,29 +1254,37 @@ export const Act = {
     );
   },
   coffee(pen: Pen, ch: Figure, fx: Pixel[], rand: () => number) {
-    body(pen, ch, { sit: true });
-    const ph = (ch.t % 3.2) / 3.2;
-    const up = ph > 0.65;
-    const [x, y] = arm(pen, ch, up ? -1 : 1.5, up ? 7 : 4);
-    const u = ch.u;
-    pen.rect(
-      Math.round(x),
-      Math.round(y - 2 * u),
-      3 * u,
-      3 * u,
-      pen.palette.paper,
-    );
-    pen.rect(
-      Math.round(x + u / 2),
-      Math.round(y - 2 * u),
-      2 * u,
-      u,
-      pen.palette.wood,
-    );
-    if (!up && pen.chance(rand, 0.05)) {
+    let steam: [number, number] | null = null;
+    if (isGirl(ch.client)) {
+      const c = coffeePose(ch.t, seedFor(ch), pen.palette);
+      girl(pen, ch, c.pose);
+      if (c.steam) steam = girlAt(ch, c.steam.x, c.steam.y);
+    } else {
+      body(pen, ch, { sit: true });
+      const ph = (ch.t % 3.2) / 3.2;
+      const up = ph > 0.65;
+      const [x, y] = arm(pen, ch, up ? -1 : 1.5, up ? 7 : 4);
+      const u = ch.u;
+      pen.rect(
+        Math.round(x),
+        Math.round(y - 2 * u),
+        3 * u,
+        3 * u,
+        pen.palette.paper,
+      );
+      pen.rect(
+        Math.round(x + u / 2),
+        Math.round(y - 2 * u),
+        2 * u,
+        u,
+        pen.palette.wood,
+      );
+      if (!up) steam = [x + u, y - 3 * u];
+    }
+    if (steam && pen.chance(rand, 0.05)) {
       fx.push({
-        x: x + u,
-        y: y - 3 * u,
+        x: steam[0],
+        y: steam[1],
         vx: 0,
         vy: -16,
         t: 0,
@@ -1184,17 +1297,21 @@ export const Act = {
   sleep(pen: Pen, ch: Figure) {
     body(pen, ch, { lie: true, lift: Math.floor(ch.t * 1.1) % 2 });
   },
+  /** A hop. */
   celebrate(pen: Pen, ch: Figure) {
     const lift = Math.sin((ch.jump ?? 0) * Math.PI) * 24;
-    body(pen, ch, { lift, legs: -1 });
+    if (isGirl(ch.client)) return void girl(pen, ch, cheerPose(lift > 6), lift);
+    body(pen, ch, { lift });
+    // The hands rise with the body.
     const [ax, ay] = handAt(ch, 0, 9 + lift / ch.u);
-    const bx = (ch.dx ?? ch.x) - ch.face * (widthOf(ch) / 2) * ch.u;
-    const color = armColor(pen.palette, ch.client);
+    const bx = 2 * (ch.dx ?? ch.x) - ax;
+    const color = tintOf(pen.palette, ch.client).arm;
     pen.rect(Math.round(ax), Math.round(ay), ch.u, 3 * ch.u, color);
     pen.rect(Math.round(bx), Math.round(ay), ch.u, 3 * ch.u, color);
   },
   slip(pen: Pen, ch: Figure) {
-    body(pen, ch, { lie: true });
+    if (isGirl(ch.client)) girl(pen, ch, lyingPose(pen.T, true), 0, true);
+    else body(pen, ch, { lie: true });
     const a = pen.T * 7;
     const cy = ch.fy - 36;
     for (let n = 0; n < 3; n += 1) {
@@ -1206,6 +1323,46 @@ export const Act = {
         pen.palette.yellow,
       );
     }
+  },
+  /** Climbing a ladder, hand over hand. */
+  climb(pen: Pen, ch: Figure) {
+    if (isGirl(ch.client)) return void girl(pen, ch, climbPose(ch.walk));
+    body(pen, ch, { walk: ch.walk });
+    const rung = Math.floor(ch.walk) % 2 ? -1 : 1;
+    const x = ch.dx ?? ch.x;
+    const sleeve = tintOf(pen.palette, ch.client).arm;
+    pen.rect(
+      Math.round(x - 28),
+      Math.round(ch.fy - 30 + rung * 3),
+      8,
+      4,
+      sleeve,
+    );
+    pen.rect(
+      Math.round(x + 20),
+      Math.round(ch.fy - 30 - rung * 3),
+      8,
+      4,
+      sleeve,
+    );
+  },
+  /**
+   * Carrying something in front, walking (`walk` counts steps) or standing;
+   * `load` draws it at the hand.
+   */
+  carry(
+    pen: Pen,
+    ch: Figure,
+    walk: number | undefined,
+    load: (x: number, y: number) => void,
+  ) {
+    if (isGirl(ch.client)) {
+      const c = carryPose(walk ?? 0, walk !== undefined);
+      const hands = girl(pen, ch, c.pose, lifted(ch, c.lift));
+      return load(...hands.near);
+    }
+    body(pen, ch, { walk });
+    load(...arm(pen, ch, 1, 5));
   },
 };
 
@@ -1480,53 +1637,23 @@ export function drawCrew(
       else if (clone.phase === "work" && clone.act === "read")
         Act.read(pen, small);
       else if (clone.phase === "work") Act.scope(pen, small);
-      else {
-        body(pen, small, {
-          legs:
-            clone.act === "wait" && clone.phase === "go"
-              ? -1
-              : Math.floor(clone.walk) % 2,
+      else if (clone.phase === "back")
+        Act.carry(pen, small, clone.walk, (x, y) => {
+          pen.rect(Math.round(x - 5), Math.round(y - 6), 10, 8, p.box);
+          pen.rect(Math.round(x - 5), Math.round(y - 3), 10, 2, p.wood);
         });
-        if (clone.phase === "back") {
-          pen.rect(
-            Math.round(clone.x - 5),
-            Math.round(clone.fy - 34),
-            10,
-            8,
-            p.box,
-          );
-          pen.rect(
-            Math.round(clone.x - 5),
-            Math.round(clone.fy - 31),
-            10,
-            2,
-            p.wood,
-          );
-        }
-      }
+      else
+        body(pen, small, {
+          walk:
+            clone.act === "wait" && clone.phase === "go"
+              ? undefined
+              : clone.walk,
+        });
     }
     if (member.slip > 0) Act.slip(pen, ch);
     else if (member.jump > 0) Act.celebrate(pen, ch);
-    else if (member.climb) {
-      body(pen, ch, { legs: Math.floor(member.walk) % 2 });
-      const rung = Math.floor(member.walk) % 2 ? -1 : 1;
-      const sleeve = armColor(p, member.client);
-      pen.rect(
-        Math.round(member.x - 28),
-        Math.round(member.fy - 30 + rung * 3),
-        8,
-        4,
-        sleeve,
-      );
-      pen.rect(
-        Math.round(member.x + 20),
-        Math.round(member.fy - 30 - rung * 3),
-        8,
-        4,
-        sleeve,
-      );
-    } else if (!member.arrived)
-      body(pen, ch, { legs: Math.floor(member.walk) % 2 });
+    else if (member.climb) Act.climb(pen, ch);
+    else if (!member.arrived) body(pen, ch, { walk: member.walk });
     else stage.perform(pen, member);
     drawOrb(pen, member, marks);
     const working =

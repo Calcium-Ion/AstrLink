@@ -81,10 +81,22 @@ func (p Prefs) MarshalJSON() ([]byte, error) {
 // Feed is the activity every toy window reads.
 type Feed struct {
 	Activity json.RawMessage `json:"activity"`
-	Tokens   *int64          `json:"tokens"`
+	// Today is the day's usage; nil before the first read.
+	Today *Today `json:"today"`
 	// Sample is debug builds only: the toys play the sample conversations
 	// instead.
 	Sample bool `json:"sample"`
+}
+
+// Today is the day's usage the pet shows and celebrates.
+type Today struct {
+	Tokens int64 `json:"tokens"`
+	// Hours are the tokens of each local hour, 0 to 23; empty when the
+	// summary had none.
+	Hours []int64 `json:"hours"`
+	// Model and Client used the most tokens; nil when unknown.
+	Model  *string `json:"model"`
+	Client *string `json:"client"`
 }
 
 // Snapshot is what a toy's page needs once it has loaded.
@@ -133,8 +145,8 @@ type Deps struct {
 	// Activity reads Core's request activity since an RFC 3339 time; false
 	// while Core is not ready or the read failed.
 	Activity func(ctx context.Context, since string) (json.RawMessage, bool)
-	// Tokens reads today's tokens; false when the read failed.
-	Tokens func(ctx context.Context) (*int64, bool)
+	// Today reads the day's usage; false when the read failed.
+	Today func(ctx context.Context) (*Today, bool)
 	// ConfigDir keeps the pets' screens, and in development the debug
 	// overrides.
 	ConfigDir string
@@ -154,8 +166,8 @@ type Runtime struct {
 
 	mu       sync.Mutex
 	activity json.RawMessage
-	tokens   *int64
-	tokensAt time.Time
+	today    *Today
+	todayAt  time.Time
 	hits     map[string]*hits
 	feeding  bool
 	polling  bool
@@ -366,7 +378,7 @@ func (r *Runtime) reconcile() {
 // Snapshot is what the page of the toy window label needs once loaded.
 func (r *Runtime) Snapshot(label string) Snapshot {
 	r.mu.Lock()
-	s := Snapshot{Feed: Feed{Activity: r.activity, Tokens: r.tokens}}
+	s := Snapshot{Feed: Feed{Activity: r.activity, Today: r.today}}
 	if f, ok := r.frames[label]; ok {
 		s.Frames = &f
 	}
@@ -445,22 +457,22 @@ func (r *Runtime) feedOnce() {
 		return
 	}
 	r.mu.Lock()
-	due := r.tokensAt.IsZero() || now.Sub(r.tokensAt) >= tokensInterval
-	tokens := r.tokens
+	due := r.todayAt.IsZero() || now.Sub(r.todayAt) >= tokensInterval
+	today := r.today
 	r.mu.Unlock()
 	if due {
-		if read, ok := r.deps.Tokens(ctx); ok {
-			tokens = read
+		if read, ok := r.deps.Today(ctx); ok {
+			today = read
 		}
 	}
 	r.mu.Lock()
 	r.activity = activity
 	if due {
-		r.tokens = tokens
-		r.tokensAt = now
+		r.today = today
+		r.todayAt = now
 	}
 	r.mu.Unlock()
-	r.emitToys(FeedEvent, Feed{Activity: activity, Tokens: tokens})
+	r.emitToys(FeedEvent, Feed{Activity: activity, Today: today})
 }
 
 func (r *Runtime) startPoll() {

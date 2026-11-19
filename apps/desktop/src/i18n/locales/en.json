@@ -6107,6 +6107,14 @@
       "today_other": "{{count}} replies written today",
       "pats_one": "patted {{count}} time",
       "pats_other": "patted {{count}} times",
+      "day": {
+        "none": "No replies finished yet today",
+        "passed": "Passed {{amount}} tokens at {{time}} ✨",
+        "next": "{{amount}} to go until {{target}}",
+        "peak": "Busiest {{from}}–{{to}}h, {{amount}} tokens",
+        "busiest": "{{name}} worked hardest, mostly on {{model}}",
+        "model": "Mostly on {{model}}"
+      },
       "poked": "Stop poking!",
       "menu": {
         "pat": "Pat her head",

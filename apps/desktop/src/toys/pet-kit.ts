@@ -74,12 +74,7 @@ const KITS: Partial<Record<ClientType, Kit>> = {
   gemini_cli: gemini as Kit,
 };
 
-/** Whether the client has a drawn girl of its own. */
-export const hasKit = (client: string): client is ClientType =>
-  Object.hasOwn(KITS, client);
-
-export const kitOf = (client: ClientType): Kit | null =>
-  hasKit(client) ? KITS[client]! : null;
+export const kitOf = (client: ClientType): Kit | null => KITS[client] ?? null;
 
 /** Points a grid pixel at each size: 2, 3 and 4 device pixels on Retina. */
 const PX = { small: 1, normal: 1.5, large: 2 } as const;

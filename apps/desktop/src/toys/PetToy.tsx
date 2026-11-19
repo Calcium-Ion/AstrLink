@@ -28,6 +28,7 @@ import {
   type PetMemo,
 } from "./pet-brain";
 import { fitBox, paint, type PaintCache } from "./pet-draw";
+import { BubbleParts, fillBubble } from "./PetBubble";
 import { petWords } from "./pet-words";
 import { cfg } from "./toy-config";
 import {
@@ -243,20 +244,16 @@ class PetView {
     if (head !== this.shown) {
       this.shown = head;
       const words = petWords(head.say);
-      const [title, text, action] = el.children as unknown as HTMLElement[];
-      title.textContent = words.title;
-      text.textContent = words.text;
-      text.hidden = !words.text;
-      action.textContent = words.action ?? "";
-      action.hidden = !words.action;
+      fillBubble(el, words);
       el.dataset.action = String(Boolean(words.action));
     }
     el.hidden = false;
-    // Over her head; floating near the top of the screen, under her feet.
+    // Over her head; when it would not fit above her, under her feet.
     const y = Math.min(top - 10, chipY - 18);
-    const below = y < b.frames.top + 70;
+    const below = y - Math.max(62, el.offsetHeight) < b.frames.top + 8;
     el.dataset.below = String(below);
-    el.style.left = `${clamp(b.x, 150, b.W - 150)}px`;
+    const half = Math.max(150, el.offsetWidth / 2 + 8);
+    el.style.left = `${clamp(b.x, half, b.W - half)}px`;
     el.style.top = `${below ? bottom + 12 : y}px`;
     this.bubbleRect = el.getBoundingClientRect();
     const p = b.pointer;
@@ -373,7 +370,10 @@ export function PetToy() {
   const menuRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<PetView | null>(null);
   const [svgs, setSvgs] = useState<MarkSvgs | null>(null);
+  // The last menu opened stays put while it closes: its fade-out plays
+  // where it was, not at the window's corner.
   const [menu, setMenu] = useState<Menu | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
   const onMarks = useCallback((next: MarkSvgs) => setSvgs(next), []);
 
   useEffect(() => {
@@ -397,6 +397,7 @@ export function PetToy() {
         W: w,
         H: h,
         tokens: () => feed.tokens,
+        today: () => feed.today,
         fx: { pet: pet.fx, orbs: orbs.fx },
         memo: loadMemo(),
       });
@@ -405,7 +406,10 @@ export function PetToy() {
         pet,
         orbs,
         { root, bubble, card, menu: () => menuRef.current },
-        (m) => setMenu(m),
+        (m) => {
+          if (m) setMenu(m);
+          setMenuOpen(Boolean(m));
+        },
       );
       view = started;
       viewRef.current = started;
@@ -460,14 +464,14 @@ export function PetToy() {
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;
-    view.menuOpen = Boolean(menu);
-    if (!menu) {
+    view.menuOpen = menuOpen;
+    if (!menuOpen) {
       view.report();
       return;
     }
     const id = requestAnimationFrame(() => view.report());
     return () => cancelAnimationFrame(id);
-  }, [menu]);
+  }, [menu, menuOpen]);
 
   const brain = () => viewRef.current?.brain;
 
@@ -484,9 +488,7 @@ export function PetToy() {
         hidden
         ref={bubbleRef}
       >
-        <b />
-        <span />
-        <a />
+        <BubbleParts />
       </div>
       <div
         className="pointer-events-none absolute flex -translate-x-1/2 -translate-y-full flex-col gap-0.5 whitespace-nowrap rounded-[10px] bg-card px-3 py-2 text-xs shadow-[0_8px_24px_-8px_rgb(26_42_61/40%)]"
@@ -500,9 +502,9 @@ export function PetToy() {
       <DropdownMenu
         modal={false}
         onOpenChange={(open) => {
-          if (!open) setMenu(null);
+          if (!open) setMenuOpen(false);
         }}
-        open={Boolean(menu)}
+        open={menuOpen}
       >
         <DropdownMenuTrigger asChild>
           <span
