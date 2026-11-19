@@ -42,7 +42,11 @@
         promise,
         (value) => host.later(resolve, value),
         (reason) => {
-          if (rejected) rejected(reason);
+          // rejected only annotates the reason: what it throws must not
+          // keep the relayed promise pending.
+          try {
+            if (rejected) rejected(reason);
+          } catch {}
           host.later(reject, reason);
         },
       );
@@ -89,6 +93,10 @@
       return PromiseClass.reject(error);
     }
     return relay(webFetch(request), (error) => {
+      // An aborted fetch rejects with its signal's reason, which is the
+      // caller's (a DOMException has no writable message), whatever the
+      // transport noted of the request it ended.
+      if (request.signal.aborted && error === request.signal.reason) return;
       const reason = host.failure(id);
       if (reason === undefined || error === null || typeof error !== "object") return;
       if (error.cause === null || typeof error.cause !== "object") error.cause = {};

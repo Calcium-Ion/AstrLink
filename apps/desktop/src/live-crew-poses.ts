@@ -198,7 +198,7 @@ export function hammerPose(
       over: hammer({ x: hx, y: hy }, dx, dy, {
         wood: p.wood,
         steel: p.paleLight,
-        dark: p.steel,
+        shade: p.steel,
       }),
       key: `hammer${f}${low ? "l" : ""}`,
       lean: f === 2 ? 1 : 0,

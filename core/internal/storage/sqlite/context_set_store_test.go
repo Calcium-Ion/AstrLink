@@ -178,7 +178,11 @@ func TestContextSetsGoWithTheLastCallCarryingThem(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t, filepath.Join(t.TempDir(), "context-orphans.db"))
 	defer store.Close()
-	old := time.Now().UTC().AddDate(0, 0, -40)
+	// The sweep cuts the retention window back from now, while the fixture's
+	// calls sit at contextTestStart and age with the calendar. Size the
+	// window so they stay inside it and the aged calls fall past it.
+	retentionDays := int(time.Since(contextTestStart).Hours()/24) + 10
+	old := time.Now().UTC().AddDate(0, 0, -(retentionDays + 10))
 	record := func(id, session, rules string, minute float64) contract.RequestRecord {
 		return contextTestRecord(id, contract.SessionID(session), minute, carriedContext(rules, "fp1_skills"))
 	}
@@ -208,7 +212,7 @@ func TestContextSetsGoWithTheLastCallCarryingThem(t *testing.T) {
 	// The retention sweep takes the aged calls; the set they shared with
 	// newer calls stays.
 	settings := contract.DefaultAuditSettings()
-	settings.MetadataRetentionDays = 30
+	settings.MetadataRetentionDays = retentionDays
 	if err := store.UpdateAuditSettings(ctx, settings); err != nil {
 		t.Fatal(err)
 	}

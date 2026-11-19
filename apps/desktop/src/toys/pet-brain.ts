@@ -7,7 +7,7 @@
 // clock, so tests drive it the same way.
 import type { Pixel } from "../live-crew-draw";
 import { CREW_STAGES, crewGrowth, type CrewMember } from "../live-crew-model";
-import { isGirl } from "../live-crew-rig";
+import { isGirl as isRigGirl } from "../live-crew-rig";
 import { spriteOf } from "../live-crew-sprites";
 import type { ClientType } from "../request-record-model";
 import { gearAt, type Gear } from "./pet-gear";
@@ -106,6 +106,10 @@ export interface HitRect {
   h: number;
   click?: boolean;
 }
+
+/** Clients with a girl: a drawn picture, or else the shape rig's. */
+const isGirl = (client: ClientType) =>
+  kitOf(client) !== null || isRigGirl(client);
 
 /** Today's counts and where she floats, kept across restarts of the window. */
 /** Who she is before any client with a girl of its own has worked. */

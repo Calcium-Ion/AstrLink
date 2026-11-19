@@ -261,8 +261,9 @@ function PluginRow({
         : "";
   return (
     <li className="flex min-w-0 items-center gap-3 border-b pr-3 last:border-b-0">
-      <button
-        className="grid h-15 min-w-0 flex-1 grid-cols-[1.75rem_minmax(0,1fr)_auto_auto] items-center gap-x-3 pl-3 text-left transition-colors hover:bg-muted/40 focus-visible:bg-accent focus-visible:outline-none"
+      <Button
+        variant="ghost"
+        className="grid h-15 min-w-0 flex-1 shrink grid-cols-[1.75rem_minmax(0,1fr)_auto_auto] items-center justify-normal gap-x-3 rounded-none px-0 pl-3 text-left text-sm font-normal whitespace-normal hover:bg-muted/40 focus-visible:bg-accent focus-visible:ring-0"
         data-plugin-key={plugin.key}
         data-testid="plugin-row"
         onClick={onOpen}
@@ -332,7 +333,7 @@ function PluginRow({
           aria-hidden="true"
           className="size-3.5 text-muted-foreground"
         />
-      </button>
+      </Button>
       {plugin.state === "failed" ? (
         <Button
           disabled={disabled}

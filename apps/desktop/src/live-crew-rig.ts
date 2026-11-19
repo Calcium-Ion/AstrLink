@@ -1591,16 +1591,16 @@ export interface Pose {
 export function hardHat(c: {
   color: string;
   light: string;
-  dark: string;
+  shade: string;
 }): Prop {
   return prop(
     (x, y) => {
       const d = x - CX;
       if (y >= 5.0 && y <= 6.4 && Math.abs(d) <= 10.2)
-        return y > 5.8 ? c.dark : c.color;
+        return y > 5.8 ? c.shade : c.color;
       if (y < 5.0 && ell(x, y, CX, 5.2, 8.2, 6.0)) {
         if (Math.abs(d + 2.6) < 0.6 && y < 3.6) return c.light;
-        return d > 5 ? c.dark : c.color;
+        return d > 5 ? c.shade : c.color;
       }
       return null;
     },
@@ -2031,7 +2031,7 @@ export function hammer(
   hand: P,
   dx: number,
   dy: number,
-  colors: { wood: string; steel: string; dark: string },
+  colors: { wood: string; steel: string; shade: string },
 ): Prop[] {
   const end = { x: hand.x + dx * 4.6, y: hand.y + dy * 4.6 };
   return [
@@ -2048,7 +2048,7 @@ export function hammer(
         const along = ax * -dy + ay * dx;
         const across = ax * dx + ay * dy;
         if (Math.abs(along) <= 2.0 && across >= -1.1 && across <= 0.9)
-          return across > 0.1 ? colors.dark : colors.steel;
+          return across > 0.1 ? colors.shade : colors.steel;
         return null;
       },
       [end.x - 3, end.y - 3, end.x + 3, end.y + 3],

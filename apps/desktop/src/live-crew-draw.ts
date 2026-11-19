@@ -892,7 +892,7 @@ function girl(pen: Pen, ch: Figure, pose: GirlPose, lift = 0, lie = false) {
             hardHat({
               color: p.yellow,
               light: p.yellowLight,
-              dark: mix(p.yellow, p.shade, 0.3),
+              shade: mix(p.yellow, p.shade, 0.3),
             }),
           ],
           key: `${pose.key ?? ""}|hat`,
