@@ -434,3 +434,15 @@ func TestValidatesAuditSettingsPatchRiskAcknowledgement(t *testing.T) {
 		t.Error(err)
 	}
 }
+
+func TestValidatesAuditSettingsPatchHTTPMetaWithoutAcknowledgement(t *testing.T) {
+	for _, patch := range []string{`{"http_meta_enabled":false}`, `{"http_meta_enabled":true}`} {
+		if err := validateAuditSettingsPatch(v(t, patch)); err != nil {
+			t.Errorf("%s rejected: %v", patch, err)
+		}
+	}
+	err := validateAuditSettingsPatch(v(t, `{"http_meta_enabled":"off"}`))
+	if err == nil || err.Error() != "audit settings patch http_meta_enabled must be a boolean" {
+		t.Errorf("non-boolean http_meta_enabled error = %v", err)
+	}
+}
