@@ -624,10 +624,27 @@ function releaseAssets(files) {
   return assets;
 }
 
+/**
+ * What a release ships of a file. The MyGo manifests are built per platform
+ * before the release has notes; the app reads its notes from them, so they
+ * get the release's here. Their signatures cover the packages they list,
+ * not the manifest.
+ */
+function releaseBytes(name, file, notes) {
+  if (!notes || !/^update-.+\.json$/.test(name)) return readFileSync(file);
+  return Buffer.from(
+    JSON.stringify({ ...readJSON(file), notes }, null, 2) + "\n",
+  );
+}
+
 /** Write assets, latest.json and a SHA256SUMS that adds both to `sums`. */
 function writeRelease(output, assets, manifest, sums = new Map()) {
   mkdirSync(output, { recursive: true });
-  for (const [name, file] of assets) cpSync(file, path.join(output, name));
+  for (const [name, file] of assets)
+    writeFileSync(
+      path.join(output, name),
+      releaseBytes(name, file, manifest.notes),
+    );
   writeJSON(path.join(output, "latest.json"), manifest);
   for (const name of [...assets.keys(), "latest.json"])
     sums.set(name, sha256(readFileSync(path.join(output, name))));
@@ -694,7 +711,8 @@ export function extendRelease(input, published, output, tag, target, keys) {
   const assets = releaseAssets(files);
   for (const [name, file] of assets)
     requireValue(
-      !sums.has(name) || sums.get(name) === sha256(readFileSync(file)),
+      !sums.has(name) ||
+        sums.get(name) === sha256(releaseBytes(name, file, manifest.notes)),
       `Release already has a different ${name}`,
     );
   manifest.platforms[target] = platform;

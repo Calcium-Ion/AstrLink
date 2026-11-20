@@ -750,6 +750,16 @@ describe("release updates", () => {
       "Release notes",
     );
     expect(manifest.notes).toBe("Release notes");
+    // The app reads its notes from its MyGo manifest, built before them.
+    const mygo = readdirSync(output).filter((name) =>
+      /^update-.+\.json$/.test(name),
+    );
+    expect(mygo.length).toBeGreaterThan(0);
+    for (const name of mygo)
+      expect(
+        JSON.parse(readFileSync(path.join(output, name), "utf8")).notes,
+        name,
+      ).toBe("Release notes");
     expect(manifest.platforms["darwin-aarch64"].url).toContain(
       "/releases/download/v1.0.0/",
     );
