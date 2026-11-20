@@ -252,7 +252,7 @@ describe("TrayPopoverPanel", () => {
     expect(text).not.toContain("Cursor");
     expect(text).not.toContain("比昨天");
     expect(
-      document.querySelector('[role="img"][aria-label="今日各小时 tokens"]'),
+      document.querySelector('[role="img"][aria-label^="今日各小时 tokens"]'),
     ).not.toBeNull();
     expect(buttons()).toEqual(
       expect.arrayContaining([

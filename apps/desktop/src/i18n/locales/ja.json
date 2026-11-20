@@ -3292,7 +3292,6 @@
     "showMoreSubscriptions": "ほか {{count}} 件を表示",
     "showLessSubscriptions": "折りたたむ",
     "hourlyChart": "今日の 1 時間ごとのトークン",
-    "hourlyPeak": "ピーク {{hour}}:00 · {{tokens}}",
     "updatedAgo": "更新: {{ago}}",
     "refresh": "更新",
     "version": "AstrLink {{version}}",

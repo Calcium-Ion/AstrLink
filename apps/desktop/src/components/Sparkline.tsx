@@ -10,15 +10,17 @@ export interface SparklinePoint {
 }
 
 /**
- * A run of thin columns under a stat tile's number, one per period: the last,
- * current one in the accent and the rest in the quiet ink, an empty period a
- * hairline on the baseline. Hovering a column shows its value and period; the
- * page keeps the same numbers in a table.
+ * A run of thin columns under a stat tile's number, one per period: the
+ * current one (the last, unless `current` says otherwise) in the accent and
+ * the rest in the quiet ink, an empty period a hairline on the baseline.
+ * Hovering a column shows its value and period; the page keeps the same
+ * numbers in a table.
  */
 export function Sparkline({
   points,
   format,
   label,
+  current = points.length - 1,
   tone = "primary",
   className,
 }: {
@@ -27,6 +29,11 @@ export function Sparkline({
   format: (value: number) => string;
   /** What the columns count, for screen readers. */
   label: string;
+  /**
+   * Index of the current period, drawn in the accent. Periods after it have
+   * not happened yet, such as the rest of today's hours.
+   */
+  current?: number;
   /** warning for counts of trouble. */
   tone?: "primary" | "warning";
   className?: string;
@@ -58,7 +65,7 @@ export function Sparkline({
               "w-full max-w-[18px] rounded-t-[2px] transition-opacity",
               item.value <= 0
                 ? "bg-border"
-                : index === points.length - 1
+                : index === current
                   ? tone === "warning"
                     ? "bg-warning"
                     : "bg-primary"

@@ -10,20 +10,19 @@ import { listen } from "./native-host/event";
 
 import {
   ArrowUpRight,
-  BadgeAlert,
   Ban,
   Copy,
   Eye,
   RefreshCw,
   RotateCcw,
   Settings,
-  ShieldCheck,
   X,
 } from "@/components/icons";
 import { IconButton } from "@/components/IconButton";
 import { Metric, MetricGroup } from "@/components/Metric";
 import { SectionKicker } from "@/components/SectionKicker";
 import { ServiceKindIcon } from "@/components/ServiceKindIcon";
+import { Sparkline } from "@/components/Sparkline";
 import { StatusDot, type StatusTone } from "@/components/StatusDot";
 import { SubscriptionQuotaMeter } from "@/components/SubscriptionQuotaMeter";
 import { UsageMeterGrid } from "@/components/UsageMeter";
@@ -73,6 +72,8 @@ const CLOCK_TICK_MS = 30_000;
 export const SUBSCRIPTION_FOLD_LIMIT = 10;
 /** Privacy kinds named before the rest fold into a count. */
 const PRIVACY_KIND_LIMIT = 3;
+/** Padding and rhythm shared by the usage sections between hairlines. */
+const TRAY_SECTION = "grid gap-2.5 px-4 py-3.5";
 
 function phaseTone(phase: CorePhase): StatusTone {
   if (phase === "ready") return "positive";
@@ -170,71 +171,48 @@ function subscriptionGroups(
   return groups;
 }
 
-/** 24 bars, one per local hour; the current hour is emphasised. */
+/** 24 columns, one per local hour; the current hour in the accent. */
 function HourlySparkline({ tokens, now }: { tokens: number[]; now: Date }) {
   const t = useT();
-  const max = Math.max(...tokens, 0);
-  if (tokens.length !== 24 || max <= 0) return null;
-  const peakHour = tokens.indexOf(max);
-  const currentHour = now.getHours();
+  if (tokens.length !== 24 || Math.max(...tokens, 0) <= 0) return null;
   return (
-    <div
-      aria-label={t("tray.hourlyChart")}
-      className="flex h-9 items-end gap-px"
-      role="img"
-      title={t("tray.hourlyPeak", {
-        hour: `${peakHour}`.padStart(2, "0"),
-        tokens: formatCompactTokens(max),
-      })}
-    >
-      {tokens.map((value, hour) => {
-        const height =
-          value <= 0 ? 2 : Math.max(3, Math.round((value / max) * 36));
-        return (
-          <span
-            key={hour}
-            aria-hidden="true"
-            className={cn(
-              "min-w-0 flex-1 rounded-[1px] transition-[height] duration-300 motion-reduce:transition-none",
-              hour === currentHour
-                ? "bg-primary"
-                : hour > currentHour
-                  ? "bg-border"
-                  : value > 0
-                    ? "bg-primary/35"
-                    : "bg-border",
-            )}
-            style={{ height }}
-          />
-        );
-      })}
-    </div>
+    <Sparkline
+      className="h-8"
+      current={now.getHours()}
+      format={formatCompactTokens}
+      label={t("tray.hourlyChart")}
+      points={tokens.map((value, hour) => ({
+        label: `${`${hour}`.padStart(2, "0")}:00`,
+        value,
+      }))}
+    />
   );
 }
 
-function Chip({
-  label,
-  value,
-  tone,
-}: {
+interface TrayDetail {
+  key: string;
   label: string;
   value: string;
   tone?: "up" | "down" | "muted";
-}) {
+}
+
+/** One line of today's details: the name, and its value at the far edge. */
+function DetailRow({ label, value, tone }: Omit<TrayDetail, "key">) {
   return (
-    <span className="inline-flex max-w-full items-center gap-1 rounded-sm border bg-muted/60 px-1.5 py-0.5 text-micro">
-      <span className="shrink-0 text-muted-foreground">{label}</span>
-      <span
+    <div className="flex min-w-0 items-baseline justify-between gap-3">
+      <dt className="shrink-0 text-muted-foreground">{label}</dt>
+      <dd
         className={cn(
-          "truncate font-medium tabular-nums",
+          "min-w-0 truncate text-right font-medium tabular-nums",
           tone === "up" && "text-warning-foreground",
           tone === "down" && "text-success-foreground",
           tone === "muted" && "text-muted-foreground",
         )}
+        title={value}
       >
         {value}
-      </span>
-    </span>
+      </dd>
+    </div>
   );
 }
 
@@ -249,9 +227,10 @@ function trayPrivacyShown(privacy: TrayPrivacy): boolean {
 }
 
 /**
- * Today's privacy protection in one row: the values it replaced, restored and
- * blocked, then the kinds it found most. A clean day or a switched-off policy
- * takes a single line; the charts live on the safety page.
+ * Today's privacy protection as a section of its own: the values it replaced,
+ * restored and blocked beside the heading, then the kinds it found most. A
+ * clean day or a switched-off policy takes a single line; the charts live on
+ * the safety page.
  */
 function TrayPrivacyRow({
   privacy,
@@ -316,24 +295,16 @@ function TrayPrivacyRow({
     !off && failOpen !== null && (flagged > 0 || privacy.checked > 0)
       ? failOpen
       : null;
-  const Icon = off ? BadgeAlert : ShieldCheck;
   return (
-    <div className="grid gap-0.5" data-slot="tray-privacy">
-      <div className="flex min-w-0 items-start gap-2 text-xs">
-        <Icon
-          aria-hidden="true"
-          className={cn(
-            "mt-px size-3.5 shrink-0",
-            off ? "text-warning-foreground" : "text-muted-foreground",
-          )}
-        />
-        {/* The status sits beside the label and drops below it, whole, when
-            a longer language leaves it no room. */}
-        <div className="flex min-w-0 flex-1 flex-wrap items-baseline justify-between gap-x-2 gap-y-0.5">
-          <span className="text-muted-foreground">{t("tray.privacy")}</span>
+    <section className={cn(TRAY_SECTION, "gap-1.5")} data-slot="tray-privacy">
+      {/* The status sits beside the heading and drops below it, whole, when
+          a longer language leaves it no room. */}
+      <div className="flex min-w-0 items-center gap-1">
+        <div className="flex min-w-0 flex-1 flex-wrap items-center justify-between gap-x-3 gap-y-1">
+          <SectionKicker>{t("tray.privacy")}</SectionKicker>
           <span
             className={cn(
-              "min-w-0 tabular-nums",
+              "min-w-0 text-xs tabular-nums",
               tone === "figures" && "font-medium",
               tone === "muted" && "text-muted-foreground",
               tone === "warning" && "text-warning-foreground",
@@ -344,7 +315,7 @@ function TrayPrivacyRow({
           </span>
         </div>
         <IconButton
-          className="-my-[3px] shrink-0 text-muted-foreground"
+          className="-mr-1 shrink-0 text-muted-foreground"
           label={t("tray.privacyOpen")}
           onClick={onOpen}
           size="icon-xs"
@@ -354,7 +325,7 @@ function TrayPrivacyRow({
       </div>
       {kinds ? (
         <p
-          className="truncate pl-5.5 text-micro text-muted-foreground"
+          className="truncate text-xs text-muted-foreground"
           data-slot="tray-privacy-kinds"
           title={kinds}
         >
@@ -362,11 +333,9 @@ function TrayPrivacyRow({
         </p>
       ) : null}
       {failOpenLine ? (
-        <p className="pl-5.5 text-micro text-warning-foreground">
-          {failOpenLine}
-        </p>
+        <p className="text-xs text-warning-foreground">{failOpenLine}</p>
       ) : null}
-    </div>
+    </section>
   );
 }
 
@@ -420,12 +389,7 @@ export function TrayPopoverPanel({
     phase === "handshaking" ||
     phase === "stopping";
 
-  const chips: Array<{
-    key: string;
-    label: string;
-    value: string;
-    tone?: "up" | "down" | "muted";
-  }> = [];
+  const details: TrayDetail[] = [];
   if (digest) {
     if (
       usage.compare_yesterday &&
@@ -436,7 +400,7 @@ export function TrayPopoverPanel({
         digest.today.total_tokens,
         digest.yesterday_tokens,
       );
-      chips.push({
+      details.push({
         key: "compare",
         label: t("tray.vsYesterday"),
         value:
@@ -458,7 +422,7 @@ export function TrayPopoverPanel({
     if (usage.cache_hit && digest.today) {
       const percent = cacheHitPercent(digest.today);
       if (percent !== null) {
-        chips.push({
+        details.push({
           key: "cache",
           label: t("tray.cacheHit"),
           value: `${percent}%`,
@@ -466,14 +430,14 @@ export function TrayPopoverPanel({
       }
     }
     if (usage.top_model && digest.top_model) {
-      chips.push({
+      details.push({
         key: "model",
         label: t("tray.topModel"),
         value: `${digest.top_model.name} · ${digest.top_model.percent}%`,
       });
     }
     if (usage.top_client && digest.top_client) {
-      chips.push({
+      details.push({
         key: "client",
         label: t("tray.topClient"),
         value: `${digest.top_client.name} · ${digest.top_client.percent}%`,
@@ -485,14 +449,14 @@ export function TrayPopoverPanel({
       if (last.model) parts.push(last.model);
       if (last.latency_ms !== null) parts.push(formatLatency(last.latency_ms));
       if (last.failed) parts.push(t("tray.lastFailed"));
-      chips.push({
+      details.push({
         key: "last",
         label: t("tray.lastRequest"),
         value: parts.join(" · "),
       });
     }
     if (usage.month_total && digest.month_tokens !== null) {
-      chips.push({
+      details.push({
         key: "month",
         label: t("tray.month"),
         value: `${formatCompactTokens(digest.month_tokens)} tokens`,
@@ -668,41 +632,18 @@ export function TrayPopoverPanel({
         title={t("tray.rawGrantsTitle")}
       />
 
-      {/* Usage: the reason to open the panel. */}
+      {/* Usage: the reason to open the panel. One section per topic, each
+          under a hairline that runs the full width. */}
       {ready && wantsUsage ? (
         <div
-          className="grid max-h-96 content-start gap-4 overflow-y-auto overscroll-contain border-t px-4 pt-4 pb-5"
+          className="max-h-[30rem] divide-y overflow-y-auto overscroll-contain border-t"
           data-slot="tray-usage"
         >
-          {showToday ? (
-            <div className="grid gap-3">
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  <SectionKicker>{t("tray.today")}</SectionKicker>
-                  {usage.today && digest?.today && digest.today.failed > 0 ? (
-                    <Button
-                      aria-label={t("tray.failedCountDetail", {
-                        count: digest.today.failed,
-                      })}
-                      className="border-destructive/30 text-destructive hover:bg-danger-wash hover:text-destructive"
-                      onClick={() =>
-                        onAction({
-                          kind: "navigate",
-                          page: TRAY_FAILED_TODAY_PAGE,
-                        })
-                      }
-                      size="xs"
-                      title={t("tray.failedCountDetail", {
-                        count: digest.today.failed,
-                      })}
-                      type="button"
-                      variant="outline"
-                    >
-                      {t("tray.failedCount", { count: digest.today.failed })}
-                    </Button>
-                  ) : null}
-                </div>
-                <div className="flex items-center gap-1 text-micro text-muted-foreground">
+          {showToday || details.length > 0 ? (
+            <section className={TRAY_SECTION}>
+              <div className="flex min-h-5.5 items-center justify-between gap-2">
+                <SectionKicker>{t("tray.today")}</SectionKicker>
+                <div className="-mr-1 flex items-center gap-1 text-micro text-muted-foreground">
                   {digestAt ? (
                     <span>
                       {t("tray.updatedAgo", { ago: formatAgo(digestAt, now) })}
@@ -717,7 +658,7 @@ export function TrayPopoverPanel({
                   </IconButton>
                 </div>
               </div>
-              {digest === null ? (
+              {!showToday ? null : digest === null ? (
                 <p className="text-xs text-muted-foreground">
                   {t("tray.loading")}
                 </p>
@@ -726,18 +667,43 @@ export function TrayPopoverPanel({
                   {t("tray.noCallsToday")}
                 </p>
               ) : (
-                <MetricGroup className="auto-cols-fr grid-flow-col grid-cols-none rounded-md [overflow-wrap:anywhere] @min-[640px]/workspace-surface:grid-cols-none">
+                <MetricGroup variant="row">
                   {usage.today && digest.today ? (
                     <>
                       <Metric
+                        detail={
+                          digest.today.failed > 0 ? (
+                            <Button
+                              aria-label={t("tray.failedCountDetail", {
+                                count: digest.today.failed,
+                              })}
+                              className="h-auto p-0 text-micro font-normal text-destructive"
+                              onClick={() =>
+                                onAction({
+                                  kind: "navigate",
+                                  page: TRAY_FAILED_TODAY_PAGE,
+                                })
+                              }
+                              title={t("tray.failedCountDetail", {
+                                count: digest.today.failed,
+                              })}
+                              type="button"
+                              variant="link"
+                            >
+                              {t("tray.failedCount", {
+                                count: digest.today.failed,
+                              })}
+                            </Button>
+                          ) : null
+                        }
                         label={t("tray.requests")}
-                        size="sm"
+                        size="inline"
                         title={digest.today.requests.toLocaleString()}
                         value={digest.today.requests.toLocaleString()}
                       />
                       <Metric
                         label={t("tray.tokens")}
-                        size="sm"
+                        size="inline"
                         title={digest.today.total_tokens.toLocaleString()}
                         value={formatCompactTokens(digest.today.total_tokens)}
                       />
@@ -746,7 +712,7 @@ export function TrayPopoverPanel({
                   {usage.cost && digest.cost_today ? (
                     <Metric
                       label={t("tray.cost")}
-                      size="sm"
+                      size="inline"
                       title={formatUsd(digest.cost_today.amount_usd)}
                       value={formatUsd(digest.cost_today.amount_usd)}
                     />
@@ -756,23 +722,16 @@ export function TrayPopoverPanel({
               {usage.today && digest ? (
                 <HourlySparkline now={now} tokens={digest.hourly_tokens} />
               ) : null}
-            </div>
+              {details.length > 0 ? (
+                <dl className="grid gap-1.5 text-xs" data-slot="tray-details">
+                  {details.map(({ key, ...detail }) => (
+                    <DetailRow key={key} {...detail} />
+                  ))}
+                </dl>
+              ) : null}
+            </section>
           ) : null}
 
-          {chips.length > 0 ? (
-            <div className="flex flex-wrap gap-1.5">
-              {chips.map((chip) => (
-                <Chip
-                  key={chip.key}
-                  label={chip.label}
-                  tone={chip.tone}
-                  value={chip.value}
-                />
-              ))}
-            </div>
-          ) : null}
-
-          {/* A row of today's block, so it shares its divider. */}
           {privacy ? (
             <TrayPrivacyRow
               onOpen={() =>
@@ -791,19 +750,14 @@ export function TrayPopoverPanel({
           ) : null}
 
           {subscriptions.length > 0 ? (
-            <div
-              className={cn(
-                "grid gap-1.5",
-                (showToday || chips.length > 0 || privacy) && "border-t pt-4",
-              )}
-            >
+            <section className={TRAY_SECTION}>
               {/* One grid, so the bars, percents and resets line up across plans. */}
               <UsageMeterGrid
                 captions={showResetColumn}
-                className="gap-y-0.5"
+                className="gap-y-1"
                 data-slot="tray-subscriptions"
               >
-                <div className="col-span-full mb-1.5 grid grid-cols-subgrid items-center">
+                <div className="col-span-full mb-1 grid min-h-5.5 grid-cols-subgrid items-center">
                   <SectionKicker className="col-span-2">
                     {t("tray.subscriptions")}
                   </SectionKicker>
@@ -852,7 +806,7 @@ export function TrayPopoverPanel({
               {subscriptionsFoldable ? (
                 <Button
                   aria-expanded={subscriptionsExpanded}
-                  className="h-6 justify-self-start px-1.5 text-micro text-muted-foreground"
+                  className="-ml-1.5 h-6 justify-self-start px-1.5 text-micro text-muted-foreground"
                   onClick={() =>
                     setSubscriptionsExpanded((expanded) => !expanded)
                   }
@@ -868,7 +822,7 @@ export function TrayPopoverPanel({
                       })}
                 </Button>
               ) : null}
-            </div>
+            </section>
           ) : null}
         </div>
       ) : !ready ? (

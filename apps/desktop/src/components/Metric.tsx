@@ -6,19 +6,24 @@ import { cn } from "@/lib/utils";
  * A responsive summary band whose labels and values stay paired. `inline`
  * sets four bare metrics in equal columns divided by hairlines, for a panel
  * that already has its own frame; it folds to two by two when its nearest
- * `@container` is narrower than 35rem.
+ * `@container` is narrower than 35rem. `row` keeps any number of bare metrics
+ * on one line in equal columns, for a narrow surface such as the tray.
  */
 export function MetricGroup({
   className,
   variant = "tiles",
   ...props
-}: HTMLAttributes<HTMLDListElement> & { variant?: "tiles" | "inline" }) {
+}: HTMLAttributes<HTMLDListElement> & {
+  variant?: "tiles" | "inline" | "row";
+}) {
   return (
     <dl
       className={cn(
-        variant === "inline"
-          ? "grid grid-cols-2 gap-y-3 [&>div:nth-child(even)]:border-l [&>div:nth-child(even)]:pl-4 @min-[35rem]:grid-cols-4 @min-[35rem]:[&>div:nth-child(3)]:border-l @min-[35rem]:[&>div:nth-child(3)]:pl-4"
-          : "grid grid-cols-2 gap-px bg-border @min-[640px]/workspace-surface:grid-cols-4",
+        variant === "row"
+          ? "grid auto-cols-fr grid-flow-col gap-x-4"
+          : variant === "inline"
+            ? "grid grid-cols-2 gap-y-3 [&>div:nth-child(even)]:border-l [&>div:nth-child(even)]:pl-4 @min-[35rem]:grid-cols-4 @min-[35rem]:[&>div:nth-child(3)]:border-l @min-[35rem]:[&>div:nth-child(3)]:pl-4"
+            : "grid grid-cols-2 gap-px bg-border @min-[640px]/workspace-surface:grid-cols-4",
         className,
       )}
       data-slot="metric-group"
