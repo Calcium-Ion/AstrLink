@@ -492,7 +492,7 @@ func validateAuditSettingsPatch(patch any) error {
 			err = inRange(key, value, 1, 3650)
 		case "content_retention_days":
 			err = inRange(key, value, 1, 365)
-		case "audit_risk_acknowledged", "agent_raw_access_enabled":
+		case "http_meta_enabled", "audit_risk_acknowledged", "agent_raw_access_enabled":
 			if _, ok := asBool(value); !ok {
 				return fmt.Errorf("audit settings patch %s must be a boolean", key)
 			}
