@@ -26,11 +26,11 @@ func main() {
 	registerClientCommands(h)
 	registerAgentCommands(h)
 	registerReleaseCommands(h)
-	// The web view starts with the app; its signal handlers must not run on
-	// goroutine stacks.
+	// The web view starts with the app; its signal handlers must not
+	// overflow goroutine stacks.
 	mygo.App.WhenReady(func() { sigstack.Keep(context.Background()) })
 	mygo.App.WhenReady(h.Start)
-	if err := mygo.App.Run(); err != nil {
+	if err := sigstack.Run(mygo.App.Run); err != nil {
 		log.Fatal(err)
 	}
 }

@@ -3,6 +3,8 @@
 package sigstack
 
 import (
+	"fmt"
+	"os"
 	"syscall"
 	"unsafe"
 )
@@ -32,11 +34,31 @@ func sigaction(sig int, set, old *action) syscall.Errno {
 	return errno
 }
 
-// fix marks every installed handler SA_ONSTACK. The default and ignored
-// dispositions run no code, and SIGKILL and SIGSTOP cannot be caught.
-func fix() {
+// suspendSignal is the signal JavaScriptCore's garbage collector sends a
+// thread to pause it and scan its stack: SIGUSR1, or the number at the start
+// of JSC_SIGNAL_FOR_GC, read as sscanf's %d reads it.
+func suspendSignal() int {
+	var sig int
+	if n, _ := fmt.Sscanf(os.Getenv("JSC_SIGNAL_FOR_GC"), "%d", &sig); n == 1 {
+		return sig
+	}
+	return int(syscall.SIGUSR1)
+}
+
+// fix marks every installed handler SA_ONSTACK except the one for suspend,
+// JavaScriptCore's suspend signal. The default and ignored dispositions run
+// no code, and SIGKILL and SIGSTOP cannot be caught.
+//
+// The suspend handler pauses its thread only when it runs on the thread's
+// own stack; anywhere else it gives up and the collector sends the signal
+// again at once. Go gives the UI thread, which runs JavaScript through the
+// web view, a signal stack of its own, so on it the collector and the UI
+// thread would trade the signal forever and the app would hang. The
+// collector signals only threads that ran JavaScript, never Go's other
+// threads, so the handler stays as installed.
+func fix(suspend int) {
 	for sig := 1; sig <= 64; sig++ {
-		if sig == int(syscall.SIGKILL) || sig == int(syscall.SIGSTOP) {
+		if sig == int(syscall.SIGKILL) || sig == int(syscall.SIGSTOP) || sig == suspend {
 			continue
 		}
 		var current action
