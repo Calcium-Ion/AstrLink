@@ -126,8 +126,8 @@ func RelayProtocol(path string) contract.ProtocolID {
 	case RelayModelsPath:
 		return contract.ProtocolOpenAIModels
 	}
-	if strings.HasPrefix(path, "/v1beta/models/") && geminiPath(path) {
-		return contract.ProtocolGoogleGenerateContent
+	if call, ok := contract.ParseGeminiCall(path); ok {
+		return call.Protocol
 	}
 	return ""
 }
@@ -197,8 +197,24 @@ func (route RelayRoute) MatchesPath(path string) bool {
 
 // RelayRouteFor is the route of meta.relay that serves model on path: a
 // route that lists the model before the route of the path for every other
-// model.
+// model. The gateway answers a Gemini call under /v1 and /v1beta alike, so
+// a call under the version no route names takes the other version's route.
 func (meta *TaskMeta) RelayRouteFor(path, model string) *RelayRoute {
+	if route := meta.relayRouteOn(path, model); route != nil {
+		return route
+	}
+	call, ok := contract.ParseGeminiCall(path)
+	if !ok {
+		return nil
+	}
+	other := "/v1"
+	if call.Version == "/v1" {
+		other = "/v1beta"
+	}
+	return meta.relayRouteOn(other+strings.TrimPrefix(path, call.Version), model)
+}
+
+func (meta *TaskMeta) relayRouteOn(path, model string) *RelayRoute {
 	var fallback *RelayRoute
 	for index := range meta.Relay {
 		route := &meta.Relay[index]

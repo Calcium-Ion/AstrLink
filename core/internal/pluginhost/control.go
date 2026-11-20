@@ -48,9 +48,6 @@ func (host *Host) UpdateSettings(ctx context.Context, update contract.PluginHost
 	if update.Paused != nil {
 		settings.Paused = *update.Paused
 	}
-	if update.InjectionBudgetBytes != nil {
-		settings.InjectionBudgetBytes = *update.InjectionBudgetBytes
-	}
 	if update.Language != nil {
 		settings.Language = *update.Language
 	}

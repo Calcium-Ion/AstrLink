@@ -692,7 +692,6 @@ describe("PluginManager", () => {
     bridgeMocks.openPluginApproval.mockResolvedValue(true);
     bridgeMocks.getPluginHostSettings.mockResolvedValue({
       paused: false,
-      injection_budget_bytes: 16384,
       language: "zh-CN",
     });
     container = document.createElement("div");
@@ -1125,13 +1124,11 @@ describe("PluginManager", () => {
   it("orders the plugins and lists them in that order", async () => {
     bridgeMocks.getPluginHostSettings.mockResolvedValue({
       paused: false,
-      injection_budget_bytes: 16384,
       language: "zh-CN",
       order: ["team-rules"],
     });
     bridgeMocks.updatePluginHostSettings.mockImplementation(async (update) => ({
       paused: false,
-      injection_budget_bytes: 16384,
       language: "zh-CN",
       ...update,
     }));
@@ -1438,7 +1435,6 @@ describe("PluginManager", () => {
       '[data-testid="plugin-host-controls"]',
     );
     expect(controls?.textContent).toContain("暂停所有插件");
-    expect(controls?.textContent).toContain("插件加的内容上限");
     // A team's own marketplace and the plugin directory have their place
     // here too; the commands that write a plugin are in 发布插件.
     expect(controls?.textContent).toContain("自建市场");
@@ -1594,21 +1590,16 @@ describe("PluginManager", () => {
     });
   });
 
-  it("pauses every plugin and sets their injection budget from the header", async () => {
+  it("pauses every plugin from the header", async () => {
     bridgeMocks.updatePluginHostSettings.mockImplementation(
       async (update: Record<string, unknown>) => ({
         paused: false,
-        injection_budget_bytes: 16384,
         language: "zh-CN",
         ...update,
       }),
     );
     await render();
     await openHostSettings();
-    const controls = document.querySelector(
-      '[data-testid="plugin-host-controls"]',
-    );
-    expect(controls?.textContent).toContain("16 KB");
     expect(document.body.textContent).not.toContain("所有插件已暂停");
     await click(document.getElementById("plugin-host-pause") as HTMLElement);
     expect(bridgeMocks.updatePluginHostSettings).toHaveBeenCalledWith({
@@ -1617,11 +1608,6 @@ describe("PluginManager", () => {
     expect(document.body.textContent).toContain(
       "所有插件已暂停，请求原样发出。",
     );
-    await chooseOption("#plugin-host-budget", "32 KB");
-    await settleClosedLayer();
-    expect(bridgeMocks.updatePluginHostSettings).toHaveBeenLastCalledWith({
-      injection_budget_bytes: 32768,
-    });
   });
 
   it("voids the lookup credentials it lists only after asking", async () => {
@@ -2143,7 +2129,6 @@ describe("PluginManager", () => {
       });
       bridgeMocks.getPluginHostSettings.mockResolvedValue({
         paused: false,
-        injection_budget_bytes: 16384,
         language: "zh-CN",
         request_plugins: [
           rule("filter", "rpi_1"),
@@ -2184,7 +2169,6 @@ describe("PluginManager", () => {
       };
       bridgeMocks.getPluginHostSettings.mockResolvedValue({
         paused: false,
-        injection_budget_bytes: 16384,
         language: "zh-CN",
         request_plugins: [],
       });

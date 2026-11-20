@@ -144,6 +144,20 @@ func TestRewriteRequestModelGeminiPath(t *testing.T) {
 			wantEscapedPath: "/v1beta/models/vendor%2Freal%20model:generateContent",
 		},
 		{
+			name:            "v1 path keeps its version",
+			path:            "/v1/models/gemini-pro:generateContent",
+			upstreamModel:   "vendor/real",
+			wantPath:        "/v1/models/vendor/real:generateContent",
+			wantEscapedPath: "/v1/models/vendor%2Freal:generateContent",
+		},
+		{
+			name:            "auto model is replaced whole",
+			path:            "/v1beta/models/astrlink/auto:generateContent",
+			upstreamModel:   "gemini-2.5-pro",
+			wantPath:        "/v1beta/models/gemini-2.5-pro:generateContent",
+			wantEscapedPath: "/v1beta/models/gemini-2.5-pro:generateContent",
+		},
+		{
 			name:            "stream action and query preserved",
 			path:            "/v1beta/models/gemini-pro:streamGenerateContent",
 			rawQuery:        "alt=sse",

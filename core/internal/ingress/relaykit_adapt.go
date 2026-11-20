@@ -43,7 +43,7 @@ func adaptRelayKitRequest(
 		return fmt.Errorf("unsupported relaykit upstream protocol %q", protocol)
 	}
 	if geminiSuffix != "" {
-		setGeminiModelPath(request.URL, model, geminiSuffix)
+		setGeminiModelPath(request.URL, "/v1beta", model, geminiSuffix)
 	} else {
 		request.URL.Path, request.URL.RawPath = path, ""
 	}

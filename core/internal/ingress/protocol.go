@@ -6,7 +6,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"net/url"
 	"strings"
 	"sync"
 	"unicode/utf8"
@@ -242,37 +241,16 @@ func matchProtocolRoute(path string) (protocolRoute, string, bool) {
 		return route, "", true
 	}
 
-	const prefix = "/v1beta/models/"
-	if !strings.HasPrefix(path, prefix) {
+	call, ok := contract.ParseGeminiCall(path)
+	if !ok {
 		return protocolRoute{}, "", false
 	}
-	modelAndAction := strings.TrimPrefix(path, prefix)
-	if decoded, err := url.PathUnescape(modelAndAction); err == nil {
-		modelAndAction = decoded
-	}
-	model, action, found := strings.Cut(modelAndAction, ":")
-	if !found || model == "" {
-		return protocolRoute{}, "", false
-	}
-	if strings.Contains(model, "/") && model != contract.AstrLinkAutoModelID {
-		return protocolRoute{}, "", false
-	}
-	switch action {
-	case "generateContent":
-		return protocolRoute{
-			method: http.MethodPost, protocol: contract.ProtocolGoogleGenerateContent,
-		}, model, true
-	case "streamGenerateContent":
-		return protocolRoute{
-			method: http.MethodPost, protocol: contract.ProtocolGoogleGenerateContent, streaming: true,
-		}, model, true
-	case "embedContent", "batchEmbedContents":
-		return protocolRoute{
-			method: http.MethodPost, protocol: contract.ProtocolGoogleEmbeddings, inspectMetadata: true,
-		}, model, true
-	default:
-		return protocolRoute{}, "", false
-	}
+	return protocolRoute{
+		method:          http.MethodPost,
+		protocol:        call.Protocol,
+		streaming:       call.Streaming,
+		inspectMetadata: call.Protocol == contract.ProtocolGoogleEmbeddings,
+	}, call.Model, true
 }
 
 type requestMetadata struct {

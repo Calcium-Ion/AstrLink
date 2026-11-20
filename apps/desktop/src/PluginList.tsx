@@ -16,13 +16,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Input, verbatimTextInput } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
@@ -357,8 +350,6 @@ function PluginRow({
   );
 }
 
-const INJECTION_BUDGETS_KIB = [4, 8, 16, 32, 64];
-
 /** The commands a plugin project is built and tried with. */
 /**
  * The address of a marketplace the user adds, whose tab then joins New
@@ -449,10 +440,6 @@ export function PluginHostDialog({
   onCustomMarket: (index: string) => void;
 }) {
   const t = useT();
-  const budgetKib = host ? Math.round(host.injection_budget_bytes / 1024) : 16;
-  const budgets = INJECTION_BUDGETS_KIB.includes(budgetKib)
-    ? INJECTION_BUDGETS_KIB
-    : [...INJECTION_BUDGETS_KIB, budgetKib].sort((a, b) => a - b);
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
       <DialogContent
@@ -499,38 +486,6 @@ export function PluginHostDialog({
                   id="plugin-host-ui"
                   onCheckedChange={onUi}
                 />
-              </SettingRow>
-              <SettingRow
-                inDialog
-                helpLabel={t("plugins.host.helpLabel", {
-                  label: t("plugins.host.budget"),
-                })}
-                help={t("plugins.host.budgetHelp")}
-                htmlFor="plugin-host-budget"
-                label={t("plugins.host.budget")}
-              >
-                <Select
-                  disabled={disabled}
-                  onValueChange={(value) =>
-                    onChange({ injection_budget_bytes: Number(value) * 1024 })
-                  }
-                  value={String(budgetKib)}
-                >
-                  <SelectTrigger
-                    className="w-28"
-                    id="plugin-host-budget"
-                    size="sm"
-                  >
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {budgets.map((kib) => (
-                      <SelectItem key={kib} value={String(kib)}>
-                        {t("plugins.host.budgetValue", { value: kib })}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
               </SettingRow>
               {canOrder ? (
                 <SettingRow

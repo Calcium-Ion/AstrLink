@@ -86,7 +86,6 @@ const bridgeMocks = vi.hoisted(() => ({
   getSessionPlugins: vi.fn(async () => []),
   updatePluginHostSettings: vi.fn(async () => ({
     paused: false,
-    injection_budget_bytes: 16384,
     language: "zh-CN",
   })),
   listMetadataAttributes: vi.fn(async () => []),

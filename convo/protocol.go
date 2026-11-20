@@ -18,7 +18,7 @@ const (
 	OpenAIResponses Protocol = "openai.responses"
 	// AnthropicMessages is POST /v1/messages. History lives in messages[].
 	AnthropicMessages Protocol = "anthropic.messages"
-	// GeminiGenerateContent is POST /v1beta/models/{model}:generateContent and
+	// GeminiGenerateContent is POST /v1beta/models/{model}:generateContent, or /v1/..., and
 	// :streamGenerateContent. History lives in contents[].
 	GeminiGenerateContent Protocol = "gemini.generate_content"
 )

@@ -73,26 +73,27 @@ func rewriteGeminiBatchModels(request *http.Request, upstreamModel string, repla
 }
 
 func rewriteGeminiPathModel(request *http.Request, upstreamModel string) (*http.Request, error) {
+	// The model may be one the client named with a slash (astrlink/auto),
+	// so the action is after the path's last colon.
 	path := request.URL.Path
 	colon := strings.LastIndex(path, ":")
 	if colon < 0 {
 		return nil, fmt.Errorf("gemini path has no action separator")
 	}
-	prefix := path[:colon]
-	action := path[colon+1:]
-	const modelsPrefix = "/v1beta/models/"
-	if !strings.HasPrefix(prefix, modelsPrefix) {
+	version, ok := contract.GeminiVersionOf(path[:colon])
+	if !ok {
 		return nil, fmt.Errorf("gemini path is missing models prefix")
 	}
-	setGeminiModelPath(request.URL, upstreamModel, ":"+action)
+	setGeminiModelPath(request.URL, version, upstreamModel, path[colon:])
 	return request, nil
 }
 
 // setGeminiModelPath stores the decoded model in Path and its escaped form in
 // RawPath. Assigning an escaped string to Path would escape it a second time
-// when the forwarder builds the target URL ("a/b" -> "a%252Fb").
-func setGeminiModelPath(target *url.URL, model, suffix string) {
-	const modelsPrefix = "/v1beta/models/"
+// when the forwarder builds the target URL ("a/b" -> "a%252Fb"). version is
+// the Gemini API version the path names: "/v1beta" or "/v1".
+func setGeminiModelPath(target *url.URL, version, model, suffix string) {
+	modelsPrefix := version + "/models/"
 	target.Path = modelsPrefix + model + suffix
 	target.RawPath = modelsPrefix + url.PathEscape(model) + suffix
 	if target.RawPath == target.Path {

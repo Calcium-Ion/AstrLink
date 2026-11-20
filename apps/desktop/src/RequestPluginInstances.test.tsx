@@ -54,7 +54,6 @@ const detail = {
 
 const host: PluginHostSettings = {
   paused: false,
-  injection_budget_bytes: 16384,
   language: "zh-CN",
   request_plugins: [
     {

@@ -101,3 +101,44 @@ func TestTheProviderPartIsChecked(t *testing.T) {
 		t.Fatalf("task and provider parts = %+v, %v", checked, err)
 	}
 }
+
+func TestGeminiRoutesUnderBothVersionsAreTheGateways(t *testing.T) {
+	for path, want := range map[string]contract.ProtocolID{
+		"/v1beta/models/{model}:generateContent":        contract.ProtocolGoogleGenerateContent,
+		"/v1/models/{model}:generateContent":            contract.ProtocolGoogleGenerateContent,
+		"/v1/models/{model}:streamGenerateContent":      contract.ProtocolGoogleGenerateContent,
+		"/v1beta/models/{model}:embedContent":           contract.ProtocolGoogleEmbeddings,
+		"/v1/models/{model}:batchEmbedContents":         contract.ProtocolGoogleEmbeddings,
+		"/v1beta/models/{model}:countTokens":            "",
+		"/v1beta/models/{model}:predictLongRunning":     "",
+		"/v1beta/openai/models/{model}:generateContent": "",
+	} {
+		if got := RelayProtocol(path); got != want {
+			t.Errorf("RelayProtocol(%q) = %q, want %q", path, got, want)
+		}
+	}
+
+	relay := `[
+  { incoming_path: "/v1beta/models/{model}:generateContent", upstream_path: "/v1beta/models/{model}:generateContent" },
+  { incoming_path: "/v1/models/{model}:embedContent", upstream_path: "/v1/models/{model}:embedContent" }
+]`
+	checked, err := Check(Source{File: "plugin.js", Text: relaySource(relay, "")})
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	meta := checked.Task
+	for path, upstream := range map[string]string{
+		"/v1beta/models/gemini:streamGenerateContent": "/v1beta/models/{model}:generateContent",
+		// A call under the version no route names takes the other's route.
+		"/v1/models/gemini:generateContent":       "/v1beta/models/{model}:generateContent",
+		"/v1/models/gemini:streamGenerateContent": "/v1beta/models/{model}:generateContent",
+		"/v1beta/models/gemini:embedContent":      "/v1/models/{model}:embedContent",
+	} {
+		if route := meta.RelayRouteFor(path, "gemini"); route == nil || route.UpstreamPath != upstream {
+			t.Errorf("route of %s = %+v, want upstream %s", path, route, upstream)
+		}
+	}
+	if route := meta.RelayRouteFor("/v1/models/gemini:batchEmbedContents", "gemini"); route != nil {
+		t.Errorf("a call no route serves = %+v", route)
+	}
+}

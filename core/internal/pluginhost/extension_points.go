@@ -272,7 +272,7 @@ func (ext *Extensions) BeforeForward(ctx context.Context, body []byte) []byte {
 	params := map[string]json.RawMessage{}
 	var addTools []ToolSpec
 	var removeTools []string
-	budget := ext.host.Settings().InjectionBudgetBytes
+	budget := contract.PluginInjectionBudgetBytes
 	opening, hasOpening := ext.host.ledger.Opening(ext.input.Protocol, body)
 	for _, target := range ext.serving(hook, plugin.CapabilityRequestWrite, plugin.CapabilityInject, plugin.CapabilityRequestWriteRaw) {
 		arg := map[string]any{"request": ext.requestContext()}

@@ -63,12 +63,12 @@ const (
 	MaxPluginTurnWaitMs     = 5000
 )
 
-// Bounds of what all plugins together inject into one request, in bytes.
-const (
-	DefaultPluginInjectionBudgetBytes = 16 << 10
-	MinPluginInjectionBudgetBytes     = 4 << 10
-	MaxPluginInjectionBudgetBytes     = 64 << 10
-)
+// PluginInjectionBudgetBytes bounds what all plugins together inject into
+// one request as text. It is a safeguard against a runaway plugin, not a
+// setting: past it, the blocks of the plugins later in the order stay out
+// and their records say so. It was a setting of 4 to 64 KB, 16 by default,
+// which two or three plugins that add rules or knowledge outgrew.
+const PluginInjectionBudgetBytes = 128 << 10
 
 // Interface languages, which what plugins inject follows. They are the
 // desktop's locales.
@@ -95,10 +95,6 @@ type PluginHostSettings struct {
 	// Paused keeps every plugin out of requests, which then go out as they
 	// came.
 	Paused bool `json:"paused"`
-	// InjectionBudgetBytes bounds what all plugins inject into one request
-	// together. Past it, the blocks of the plugins later in key order stay
-	// out.
-	InjectionBudgetBytes int `json:"injection_budget_bytes"`
 	// Language is the interface language, en, zh-CN or ja. A session takes
 	// it when it starts and keeps it.
 	Language string `json:"language"`
@@ -129,13 +125,10 @@ const MaxPluginOrder = 64
 
 // DefaultPluginHostSettings are the settings of a Core nobody changed them in.
 func DefaultPluginHostSettings() PluginHostSettings {
-	return PluginHostSettings{InjectionBudgetBytes: DefaultPluginInjectionBudgetBytes, Language: DefaultPluginLanguage}
+	return PluginHostSettings{Language: DefaultPluginLanguage}
 }
 
 func (settings PluginHostSettings) Validate() error {
-	if settings.InjectionBudgetBytes < MinPluginInjectionBudgetBytes || settings.InjectionBudgetBytes > MaxPluginInjectionBudgetBytes {
-		return fmt.Errorf("injection_budget_bytes must be %d to %d", MinPluginInjectionBudgetBytes, MaxPluginInjectionBudgetBytes)
-	}
 	if !ValidPluginLanguage(settings.Language) {
 		return fmt.Errorf("language must be en, zh-CN or ja")
 	}
@@ -181,7 +174,9 @@ func validRegistry(text string) bool {
 
 // PluginHostSettingsUpdate changes what is set and keeps what is absent.
 type PluginHostSettingsUpdate struct {
-	Paused               *bool     `json:"paused,omitempty"`
+	Paused *bool `json:"paused,omitempty"`
+	// InjectionBudgetBytes is accepted and ignored: the budget was a
+	// setting, and an interface of that time still sends it.
 	InjectionBudgetBytes *int      `json:"injection_budget_bytes,omitempty"`
 	Language             *string   `json:"language,omitempty"`
 	Order                *[]string `json:"order,omitempty"`

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"regexp"
 	"slices"
@@ -235,35 +236,49 @@ func TestPausingASessionKeepsThePluginOutOfIt(t *testing.T) {
 }
 
 func TestTheInjectionBudgetKeepsOutTheLaterPlugins(t *testing.T) {
+	// Each block is a little under the 8 KB a prepare block may take, so
+	// the fixed budget holds whole blocks and the plugins past it stay out.
+	const each = 7 << 10
 	big := func(key string) string {
 		return `export const meta = { apiVersion: 1, key: "` + key + `", name: "` + key + `", version: "1.0.0", capabilities: ["context.inject"] };
-export function prepareSession() { return { system: "` + key + `:" + "x".repeat(3000) }; }
+export function prepareSession() { return { system: "` + key + `:" + "x".repeat(` + strconv.Itoa(each) + `) }; }
 `
 	}
-	h := newHarness(t, allCapabilities(), map[string]string{"alpha": big("alpha"), "beta": big("beta")}, nil)
-	if _, err := h.host.UpdateSettings(context.Background(), contract.PluginHostSettingsUpdate{InjectionBudgetBytes: ptr(contract.MinPluginInjectionBudgetBytes)}); err != nil {
-		t.Fatal(err)
+	fits := contract.PluginInjectionBudgetBytes / (each + 64)
+	sources := map[string]string{}
+	keys := make([]string, 0, fits+2)
+	for index := range fits + 2 {
+		key := fmt.Sprintf("p%02d", index)
+		keys = append(keys, key)
+		sources[key] = big(key)
 	}
+	h := newHarness(t, allCapabilities(), sources, nil)
 	body := messages(user("帮我看看分页逻辑"))
 	run, sent := h.send(t, call{session: "session_1", turn: 1, body: body})
-	if system := systemOf(sent); !strings.HasPrefix(system, "alpha:") || strings.Contains(system, "beta:") {
-		t.Fatalf("system = %.40q…", system)
+	system := systemOf(sent)
+	if !strings.Contains(system, keys[0]+":") || strings.Contains(system, keys[len(keys)-1]+":") {
+		t.Fatalf("system holds %d bytes", len(system))
+	}
+	if len(system) > contract.PluginInjectionBudgetBytes {
+		t.Fatalf("system holds %d bytes, past the budget", len(system))
 	}
 	records, _ := run.Report()
+	if len(records) != len(keys) {
+		t.Fatalf("records = %d, want %d", len(records), len(keys))
+	}
+	kept, over := 0, 0
 	for _, record := range records {
-		switch record.Plugin {
-		case "alpha":
-			if record.Injection == nil || record.SkippedReason != "" {
-				t.Fatalf("alpha = %+v", record)
-			}
-		case "beta":
-			if record.Injection != nil || record.Status != contract.PluginRecordSkipped || record.SkippedReason != contract.PluginSkipOverBudget {
-				t.Fatalf("beta = %+v", record)
-			}
+		switch {
+		case record.Injection != nil && record.SkippedReason == "":
+			kept++
+		case record.Injection == nil && record.Status == contract.PluginRecordSkipped && record.SkippedReason == contract.PluginSkipOverBudget:
+			over++
+		default:
+			t.Fatalf("%s = %+v", record.Plugin, record)
 		}
 	}
-	if len(records) != 2 {
-		t.Fatalf("records = %+v", records)
+	if kept == 0 || over == 0 || kept+over != len(keys) {
+		t.Fatalf("kept %d, over the budget %d", kept, over)
 	}
 }
 

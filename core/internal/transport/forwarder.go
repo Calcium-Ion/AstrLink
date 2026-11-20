@@ -419,6 +419,11 @@ func trimDuplicateProtocolVersion(basePath, incomingPath string) string {
 		if strings.HasPrefix(incomingPath, version+"/") {
 			return strings.TrimPrefix(incomingPath, version)
 		}
+		// Google serves a Gemini model call under /v1 and /v1beta alike;
+		// the version the base URL names wins over the client's.
+		if called, ok := contract.GeminiVersionOf(incomingPath); ok && strings.Contains(incomingPath, ":") {
+			return strings.TrimPrefix(incomingPath, called)
+		}
 	}
 	return incomingPath
 }

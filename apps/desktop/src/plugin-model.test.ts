@@ -333,14 +333,12 @@ describe("plugin model", () => {
       }),
     ).toEqual({
       paused: true,
-      injection_budget_bytes: 16384,
       language: "ja",
       request_plugins: [],
     });
     expect(
       parsePluginHostSettings({
         paused: false,
-        injection_budget_bytes: 16384,
         language: "zh-CN",
         request_plugins: [
           {
@@ -366,7 +364,6 @@ describe("plugin model", () => {
     expect(() =>
       parsePluginHostSettings({
         paused: false,
-        injection_budget_bytes: 16384,
         language: "fr",
       }),
     ).toThrow("$.language");

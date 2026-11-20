@@ -103,7 +103,7 @@ func TestPluginHostSettingsKeepDefaultsUntilChanged(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(settings, contract.DefaultPluginHostSettings()) {
 		t.Fatalf("settings before a change = %+v, %v", settings, err)
 	}
-	changed := contract.PluginHostSettings{Paused: true, InjectionBudgetBytes: 8 << 10, Language: contract.PluginLanguageJapanese}
+	changed := contract.PluginHostSettings{Paused: true, Language: contract.PluginLanguageJapanese}
 	if err := store.PutPluginHostSettings(ctx, changed); err != nil {
 		t.Fatal(err)
 	}
@@ -111,18 +111,18 @@ func TestPluginHostSettingsKeepDefaultsUntilChanged(t *testing.T) {
 		t.Fatalf("settings = %+v, %v", settings, err)
 	}
 	for _, invalid := range []contract.PluginHostSettings{
-		{InjectionBudgetBytes: 1024, Language: "en"},
-		{InjectionBudgetBytes: 16 << 10, Language: "fr"},
+		{Language: "fr"},
 	} {
 		if err := store.PutPluginHostSettings(ctx, invalid); !errors.Is(err, storagecontract.ErrInvalidArgument) {
 			t.Fatalf("PutPluginHostSettings(%+v) = %v", invalid, err)
 		}
 	}
-	// A document from an older Core without a setting keeps its default.
-	if _, err := store.db.ExecContext(ctx, `UPDATE plugin_host_settings SET document_json = '{"paused":true}'`); err != nil {
+	// A document from an older Core without a setting keeps its default; one
+	// that still holds the injection budget, a setting no longer, loads.
+	if _, err := store.db.ExecContext(ctx, `UPDATE plugin_host_settings SET document_json = '{"paused":true,"injection_budget_bytes":4096}'`); err != nil {
 		t.Fatal(err)
 	}
-	if settings, err := store.PluginHostSettings(ctx); err != nil || !settings.Paused || settings.InjectionBudgetBytes != contract.DefaultPluginInjectionBudgetBytes || settings.Language != contract.DefaultPluginLanguage {
+	if settings, err := store.PluginHostSettings(ctx); err != nil || !settings.Paused || settings.Language != contract.DefaultPluginLanguage {
 		t.Fatalf("partial document = %+v, %v", settings, err)
 	}
 }

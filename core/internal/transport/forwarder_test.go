@@ -53,6 +53,9 @@ func TestJoinTargetURLNormalizesOneDuplicateProtocolVersionSegment(t *testing.T)
 		{name: "Gemini SDK base", base: "https://upstream.example/v1beta", incoming: "http://localhost/v1beta/models/gemini:generateContent", want: "https://upstream.example/v1beta/models/gemini:generateContent"},
 		{name: "ordinary prefix", base: "https://upstream.example/api", incoming: "http://localhost/v1/responses", want: "https://upstream.example/api/v1/responses"},
 		{name: "different version", base: "https://upstream.example/v1", incoming: "http://localhost/v1beta/models", want: "https://upstream.example/v1/v1beta/models"},
+		{name: "Gemini v1 call on a v1beta base", base: "https://upstream.example/v1beta", incoming: "http://localhost/v1/models/gemini:embedContent", want: "https://upstream.example/v1beta/models/gemini:embedContent"},
+		{name: "Gemini v1beta call on a v1 base", base: "https://upstream.example/v1", incoming: "http://localhost/v1beta/models/gemini:generateContent", want: "https://upstream.example/v1/models/gemini:generateContent"},
+		{name: "Gemini v1 call on an origin", base: "https://upstream.example", incoming: "http://localhost/v1/models/gemini:generateContent", want: "https://upstream.example/v1/models/gemini:generateContent"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

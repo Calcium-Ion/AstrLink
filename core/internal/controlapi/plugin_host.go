@@ -84,9 +84,6 @@ func (handler *Handler) pluginHostResource(writer http.ResponseWriter, request *
 		if update.Paused != nil {
 			merged.Paused = *update.Paused
 		}
-		if update.InjectionBudgetBytes != nil {
-			merged.InjectionBudgetBytes = *update.InjectionBudgetBytes
-		}
 		if update.Language != nil {
 			merged.Language = *update.Language
 		}

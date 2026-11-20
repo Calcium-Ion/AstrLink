@@ -140,11 +140,14 @@ func TestPluginHostSettingsArePausedBudgetedAndTold(t *testing.T) {
 	if got := decodeBody[contract.PluginHostSettings](t, controlRequest(t, handler, http.MethodGet, PluginHostPath, "", "", "")); !reflect.DeepEqual(got, contract.DefaultPluginHostSettings()) {
 		t.Fatalf("defaults = %+v", got)
 	}
+	// The injection budget is no longer a setting; an interface that still
+	// sends it is not refused.
 	response := approvedRequest(t, handler, http.MethodPatch, PluginHostPath, "application/json", `{"language":"ja","injection_budget_bytes":8192}`, "")
-	if got := decodeBody[contract.PluginHostSettings](t, response); response.Code != http.StatusOK || got.Language != "ja" || got.InjectionBudgetBytes != 8192 || got.Paused {
+	if got := decodeBody[contract.PluginHostSettings](t, response); response.Code != http.StatusOK || got.Language != "ja" || got.Paused ||
+		strings.Contains(response.Body.String(), "injection_budget_bytes") {
 		t.Fatalf("PATCH = %d %s", response.Code, response.Body.String())
 	}
-	for _, body := range []string{`{"language":"fr"}`, `{"injection_budget_bytes":100}`} {
+	for _, body := range []string{`{"language":"fr"}`} {
 		if response := approvedRequest(t, handler, http.MethodPatch, PluginHostPath, "application/json", body, ""); response.Code != http.StatusUnprocessableEntity {
 			t.Fatalf("PATCH %s = %d %s", body, response.Code, response.Body.String())
 		}

@@ -925,7 +925,7 @@ func (run *Run) Inject(body []byte) []byte {
 				result.turnTitle, turnBytes, choices = called.record.Title, len(entry.Turn), called.choices
 			}
 		}
-		if size := len(entry.Resident) + turnBytes; size > 0 && used+size > run.settings.InjectionBudgetBytes {
+		if size := len(entry.Resident) + turnBytes; size > 0 && used+size > contract.PluginInjectionBudgetBytes {
 			entry.Resident, entry.Turn, turnBytes, choices = "", "", 0, nil
 			result.overBudget = true
 		} else {

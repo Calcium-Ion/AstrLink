@@ -39,6 +39,10 @@ func TestClassifyAlphaProtocolRoutes(t *testing.T) {
 		{name: "rerank", method: http.MethodPost, path: "/v1/rerank", body: `{"model":"bge-reranker-v2-m3","query":"q","documents":["a"]}`, protocol: contract.ProtocolRerank, model: "bge-reranker-v2-m3"},
 		{name: "gemini embed", method: http.MethodPost, path: "/v1beta/models/gemini-embedding-001:embedContent", body: `{"content":{"parts":[{"text":"a"}]}}`, protocol: contract.ProtocolGoogleEmbeddings, model: "gemini-embedding-001"},
 		{name: "gemini batch embed", method: http.MethodPost, path: "/v1beta/models/gemini-embedding-001:batchEmbedContents", body: `{"requests":[{"model":"models/gemini-embedding-001","content":{"parts":[{"text":"a"}]}}]}`, protocol: contract.ProtocolGoogleEmbeddings, model: "gemini-embedding-001"},
+		{name: "gemini v1 generate", method: http.MethodPost, path: "/v1/models/gemini-2.5-pro:generateContent", body: `{}`, protocol: contract.ProtocolGoogleGenerateContent, model: "gemini-2.5-pro"},
+		{name: "gemini v1 stream", method: http.MethodPost, path: "/v1/models/gemini-2.5-flash:streamGenerateContent?alt=sse", body: `{}`, protocol: contract.ProtocolGoogleGenerateContent, model: "gemini-2.5-flash", streaming: true},
+		{name: "gemini v1 embed", method: http.MethodPost, path: "/v1/models/gemini-embedding-001:embedContent", body: `{"content":{"parts":[{"text":"a"}]}}`, protocol: contract.ProtocolGoogleEmbeddings, model: "gemini-embedding-001"},
+		{name: "gemini v1 batch embed", method: http.MethodPost, path: "/v1/models/gemini-embedding-001:batchEmbedContents", body: `{"requests":[{"model":"models/gemini-embedding-001","content":{"parts":[{"text":"a"}]}}]}`, protocol: contract.ProtocolGoogleEmbeddings, model: "gemini-embedding-001"},
 	}
 
 	for _, test := range tests {
@@ -91,6 +95,9 @@ func TestClassifyRejectsUnknownPathsAndWrongMethods(t *testing.T) {
 		"/v1beta/models/:embedContent",
 		"/v1beta/models/publisher/model:generateContent",
 		"/v1beta/models/gemini:countTokens",
+		"/v1/models/:generateContent",
+		"/v1/models/gemini:countTokens",
+		"/v1/models/gpt-4o",
 	} {
 		request := httptest.NewRequest(http.MethodPost, path, nil)
 		if _, err := classify(request, 0); err != errProtocolPathNotFound {
