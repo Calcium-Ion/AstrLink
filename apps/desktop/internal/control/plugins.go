@@ -522,8 +522,8 @@ func pluginRequest(action, key, name string, input any, hasInput bool) (Request,
 		return Request{Method: http.MethodGet, Path: "/control/v1/plugin-host"}, nil
 	case "update_host":
 		return with(http.MethodPatch, "/control/v1/plugin-host", "plugin host settings are required")
-	// A GitHub link fetched, built and reviewed; the install of what the
-	// review staged.
+	// A GitHub link fetched, or a local folder read, built and reviewed;
+	// the install of what the review staged.
 	case "source_preview":
 		return with(http.MethodPost, pluginsPath+"/sources/preview", "the link is required")
 	case "source_install":

@@ -24,8 +24,17 @@ func registerPluginCommands(h *host.Host, app *ui.App) {
 			Window:    app.PluginApprovalWindow(),
 		},
 		control.Metadata{API: api},
+		PluginFolders{},
 	)
 	if err := mygo.Protocol.Handle(control.PluginScheme, control.PluginClientHandler(h, host.CallerLabel)); err != nil {
 		log.Printf("astrlink: unable to serve plugin interfaces: %v", err)
 	}
 }
+
+// PluginFolders is the folder picker of the plugin install dialog.
+type PluginFolders struct{}
+
+// PickPluginFolder asks for the folder of a plugin project to install,
+// starting at start when it is one. It returns nil when the operator
+// canceled.
+func (PluginFolders) PickPluginFolder(start *string) (*string, error) { return pickFolder(start) }

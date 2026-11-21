@@ -343,7 +343,11 @@ func (Terminal) ListTerminalApps() []agents.TerminalChoice { return agents.Insta
 
 // PickTerminalDirectory asks for the folder a terminal opens in, starting
 // at start when it is one. It returns nil when the operator canceled.
-func (Terminal) PickTerminalDirectory(start *string) (*string, error) {
+func (Terminal) PickTerminalDirectory(start *string) (*string, error) { return pickFolder(start) }
+
+// pickFolder asks for a folder, starting at start when it is one. It
+// returns nil when the operator canceled.
+func pickFolder(start *string) (*string, error) {
 	options := mygo.OpenDialogOptions{Directory: true}
 	if start != nil {
 		if info, err := os.Stat(*start); err == nil && info.IsDir() {

@@ -3,8 +3,9 @@ package contract
 import "net/url"
 
 // Plugins installed from source (plugin platform v2, §7): a GitHub link is
-// resolved to a commit, its source built in Core with the dependencies its
-// lock file pins, reviewed, and installed only once the user confirms.
+// resolved to a commit, or a folder on the computer Core runs on is read,
+// its source built in Core with the dependencies its lock file pins,
+// reviewed, and installed only once the user confirms.
 
 // Where an installed plugin's source came from.
 const (
@@ -23,24 +24,28 @@ const (
 	// format: its index.json lists the plugins, their versions and the
 	// sha256 of each file.
 	PluginSourceMarket = "market"
+	// PluginSourceLocal is a folder on the computer Core runs on.
+	PluginSourceLocal = "local"
 )
 
 // PluginInstallSource is where a plugin installed from source came from.
 type PluginInstallSource struct {
-	// Kind is github or market; PluginSourceDirectory for a version the
-	// plugin directory held, which an install from source replaced and of
-	// which nothing else is known.
+	// Kind is github, market or local; PluginSourceDirectory for a version
+	// the plugin directory held, which an install from source replaced and
+	// of which nothing else is known.
 	Kind string `json:"kind"`
-	// Repository is owner/name; for a marketplace, its name.
+	// Repository is owner/name; for a marketplace, its name; for a local
+	// folder, the folder's name.
 	Repository string `json:"repository"`
-	// URL is the link the install started from.
+	// URL is the link the install started from; for a local folder, its
+	// absolute path.
 	URL string `json:"url"`
 	// Ref is the tag or branch installed, "" for a commit.
 	Ref string `json:"ref,omitempty"`
 	// RefKind is tag, branch or commit: what an update follows.
 	RefKind string `json:"ref_kind"`
 	// Commit is the commit built; for a marketplace, the sha256 of the
-	// plugin's file.
+	// plugin's file; "" for a local folder.
 	Commit      string `json:"commit"`
 	CommittedAt string `json:"committed_at,omitempty"`
 	// Subdir is the plugin's directory in the repository, "" for its root;
@@ -80,6 +85,8 @@ type PluginDependency struct {
 // PluginInstallPreviewRequest asks for a plugin to be fetched, built and
 // reviewed.
 type PluginInstallPreviewRequest struct {
+	// URL is a GitHub link, a marketplace link, or the absolute path of a
+	// folder on the computer Core runs on.
 	URL string `json:"url"`
 }
 
@@ -198,6 +205,7 @@ type PluginInstallChanges struct {
 const (
 	PluginInstallInvalidLink           = "invalid_link"
 	PluginInstallRepositoryNotFound    = "repository_not_found"
+	PluginInstallFolderNotFound        = "folder_not_found"
 	PluginInstallRefNotFound           = "ref_not_found"
 	PluginInstallRateLimited           = "rate_limited"
 	PluginInstallUnavailable           = "source_unavailable"

@@ -48,12 +48,14 @@ export interface PluginApproval {
 /** Where a plugin installed from source came from. */
 export interface PluginInstallSource {
   /**
-   * github; market for a plugin marketplace in new-api's index format; or
-   * directory for a version the plugin directory held, of no source.
+   * github; market for a plugin marketplace in new-api's index format; local
+   * for a folder on the computer Core runs on; or directory for a version
+   * the plugin directory held, of no source.
    */
   kind: string;
-  /** owner/name on GitHub; a marketplace's name. */
+  /** owner/name on GitHub; a marketplace's name; a local folder's name. */
   repository: string;
+  /** The link installed from; a local folder's absolute path. */
   url: string;
   /** The tag, branch or marketplace version installed; absent for a commit. */
   ref?: string;

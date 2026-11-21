@@ -142,13 +142,15 @@ func New(options Options) *Installer {
 	}
 }
 
-// Preview fetches the plugin a link names, builds it and checks it, and
-// stages the build for Install. existing describes the plugin a key names
-// now, nil for none. A *Failure says why the plugin cannot be installed.
+// Preview fetches the plugin a link names, or reads the local folder it is
+// the path of, builds it and checks it, and stages the build for Install.
+// existing describes the plugin a key names now, nil for none. A *Failure
+// says why the plugin cannot be installed.
 func (installer *Installer) Preview(ctx context.Context, link string, existing func(key string) *Existing) (contract.PluginInstallReview, error) {
 	parsed, ok := ParseLink(link)
 	market, isMarket := parseMarketLink(link)
-	if !ok && !isMarket {
+	folder, isLocal := localFolder(link)
+	if !ok && !isMarket && !isLocal {
 		return contract.PluginInstallReview{}, fail(contract.PluginInstallInvalidLink, "")
 	}
 	ctx, cancel := context.WithTimeout(ctx, previewTimeout)
@@ -171,8 +173,10 @@ func (installer *Installer) Preview(ctx context.Context, link string, existing f
 			return contract.PluginInstallReview{}, installer.failure(ctx, err)
 		}
 		review, record, err = installer.build(ctx, resolved, strings.TrimSpace(link), work, existing)
-	} else {
+	} else if isMarket {
 		review, record, err = installer.previewMarket(ctx, market, strings.TrimSpace(link), work, existing)
+	} else {
+		review, record, err = installer.buildLocal(ctx, folder, work, existing)
 	}
 	if err != nil {
 		_ = os.RemoveAll(work)
@@ -200,28 +204,48 @@ func (installer *Installer) failure(ctx context.Context, err error) error {
 	return err
 }
 
+// origin is where the source a build reads came from: what the install
+// record says of it, and the GitHub commit it is, nil for a local folder.
+type origin struct {
+	source   contract.PluginInstallSource
+	resolved *Resolved
+}
+
 // build fetches resolved's source into work and builds it into work/out.
 func (installer *Installer) build(ctx context.Context, resolved Resolved, link, work string, existing func(string) *Existing) (contract.PluginInstallReview, contract.PluginInstallRecord, error) {
-	var review contract.PluginInstallReview
-	var record contract.PluginInstallRecord
 	source := filepath.Join(work, "source")
 	if err := os.MkdirAll(source, 0o700); err != nil {
-		return review, record, err
+		return contract.PluginInstallReview{}, contract.PluginInstallRecord{}, err
 	}
+	defer os.RemoveAll(source)
 	commit, err := installer.hub.download(ctx, resolved, source)
 	if err != nil {
-		return review, record, err
+		return contract.PluginInstallReview{}, contract.PluginInstallRecord{}, err
 	}
 	resolved.Commit, resolved.CommittedAt = commit.id, commit.committedAt
+	return installer.buildSource(ctx, origin{source: resolved.Source(link), resolved: &resolved}, source, work, existing)
+}
+
+// buildSource builds the project in source into work/out and leaves source
+// as it is: the dependencies come from the registries by its lock file,
+// never from a node_modules beside it.
+func (installer *Installer) buildSource(ctx context.Context, from origin, source, work string, existing func(string) *Existing) (contract.PluginInstallReview, contract.PluginInstallRecord, error) {
+	var review contract.PluginInstallReview
+	var record contract.PluginInstallRecord
+	// The package store resolves work's real path, so work must exist
+	// first: a local folder's build makes nothing in it before.
+	if err := os.MkdirAll(work, 0o700); err != nil {
+		return review, record, err
+	}
 	if text, ok := plugin.ReadTaskSource(source); ok {
-		return installer.buildTask(ctx, resolved, link, work, source, text, existing)
+		return installer.buildTask(ctx, from, work, source, text, existing)
 	}
 	manifest, err := pluginbuild.ReadManifest(source)
 	if err != nil {
 		return review, record, &Failure{contract.PluginInstallFailure{Reason: contract.PluginInstallBuildFailed, Messages: []string{err.Error()}}}
 	}
 	if _, err := pluginbuild.ResolveEntries(source, manifest); err != nil {
-		return review, record, fail(contract.PluginInstallNoPlugin, resolved.Subdir)
+		return review, record, fail(contract.PluginInstallNoPlugin, from.source.Subdir)
 	}
 	lock, lockName, lockData, err := readLock(source)
 	if err != nil {
@@ -265,14 +289,13 @@ func (installer *Installer) build(ctx context.Context, resolved Resolved, link, 
 		return review, record, &Failure{contract.PluginInstallFailure{Reason: contract.PluginInstallInvalidPlugin, Messages: []string{err.Error()}}}
 	}
 	record = contract.PluginInstallRecord{
-		Source: resolved.Source(link), Version: checked.Meta.Version, Lockfile: lockName,
+		Source: from.source, Version: checked.Meta.Version, Lockfile: lockName,
 		Outputs: outputs, Dependencies: store.dependencies(),
 	}
 	if lockData != nil {
 		sum := sha256.Sum256(lockData)
 		record.LockfileSHA256 = hex.EncodeToString(sum[:])
 	}
-	_ = os.RemoveAll(source)
 	_ = os.RemoveAll(filepath.Join(work, "packages"))
 	review = newReview(checked, len(result.Plugin), len(result.Client), record)
 	review.Author = manifest.AuthorName()
@@ -739,6 +762,11 @@ func (installer *Installer) CheckUpdate(ctx context.Context, record contract.Plu
 		ctx, cancel := context.WithTimeout(ctx, time.Minute)
 		defer cancel()
 		return installer.checkMarketUpdate(ctx, record)
+	}
+	// A local folder has no newer version to look for: installing from it
+	// again builds what it holds now.
+	if source.Kind == contract.PluginSourceLocal {
+		return contract.PluginUpdateCheck{Pinned: true}, nil
 	}
 	owner, repo, ok := strings.Cut(source.Repository, "/")
 	if !ok || !ownerPattern.MatchString(owner) || !repoPattern.MatchString(repo) {

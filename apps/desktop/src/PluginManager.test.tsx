@@ -24,6 +24,7 @@ const bridgeMocks = vi.hoisted(() => ({
   openPluginApproval: vi.fn(),
   pluginApprovalOf: vi.fn(),
   previewPluginInstall: vi.fn(),
+  pickPluginFolder: vi.fn(),
   installPlugin: vi.fn(),
   checkPluginUpdate: vi.fn(),
   rollbackPlugin: vi.fn(),
@@ -1185,7 +1186,7 @@ describe("PluginManager", () => {
       new Error('{"error":{"code":"approval_pending","message":"waits"}}'),
     );
     await render();
-    await click(button("从 GitHub 安装"));
+    await click(button("安装插件"));
     const dialog = document.querySelector(
       '[data-testid="plugin-install-dialog"]',
     ) as HTMLElement;
@@ -1235,6 +1236,61 @@ describe("PluginManager", () => {
     ).toContain("acme/hello");
   });
 
+  const localFolder = "/Users/ada/code/hello-plugin";
+  const localReview = {
+    ...helloReview,
+    source: {
+      kind: "local",
+      repository: "hello-plugin",
+      url: localFolder,
+      commit: "",
+    },
+  };
+
+  it("installs a plugin from a folder on this computer", async () => {
+    bridgeMocks.pickPluginFolder.mockResolvedValue(localFolder);
+    bridgeMocks.previewPluginInstall.mockResolvedValue(localReview);
+    await render();
+    await click(button("安装插件"));
+    const dialog = document.querySelector(
+      '[data-testid="plugin-install-dialog"]',
+    ) as HTMLElement;
+    await click(button("选择文件夹", dialog));
+    expect(bridgeMocks.pickPluginFolder).toHaveBeenCalledWith(null);
+    expect(bridgeMocks.previewPluginInstall).toHaveBeenCalledWith(localFolder);
+    expect(
+      (document.getElementById("plugin-install-url") as HTMLInputElement).value,
+    ).toBe(localFolder);
+    const source = dialog.querySelector(
+      '[data-testid="plugin-install-source"]',
+    ) as HTMLElement;
+    expect(source.textContent).toContain("本地文件夹");
+    expect(source.textContent).toContain(localFolder);
+  });
+
+  it("reinstalls a plugin from its folder instead of checking for updates", async () => {
+    const hello = {
+      ...memory,
+      key: "hello",
+      name: "Hello",
+      source: "directory" as const,
+      installed: localReview.source,
+    };
+    bridgeMocks.listPlugins.mockResolvedValue({ ...list, plugins: [hello] });
+    bridgeMocks.getPlugin.mockResolvedValue(hello);
+    bridgeMocks.previewPluginInstall.mockResolvedValue(localReview);
+    await renderOpen("hello");
+    const heading = document.getElementById("plugin-manager-heading")
+      ?.parentElement as HTMLElement;
+    expect(heading.textContent).toContain("本地文件夹 hello-plugin");
+    await chooseMenuItem("从文件夹重新安装");
+    expect(bridgeMocks.checkPluginUpdate).not.toHaveBeenCalled();
+    expect(bridgeMocks.previewPluginInstall).toHaveBeenCalledWith(localFolder);
+    expect(
+      (document.getElementById("plugin-install-url") as HTMLInputElement).value,
+    ).toBe(localFolder);
+  });
+
   it("says why a plugin cannot be installed, with the build's messages", async () => {
     bridgeMocks.previewPluginInstall.mockRejectedValue({
       failure: {
@@ -1243,7 +1299,7 @@ describe("PluginManager", () => {
       },
     });
     await render();
-    await click(button("从 GitHub 安装"));
+    await click(button("安装插件"));
     const dialog = document.querySelector(
       '[data-testid="plugin-install-dialog"]',
     ) as HTMLElement;

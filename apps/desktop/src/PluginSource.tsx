@@ -36,8 +36,8 @@ import type {
 /**
  * What the header of a plugin's page offers besides its switch: the update
  * a check found, and behind ⋯ the connection test, its interface, the check
- * for a newer version, going back to a version an install replaced, and
- * removing it.
+ * for a newer version (for a local folder, installing from it again), going
+ * back to a version an install replaced, and removing it.
  */
 export function PluginMenu({
   detail,
@@ -54,7 +54,7 @@ export function PluginMenu({
   testing: boolean;
   onTest: () => void;
   onUiEnabled: (on: boolean) => void;
-  /** Reviews the update the link names. */
+  /** Reviews the update the link or the local folder names. */
   onUpdate: (url: string) => void;
   onRollback: (version: PluginInstalledVersion) => void;
   onUninstall: () => void;
@@ -68,6 +68,9 @@ export function PluginMenu({
   const versions = detail.versions ?? [];
   const loaded = detail.state === "loaded";
   const testable = loaded && detail.hooks.includes("testConnection");
+  // A local folder has no newer version to look for: installing from it
+  // again builds what it holds now.
+  const local = source?.kind === "local";
 
   async function runCheck() {
     setChecking(true);
@@ -159,14 +162,20 @@ export function PluginMenu({
                 {testable || (loaded && detail.client) ? (
                   <DropdownMenuSeparator />
                 ) : null}
-                <DropdownMenuItem
-                  disabled={checking}
-                  onSelect={() => void runCheck()}
-                >
-                  {checking
-                    ? t("plugins.install.checking")
-                    : t("plugins.install.checkUpdate")}
-                </DropdownMenuItem>
+                {local ? (
+                  <DropdownMenuItem onSelect={() => onUpdate(source.url)}>
+                    {t("plugins.install.reinstallFolder")}
+                  </DropdownMenuItem>
+                ) : (
+                  <DropdownMenuItem
+                    disabled={checking}
+                    onSelect={() => void runCheck()}
+                  >
+                    {checking
+                      ? t("plugins.install.checking")
+                      : t("plugins.install.checkUpdate")}
+                  </DropdownMenuItem>
+                )}
                 {versions.length > 0 ? (
                   <DropdownMenuItem onSelect={() => setChoosing(true)}>
                     {t("plugins.install.rollback")}
@@ -238,6 +247,8 @@ export function sourceLine(
 ): string {
   if (source.kind === "market")
     return source.repository || t("plugins.source.market");
+  if (source.kind === "local")
+    return `${t("plugins.source.local")} ${source.repository}`;
   return [
     `GitHub ${source.repository}${source.subdir ? `/${source.subdir}` : ""}`,
     sourceRef(source, t),

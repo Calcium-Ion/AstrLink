@@ -19,11 +19,13 @@ import {
   installPlugin,
   listenPluginApprovalFinished,
   openPluginApproval,
+  pickPluginFolder,
   pluginApprovalOf,
   pluginInstallFailureOf,
   previewPluginInstall,
 } from "./bridge";
 import { controlErrorCode, controlErrorMessage } from "./control-error";
+import { isWebEdition } from "./edition";
 import { useT } from "./i18n";
 import {
   installFailureText,
@@ -36,7 +38,7 @@ import type {
   PluginInstallReview,
 } from "./plugin-model";
 
-/** Where an install from a GitHub link is. */
+/** Where an install from a GitHub link or a local folder is. */
 type Phase =
   | { kind: "idle" }
   | { kind: "previewing" }
@@ -49,11 +51,12 @@ type Phase =
   | { kind: "confirming"; review: PluginInstallReview };
 
 /**
- * Installs a plugin from a GitHub link: Core fetches the commit the link
- * names and the packages its lock file pins, builds it without running any
- * script, and checks it; the review shows what it is before anything is
- * installed, and the install itself waits for the confirmation window.
- * `link` opens the dialog on a link already, as an update does.
+ * Installs a plugin from a GitHub link or, on the desktop, a folder on this
+ * computer: Core fetches the commit the link names, or reads the folder, and
+ * the packages its lock file pins, builds it without running any script, and
+ * checks it; the review shows what it is before anything is installed, and
+ * the install itself waits for the confirmation window. `link` opens the
+ * dialog on a link or a folder already, as an update does.
  */
 export function PluginInstallDialog({
   link,
@@ -72,8 +75,10 @@ export function PluginInstallDialog({
   const [url, setUrl] = useState(link ?? "");
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
   // A marketplace link (…/index.json#key@version) comes from the market page
-  // and is reviewed as it is; only a GitHub install takes a typed link.
-  const fromMarket = Boolean(link && !/github\.com/i.test(link));
+  // and is reviewed as it is; a GitHub link or a folder can be edited.
+  const fromMarket = Boolean(
+    link && /^https?:\/\//i.test(link) && !/github\.com/i.test(link),
+  );
   const [registry, setRegistry] = useState(host?.npm_registry ?? "");
   // The newest preview wins; an older one's answer is dropped.
   const previewRun = useRef(0);
@@ -172,6 +177,28 @@ export function PluginInstallDialog({
       ? phase.review
       : null;
   const busy = phase.kind === "previewing" || phase.kind === "installing";
+  const [picking, setPicking] = useState(false);
+  async function pickFolder() {
+    setPicking(true);
+    try {
+      const start = url.trim();
+      const folder = await pickPluginFolder(
+        start && !/^https?:\/\//i.test(start) ? start : null,
+      );
+      if (folder) {
+        setUrl(folder);
+        void preview(folder);
+      }
+    } catch (error) {
+      setPhase({
+        kind: "failed",
+        failure: null,
+        message: controlErrorMessage(error, t("plugins.install.failed")),
+      });
+    } finally {
+      setPicking(false);
+    }
+  }
   const saveRegistry = () => {
     const next = registry.trim().replace(/\/+$/, "");
     if (next !== (host?.npm_registry ?? ""))
@@ -197,6 +224,9 @@ export function PluginInstallDialog({
               >
                 <div className="grid gap-2">
                   <p>{t("plugins.install.helpLinks")}</p>
+                  {isWebEdition ? null : (
+                    <p>{t("plugins.install.helpFolder")}</p>
+                  )}
                   <p>{t("plugins.install.helpBuild")}</p>
                   <p>{t("plugins.install.helpConfirm")}</p>
                 </div>
@@ -215,7 +245,11 @@ export function PluginInstallDialog({
             <Field
               className="min-w-0 flex-1"
               htmlFor="plugin-install-url"
-              label={t("plugins.install.link")}
+              label={
+                isWebEdition
+                  ? t("plugins.install.link")
+                  : t("plugins.install.linkOrFolder")
+              }
             >
               <Input
                 {...verbatimTextInput}
@@ -235,6 +269,17 @@ export function PluginInstallDialog({
             >
               {t("plugins.install.check")}
             </Button>
+            {isWebEdition ? null : (
+              <Button
+                disabled={busy || picking || phase.kind === "waiting"}
+                onClick={() => void pickFolder()}
+                size="sm"
+                type="button"
+                variant="outline"
+              >
+                {t("plugins.install.chooseFolder")}
+              </Button>
+            )}
           </form>
         )}
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">

@@ -203,10 +203,11 @@ func stripFrontMatter(text string) string {
 	return strings.TrimSpace(text)
 }
 
-// buildTask stages a task plugin a GitHub link names. A plugin of a
-// repository that is a marketplace, whose index lists this very file,
-// counts as installed from the marketplace, which its updates follow.
-func (installer *Installer) buildTask(ctx context.Context, resolved Resolved, link, work, source, text string, existing func(string) *Existing) (contract.PluginInstallReview, contract.PluginInstallRecord, error) {
+// buildTask stages a task plugin a GitHub link names or a local folder
+// holds. A plugin of a GitHub repository that is a marketplace, whose index
+// lists this very file, counts as installed from the marketplace, which its
+// updates follow.
+func (installer *Installer) buildTask(ctx context.Context, from origin, work, source, text string, existing func(string) *Existing) (contract.PluginInstallReview, contract.PluginInstallRecord, error) {
 	extras := filepath.Join(work, extrasDir)
 	icon, iconName := sidecarIcon(source, extras)
 	files := taskFiles{icon: icon, iconName: iconName, changelogs: localChangelogs(source)}
@@ -216,20 +217,21 @@ func (installer *Installer) buildTask(ctx context.Context, resolved Resolved, li
 		return contract.PluginInstallReview{}, contract.PluginInstallRecord{}, err
 	}
 	sum := sha256.Sum256([]byte(text))
-	record := contract.PluginInstallRecord{Source: resolved.Source(link), Version: staged.checked.Task.Version, Outputs: staged.outputs}
-	if index, err := os.ReadFile(filepath.Join(extras, "index.json")); err == nil {
-		file := path.Join(resolved.Subdir, "plugin.js")
+	record := contract.PluginInstallRecord{Source: from.source, Version: staged.checked.Task.Version, Outputs: staged.outputs}
+	// A marketplace's own repository on GitHub installs as from the
+	// marketplace, which an update follows.
+	if index, err := os.ReadFile(filepath.Join(extras, "index.json")); err == nil && from.resolved != nil {
+		file := path.Join(from.resolved.Subdir, "plugin.js")
 		if market, err := parseIndex(index); err == nil {
 			if entry, version := market.find(staged.checked.Task.Key, staged.checked.Task.Version); version != nil && version.Path == file && strings.EqualFold(version.SHA256, hex.EncodeToString(sum[:])) {
 				record.Source = contract.PluginInstallSource{
-					Kind: contract.PluginSourceMarket, Repository: market.Name, URL: link, Index: repositoryIndex(resolved),
+					Kind: contract.PluginSourceMarket, Repository: market.Name, URL: from.source.URL, Index: repositoryIndex(*from.resolved),
 					Key: entry.Key, Ref: version.Version, RefKind: contract.PluginRefVersion, Commit: version.SHA256,
-					CommittedAt: resolved.Source(link).CommittedAt, Subdir: version.Path,
+					CommittedAt: from.source.CommittedAt, Subdir: version.Path,
 				}
 			}
 		}
 	}
-	_ = os.RemoveAll(source)
 	review := installer.taskReview(staged, len(text), record, files)
 	if existing != nil {
 		compare(&review, record, existing(staged.checked.Meta.Key))

@@ -62,7 +62,10 @@ export function installFailureText(
   });
 }
 
-/** Where the plugin comes from: its repository and directory, or its marketplace. */
+/**
+ * Where the plugin comes from: its repository and directory, its
+ * marketplace, or a folder on this computer.
+ */
 function SourceLine({ source }: { source: PluginInstallSource }) {
   const t = useT();
   if (source.kind === "directory")
@@ -70,6 +73,17 @@ function SourceLine({ source }: { source: PluginInstallSource }) {
       <div className="grid gap-0.5" data-testid="plugin-install-source">
         <span className="min-w-0 font-medium">
           {t("plugins.install.directorySource")}
+        </span>
+      </div>
+    );
+  if (source.kind === "local")
+    return (
+      <div className="grid gap-0.5" data-testid="plugin-install-source">
+        <span className="min-w-0 font-medium">
+          {t("plugins.install.localSource")}
+        </span>
+        <span className="font-mono text-xs break-all text-muted-foreground">
+          {source.url}
         </span>
       </div>
     );

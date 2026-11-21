@@ -81,8 +81,9 @@ func (handler *Handler) existingPlugin(key string) *plugininstall.Existing {
 }
 
 // pluginSources serves /plugins/sources/preview, which fetches, builds and
-// reviews a plugin from a GitHub link, and /plugins/sources/install, which
-// installs what a review staged once the user confirmed it.
+// reviews a plugin from a GitHub or marketplace link or a local folder, and
+// /plugins/sources/install, which installs what a review staged once the
+// user confirmed it.
 func (handler *Handler) pluginSources(writer http.ResponseWriter, request *http.Request, action string) {
 	if handler.pluginInstaller == nil {
 		writeError(writer, http.StatusServiceUnavailable, "unavailable", "installing plugins is unavailable")

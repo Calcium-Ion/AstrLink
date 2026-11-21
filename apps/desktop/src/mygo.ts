@@ -2022,6 +2022,18 @@ export const Metadata = {
   },
 } as const;
 
+/** PluginFolders is the folder picker of the plugin install dialog. */
+export const PluginFolders = {
+  /**
+   * PickPluginFolder asks for the folder of a plugin project to install,
+   * starting at start when it is one. It returns nil when the operator
+   * canceled.
+   */
+  pickPluginFolder(start: string | null): Promise<string | null> {
+    return call("PluginFolders.PickPluginFolder", start);
+  },
+} as const;
+
 /**
  * Clients writes and removes the config files of the coding clients,
  * previews and copies their setups, and checks what reaches the gateway.

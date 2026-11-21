@@ -4860,7 +4860,8 @@
       "directory": "Directory",
       "override": "Replaces built-in",
       "github": "GitHub",
-      "market": "Marketplace"
+      "market": "Marketplace",
+      "local": "Local folder"
     },
     "state": {
       "running": "Running",
@@ -5330,13 +5331,14 @@
       "description": "At each extension point the plugins run from top to bottom, each with what the one above returned."
     },
     "install": {
-      "open": "Install from GitHub",
-      "title": "Install from GitHub",
-      "helpLabel": "About installing from GitHub",
+      "open": "Install plugin",
+      "title": "Install a plugin",
+      "helpLabel": "About installing plugins",
       "helpLinks": "Paste a repository's home page (installs its newest version tag, or its default branch without tags), a branch, tag or directory under tree/, a release, or a commit. Private repositories are not supported yet.",
       "helpBuild": "AstrLink fetches the dependencies the lock file pins from npm on this computer, checks each against the lock file's hash, and builds the plugin with its own bundler, without running any install script. Dependencies with native modules cannot be used.",
       "helpConfirm": "Review the result here first; the install itself is confirmed in the plugin confirmation window. An installed plugin stays off until you enable it.",
       "link": "GitHub link",
+      "linkOrFolder": "GitHub link or local folder",
       "check": "Check",
       "previewing": "Downloading and building…",
       "failed": "This plugin cannot be installed.",
@@ -5414,7 +5416,7 @@
         "route_unsupported": "AstrLink cannot relay the route {{detail}} yet (the plugin converts it itself, or AstrLink does not serve that endpoint). It stays inactive after install."
       },
       "failures": {
-        "invalid_link": "This is not a GitHub repository link AstrLink can read.",
+        "invalid_link": "This is neither a GitHub repository link AstrLink can read nor the full path of a folder on this computer.",
         "repository_not_found": "The repository {{detail}} cannot be found, or it is private (not supported yet).",
         "ref_not_found": "The repository has no {{detail}}.",
         "rate_limited": "GitHub is limiting requests for now. Try again later.",
@@ -5432,7 +5434,8 @@
         "incompatible": "The plugin requires AstrLink {{detail}} and is not compatible with this version.",
         "expired": "The review expired. Check again.",
         "busy": "Another plugin is being built. Try again shortly.",
-        "unknown": "Could not install ({{reason}})."
+        "unknown": "Could not install ({{reason}}).",
+        "folder_not_found": "The folder {{detail}} cannot be found."
       },
       "marketRef": "Version {{version}} · verified",
       "directorySource": "The version the plugin directory held",
@@ -5449,7 +5452,11 @@
       "highRisk": "Asks for a high-risk capability: {{capability}}",
       "changelog": "Changelog",
       "marketTitle": "Install from the marketplace",
-      "updateTo": "Update to {{version}}"
+      "updateTo": "Update to {{version}}",
+      "helpFolder": "You can also choose a plugin project folder on this computer; it is built and reviewed as a GitHub install is. After you change its code, choose “Reinstall from folder” in the plugin’s ⋯ menu.",
+      "chooseFolder": "Choose folder",
+      "localSource": "Local folder",
+      "reinstallFolder": "Reinstall from folder"
     },
     "ui": {
       "switch": "Plugin interfaces",

@@ -1930,8 +1930,22 @@ export async function listenPluginApprovalChanged(
 }
 
 /**
- * Fetches the plugin a GitHub link names, builds it in Core and checks it,
- * for the user to review before installing it.
+ * The folder of a plugin project the user picked, or null when they closed
+ * the picker. Only the desktop has a picker: Core reads the folder on this
+ * computer.
+ */
+export async function pickPluginFolder(
+  start: string | null,
+): Promise<string | null> {
+  requireNativeBridge();
+  const picked = await invoke<unknown>("pick_plugin_folder", { start });
+  return typeof picked === "string" ? picked : null;
+}
+
+/**
+ * Fetches the plugin a GitHub or marketplace link names, or reads the one in
+ * a folder on this computer by its absolute path, builds it in Core and
+ * checks it, for the user to review before installing it.
  */
 export async function previewPluginInstall(
   url: string,

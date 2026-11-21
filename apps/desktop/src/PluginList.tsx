@@ -71,6 +71,7 @@ export function pluginOrigin(plugin: PluginSummary, t: Translate): string {
   const installed = plugin.installed;
   if (installed?.kind === "market")
     return installed.repository || t("plugins.source.market");
+  if (installed?.kind === "local") return t("plugins.source.local");
   if (installed) return installed.repository;
   return t(`plugins.source.${plugin.source}`);
 }

@@ -4860,7 +4860,8 @@
       "directory": "目录",
       "override": "替换内置",
       "github": "GitHub",
-      "market": "插件市场"
+      "market": "插件市场",
+      "local": "本地文件夹"
     },
     "state": {
       "running": "运行中",
@@ -5330,13 +5331,14 @@
       "description": "同一个扩展点上，插件从上到下依次执行，每个插件拿到上一个插件的结果。"
     },
     "install": {
-      "open": "从 GitHub 安装",
-      "title": "从 GitHub 安装",
-      "helpLabel": "关于从 GitHub 安装",
+      "open": "安装插件",
+      "title": "安装插件",
+      "helpLabel": "关于安装插件",
       "helpLinks": "可以粘贴仓库首页（装最新的版本标签，没有标签就装默认分支）、tree/ 下的分支、标签或目录、Release 或提交的链接。暂不支持私有仓库。",
       "helpBuild": "AstrLink 在本机按锁文件从 npm 下载依赖，逐个核对锁文件里的哈希，再用内置的构建器打包，不运行任何安装脚本；带原生模块的依赖用不了。",
       "helpConfirm": "先在这里看审查结果，安装要在「插件确认」窗口里确认。装好的插件不会自动启用。",
       "link": "GitHub 链接",
+      "linkOrFolder": "GitHub 链接或本地文件夹",
       "check": "检查",
       "previewing": "正在下载和构建…",
       "failed": "无法安装这个插件。",
@@ -5414,7 +5416,7 @@
         "route_unsupported": "{{detail}} 这条路由 AstrLink 暂时不能转发（需要插件自己转换，或者不是 AstrLink 接收的接口），装上后这条路由不生效。"
       },
       "failures": {
-        "invalid_link": "这不是能识别的 GitHub 仓库链接。",
+        "invalid_link": "这不是能识别的 GitHub 仓库链接，也不是本机文件夹的完整路径。",
         "repository_not_found": "找不到仓库 {{detail}}，或者它是私有仓库（暂不支持）。",
         "ref_not_found": "仓库里没有 {{detail}}。",
         "rate_limited": "GitHub 暂时限制了访问，请过一会儿再试。",
@@ -5432,7 +5434,8 @@
         "incompatible": "插件要求 AstrLink {{detail}}，和当前版本不兼容。",
         "expired": "审查结果已过期，请重新检查。",
         "busy": "正在构建另一个插件，请稍后再试。",
-        "unknown": "无法安装（{{reason}}）。"
+        "unknown": "无法安装（{{reason}}）。",
+        "folder_not_found": "找不到文件夹 {{detail}}。"
       },
       "marketRef": "版本 {{version}} · 已校验",
       "directorySource": "插件目录里原来的版本",
@@ -5449,7 +5452,11 @@
       "highRisk": "申请了高风险能力：{{capability}}",
       "changelog": "更新记录",
       "marketTitle": "从插件市场安装",
-      "updateTo": "更新到 {{version}}"
+      "updateTo": "更新到 {{version}}",
+      "helpFolder": "也可以选本机的插件项目文件夹，构建和审查与 GitHub 相同。改了代码后，在插件的「⋯」菜单里点「从文件夹重新安装」。",
+      "chooseFolder": "选择文件夹",
+      "localSource": "本地文件夹",
+      "reinstallFolder": "从文件夹重新安装"
     },
     "ui": {
       "switch": "插件界面",

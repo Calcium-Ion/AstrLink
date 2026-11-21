@@ -1,4 +1,4 @@
-import { Metadata, Plugins } from "../mygo";
+import { Metadata, PluginFolders, Plugins } from "../mygo";
 import type { CommandTable } from "./types";
 
 // Commands bound in commands_plugins.go: the plugin page, its confirmation
@@ -19,6 +19,8 @@ export const pluginsCommands = {
     kept?: string[];
   }) => Plugins.pluginApprovalDecide(a.id, a.approve, a.kept ?? null),
   open_plugin_approval: () => Plugins.openPluginApproval(),
+  pick_plugin_folder: (a: { start?: string | null }) =>
+    PluginFolders.pickPluginFolder(a.start ?? null),
   session_plugins: (a: {
     sessionId: string;
     key?: string;
