@@ -543,3 +543,67 @@ VALUES (?,?,?,'','model_sort',?,1,?,?)`,
 		t.Fatalf("scoped services=%+v error=%v", scoped.ByService, err)
 	}
 }
+
+func TestRunningCallCountsWithUsageSoFar(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t, filepath.Join(t.TempDir(), "billing.db"))
+	defer s.Close()
+	service := pathTestService("service_running")
+	if _, err := s.CreateService(ctx, service, storage.CredentialMutation{}); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now().UTC().Truncate(time.Second).Add(-time.Minute)
+	price := pricing.Price{Provider: "openai", Model: "model_a", Expression: `tier("standard",p * 1 + c * 4)`}
+	catalog := pricing.Catalog{Version: "v1", ActivatedAt: start.Add(-time.Hour), GeneratedAt: start, Prices: []pricing.Price{price}, Warnings: []string{}}
+	if err := s.SavePricingCatalog(ctx, catalog); err != nil {
+		t.Fatal(err)
+	}
+	root := contract.RequestID("request_running_root")
+	model := "model_a"
+	r := contract.RequestRecord{ID: root, AttemptIndex: 1, ServiceID: &service.ID, RequestedModel: &model, StartedAt: start, Status: contract.RequestStatusPending, InputProtocol: contract.ProtocolAnthropicMessages, Audit: contract.NotCapturedAuditSummary()}
+	if err := s.UpsertRequestRecord(ctx, r); err != nil {
+		t.Fatal(err)
+	}
+	check := func(step, amount string, priced, pending int64) {
+		t.Helper()
+		summary, err := s.BillingSummary(ctx, service.ID, "", start, start.Add(time.Hour), pricing.BillingSummaryOptions{})
+		if err != nil || summary.AmountUSD != amount || summary.Priced != priced || summary.Pending != pending || summary.Requests != 1 {
+			t.Fatalf("%s: summary=%+v err=%v", step, summary.Amounts, err)
+		}
+		if len(summary.ByService) != 1 || summary.ByService[0].AmountUSD != amount {
+			t.Fatalf("%s: by service=%+v", step, summary.ByService)
+		}
+	}
+	check("before usage", "0.000000000", 0, 1)
+
+	// The stream reported its input: the running call counts it at once.
+	read := 200000
+	live := contract.Usage{InputTokens: 1000000, OutputTokens: 1, TotalTokens: 1000001, CacheReadTokens: &read, BillingIncomplete: true}
+	if err := s.UpdateLiveUsage(ctx, root, 1, live); err != nil {
+		t.Fatal(err)
+	}
+	check("live input", "1.000004000", 0, 1)
+
+	// A later pending snapshot carries the same usage and keeps the value.
+	r.Usage = &live
+	if err := s.UpsertRequestRecord(ctx, r); err != nil {
+		t.Fatal(err)
+	}
+	check("pending snapshot", "1.000004000", 0, 1)
+
+	r.Status = contract.RequestStatusSucceeded
+	r.Usage = &contract.Usage{InputTokens: 1000000, OutputTokens: 100000, TotalTokens: 1100000, CacheReadTokens: &read}
+	if err := s.UpsertRequestRecord(ctx, r); err != nil {
+		t.Fatal(err)
+	}
+	check("settled", "1.400000000", 1, 0)
+
+	// A read that arrives after the call settled changes nothing.
+	if err := s.UpdateLiveUsage(ctx, root, 1, live); err != nil {
+		t.Fatal(err)
+	}
+	check("late update", "1.400000000", 1, 0)
+	if err := s.UpdateLiveUsage(ctx, "request_running_unknown", 1, live); err != nil {
+		t.Fatalf("unknown entry: %v", err)
+	}
+}

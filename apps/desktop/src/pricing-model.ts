@@ -103,6 +103,15 @@ export function formatUSD(
   const digits = short && Math.abs(amount) >= 1000 ? 0 : currency.digits;
   return formatCurrency(amount, digits, currency);
 }
+/**
+ * Whether an amount has something to show: a priced call, or a running one
+ * already valued at the usage it has reported so far.
+ */
+export function hasBillingAmount(
+  amounts: Pick<BillingAmounts, "amount_usd" | "priced">,
+): boolean {
+  return amounts.priced > 0 || Number(amounts.amount_usd) > 0;
+}
 export function billingAmount(
   amounts:
     | Pick<BillingAmounts, "amount_usd" | "priced" | "unpriced" | "pending">
@@ -111,7 +120,7 @@ export function billingAmount(
 ): string {
   if (
     !amounts ||
-    (amounts.priced === 0 && amounts.unpriced + amounts.pending > 0)
+    (!hasBillingAmount(amounts) && amounts.unpriced + amounts.pending > 0)
   )
     return "—";
   return formatUSD(amounts.amount_usd, options);

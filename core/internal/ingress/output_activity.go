@@ -2,6 +2,7 @@ package ingress
 
 import (
 	"context"
+	"reflect"
 	"slices"
 	"strings"
 	"time"
@@ -204,6 +205,48 @@ func (session *recordSession) flushLiveOutput() {
 	defer cancel()
 	if err := store.UpdateRequestOutput(ctx, session.id, *output); err != nil {
 		logRequestRecordFailure(session.persistLogf, "live_output_update", err)
+	}
+}
+
+// liveUsageInterval bounds how often one stream revalues its running call.
+const liveUsageInterval = 2 * time.Second
+
+// liveUsageStore is implemented by stores that value a running call from the
+// usage its stream has reported so far.
+type liveUsageStore interface {
+	UpdateLiveUsage(context.Context, contract.RequestID, int, contract.Usage) error
+}
+
+// flushLiveUsage values attempt with the usage the stream has reported so
+// far, once it has changed and at most every liveUsageInterval, so a running
+// call counts in the amounts before it ends. Like flushLiveOutput it reads
+// only the scanner and fields set before the stream began. A Claude CLI
+// call is billed on the request it serves, so it has no entry of its own.
+func (session *recordSession) flushLiveUsage(attempt int) {
+	scanner := session.upstreamScanner
+	if scanner == nil || attempt < 1 || session.delegatedParent != nil {
+		return
+	}
+	store, ok := session.persistStore.(liveUsageStore)
+	if !ok {
+		return
+	}
+	now := time.Now()
+	if now.Sub(session.usageFlushedAt) < liveUsageInterval {
+		return
+	}
+	usage := scanner.liveUsage()
+	if usage == nil || reflect.DeepEqual(usage, session.usageFlushed) {
+		return
+	}
+	session.usageFlushed = usage
+	session.usageFlushedAt = now
+	stored := *usage
+	stored.ThinkingEnabled = session.classified.ThinkingEnabled
+	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	defer cancel()
+	if err := store.UpdateLiveUsage(ctx, session.id, attempt, stored); err != nil {
+		logRequestRecordFailure(session.persistLogf, "live_usage_update", err)
 	}
 }
 

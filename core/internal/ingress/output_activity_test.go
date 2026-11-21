@@ -170,3 +170,85 @@ func TestStreamStoresItsOutputAtMostEveryInterval(t *testing.T) {
 		t.Fatalf("snapshot output = %+v", record.Output)
 	}
 }
+
+// usageRecordingStore keeps the usage a stream valued its call with.
+type usageRecordingStore struct {
+	memoryRequestRecordStore
+	ids      []contract.RequestID
+	attempts []int
+	usages   []contract.Usage
+}
+
+func (store *usageRecordingStore) UpdateLiveUsage(
+	_ context.Context,
+	id contract.RequestID,
+	attempt int,
+	usage contract.Usage,
+) error {
+	store.ids = append(store.ids, id)
+	store.attempts = append(store.attempts, attempt)
+	store.usages = append(store.usages, usage)
+	return nil
+}
+
+func TestStreamValuesItsRunningCallFromUsageSoFar(t *testing.T) {
+	store := &usageRecordingStore{}
+	thinking := true
+	session := newRecordSession(Request{Protocol: contract.ProtocolAnthropicMessages, Streaming: true, ThinkingEnabled: &thinking}, "", contract.AuditSettings{})
+	session.persistStore = store
+	session.attemptIndex = 2
+	session.upstreamScanner = newUsageScanner(contract.ProtocolAnthropicMessages, true)
+	start := `data: {"type":"message_start","message":{"id":"msg_1","usage":{"input_tokens":10,"cache_read_input_tokens":900,"cache_creation_input_tokens":90,"output_tokens":1}}}` + "\n\n"
+	text := `data: {"type":"content_block_start","content_block":{"type":"text","text":""}}` + "\n\n"
+	// The final usage line arrives cut; the live read must not parse it early.
+	end := `data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":500}}` + "\n\n"
+	upstream := io.NopCloser(strings.NewReader(start + text + end))
+	body := session.wrapUpstreamResponseBody(200, map[string][]string{"Content-Type": {"text/event-stream"}}, upstream)
+	read := func(size int) {
+		t.Helper()
+		buffer := make([]byte, size)
+		if _, err := io.ReadFull(body, buffer); err != nil {
+			t.Fatal(err)
+		}
+	}
+	read(len(start) + len(text) + len(end)/2)
+	if len(store.usages) != 1 || store.ids[0] != session.id || store.attempts[0] != 2 {
+		t.Fatalf("updates = %v %v %+v", store.ids, store.attempts, store.usages)
+	}
+	got := store.usages[0]
+	if got.InputTokens != 1000 || got.OutputTokens != 1 || got.CacheReadTokens == nil || *got.CacheReadTokens != 900 ||
+		got.CacheWriteTokens == nil || *got.CacheWriteTokens != 90 || !got.BillingIncomplete ||
+		got.ThinkingEnabled == nil || !*got.ThinkingEnabled {
+		t.Fatalf("live usage = %+v", got)
+	}
+	// The rest arrives within the interval and waits for a later read.
+	session.usageFlushedAt = session.usageFlushedAt.Add(-liveUsageInterval)
+	read(len(end) - len(end)/2)
+	if len(store.usages) != 2 || store.usages[1].OutputTokens != 500 || store.usages[1].BillingIncomplete {
+		t.Fatalf("updates = %+v", store.usages)
+	}
+	// Nothing changed, so nothing is stored again.
+	session.usageFlushedAt = session.usageFlushedAt.Add(-liveUsageInterval)
+	session.flushLiveUsage(2)
+	if len(store.usages) != 2 {
+		t.Fatalf("unchanged usage stored again: %+v", store.usages)
+	}
+}
+
+func TestClaudeCLICallValuesNoEntryOfItsOwn(t *testing.T) {
+	store := &usageRecordingStore{}
+	session := newRecordSession(Request{Protocol: contract.ProtocolAnthropicMessages, Streaming: true}, "", contract.AuditSettings{})
+	parent := contract.RequestID("request_outer")
+	session.delegatedParent = &parent
+	session.persistStore = store
+	session.attemptIndex = 1
+	session.upstreamScanner = newUsageScanner(contract.ProtocolAnthropicMessages, true)
+	start := `data: {"type":"message_start","message":{"id":"msg_1","usage":{"input_tokens":10,"output_tokens":1}}}` + "\n\n"
+	body := session.wrapUpstreamResponseBody(200, map[string][]string{"Content-Type": {"text/event-stream"}}, io.NopCloser(strings.NewReader(start)))
+	if _, err := io.ReadAll(body); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.usages) != 0 {
+		t.Fatalf("CLI call valued an entry: %+v", store.usages)
+	}
+}

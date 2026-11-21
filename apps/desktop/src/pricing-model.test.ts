@@ -5,6 +5,7 @@ import {
   parseServiceBilling,
   parsePricingConfig,
   billingAmount,
+  hasBillingAmount,
   currentBillingPeriod,
   formatUSD,
   type BillingPeriod,
@@ -185,6 +186,12 @@ describe("official pricing boundary", () => {
     };
     expect(billingAmount(amounts)).toBe("—");
     expect(billingAmount({ ...amounts, unpriced: 0 })).toBe("$0.00");
+    // A running call shows what it has used so far once it is valued.
+    const running = { ...amounts, unpriced: 0, pending: 1 };
+    expect(billingAmount(running)).toBe("—");
+    expect(hasBillingAmount(running)).toBe(false);
+    expect(billingAmount({ ...running, amount_usd: "1.25" })).toBe("$1.25");
+    expect(hasBillingAmount({ ...running, amount_usd: "1.25" })).toBe(true);
     const month = {
       id: "month",
       kind: "month",

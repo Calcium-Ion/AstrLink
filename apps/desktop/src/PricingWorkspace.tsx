@@ -48,7 +48,10 @@ function periodLabel(p: BillingPeriod, t: ReturnType<typeof useT>) {
   return `${kind} · ${stamp(p.start)} – ${stamp(p.end)}`;
 }
 
-/** The calls an amount leaves out, joined for one line; empty when none. */
+/**
+ * The calls an amount has not settled, joined for one line: unpriced ones it
+ * leaves out and running ones it counts so far. Empty when none.
+ */
 export function billingNoteText(
   t: ReturnType<typeof useT>,
   amounts: BillingAmounts,

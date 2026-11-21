@@ -202,9 +202,12 @@ type recordSession struct {
 	accessTokenID       *contract.AccessTokenID
 	scanner             *usageScanner
 	upstreamScanner     *usageScanner
-	// outputFlushedAt is when the stream last stored its output; only the
-	// goroutine reading the upstream body touches it.
+	// outputFlushedAt is when the stream last stored its output, and
+	// usageFlushed/usageFlushedAt the usage it last valued and when; only the
+	// goroutine reading the upstream body touches them.
 	outputFlushedAt       time.Time
+	usageFlushed          *contract.Usage
+	usageFlushedAt        time.Time
 	status                contract.RequestStatus
 	httpStatus            int
 	hasHTTPStatus         bool
@@ -1158,15 +1161,16 @@ func (session *recordSession) wrapUpstreamResponseBody(
 		}
 		session.upstreamResponseCapture.mediaType = mediaType
 	}
-	return &upstreamResponseCaptureBody{ReadCloser: body, session: session, upstreamError: session.upstreamError}
+	return &upstreamResponseCaptureBody{ReadCloser: body, session: session, upstreamError: session.upstreamError, attempt: session.attemptIndex}
 }
 
 type upstreamResponseCaptureBody struct {
 	io.ReadCloser
 	session *recordSession
-	// upstreamError is this attempt's own error capture, even if a late read
-	// arrives after the next attempt began.
+	// upstreamError is this attempt's own error capture, and attempt its
+	// number, even if a late read arrives after the next attempt began.
 	upstreamError *upstreamErrorCapture
+	attempt       int
 }
 
 func (body *upstreamResponseCaptureBody) Read(p []byte) (int, error) {
@@ -1177,6 +1181,7 @@ func (body *upstreamResponseCaptureBody) Read(p []byte) (int, error) {
 		if body.session.upstreamScanner != nil {
 			body.session.upstreamScanner.observe(p[:n])
 			body.session.flushLiveOutput()
+			body.session.flushLiveUsage(body.attempt)
 		}
 	}
 	return n, err

@@ -226,7 +226,13 @@ WHERE root_id = ? AND attempt = ? AND local_access_token_id IS NULL`,
 	if err != nil {
 		return err
 	}
-	if r.Status != contract.RequestStatusPending {
+	if r.Status == contract.RequestStatusPending {
+		// A running call counts with the usage reported so far; it stays
+		// pending until its final snapshot settles it.
+		if value, ok := livePendingValue(priceJSON, r.Usage, r.StartedAt); ok {
+			amount, tier = value.AmountUSD, value.Tier
+		}
+	} else {
 		terminal = 1
 		reason = "missing_price"
 		if r.Usage == nil && (r.Status == contract.RequestStatusFailed || r.Status == contract.RequestStatusCancelled) {
@@ -254,6 +260,51 @@ WHERE root_id = ? AND attempt = ? AND local_access_token_id IS NULL`,
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO billing_ledger(root_id,attempt,service_id,account_key,model,started_at,terminal,usage_json,price_json,price_version,amount_usd,tier,reason,revalued,local_access_token_id)
  VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(root_id,attempt) DO UPDATE SET terminal=excluded.terminal,usage_json=excluded.usage_json,price_json=excluded.price_json,price_version=excluded.price_version,amount_usd=excluded.amount_usd,tier=excluded.tier,reason=excluded.reason,revalued=excluded.revalued,local_access_token_id=COALESCE(billing_ledger.local_access_token_id, excluded.local_access_token_id)`, root, attempt, service.ID, accountKey, model, billingTime(r.StartedAt), terminal, string(usageJSON), priceJSON, version, amount, tier, reason, revalue, localAccessTokenID)
+	return err
+}
+
+// livePendingValue values a running attempt's usage so far at its price
+// snapshot; false when either is missing or the usage cannot be valued yet.
+func livePendingValue(priceJSON string, usage *contract.Usage, at time.Time) (pricing.Valuation, bool) {
+	if priceJSON == "" || usage == nil {
+		return pricing.Valuation{}, false
+	}
+	var price pricing.Price
+	if json.Unmarshal([]byte(priceJSON), &price) != nil {
+		return pricing.Valuation{}, false
+	}
+	value, err := pricing.Evaluate(price.Expression, usage, at)
+	return value, err == nil
+}
+
+// UpdateLiveUsage values a running attempt with the usage its stream has
+// reported so far. Only an entry that is still pending changes, so a late
+// update never overwrites what the attempt's final snapshot settled.
+func (s *Store) UpdateLiveUsage(ctx context.Context, root contract.RequestID, attempt int, usage contract.Usage) error {
+	if err := usage.Validate(); err != nil {
+		return fmt.Errorf("%w: %v", storage.ErrInvalidArgument, err)
+	}
+	var priceJSON, started string
+	err := s.db.QueryRowContext(ctx, `SELECT COALESCE(price_json,''),started_at FROM billing_ledger WHERE root_id=? AND attempt=? AND terminal=0`, string(root), attempt).Scan(&priceJSON, &started)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	at, err := time.Parse(time.RFC3339Nano, started)
+	if err != nil {
+		return err
+	}
+	usageJSON, err := json.Marshal(usage)
+	if err != nil {
+		return err
+	}
+	amount, tier := "0.000000000", ""
+	if value, ok := livePendingValue(priceJSON, &usage, at); ok {
+		amount, tier = value.AmountUSD, value.Tier
+	}
+	_, err = s.db.ExecContext(ctx, `UPDATE billing_ledger SET usage_json=?,amount_usd=?,tier=? WHERE root_id=? AND attempt=? AND terminal=0`, string(usageJSON), amount, tier, string(root), attempt)
 	return err
 }
 
@@ -558,7 +609,8 @@ func (s *Store) BillingSummary(ctx context.Context, id contract.ServiceID, accou
 				a.Revalued++
 			}
 		}
-		if reason == "priced" {
+		// A running call adds what it has used so far.
+		if reason == "priced" || reason == "pending" {
 			v, ok := new(big.Rat).SetString(amount)
 			if !ok {
 				return result, fmt.Errorf("invalid stored amount")

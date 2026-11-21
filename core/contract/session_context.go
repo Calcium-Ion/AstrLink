@@ -40,8 +40,9 @@ func validateUSDAmount(field, value string) error {
 }
 
 // SessionCost values a conversation's calls at official API prices, as the
-// billing ledger records them. AmountUSD sums the priced attempts; the counts
-// say how many attempts were priced, could not be priced, or still run.
+// billing ledger records them. AmountUSD sums the priced attempts and what the
+// running ones have used so far; the counts say how many attempts were priced,
+// could not be priced, or still run.
 type SessionCost struct {
 	AmountUSD string `json:"amount_usd"`
 	Priced    int    `json:"priced"`

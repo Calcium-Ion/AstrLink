@@ -437,7 +437,8 @@ WHERE b.root_id IN (
 	return entries, nil
 }
 
-// sessionCost sums the priced attempts of a conversation.
+// sessionCost sums the priced attempts of a conversation and what its
+// running ones have used so far.
 func sessionCost(entries []ledgerEntry) (*contract.SessionCost, error) {
 	if len(entries) == 0 {
 		return nil, nil
@@ -445,18 +446,19 @@ func sessionCost(entries []ledgerEntry) (*contract.SessionCost, error) {
 	total := new(big.Rat)
 	cost := contract.SessionCost{}
 	for _, entry := range entries {
-		switch entry.reason {
-		case "priced":
-			amount, ok := new(big.Rat).SetString(entry.amount)
-			if !ok {
-				return nil, fmt.Errorf("invalid stored amount")
-			}
-			total.Add(total, amount)
-			cost.Priced++
-		case "pending":
-			cost.Pending++
-		default:
+		if entry.reason != "priced" && entry.reason != "pending" {
 			cost.Unpriced++
+			continue
+		}
+		amount, ok := new(big.Rat).SetString(entry.amount)
+		if !ok {
+			return nil, fmt.Errorf("invalid stored amount")
+		}
+		total.Add(total, amount)
+		if entry.reason == "priced" {
+			cost.Priced++
+		} else {
+			cost.Pending++
 		}
 	}
 	cost.AmountUSD = total.FloatString(9)

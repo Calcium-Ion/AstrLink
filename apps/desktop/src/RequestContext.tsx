@@ -14,7 +14,7 @@ import { cn } from "@/lib/utils";
 import { useDisplayCurrency } from "./currency-display";
 import { formatCompactNumber, formatShare } from "./format-compact-number";
 import { useT } from "./i18n";
-import { billingAmount } from "./pricing-model";
+import { billingAmount, hasBillingAmount } from "./pricing-model";
 import {
   cacheMissCost,
   cacheMissReason,
@@ -644,7 +644,7 @@ function ContextCostLine({
     misses.flatMap((miss) => (miss.extra_usd != null ? [miss.extra_usd] : [])),
   );
   const amount =
-    session.cost && session.cost.priced > 0
+    session.cost && hasBillingAmount(session.cost)
       ? billingAmount(session.cost)
       : null;
   const ratio = session.usage?.cache_hit_ratio;

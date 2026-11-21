@@ -179,6 +179,30 @@ func (scanner *usageScanner) Usage() *contract.Usage {
 	return scanner.usage
 }
 
+// liveUsage is a copy of the usage a stream has reported so far, read without
+// flushing the unfinished line that Usage would parse; nil before any usage
+// event and for a buffered body.
+func (scanner *usageScanner) liveUsage() *contract.Usage {
+	if scanner == nil || scanner.disabled || !scanner.streaming {
+		return nil
+	}
+	var usage *contract.Usage
+	if scanner.protocol == contract.ProtocolAnthropicMessages && scanner.anthropicSeen {
+		output := scanner.anthropicOutput
+		usage = normalizeAnthropicUsage(scanner.anthropicInput, &output, scanner.anthropicCacheRead, scanner.anthropicCacheWrite)
+		if usage != nil {
+			usage.CacheWrite1hTokens = scanner.anthropicCacheWrite1h
+		}
+	} else if scanner.usage != nil {
+		copy := *scanner.usage
+		usage = &copy
+	}
+	if usage != nil {
+		usage.BillingIncomplete = !scanner.complete
+	}
+	return usage
+}
+
 func (scanner *usageScanner) decodeNonStreamingBody(body []byte) ([]byte, bool) {
 	decoded, err := transport.DecodeBody(body, scanner.contentEncoding, maxResponseInspectionBytes)
 	return decoded, err == nil

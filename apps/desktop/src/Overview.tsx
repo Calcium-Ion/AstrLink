@@ -90,6 +90,7 @@ import type { AccessTokenCatalog } from "./AccessTokenManager";
 import { phaseLabel, phaseTone, type AppSnapshot } from "./core-model";
 import {
   billingAmount,
+  hasBillingAmount,
   type BillingAmounts,
   type BillingSummary,
 } from "./pricing-model";
@@ -2598,7 +2599,7 @@ function UsageBreakdownRow({
   useDisplayCurrency();
   const requestMetric = compactMetric(requests, status);
   // An unpriced row has no amount to show; its title says why.
-  const amount = cost && cost.priced > 0 ? billingAmount(cost) : null;
+  const amount = cost && hasBillingAmount(cost) ? billingAmount(cost) : null;
   const requestText = t("overview.requestTimes", { value: requestMetric.text });
   return (
     <BreakdownRow

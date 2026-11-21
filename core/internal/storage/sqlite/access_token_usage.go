@@ -144,7 +144,9 @@ func (a *tokenBillingAccumulator) add(root, reason string, amount *big.Rat, reva
 		a.Priced++
 		a.total.Add(&a.total, amount)
 	case "pending":
+		// A running call adds what it has used so far.
 		a.Pending++
+		a.total.Add(&a.total, amount)
 	default:
 		a.Unpriced++
 	}
@@ -182,7 +184,7 @@ FROM billing_ledger WHERE local_access_token_id IS NOT NULL`, billingTime(todayF
 			return nil, fmt.Errorf("%w: invalid billing token ID", storagecontract.ErrInvalidRecord)
 		}
 		var amount *big.Rat
-		if reason == "priced" {
+		if reason == "priced" || reason == "pending" {
 			var ok bool
 			amount, ok = new(big.Rat).SetString(raw)
 			if !ok || amount.Sign() < 0 {
