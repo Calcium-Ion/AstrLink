@@ -250,7 +250,25 @@ func TestSendTurnsARefusalIntoAStatusError(t *testing.T) {
 
 func TestDoReusesConnectionsAcrossConcurrentBursts(t *testing.T) {
 	var opened atomic.Int32
+	// Each request of a burst waits in the handler until the whole burst has
+	// arrived, so every request holds a connection of its own from start to
+	// end. Otherwise one that finished early lends its connection to another
+	// whose dial is still in flight, and that dial lands as a spare
+	// connection after the next burst has already dialed again.
+	arrived := make(chan struct{})
+	proceed := make(chan struct{})
+	stop := make(chan struct{})
 	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		select {
+		case arrived <- struct{}{}:
+		case <-stop:
+			return
+		}
+		select {
+		case <-proceed:
+		case <-stop:
+			return
+		}
 		_, _ = io.WriteString(w, `{}`)
 	}))
 	server.Config.ConnState = func(_ net.Conn, state http.ConnState) {
@@ -260,27 +278,38 @@ func TestDoReusesConnectionsAcrossConcurrentBursts(t *testing.T) {
 	}
 	server.Start()
 	defer server.Close()
+	// Handlers still waiting let go before Close waits for them.
+	defer close(stop)
 
 	client := NewClient()
 	const burst = 6
 	for round := 0; round < 3; round++ {
-		var started, done sync.WaitGroup
-		release := make(chan struct{})
+		failed := make(chan error, burst)
+		var done sync.WaitGroup
 		for i := 0; i < burst; i++ {
-			started.Add(1)
 			done.Add(1)
 			go func() {
 				defer done.Done()
-				started.Done()
-				<-release
 				if _, err := client.Do(context.Background(), server.URL, "token", Request{Method: http.MethodGet, Path: "/control/v1/health"}); err != nil {
-					t.Error(err)
+					failed <- err
 				}
 			}()
 		}
-		started.Wait()
-		close(release)
+		for i := 0; i < burst; i++ {
+			select {
+			case <-arrived:
+			case err := <-failed:
+				t.Fatalf("round %d: %v", round, err)
+			}
+		}
+		for i := 0; i < burst; i++ {
+			proceed <- struct{}{}
+		}
 		done.Wait()
+		close(failed)
+		for err := range failed {
+			t.Fatalf("round %d: %v", round, err)
+		}
 	}
 	if got := opened.Load(); got > burst {
 		t.Fatalf("opened %d connections for bursts of %d; idle ones were not kept", got, burst)
