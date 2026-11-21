@@ -212,6 +212,68 @@ describe("readCrew", () => {
     ]);
   });
 
+  it("reads a conversation from its own calls, not its side calls", () => {
+    const helper = (session: string, started: string, ended: string) =>
+      call(session, started, {
+        completed_at: `2026-11-02T08:${ended}Z`,
+        status: "succeeded",
+        output: output("text"),
+        model: "claude-haiku-5-5",
+        side: true,
+      });
+    const crew = readCrew({
+      now: "2026-11-02T08:10:00Z",
+      calls: [
+        // A title written beside the first call, and a check of the tool
+        // call, end in text while the client runs the tool.
+        call("main", "05:00", {
+          completed_at: "2026-11-02T08:08:00Z",
+          status: "succeeded",
+          output: output("tool", ["Bash"]),
+          model: "claude-opus-5-5",
+        }),
+        helper("main", "05:01", "05:03"),
+        helper("main", "08:01", "08:02"),
+        // A conversation of side calls alone still reads from them.
+        helper("lone", "09:50", "09:55"),
+      ],
+    });
+    expect(
+      crew.members.map(({ id, act, tool, model }) => ({
+        id,
+        act,
+        tool,
+        model,
+      })),
+    ).toEqual([
+      { id: "main", act: "bash", tool: "Bash", model: "claude-opus-5-5" },
+      { id: "lone", act: "wait", tool: "", model: "claude-haiku-5-5" },
+    ]);
+  });
+
+  it("keeps a conversation on its tools past the grace after a side call", () => {
+    const crew = readCrew({
+      now: "2026-11-02T08:10:00Z",
+      calls: [
+        call("main", "05:00", {
+          completed_at: "2026-11-02T08:05:10Z",
+          status: "succeeded",
+          output: output("tool", ["Bash"]),
+        }),
+        // A side call right after the tool call ended long before now.
+        call("main", "05:11", {
+          completed_at: "2026-11-02T08:05:12Z",
+          status: "succeeded",
+          output: output("text"),
+          side: true,
+        }),
+      ],
+    });
+    expect(crew.members).toMatchObject([
+      { id: "main", act: "bash", tool: "Bash" },
+    ]);
+  });
+
   it("marks a conversation whose last call failed or was stopped", () => {
     const ended = (session: string, status: RequestActivityCall["status"]) =>
       call(session, "09:50", {

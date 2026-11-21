@@ -196,6 +196,17 @@ function endedFailed(calls: readonly RequestActivityCall[]) {
   );
 }
 
+/**
+ * The calls that tell what a conversation does: all but its side calls. A
+ * title, a check of a tool call or a compaction summary that ends in text
+ * while the client runs tools is no answer; with only side calls listed,
+ * they are all there is.
+ */
+function ownCalls(calls: readonly RequestActivityCall[]) {
+  const own = calls.filter((call) => !call.side);
+  return own.length > 0 ? own : calls;
+}
+
 /** A conversation's action from its own calls, as its lane says it. */
 function ownAction(calls: readonly RequestActivityCall[]) {
   const latest = calls.at(-1);
@@ -253,13 +264,13 @@ export function readCrew(activity: RequestActivity): CrewReading {
       (left, right) =>
         Date.parse(left.started_at) - Date.parse(right.started_at),
     );
-    const own = bySession.get(root) ?? [];
+    const own = ownCalls(bySession.get(root) ?? []);
     const clones = [...tree.live]
       .filter((session) => session !== root)
       .map((session) => ({
         id: session,
         since: Date.parse(bySession.get(session)![0].started_at),
-        ...ownAction(bySession.get(session)!),
+        ...ownAction(ownCalls(bySession.get(session)!)),
       }))
       .sort(
         (left, right) =>

@@ -782,6 +782,12 @@ export interface RequestActivityCall {
   started_at: string;
   completed_at: string | null;
   status: RequestStatus;
+  /**
+   * Works for its conversation without moving it on: a helper call such as
+   * a title or a check of a tool call, or a summary for a compaction. Its
+   * text is no answer to the conversation.
+   */
+  side?: boolean;
   /** What the call produced; absent before any output and on old records. */
   output?: OutputActivity;
   /**
@@ -2275,6 +2281,9 @@ export function parseRequestActivity(value: unknown): RequestActivity {
           `${path}.completed_at`,
         ),
         status: call.status as RequestStatus,
+        ...(call.side == null || call.side === false
+          ? {}
+          : { side: boolAt(call.side, `${path}.side`) }),
         ...optionalOutput(call.output, `${path}.output`),
         ...(call.output_tokens == null
           ? {}

@@ -164,6 +164,61 @@ func TestListRequestActivityKeepsCallsWhoseToolsMayStillRun(t *testing.T) {
 	}
 }
 
+func TestListRequestActivityMarksSideCalls(t *testing.T) {
+	store := openTestStore(t, filepath.Join(t.TempDir(), "activity.db"))
+	defer store.Close()
+	ctx := context.Background()
+	since := time.Date(2026, 10, 23, 6, 0, 0, 0, time.UTC)
+	session := contract.SessionID("session_side")
+	text := &contract.OutputActivity{Kind: contract.OutputKindText}
+	call := func(id string, started, completed time.Duration, output *contract.OutputActivity, context *contract.RequestContext) contract.RequestRecord {
+		return contract.RequestRecord{
+			ID: contract.RequestID(id), SessionID: &session,
+			StartedAt: since.Add(started), CompletedAt: ptrTime(since.Add(completed)),
+			Status: contract.RequestStatusSucceeded, InputProtocol: contract.ProtocolAnthropicMessages,
+			Output: output, Context: context, Audit: contract.NotCapturedAuditSummary(),
+		}
+	}
+	// The client runs the tools a call asked for; meanwhile it checks the
+	// call with a helper and summarizes the conversation for a compaction.
+	tools := call("request_tools", -10*time.Minute, -9*time.Minute,
+		&contract.OutputActivity{Kind: contract.OutputKindTool, Tools: []string{"Bash"}}, &contract.RequestContext{})
+	helper := call("request_helper", -9*time.Minute, -8*time.Minute, text, &contract.RequestContext{Helper: true})
+	summary := call("request_summary", -time.Minute, time.Minute, text, &contract.RequestContext{Summary: true})
+	for _, record := range []contract.RequestRecord{tools, helper, summary} {
+		if err := store.InsertRequestRecord(ctx, record); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	calls, err := store.ListRequestActivity(ctx, since)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) != 2 {
+		t.Fatalf("calls = %+v, want the summary and the call still waiting on its tools", calls)
+	}
+	if !calls[0].StartedAt.Equal(summary.StartedAt) || !calls[0].Side {
+		t.Fatalf("summary call = %+v, want a side call", calls[0])
+	}
+	if !calls[1].StartedAt.Equal(tools.StartedAt) || calls[1].Side {
+		t.Fatalf("tool call = %+v, want the conversation's own call", calls[1])
+	}
+
+	// The conversation's next call of its own brings the results back.
+	next := call("request_next", -7*time.Minute, -6*time.Minute, text, nil)
+	if err := store.InsertRequestRecord(ctx, next); err != nil {
+		t.Fatal(err)
+	}
+	calls, err = store.ListRequestActivity(ctx, since)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) != 1 || !calls[0].StartedAt.Equal(summary.StartedAt) {
+		t.Fatalf("calls = %+v, want only the summary", calls)
+	}
+}
+
 func TestListRequestActivityReadsFinalOutputTokens(t *testing.T) {
 	store := openTestStore(t, filepath.Join(t.TempDir(), "activity.db"))
 	defer store.Close()

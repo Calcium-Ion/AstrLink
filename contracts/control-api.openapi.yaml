@@ -8102,6 +8102,13 @@ components:
           description: Null while the call is running.
         status:
           $ref: "#/components/schemas/RequestStatus"
+        side:
+          type: boolean
+          description: >-
+            Set on a call that works for its conversation without moving it
+            on: a helper call such as a title or a check of a tool call, or a
+            summary for a compaction. The conversation's own calls tell what
+            it does; a side call's text is no answer to it.
         output:
           $ref: "#/components/schemas/OutputActivity"
         output_tokens:

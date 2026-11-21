@@ -18,6 +18,11 @@ type RequestActivityCall struct {
 	StartedAt   time.Time     `json:"started_at"`
 	CompletedAt *time.Time    `json:"completed_at"`
 	Status      RequestStatus `json:"status"`
+	// Side is set on a call that works for its conversation without moving
+	// it on: a helper call such as a title or a check of a tool call, or a
+	// summary for a compaction. The conversation's own calls tell what it
+	// does; a side call's text is no answer to it.
+	Side bool `json:"side,omitempty"`
 	// Output is what the call produced, as on its record.
 	Output *OutputActivity `json:"output,omitempty"`
 	// OutputTokens is what the upstream reported the call generated,

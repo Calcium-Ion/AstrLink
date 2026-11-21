@@ -18,10 +18,11 @@ const maxActivityCallSpan = time.Hour
 // ListRequestActivity reads the spans of root model calls running at or after
 // since, newest first, with the model each ran with and the output tokens of
 // those that ended. A call that ended before since on the tool calls it asked
-// for is read too while its conversation has made no later call before since:
-// the client may still be running those tools. A call the core interrupted is
-// left out: recovery stamps when the core came back, not when the call
-// stopped, so its span would cover the downtime.
+// for is read too while its conversation has made no later call of its own
+// before since: the client may still be running those tools, and helper calls
+// or compaction summaries it sends meanwhile do not bring their results. A
+// call the core interrupted is left out: recovery stamps when the core came
+// back, not when the call stopped, so its span would cover the downtime.
 func (store *Store) ListRequestActivity(
 	ctx context.Context,
 	since time.Time,
@@ -39,7 +40,7 @@ SELECT COALESCE(root.session_id, root.id), root.client_type, COALESCE(
        root.started_at, root.completed_at,
        root.status, root.http_status, root.output_json, root.parent_session_id,
        json_extract(root.usage_json, '$.output_tokens'), json_extract(root.usage_json, '$.billing_incomplete'),
-       root.service_id, `+gatewayRewriteColumns("root")+`
+       root.service_id, `+sideCallColumn("root")+`, `+gatewayRewriteColumns("root")+`
 FROM request_records AS root INDEXED BY request_records_root_started_idx
 WHERE root.parent_request_id IS NULL
   AND root.started_at >= ?
@@ -56,6 +57,7 @@ WHERE root.parent_request_id IS NULL
           AND later.id <> root.id
           AND later.started_at >= root.completed_at
           AND later.started_at < ?
+          AND NOT `+sideCallColumn("later")+`
           AND later.input_protocol NOT IN (?, ?)
           AND COALESCE(json_extract(later.error_json, '$.code'), '') <> 'core_interrupted')))
 ORDER BY root.started_at DESC, root.id DESC`,
@@ -76,15 +78,17 @@ ORDER BY root.started_at DESC, root.id DESC`,
 		var httpStatus, outputTokens sql.NullInt64
 		var incomplete sql.NullBool
 		var service sql.NullString
+		var side bool
 		var rewritten gatewayRewriteRow
 		if err := rows.Scan(append([]any{&sessionID, &clientType, &model, &startedAt, &completedAt, &status, &httpStatus, &output, &parent,
-			&outputTokens, &incomplete, &service}, rewritten.targets()...)...); err != nil {
+			&outputTokens, &incomplete, &service, &side}, rewritten.targets()...)...); err != nil {
 			return nil, fmt.Errorf("scan request activity: %w", err)
 		}
 		call := contract.RequestActivityCall{
 			SessionID:  contract.SessionID(sessionID),
 			ClientType: contract.ClientType(clientType.String),
 			Model:      model.String,
+			Side:       side,
 		}
 		if parent.Valid && parent.String != "" && parent.String != sessionID {
 			value := contract.SessionID(parent.String)
@@ -133,4 +137,12 @@ ORDER BY root.started_at DESC, root.id DESC`,
 		return nil, fmt.Errorf("iterate request activity: %w", err)
 	}
 	return calls, nil
+}
+
+// sideCallColumn is whether the call of table alias t is a side call of its
+// conversation (contract.RequestActivityCall.Side): a helper or a compaction
+// summary, as its context marks it.
+func sideCallColumn(t string) string {
+	return `(COALESCE(json_extract(NULLIF(` + t + `.context_json, ''), '$.helper'), 0) = 1
+    OR COALESCE(json_extract(NULLIF(` + t + `.context_json, ''), '$.summary'), 0) = 1)`
 }

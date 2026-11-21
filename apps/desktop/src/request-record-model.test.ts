@@ -1088,6 +1088,28 @@ describe("request activity", () => {
       }),
     ).toThrow();
   });
+
+  it("marks side calls", () => {
+    const call = {
+      session_id: "session_a",
+      started_at: "2026-10-24T10:00:00Z",
+      completed_at: null,
+      status: "pending",
+    };
+    const activity = parseRequestActivity({
+      now: "2026-10-24T10:01:00Z",
+      calls: [{ ...call, side: true }, { ...call, side: false }, call],
+    });
+    expect(activity.calls[0].side).toBe(true);
+    expect(activity.calls[1]).not.toHaveProperty("side");
+    expect(activity.calls[2]).not.toHaveProperty("side");
+    expect(() =>
+      parseRequestActivity({
+        now: "2026-10-24T10:01:00Z",
+        calls: [{ ...call, side: "yes" }],
+      }),
+    ).toThrow();
+  });
 });
 
 describe("client attribution", () => {

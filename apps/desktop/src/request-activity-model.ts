@@ -61,14 +61,19 @@ function awaitsTools(
   );
 }
 
-/** The first other call in `own`, oldest first, to start once `call` ended. */
+/**
+ * The first other call of the conversation's own in `own`, oldest first, to
+ * start once `call` ended. Side calls the client makes while it runs the
+ * tools, such as a check of the call, do not bring their results.
+ */
 function nextCall(
   own: readonly RequestActivityCall[],
   call: RequestActivityCall,
 ): RequestActivityCall | undefined {
   const ended = Date.parse(call.completed_at ?? "");
   return own.find(
-    (other) => other !== call && Date.parse(other.started_at) >= ended,
+    (other) =>
+      other !== call && !other.side && Date.parse(other.started_at) >= ended,
   );
 }
 
