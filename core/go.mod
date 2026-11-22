@@ -3,9 +3,9 @@ module github.com/QuantumNous/astrlink/core
 go 1.26.11
 
 require (
-	github.com/MoeForge/moego v0.1.0-alpha.4
+	github.com/MoeForge/moego v0.1.0-alpha.5
 	github.com/QuantumNous/astrlink/convo v0.0.0
-	github.com/QuantumNous/new-api/relaykit v0.3.7
+	github.com/QuantumNous/new-api/relaykit v0.3.8
 	github.com/andybalholm/brotli v1.2.8
 	github.com/deepteams/webp v1.2.8
 	github.com/evanw/esbuild v0.28.2

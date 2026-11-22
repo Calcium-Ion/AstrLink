@@ -385,6 +385,13 @@ func TestOverrideReasoningPerModel(t *testing.T) {
 			`{"generationConfig":{"thinkingConfig":{"thinkingLevel":"low"}}}`, `{"generationConfig":{"thinkingConfig":{"thinkingLevel":"high"}}}`, "high"},
 		{"Gemini 3 off is its lowest level", gemini, "gemini-3-flash-preview", off, codexModel{},
 			`{"generationConfig":{"thinkingConfig":{"thinkingLevel":"high"}}}`, `{"generationConfig":{"thinkingConfig":{"thinkingLevel":"minimal"}}}`, "minimal"},
+		// Gemini 4 takes a level; max is xhigh on Neon and high on Argon.
+		{"Gemini 4 Neon gets a level the client did not send", gemini, "gemini-4-neon", high, codexModel{},
+			`{"contents":[]}`, `{"contents":[],"generationConfig":{"thinkingConfig":{"thinkingLevel":"high"}}}`, "high"},
+		{"Gemini 4 Neon max is xhigh", gemini, "gemini-4-neon", max, codexModel{},
+			`{"contents":[]}`, `{"contents":[],"generationConfig":{"thinkingConfig":{"thinkingLevel":"xhigh"}}}`, "xhigh"},
+		{"Gemini 4 Argon max is high", gemini, "gemini-4-argon-contributor", max, codexModel{},
+			`{"contents":[]}`, `{"contents":[],"generationConfig":{"thinkingConfig":{"thinkingLevel":"high"}}}`, "high"},
 		{"Gemini outside: nothing added", gemini, "gemini-exp-9", high, codexModel{},
 			`{"contents":[]}`, `{"contents":[]}`, ""},
 		{"Gemini outside: a level is rewritten", gemini, "gemini-exp-9", max, codexModel{},

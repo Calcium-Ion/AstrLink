@@ -761,6 +761,12 @@ func TestReasoningSettingsEndToEnd(t *testing.T) {
 			}
 		}
 	})
+	t.Run("fixed adds a level to Gemini 4 when the client sent none", func(t *testing.T) {
+		got, record := serveReasoning(t, fixed(contract.ReasoningLevelMedium), gemini, []string{"gemini-4-neon"},
+			"/v1/models/gemini-4-neon:generateContent", `{"contents":[{"role":"user","parts":[{"text":"hello"}]}]}`, nil)
+		check(t, got, record, `{"contents":[{"role":"user","parts":[{"text":"hello"}]}],"generationConfig":{"thinkingConfig":{"thinkingLevel":"medium"}}}`,
+			"medium", "fixed: sent medium, client asked nothing")
+	})
 	t.Run("fixed max without a catalog is the model's highest effort unless the client asked for more", func(t *testing.T) {
 		got, record := serveReasoning(t, fixed(contract.ReasoningLevelMax), chat, []string{"gpt-5.4"}, "/v1/chat/completions",
 			`{"model":"gpt-5.4","reasoning_effort":"low","messages":[{"role":"user","content":"hello"}]}`, nil)

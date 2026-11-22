@@ -265,6 +265,38 @@ func TestRelayKitEachAttemptConvertsWithItsOwnState(t *testing.T) {
 	}
 }
 
+func TestRelayKitResponsesEffortReachesGemini4AsThinkingLevel(t *testing.T) {
+	for _, test := range []struct{ model, effort, want string }{
+		{"gemini-4-neon", "max", "xhigh"},
+		{"gemini-4-neon", "medium", "medium"},
+		{"gemini-4-argon-contributor", "max", "high"},
+	} {
+		t.Run(test.model+" "+test.effort, func(t *testing.T) {
+			var sent []byte
+			handler := NewWithDependencies(Dependencies{
+				Resolver:         candidateResolver{candidates: []endpoint.Resolved{relayKitCandidate("endpoint_gemini", contract.ProtocolGoogleGenerateContent, test.model)}},
+				ConversionEngine: relaykitbridge.NewEngine(),
+				Forwarder: transport.New(roundTripFunc(func(request *http.Request) (*http.Response, error) {
+					sent, _ = io.ReadAll(request.Body)
+					return jsonResponse(http.StatusOK, `{"candidates":[{"finishReason":"STOP","content":{"role":"model","parts":[{"text":"ok"}]}}],"usageMetadata":{"promptTokenCount":1,"candidatesTokenCount":1,"totalTokenCount":2}}`), nil
+				})),
+			})
+			serveRelayKitResponses(t, handler, `{"model":"public-responses","input":"hello","reasoning":{"effort":"`+test.effort+`"}}`)
+			var body struct {
+				GenerationConfig struct {
+					ThinkingConfig map[string]any `json:"thinkingConfig"`
+				} `json:"generationConfig"`
+			}
+			if err := json.Unmarshal(sent, &body); err != nil {
+				t.Fatalf("upstream body %s: %v", sent, err)
+			}
+			if level := body.GenerationConfig.ThinkingConfig["thinkingLevel"]; level != test.want {
+				t.Fatalf("thinkingLevel = %v, want %q; upstream body %s", level, test.want, sent)
+			}
+		})
+	}
+}
+
 func TestRelayKitConversionDiagnosticsAreRecordedPerAttempt(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "records.db")
