@@ -25,10 +25,10 @@ const (
 
 	DefaultCodexOriginator = "codex-tui"
 	// DefaultCodexModelsClientVersion is the observed openai/codex ModelsClient
-	// query (public CLI 0.155.1). GPT-6 Astra support landed in CLI 0.154.0.
-	// The backend may hide models below a catalog minimum; keep this aligned
-	// with stable releases: https://learn.chatgpt.com/docs/changelog
-	DefaultCodexModelsClientVersion = "0.155.1"
+	// query (public CLI 0.171.0). The backend hides models below their catalog
+	// minimum: GPT-6.2 Sol and Astra need CLI 0.166.0. Keep this aligned with
+	// stable releases: https://learn.chatgpt.com/docs/changelog
+	DefaultCodexModelsClientVersion = "0.171.0"
 	codexUserAgentSuffix            = " (Ubuntu 22.4.0; x86_64) xterm-256color"
 
 	// DefaultGrokCLIClientVersion is the Grok CLI build reported to auth.x.ai

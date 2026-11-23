@@ -489,12 +489,12 @@ func TestNilIdentityRegistryResolvesBaselineWithFloor(t *testing.T) {
 
 func TestIdentityRegistryReadsPersistedSettings(t *testing.T) {
 	settings := contract.DefaultRoutingSettings()
-	settings.ClaudeIdentityVersion, settings.CodexIdentityVersion = "2.1.400", "0.170.0"
+	settings.ClaudeIdentityVersion, settings.CodexIdentityVersion = "2.1.400", "0.180.0"
 	registry := NewIdentityRegistry(fixedSettings{settings: settings}, nil)
 	if got := registry.ClaudeIdentityFor(context.Background()); got.Version != "2.1.400" {
 		t.Fatalf("ClaudeIdentityFor = %+v", got)
 	}
-	if got := registry.CodexIdentityFor(context.Background(), ""); got.Version != "0.170.0" {
+	if got := registry.CodexIdentityFor(context.Background(), ""); got.Version != "0.180.0" {
 		t.Fatalf("CodexIdentityFor = %+v", got)
 	}
 	failing := NewIdentityRegistry(fixedSettings{settings: settings, err: errors.New("unavailable")}, nil)

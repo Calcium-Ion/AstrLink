@@ -424,11 +424,11 @@ func TestClientIdentityLearningSettingsPatchAndApplyImmediately(t *testing.T) {
 			t.Fatalf("invalid %s=%s returned %d", test.key, test.invalid, code)
 		}
 	}
-	if code := patch(`{"claude_identity_version":"2.1.400","codex_identity_version":"0.170.0","grok_identity_version":"1.0.50"}`); code != http.StatusOK {
+	if code := patch(`{"claude_identity_version":"2.1.400","codex_identity_version":"0.180.0","grok_identity_version":"1.0.50"}`); code != http.StatusOK {
 		t.Fatalf("PATCH versions returned %d", code)
 	}
 	settings := read()
-	if settings["claude_identity_version"] != "2.1.400" || settings["codex_identity_version"] != "0.170.0" {
+	if settings["claude_identity_version"] != "2.1.400" || settings["codex_identity_version"] != "0.180.0" {
 		t.Fatalf("versions = %v, %v", settings["claude_identity_version"], settings["codex_identity_version"])
 	}
 	if got := outgoing(contract.ServiceKindClaudeSubscription).Get("User-Agent"); got != "claude-cli/2.1.400 (external, cli)" {
@@ -439,7 +439,7 @@ func TestClientIdentityLearningSettingsPatchAndApplyImmediately(t *testing.T) {
 		t.Fatalf("Grok identity = %q, version %q", grok.Get("User-Agent"), grok.Get("X-Grok-Client-Version"))
 	}
 	codex := outgoing(contract.ServiceKindCodexSubscription)
-	if !strings.HasPrefix(codex.Get("User-Agent"), "codex-tui/0.170.0 ") || codex.Get("version") != "0.170.0" {
+	if !strings.HasPrefix(codex.Get("User-Agent"), "codex-tui/0.180.0 ") || codex.Get("version") != "0.180.0" {
 		t.Fatalf("Codex identity = %q, version %q", codex.Get("User-Agent"), codex.Get("version"))
 	}
 

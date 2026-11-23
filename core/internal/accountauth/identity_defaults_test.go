@@ -35,14 +35,14 @@ func TestBaselineIdentitySnapshot(t *testing.T) {
 
 	codex := DefaultCodexIdentity()
 	wantCodex := ClientIdentity{
-		UserAgent: "codex-tui/0.155.1 (Ubuntu 22.4.0; x86_64) xterm-256color",
-		Version:   "0.155.1",
+		UserAgent: "codex-tui/0.171.0 (Ubuntu 22.4.0; x86_64) xterm-256color",
+		Version:   "0.171.0",
 		Headers:   map[string]string{"originator": "codex-tui"},
 	}
 	if !reflect.DeepEqual(codex, wantCodex) {
 		t.Fatalf("Codex baseline = %#v, want %#v", codex, wantCodex)
 	}
-	if DefaultCodexOriginator != "codex-tui" || DefaultCodexModelsClientVersion != "0.155.1" ||
+	if DefaultCodexOriginator != "codex-tui" || DefaultCodexModelsClientVersion != "0.171.0" ||
 		CodexUserAgent("") != wantCodex.UserAgent {
 		t.Fatalf("Codex baseline constants drifted: %q %q %q", DefaultCodexOriginator, DefaultCodexModelsClientVersion, CodexUserAgent(""))
 	}
