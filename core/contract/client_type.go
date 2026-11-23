@@ -31,6 +31,7 @@ const (
 	ClientZed             ClientType = "zed"
 	ClientCherryStudio    ClientType = "cherry_studio"
 	ClientGoose           ClientType = "goose"
+	ClientAntigravity     ClientType = "antigravity"
 )
 
 func (client ClientType) Valid() bool {
@@ -40,7 +41,7 @@ func (client ClientType) Valid() bool {
 		ClientDeepSeekHarness, ClientCodewhale, ClientReasonix, ClientDimAgent, ClientQwenCode,
 		ClientKimiCode, ClientCodeBuddy, ClientCopilot, ClientDroid, ClientCrush,
 		ClientKiloCode, ClientRooCode, ClientMistralVibe, ClientZed, ClientCherryStudio,
-		ClientGoose:
+		ClientGoose, ClientAntigravity:
 		return true
 	default:
 		return false

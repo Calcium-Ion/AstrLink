@@ -7495,6 +7495,7 @@ components:
           zed,
           cherry_studio,
           goose,
+          antigravity,
         ]
       description: Best-effort client label from original inbound headers, before upstream identity rewriting. Display metadata only; never an authenticated identity. Unknown means no recognized signature. Historical records omit this field.
     RequestRecord:

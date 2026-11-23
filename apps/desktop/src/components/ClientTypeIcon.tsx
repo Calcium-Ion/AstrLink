@@ -52,6 +52,7 @@ const clients: Record<
   zed: { name: "Zed" },
   cherry_studio: { name: "Cherry Studio", Mark: CherryStudioColor },
   goose: { name: "Goose" },
+  antigravity: { name: "Antigravity", Mark: vendorMarks.antigravity },
 };
 
 /** Product name of a detected client, or the unknown-client label. */

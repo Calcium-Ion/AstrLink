@@ -111,6 +111,14 @@ export interface HitRect {
 const isGirl = (client: ClientType) =>
   kitOf(client) !== null || isRigGirl(client);
 
+/** Clients that dress as another client's girl: Antigravity is Gemini's. */
+const WEARS: Partial<Record<ClientType, ClientType>> = {
+  antigravity: "gemini_cli",
+};
+
+/** The girl a client's conversations count toward. */
+const girlOf = (client: ClientType) => WEARS[client] ?? client;
+
 /** Today's counts and where she floats, kept across restarts of the window. */
 /** Who she is before any client with a girl of its own has worked. */
 export const FIRST_GIRL: ClientType = "deepseek_harness";
@@ -714,9 +722,10 @@ export class PetBrain {
     let best: ClientType | null = chosen === "auto" ? null : chosen;
     if (!best) {
       const counts = new Map<ClientType, number>();
-      for (const m of this.members())
-        if (isGirl(m.client))
-          counts.set(m.client, (counts.get(m.client) ?? 0) + 1);
+      for (const m of this.members()) {
+        const girl = girlOf(m.client);
+        if (isGirl(girl)) counts.set(girl, (counts.get(girl) ?? 0) + 1);
+      }
       let most = 0;
       for (const [client, n] of counts)
         if (n > most || (n === most && client === this.client)) {

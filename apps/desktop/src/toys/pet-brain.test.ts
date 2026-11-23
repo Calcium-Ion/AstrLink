@@ -484,6 +484,19 @@ describe("what happens in the conversations", () => {
     expect(brain.client).toBe("gemini_cli");
   });
 
+  it("dresses as Gemini for Antigravity, counted with Gemini CLI", () => {
+    const { brain, run } = setup([
+      member({ id: "a", client: "codex" }),
+      member({ id: "b", client: "codex", order: 1 }),
+      member({ id: "c", client: "antigravity", order: 2 }),
+      member({ id: "d", client: "gemini_cli", order: 3 }),
+      member({ id: "e", client: "antigravity", order: 4 }),
+    ]);
+    run(0.1);
+    expect(brain.client).toBe("gemini_cli");
+    expect(brain.memo.client).toBe("gemini_cli");
+  });
+
   it("is DeepSeek until one of the three clients has worked", () => {
     const { brain, run } = setup([member({ id: "a", client: "pi" })]);
     run(0.1);

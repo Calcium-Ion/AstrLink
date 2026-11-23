@@ -34,6 +34,7 @@ export const CLIENT_TYPES = [
   "zed",
   "cherry_studio",
   "goose",
+  "antigravity",
 ] as const;
 
 export type ClientType = (typeof CLIENT_TYPES)[number];

@@ -17,13 +17,17 @@ func detectClientType(headers http.Header) contract.ClientType {
 		}
 	}
 	ua := normalizedClientHeader(headers.Get("User-Agent"))
-	for _, token := range strings.FieldsFunc(ua, func(r rune) bool {
+	tokens := strings.FieldsFunc(ua, func(r rune) bool {
 		return r == ' ' || r == '(' || r == ')' || r == ';'
-	}) {
+	})
+	for _, token := range tokens {
 		product, _, _ := strings.Cut(token, "/")
 		if client := clientProduct(product); client != "" {
 			return client
 		}
+	}
+	if googleBuiltGenAI(tokens) {
+		return contract.ClientAntigravity
 	}
 	// Copilot CLI keeps its SDK's User-Agent on BYOK endpoints; this header is
 	// the only GitHub Copilot trace on those requests.
@@ -36,6 +40,20 @@ func detectClientType(headers http.Header) contract.ClientType {
 		return contract.ClientGoose
 	}
 	return contract.ClientUnknown
+}
+
+// googleBuiltGenAI reports a User-Agent of the Go Gemini SDK in a binary
+// built with Google's internal Go toolchain, which appends its change number
+// (cl/NNN) to the Go version. Antigravity calls the Gemini API that way with
+// no product name of its own, e.g. "google-genai-sdk/1.79.1
+// gl-go/go1.28-20261102-RC01 cl/1012564305 +298f53e483"; a public Go build
+// reports only gl-go/go1.x and stays unknown.
+func googleBuiltGenAI(tokens []string) bool {
+	if len(tokens) < 3 || !strings.HasPrefix(tokens[0], "google-genai-sdk/") || !strings.HasPrefix(tokens[1], "gl-go/") {
+		return false
+	}
+	change, ok := strings.CutPrefix(tokens[2], "cl/")
+	return ok && change != "" && strings.Trim(change, "0123456789") == ""
 }
 
 func normalizedClientHeader(value string) string {
