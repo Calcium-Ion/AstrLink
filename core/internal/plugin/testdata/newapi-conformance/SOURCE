@@ -1,0 +1,5 @@
+Copied from https://github.com/QuantumNous/new-api at commit cb074d31e296b53ce252d402a7063079cbf7f990:
+plugins/tasks/*/plugin.js into plugins/, and the top-level property names
+of docs/plugin-api/v1.schema.json into meta-fields.json. new-api is
+licensed under AGPL-3.0 (LICENSES/AGPL-3.0.txt). Refresh with
+scripts/refresh-newapi-conformance.sh <new-api checkout>.

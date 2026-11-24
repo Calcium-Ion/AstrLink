@@ -44,7 +44,7 @@ func runNew(_ context.Context, env Environment, args []string) int {
 		return 2
 	}
 	key := positional[0]
-	if !contract.ValidPluginKey(key) {
+	if !contract.ValidNativePluginKey(key) {
 		fmt.Fprintf(env.Stderr, "error: %q cannot be a plugin key: a lowercase letter, then up to 31 lowercase letters, digits and hyphens\n", key)
 		return 2
 	}

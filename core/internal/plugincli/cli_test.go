@@ -55,6 +55,11 @@ func TestNewTestCheckAndBuildAProject(t *testing.T) {
 	if code, _, stderr := run(t, Environment{}, "new", "Bad_Key"); code != 2 || !strings.Contains(stderr, "cannot be a plugin key") {
 		t.Fatalf("new with a bad key = %d: %s", code, stderr)
 	}
+	// new-api keys such as alice_foo install from a marketplace, but an
+	// AstrLink plugin with one would never load.
+	if code, _, stderr := run(t, Environment{}, "new", "alice_foo"); code != 2 || !strings.Contains(stderr, "cannot be a plugin key") {
+		t.Fatalf("new alice_foo = %d, %q", code, stderr)
+	}
 }
 
 func TestATaskPluginRunsNewAPIFixturesAsItIs(t *testing.T) {

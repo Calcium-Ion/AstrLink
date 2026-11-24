@@ -2697,6 +2697,55 @@ describe("PluginManager", () => {
       );
     });
 
+    it("copies the prompt for the format each way of sharing takes", async () => {
+      const writeText = vi.fn((_text: string) => Promise.resolve());
+      Object.defineProperty(navigator, "clipboard", {
+        configurable: true,
+        value: { writeText },
+      });
+      try {
+        await renderTasks();
+        await chooseSegment("插件市场");
+        await click(button("发布插件"));
+        const community = document.querySelector(
+          '[data-testid="plugin-publish-community"]',
+        ) as HTMLElement;
+        const github = document.querySelector(
+          '[data-testid="plugin-publish-github"]',
+        ) as HTMLElement;
+        // The astrlink plugin commands make plugins only a GitHub link
+        // shares; the community marketplace takes New API plugins.
+        expect(community.textContent).not.toContain("astrlink plugin new");
+        expect(github.textContent).toContain("astrlink plugin new <key>");
+
+        await click(button("复制给 AI", community));
+        const marketPrompt = String(writeText.mock.calls.at(-1)?.[0]);
+        expect(marketPrompt).toContain(
+          "https://raw.githubusercontent.com/QuantumNous/new-api/main/docs/plugin-api/v1.d.ts",
+        );
+        expect(marketPrompt).toContain("apiVersion 1");
+        expect(marketPrompt).toContain("CHANGELOG.md");
+        expect(marketPrompt).not.toContain("{{");
+
+        await click(button("复制给 AI", github));
+        const githubPrompt = String(writeText.mock.calls.at(-1)?.[0]);
+        expect(githubPrompt).toContain("astrlink plugin new <key> --template");
+        expect(githubPrompt).toContain("basic, gate, route");
+        expect(githubPrompt).toContain("astrlink plugin check");
+        expect(githubPrompt).not.toContain("docs/plugin-api");
+        expect(githubPrompt).not.toContain("{{");
+        expect(
+          (
+            document.querySelector(
+              '[data-testid="plugin-publish-dialog"]',
+            ) as HTMLElement
+          ).textContent,
+        ).toContain("已复制，粘贴给 AI");
+      } finally {
+        Reflect.deleteProperty(navigator, "clipboard");
+      }
+    });
+
     it("adds a team's own marketplace in the settings as a tab of its name", async () => {
       const own = "https://plugins.example.com/index.json";
       bridgeMocks.getPluginMarket.mockImplementation(async (index?: string) =>

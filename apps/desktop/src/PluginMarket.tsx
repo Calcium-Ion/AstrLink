@@ -11,6 +11,7 @@ import {
   Boxes,
   Check,
   ChevronRight,
+  Copy,
   RefreshCw,
 } from "@/components/icons";
 import { LoadingState } from "@/components/LoadingState";
@@ -37,6 +38,7 @@ import {
   pluginInstallFailureOf,
 } from "./bridge";
 import { controlErrorMessage } from "./control-error";
+import { useCopyFeedback } from "./copy-feedback";
 import { useLocale, useT } from "./i18n";
 import { installFailureText } from "./PluginInstallReview";
 import { ModelChips, TaskEndpoints } from "./PluginTaskParts";
@@ -125,6 +127,17 @@ function newAPIPage(locale: string, page: "plugins" | "community"): string {
 /** New API's plugin API, which the marketplaces' plugins are written for. */
 const PLUGIN_API_DOCS =
   "https://github.com/QuantumNous/new-api/blob/main/docs/plugin-api/v1.md";
+
+/** The raw contract files an AI reads to write a New API plugin. */
+const NEW_API_PLUGIN_DOCS = [
+  "https://raw.githubusercontent.com/QuantumNous/new-api/main/docs/plugin-api/v1.md",
+  "https://raw.githubusercontent.com/QuantumNous/new-api/main/docs/plugin-api/v1.d.ts",
+  "https://raw.githubusercontent.com/QuantumNous/new-api/main/docs/plugin-api/v1.schema.json",
+].join("\n");
+
+/** The templates astrlink plugin new offers, named in the prompt for an AI. */
+const PLUGIN_TEMPLATES =
+  "basic, gate, route, forward, stream, response, schedule, http, provider, ui, files";
 
 /** The commands that start, run and check a plugin, in the publish dialog. */
 const PUBLISH_COMMANDS = [
@@ -1018,9 +1031,11 @@ function MarketEntryDialog({
 }
 
 /**
- * How a plugin reaches other people: the commands that write it, then New
- * API's community marketplace, where an upload gets a plugin code, or a
- * GitHub link anyone can install from.
+ * How a plugin reaches other people. Each way takes its own format: New
+ * API's community marketplace takes New API plugins, which an upload there
+ * turns into a plugin code; a GitHub link carries a plugin written with
+ * astrlink plugin, which only AstrLink runs. Each row hands an AI the
+ * prompt for its format.
  */
 function PublishDialog({
   locale,
@@ -1031,6 +1046,22 @@ function PublishDialog({
 }) {
   const t = useT();
   const publish = newAPIPage(locale, "community");
+  const feedback = useCopyFeedback();
+  const failed = feedback.state === "failed";
+  const copyButton = (key: "community" | "github", text: string) => {
+    const copied = feedback.activeKey === key && feedback.state === "copied";
+    return (
+      <Button
+        onClick={() => feedback.copy(key, text)}
+        size="sm"
+        type="button"
+        variant="outline"
+      >
+        {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
+        {t("plugins.publish.copyPrompt")}
+      </Button>
+    );
+  };
   return (
     <Dialog open onOpenChange={(next) => !next && onClose()}>
       <DialogContent
@@ -1040,48 +1071,28 @@ function PublishDialog({
         <DialogHeader className="text-left">
           <DialogTitle>{t("plugins.publish.title")}</DialogTitle>
         </DialogHeader>
-        <div className="grid min-h-0 gap-5 overflow-y-auto overscroll-contain">
-          <section className="grid gap-2">
-            <h3 className="text-xs font-medium text-muted-foreground">
-              {t("plugins.publish.write")}
-            </h3>
-            <dl className="grid gap-1.5 text-xs">
-              {PUBLISH_COMMANDS.map((entry) => (
-                <div
-                  className="grid gap-x-3 gap-y-0.5 sm:grid-cols-[13rem_1fr] sm:items-baseline"
-                  key={entry.key}
-                >
-                  <dt>
-                    <code className="font-mono">{entry.command}</code>
-                  </dt>
-                  <dd className="text-muted-foreground">
-                    {t(`plugins.developHome.command.${entry.key}`)}
-                  </dd>
+        <div className="grid min-h-0 gap-3 overflow-y-auto overscroll-contain">
+          <Panel asChild>
+            <ul>
+              <li
+                className="grid gap-2 border-b px-3 py-2.5"
+                data-testid="plugin-publish-community"
+              >
+                <div className="grid gap-0.5">
+                  <span className="text-sm font-medium">
+                    {t("plugins.publish.community.title")}
+                  </span>
+                  <span className="text-xs text-muted-foreground">
+                    {t("plugins.publish.community.body")}
+                  </span>
                 </div>
-              ))}
-            </dl>
-            <ExternalLink
-              className="justify-self-start text-xs"
-              href={PLUGIN_API_DOCS}
-            >
-              {t("plugins.publish.docs")}
-            </ExternalLink>
-          </section>
-          <section className="grid gap-2">
-            <h3 className="text-xs font-medium text-muted-foreground">
-              {t("plugins.publish.share")}
-            </h3>
-            <Panel asChild>
-              <ul>
-                <li className="flex items-center gap-3 border-b px-3 py-2.5">
-                  <div className="grid min-w-0 flex-1 gap-0.5">
-                    <span className="text-sm font-medium">
-                      {t("plugins.publish.community.title")}
-                    </span>
-                    <span className="text-xs text-muted-foreground">
-                      {t("plugins.publish.community.body")}
-                    </span>
-                  </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  {copyButton(
+                    "community",
+                    t("plugins.publish.community.prompt", {
+                      docs: NEW_API_PLUGIN_DOCS,
+                    }),
+                  )}
                   <Button asChild size="sm" variant="outline">
                     <a
                       href={publish}
@@ -1093,18 +1104,56 @@ function PublishDialog({
                       <ArrowUpRight />
                     </a>
                   </Button>
-                </li>
-                <li className="grid gap-0.5 px-3 py-2.5">
+                  <ExternalLink className="text-xs" href={PLUGIN_API_DOCS}>
+                    {t("plugins.publish.docs")}
+                  </ExternalLink>
+                </div>
+              </li>
+              <li
+                className="grid gap-2 px-3 py-2.5"
+                data-testid="plugin-publish-github"
+              >
+                <div className="grid gap-0.5">
                   <span className="text-sm font-medium">
                     {t("plugins.publish.github.title")}
                   </span>
                   <span className="text-xs text-muted-foreground">
                     {t("plugins.publish.github.body")}
                   </span>
-                </li>
-              </ul>
-            </Panel>
-          </section>
+                </div>
+                <dl className="grid gap-1.5 text-xs">
+                  {PUBLISH_COMMANDS.map((entry) => (
+                    <div
+                      className="grid gap-x-3 gap-y-0.5 sm:grid-cols-[13rem_1fr] sm:items-baseline"
+                      key={entry.key}
+                    >
+                      <dt>
+                        <code className="font-mono">{entry.command}</code>
+                      </dt>
+                      <dd className="text-muted-foreground">
+                        {t(`plugins.developHome.command.${entry.key}`)}
+                      </dd>
+                    </div>
+                  ))}
+                </dl>
+                <div className="flex">
+                  {copyButton(
+                    "github",
+                    t("plugins.publish.github.prompt", {
+                      templates: PLUGIN_TEMPLATES,
+                    }),
+                  )}
+                </div>
+              </li>
+            </ul>
+          </Panel>
+          <p aria-live="polite" className="text-xs empty:hidden">
+            {feedback.activeKey === null
+              ? ""
+              : failed
+                ? t("copy.manualSelect")
+                : t("plugins.publish.copied")}
+          </p>
         </div>
       </DialogContent>
     </Dialog>

@@ -74,6 +74,9 @@ type TaskMeta struct {
 	ConfigSchema json.RawMessage `json:"configSchema,omitempty"`
 	Optional     bool            `json:"optional,omitempty"`
 	Samples      json.RawMessage `json:"samples,omitempty"`
+	// Scope is the range of requests the request processing part is made
+	// for; an instance that lists no models of its own runs there.
+	Scope *TaskScope `json:"scope,omitempty"`
 
 	// taskPart is set for a plugin with a task part: one that exports
 	// buildSubmitRequest.
@@ -82,6 +85,62 @@ type TaskMeta struct {
 	stages []string
 	// config is ConfigSchema, read.
 	config *ConfigSchema
+}
+
+// TaskScope is the range of requests a request processing plugin is made
+// for, as new-api's meta.scope declares it: its models and the new-api
+// channel types its requests go through. An empty list leaves that side
+// open, and a scope names at least one model or channel type. The gateway
+// has no channel types, so it keeps them but matches on the models alone.
+type TaskScope struct {
+	Models       []string `json:"models,omitempty"`
+	ChannelTypes []int    `json:"channelTypes,omitempty"`
+}
+
+// Limits on meta.scope, as new-api's contract sets them.
+const (
+	maxScopeModels       = 100
+	maxScopeModelRunes   = 128
+	maxScopeChannelTypes = 64
+)
+
+// validate checks a scope as new-api does.
+func (scope *TaskScope) validate() error {
+	for index, model := range scope.Models {
+		if model == "" || strings.TrimSpace(model) != model || utf8.RuneCountInString(model) > maxScopeModelRunes {
+			return fmt.Errorf("meta.scope.models must hold names of 1 to %d characters without surrounding spaces", maxScopeModelRunes)
+		}
+		if slices.Contains(scope.Models[:index], model) {
+			return fmt.Errorf("meta.scope.models lists %q twice", model)
+		}
+	}
+	for index, channel := range scope.ChannelTypes {
+		if channel <= 0 {
+			return errors.New("meta.scope.channelTypes must hold positive channel types")
+		}
+		if slices.Contains(scope.ChannelTypes[:index], channel) {
+			return fmt.Errorf("meta.scope.channelTypes lists %d twice", channel)
+		}
+	}
+	if len(scope.Models) > maxScopeModels || len(scope.ChannelTypes) > maxScopeChannelTypes {
+		return fmt.Errorf("meta.scope lists at most %d models and %d channel types", maxScopeModels, maxScopeChannelTypes)
+	}
+	if len(scope.Models) == 0 && len(scope.ChannelTypes) == 0 {
+		return errors.New("meta.scope must list at least one model or channel type; leave it out for a plugin placed by hand")
+	}
+	return nil
+}
+
+// InScope reports whether the plugin's scope holds a request for model, the
+// model the client asked for, matched without its @ modifiers as an
+// instance's models are: true without a scope or with one that lists no
+// models.
+func (meta *TaskMeta) InScope(model string) bool {
+	if meta == nil || meta.Scope == nil || len(meta.Scope.Models) == 0 {
+		return true
+	}
+	base, _, _ := strings.Cut(model, "@")
+	return slices.Contains(meta.Scope.Models, base)
 }
 
 // TaskAuthor is who wrote a task plugin, as it says.
@@ -291,8 +350,8 @@ func validateTaskMeta(meta *TaskMeta, key string, exported map[string]bool) erro
 		return invalid("meta.website must be an absolute https URL")
 	case !meta.taskPart && len(meta.Relay) == 0 && len(meta.stages) == 0:
 		return invalid("the plugin has no part this host runs: a task part exports buildSubmitRequest, a provider part lists meta.relay, a request processing part exports ingress, request, outbound, egress, reply or report")
-	case len(meta.stages) == 0 && (meta.Optional || len(meta.ConfigSchema) > 0 || len(meta.Samples) > 0):
-		return invalid("optional, configSchema and samples are for a plugin with a request processing part")
+	case len(meta.stages) == 0 && (meta.Optional || len(meta.ConfigSchema) > 0 || len(meta.Samples) > 0 || meta.Scope != nil):
+		return invalid("optional, configSchema, samples and scope are for a plugin with a request processing part; export ingress, request, outbound, egress, reply or report, or remove them")
 	case exported["validateConfig"] && len(meta.stages) == 0:
 		return invalid("validateConfig needs a request processing hook")
 	case !meta.taskPart && len(meta.Relay) == 0 && (exported["login"] || exported["refresh"] || exported["revoke"] || exported["signRequest"]):
@@ -310,6 +369,11 @@ func validateTaskMeta(meta *TaskMeta, key string, exported map[string]bool) erro
 	}
 	if err := validateLocalized(meta.Description, 512, "meta.description"); err != nil {
 		return invalid("%v", err)
+	}
+	if meta.Scope != nil {
+		if err := meta.Scope.validate(); err != nil {
+			return invalid("%v", err)
+		}
 	}
 	if meta.BaseURL != "" {
 		parsed, err := url.Parse(meta.BaseURL)

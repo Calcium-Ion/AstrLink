@@ -464,3 +464,48 @@ func TestRequestPluginsCheckTaskSubmissions(t *testing.T) {
 		t.Fatalf("form = %d %s, sent %v", response.Code, response.Body, sent)
 	}
 }
+
+// scopedTagger is a request processing plugin made for one model, as
+// new-api's meta.scope declares it; its channel types are new-api's, which
+// the gateway keeps but does not match.
+const scopedTagger = `export const meta = { apiVersion: 1, key: "scoped-tagger", name: "Scoped tagger", version: "1.0.0", author: { name: "Test" },
+  scope: { models: ["gpt-scoped"], channelTypes: [1, 14] } };
+export function ingress(ctx, req) {
+  return { action: "continue", effects: [{ type: "json.patch", ops: [{ op: "add", path: "/tagged", value: true }] }] };
+}
+`
+
+func TestARequestPluginScopeLimitsItsModels(t *testing.T) {
+	gateway := newRequestPluginGatewayWith(t, map[string]string{"scoped-tagger": scopedTagger},
+		contract.RequestPluginInstance{ID: "rpi_scoped001", Name: "Scoped", Plugin: "scoped-tagger", Enabled: true, Models: []string{}},
+		contract.RequestPluginInstance{ID: "rpi_placed001", Name: "Placed", Plugin: "scoped-tagger", Enabled: false, Models: []string{"other"}})
+	for _, model := range []string{"gpt-scoped", "gpt-scoped@effort:high", "other"} {
+		response := gateway.chat(`{"model":"` + model + `","messages":[{"role":"user","content":"hi"}]}`)
+		if response.Code != http.StatusOK {
+			t.Fatalf("%s: status = %d %s", model, response.Code, response.Body)
+		}
+	}
+	if len(gateway.sent) != 3 {
+		t.Fatalf("sent %d requests", len(gateway.sent))
+	}
+	for index, want := range []bool{true, true, false} {
+		if tagged := gjson.Get(gateway.sent[index], "tagged").Bool(); tagged != want {
+			t.Fatalf("request %d tagged = %v, want %v: %s", index, tagged, want, gateway.sent[index])
+		}
+	}
+
+	// An instance that lists models was placed by hand and runs there,
+	// whatever the plugin's scope says.
+	placed := []contract.RequestPluginInstance{{ID: "rpi_placed001", Name: "Placed", Plugin: "scoped-tagger", Enabled: true, Models: []string{"other"}}}
+	if _, err := gateway.host.UpdateSettings(context.Background(), contract.PluginHostSettingsUpdate{RequestPlugins: &placed}); err != nil {
+		t.Fatal(err)
+	}
+	for _, model := range []string{"gpt-scoped", "other"} {
+		if response := gateway.chat(`{"model":"` + model + `","messages":[{"role":"user","content":"hi"}]}`); response.Code != http.StatusOK {
+			t.Fatalf("%s: status = %d %s", model, response.Code, response.Body)
+		}
+	}
+	if gjson.Get(gateway.sent[3], "tagged").Bool() || !gjson.Get(gateway.sent[4], "tagged").Bool() {
+		t.Fatalf("placed instance sent %s and %s", gateway.sent[3], gateway.sent[4])
+	}
+}

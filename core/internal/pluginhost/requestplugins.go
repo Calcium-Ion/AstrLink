@@ -251,6 +251,12 @@ func (host *Host) RequestPlugins(model, path string) *RequestRun {
 			continue
 		}
 		meta := target.NewAPI()
+		// An instance that lists no models runs where its plugin's
+		// meta.scope says, as the plugin is now; one that lists models
+		// was placed by hand and runs there alone.
+		if len(instance.Models) == 0 && !meta.InScope(model) {
+			continue
+		}
 		schema := meta.Config()
 		config, keywords := schema.HookConfig(schema.Defaults(instance.Config))
 		hosts := slices.Clone(meta.AllowedHosts)
