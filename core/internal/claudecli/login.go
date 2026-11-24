@@ -136,8 +136,10 @@ func (logins *Logins) Begin(ctx context.Context, id contract.ServiceID) (contrac
 		stdin: stdin, run: runCtx, cancel: cancel, done: make(chan struct{}),
 	}
 	found := make(chan string, 1)
+	scanned := make(chan struct{})
 	transcript := &loginTranscript{}
 	go func() {
+		defer close(scanned)
 		scanner := bufio.NewScanner(output)
 		scanner.Buffer(make([]byte, 0, 4096), maxLoginOutput)
 		sent := false
@@ -165,8 +167,18 @@ func (logins *Logins) Begin(ctx context.Context, id contract.ServiceID) (contrac
 	case page := <-found:
 		current.session.AuthorizationURL = page
 	case err := <-exited:
-		cancel()
-		return contract.AuthorizationSession{}, fmt.Errorf("%w: %s", ErrLoginNoURL, loginFailure(err, transcript))
+		// Wait can return before the reader has seen the last lines the CLI
+		// wrote, so read them all: a page shown just before it exited, as a
+		// browser sign-in does, still starts the login.
+		<-scanned
+		select {
+		case page := <-found:
+			current.session.AuthorizationURL = page
+			exited <- err
+		default:
+			cancel()
+			return contract.AuthorizationSession{}, fmt.Errorf("%w: %s", ErrLoginNoURL, loginFailure(err, transcript))
+		}
 	case <-timer.C:
 		cancel()
 		<-exited
