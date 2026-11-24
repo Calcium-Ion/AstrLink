@@ -45,13 +45,13 @@ const (
 	maxTaskFetches      = 4
 	taskFetchTimeout    = 15 * time.Second
 	taskFetchBudget     = 30 * time.Second
-	maxTaskFetchBody    = 1 << 20
+	maxTaskFetchBody    = 64 << 20
 	maxTaskFetchURL     = 64 << 10
 	maxTaskFetchHeaders = 64
 	maxTaskHeaderValue  = 8 << 10
-	maxCloneBytes       = 1 << 20
-	maxCloneNodes       = 32768
-	maxCloneDepth       = 32
+	maxCloneBytes       = 64 << 20
+	maxCloneNodes       = 4 << 20
+	maxCloneDepth       = 256
 )
 
 // taskFetchForbidden are the headers utils.fetch leaves to the transport.
@@ -117,7 +117,7 @@ func (bound *instance) installTask() error {
 				}
 				var raw json.RawMessage
 				if err := runtime.UnmarshalWith(value, &raw, moejs.DecodeOptions{MaxBytes: maxCloneBytes, MaxNodes: maxCloneNodes}); err != nil || len(raw) == 0 {
-					return moejs.Undefined(), fail(realm, "utils.json.clone: the value is larger than 1 MiB")
+					return moejs.Undefined(), fail(realm, "utils.json.clone: the value is larger than %d MiB", maxCloneBytes>>20)
 				}
 				return realm.JSONParseGoString(string(raw))
 			}),
@@ -235,10 +235,10 @@ func plainJSONValue(realm *moejs.Realm, value moejs.Value) error {
 	var walk func(value moejs.Value, depth int) error
 	walk = func(value moejs.Value, depth int) error {
 		if nodes++; nodes > maxCloneNodes {
-			return errors.New("the value has more than 32,768 values")
+			return fmt.Errorf("the value has more than %d values", maxCloneNodes)
 		}
 		if depth > maxCloneDepth {
-			return errors.New("the value is nested deeper than 32 levels")
+			return fmt.Errorf("the value is nested deeper than %d levels", maxCloneDepth)
 		}
 		switch {
 		case value.IsNull(), value.IsBool(), value.IsString():
@@ -306,7 +306,7 @@ func taskFetch(c *call, realm *moejs.Realm, argument moejs.Value) (moejs.Value, 
 		return moejs.Undefined(), realm.Throw(engine.ObjectValue(realm.NewError(engine.KindError, "utils.fetch: "+format, args...)))
 	}
 	var raw map[string]json.RawMessage
-	if err := c.runtime.UnmarshalWith(argument, &raw, moejs.DecodeOptions{MaxBytes: 1 << 20, MaxNodes: 1024}); err != nil || raw == nil {
+	if err := c.runtime.UnmarshalWith(argument, &raw, moejs.DecodeOptions{MaxBytes: maxTaskFetchBody + 1<<20, MaxNodes: 1024}); err != nil || raw == nil {
 		return fail("the request must be a plain object")
 	}
 	var request struct {
@@ -341,7 +341,7 @@ func taskFetch(c *call, realm *moejs.Realm, argument moejs.Value) (moejs.Value, 
 	case request.Body != nil && method != http.MethodPost:
 		return fail("only a POST has a body")
 	case request.Body != nil && len(*request.Body) > maxTaskFetchBody:
-		return fail("the body is larger than 1 MiB")
+		return fail("the body is larger than %d MiB", maxTaskFetchBody>>20)
 	}
 	var payload []byte
 	if request.Body != nil {
@@ -426,7 +426,7 @@ func taskFetch(c *call, realm *moejs.Realm, argument moejs.Value) (moejs.Value, 
 	case fetchErr != nil:
 		return fail("the request to %s failed", target.Hostname())
 	case len(body) > maxTaskFetchBody:
-		return fail("the response of %s is larger than 1 MiB", target.Hostname())
+		return fail("the response of %s is larger than %d MiB", target.Hostname(), maxTaskFetchBody>>20)
 	}
 	headers := map[string]any{}
 	for name, values := range header {

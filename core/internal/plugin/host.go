@@ -32,9 +32,10 @@ const (
 	MaxFetchTimeout     = 30 * time.Second
 	defaultFetchTimeout = 10 * time.Second
 	// MaxFetchBodyBytes bounds a request body, and MaxFetchResponseBytes a
-	// response body; a Fetcher answers FetchTooLarge past it.
-	MaxFetchBodyBytes     = 1 << 20
-	MaxFetchResponseBytes = 1 << 20
+	// response body; a Fetcher answers FetchTooLarge past it. A plugin may
+	// send or read a whole model request or response, as hook results may.
+	MaxFetchBodyBytes     = 64 << 20
+	MaxFetchResponseBytes = 64 << 20
 )
 
 // Limits of astrlink.store and astrlink.log.
@@ -47,8 +48,9 @@ const (
 	maxLogBytes        = 1 << 10
 )
 
-// maxArgNodes bounds the values of one host function argument.
-const maxArgNodes = 1 << 16
+// maxArgNodes bounds the values of one host function argument, as many as a
+// hook's result may have.
+const maxArgNodes = 4 << 20
 
 // Errors of astrlink.http.fetch, in HTTPResponse.Error.
 const (

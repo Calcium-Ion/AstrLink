@@ -10,7 +10,6 @@ import (
 	"regexp"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/MoeForge/moejs"
 	"github.com/MoeForge/moejs/syntax"
@@ -48,17 +47,6 @@ func isNewAPIMeta(runtime *moejs.Runtime) bool {
 	return relay || author
 }
 
-// taskLimits are the limits of a task plugin's hooks: conversions of whole
-// media requests and responses take more time, memory and result than the
-// hooks of a turn.
-func taskLimits(limits Limits) Limits {
-	limits.ScriptTime = max(limits.ScriptTime, 5*time.Second)
-	limits.Memory = max(limits.Memory, 256<<20)
-	limits.ResultBytes = max(limits.ResultBytes, 64<<20)
-	limits.ResultNodes = max(limits.ResultNodes, 1<<20)
-	return limits
-}
-
 // loadTask loads a task plugin: its manifest is new-api's, and its hooks
 // are the driver's functions and the members of native and of each protocol
 // of protocols, by their paths: native.createJob,
@@ -68,7 +56,7 @@ func loadTask(source Source, module *moejs.Module, parsed *syntax.Module, limits
 		return nil, err
 	}
 	loaded := &program{key: source.Key, file: source.File, module: module, hooks: make(map[string]moejs.Hook), sources: parseSourceMap(source.SourceMap, source.File), dirs: dirs, task: &TaskMeta{}}
-	instance, err := newInstance(loaded, taskLimits(limits))
+	instance, err := newInstance(loaded, limits)
 	if err != nil {
 		return nil, loadFailure(source.File, err)
 	}

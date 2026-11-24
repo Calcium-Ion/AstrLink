@@ -177,7 +177,7 @@ func TestTaskJSONCloneRefusesWhatIsNotJSON(t *testing.T) {
 		"demo": taskSource("demo", `
 export function extractUsage(ctx) {
   const deep = {}; let at = deep;
-  for (let i = 0; i < 40; i++) { at.next = {}; at = at.next; }
+  for (let i = 0; i < 300; i++) { at.next = {}; at = at.next; }
   const out = {};
   for (const [name, value] of [["fn", () => 1], ["deep", deep], ["undef", undefined], ["cycle", (() => { const a = {}; a.a = a; return a; })()]]) {
     try { utils.json.clone(value); out[name] = "cloned"; } catch (error) { out[name] = "refused"; }

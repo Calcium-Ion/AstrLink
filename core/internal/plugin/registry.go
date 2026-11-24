@@ -621,14 +621,7 @@ func (manager *Manager) publish(settings map[string]Settings) {
 			// lists them, and enabling the plugin grants them all.
 			plugin.granted = slices.Clone(result.program.meta.Capabilities)
 			plugin.config = result.program.meta.WithDefaults(current.Config)
-			limits := manager.limits
-			if len(result.program.meta.Providers) > 0 {
-				limits = providerLimits(limits)
-			}
-			if result.program.task != nil {
-				limits = taskLimits(limits)
-			}
-			plugin.pool = newPool(result.program, limits)
+			plugin.pool = newPool(result.program, manager.limits)
 		}
 		plugins = append(plugins, plugin)
 	}

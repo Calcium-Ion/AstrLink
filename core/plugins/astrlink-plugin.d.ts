@@ -845,7 +845,7 @@ declare namespace AstrLinkPlugin {
     url: string;
     /** Never Authorization, Cookie, Host, Content-Length, Proxy-* or X-AstrLink-*. */
     headers?: Record<string, string>;
-    /** Sent as application/json. A request has json or body, not both; a GET has neither. At most 1 MiB. */
+    /** Sent as application/json. A request has json or body, not both; a GET has neither. At most 64 MiB. */
     json?: unknown;
     body?: string;
     /** A slot of meta.credentials. */
@@ -864,7 +864,7 @@ declare namespace AstrLinkPlugin {
     status: number;
     /** The first value of each header, keyed in lowercase. */
     headers: Record<string, string>;
-    /** The body when it parses as JSON; text otherwise. At most 1 MiB. */
+    /** The body when it parses as JSON; text otherwise. At most 64 MiB. */
     json?: unknown;
     text?: string;
     error?: "denied" | "timeout" | "network" | "too_large" | "budget";
@@ -892,7 +892,7 @@ declare const astrlink: {
     /**
      * Needs network. An array runs in parallel; at most 8 run at once, 16 in
      * an apiVersion 1 call and 32 in an apiVersion 2 one. Waits do not count
-     * against the 200 ms of script time. fetch() is the same with the web's
+     * against the 5 s of script time. fetch() is the same with the web's
      * Response.
      */
     fetch(

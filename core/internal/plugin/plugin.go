@@ -205,14 +205,16 @@ type Limits struct {
 	DataBytes int64
 }
 
-// DefaultLimits are the limits of the design: 200 ms of JavaScript, 32 MiB,
-// and a result of at most 64 KiB and 4096 values.
+// DefaultLimits are the limits of every hook call. A hook may take and
+// return a whole request or response, as large as the gateway lets one be,
+// so it gets 5 s of JavaScript, 512 MiB, and a result of at most 64 MiB and
+// 4 Mi values. The extension points' own time limits bound it further.
 func DefaultLimits() Limits {
 	return Limits{
-		ScriptTime:  200 * time.Millisecond,
-		Memory:      32 << 20,
-		ResultBytes: 64 << 10,
-		ResultNodes: 4096,
+		ScriptTime:  5 * time.Second,
+		Memory:      512 << 20,
+		ResultBytes: 64 << 20,
+		ResultNodes: 4 << 20,
 		Concurrency: runtime.GOMAXPROCS(0),
 		DataBytes:   DefaultDataBytes,
 	}

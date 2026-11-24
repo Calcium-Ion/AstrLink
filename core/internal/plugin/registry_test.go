@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -342,7 +343,7 @@ export function prepareTurn() {
 }
 export function describeStatus() { return "x".repeat(70000); }
 `),
-	}, settingsMap{"demo": enabled()}, Services{}, Limits{})
+	}, settingsMap{"demo": enabled()}, Services{}, Limits{ResultBytes: 64 << 10})
 	plugin := loadedPlugin(t, manager, "demo")
 	outcome := callWithin(t, context.Background(), plugin, HookPrepareTurn, nil, CallOptions{})
 	callError(t, outcome, ReasonPluginError, "threw Error: boom[31mxxx")
@@ -473,7 +474,7 @@ export function prepareTurn() {
     { ...base, timeoutMs: 60000 },
     { ...base, headers: { "Bad Header": "x" } },
     { ...base, extra: true },
-    { ...base, body: "x".repeat(1100000) },
+    { ...base, body: "x".repeat(`+strconv.Itoa(MaxFetchBodyBytes+1)+`) },
     { ...base, get url() { return "https://memory.test/"; } },
     Array.from({ length: 9 }, () => base),
   ]) {
@@ -484,7 +485,7 @@ export function prepareTurn() {
 `),
 	}, settingsMap{"demo": enabled(CapabilityNetwork)}, Services{Fetcher: fetcherFunc(func(context.Context, *Plugin, HTTPRequest) HTTPResponse {
 		return HTTPResponse{Status: 200}
-	})}, Limits{Memory: 64 << 20, ScriptTime: 10 * time.Second}) // builds a 1 MiB body; the shape is what is under test
+	})}, Limits{ScriptTime: 10 * time.Second}) // builds a body past the limit; the shape is what is under test
 	outcome := callWithin(t, context.Background(), loadedPlugin(t, manager, "demo"), HookPrepareTurn, nil, CallOptions{NetworkBudget: time.Second})
 	want := `["TypeError","TypeError","TypeError","TypeError","TypeError","TypeError","TypeError","TypeError","TypeError","TypeError","TypeError","RangeError"]`
 	if outcome.err != nil || string(outcome.result) != want {

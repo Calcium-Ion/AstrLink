@@ -7,7 +7,6 @@ import (
 	"regexp"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/QuantumNous/astrlink/core/contract"
 )
@@ -268,15 +267,4 @@ func checkProviderHooks(meta Meta, exported map[string]bool) error {
 		return fmt.Errorf("exports %s or %s but declares no stream", HookParseStreamEvent, HookFinishStream)
 	}
 	return nil
-}
-
-// providerLimits are the limits of a plugin that adapts providers: a call
-// takes the whole request or response, as large as the gateway lets one
-// be, and parsing it takes longer than a hook that reads a summary.
-func providerLimits(limits Limits) Limits {
-	limits.Memory = max(limits.Memory, 256<<20)
-	limits.ResultBytes = max(limits.ResultBytes, 64<<20)
-	limits.ResultNodes = max(limits.ResultNodes, 4<<20)
-	limits.ScriptTime = max(limits.ScriptTime, time.Second)
-	return limits
 }

@@ -62,10 +62,3 @@ export async function parseResponse() {}`), "does not export parseStreamEvent"},
 		t.Fatalf("auth = %s", data)
 	}
 }
-
-func TestProviderPluginsGetRoomForWholeBodies(t *testing.T) {
-	limits := providerLimits(DefaultLimits())
-	if limits.ResultBytes < 32<<20 || limits.Memory < 256<<20 || limits.ScriptTime < DefaultLimits().ScriptTime {
-		t.Fatalf("providerLimits = %+v", limits)
-	}
-}

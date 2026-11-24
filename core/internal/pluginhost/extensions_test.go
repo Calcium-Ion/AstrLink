@@ -77,6 +77,26 @@ export async function beforeForward(ctx) {
 	}
 }
 
+func TestBeforeUpstreamReturnsAWholeLargeBody(t *testing.T) {
+	source := `export const meta = { apiVersion: 2, key: "big", name: "Big", version: "1.0.0", capabilities: ["request.write.raw"] };
+export async function beforeUpstream(ctx) {
+  return { body: { ...ctx.body, metadata: { user_id: "device" } }, headers: { "x-session": "s1" } };
+}
+`
+	host := extensionHost(t, "big", source, plugin.Settings{Enabled: true, Capabilities: []string{plugin.CapabilityRequestWriteRaw}})
+	// Over 1 MiB and 8,192 values, as a long Claude Code conversation is.
+	messages := make([]map[string]any, 8192)
+	for index := range messages {
+		messages[index] = map[string]any{"role": "user", "content": strings.Repeat("x", 128)}
+	}
+	body, _ := json.Marshal(map[string]any{"model": "m", "messages": messages})
+	ext := host.Extend(ExtensionInput{Protocol: contract.ProtocolAnthropicMessages, Model: "m"})
+	edited, headers := ext.BeforeUpstream(context.Background(), UpstreamAttempt{Protocol: string(contract.ProtocolAnthropicMessages), Model: "m"}, body)
+	if got := gjson.GetBytes(edited, "metadata.user_id").Str; got != "device" || gjson.GetBytes(edited, "messages.#").Int() != 8192 || headers["X-Session"] != "s1" {
+		t.Fatalf("user_id = %q, %d messages, headers %v; records %+v", got, gjson.GetBytes(edited, "messages.#").Int(), headers, ext.Records())
+	}
+}
+
 func TestTurnBlocksSettleOncePerTurn(t *testing.T) {
 	source := `export const meta = { apiVersion: 2, key: "turns", name: "Turns", version: "1.0.0", capabilities: ["request.write"] };
 let calls = 0;

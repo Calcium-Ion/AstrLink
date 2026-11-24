@@ -138,8 +138,9 @@ type httpResult struct {
 	JSON    json.RawMessage   `json:"json"`
 }
 
-// MaxPluginHTTPBytes bounds the bodies of /plugins/<key>/… both ways.
-const MaxPluginHTTPBytes = 1 << 20
+// MaxPluginHTTPBytes bounds the bodies of /plugins/<key>/… both ways, as
+// large as a hook's result.
+const MaxPluginHTTPBytes = 64 << 20
 
 // ServePluginHTTP answers a request to /plugins/<key>/… with the plugin's
 // onHttp hook. found is false when no enabled plugin of key serves HTTP.
