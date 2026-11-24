@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"slices"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -474,7 +473,7 @@ export function prepareTurn() {
     { ...base, timeoutMs: 60000 },
     { ...base, headers: { "Bad Header": "x" } },
     { ...base, extra: true },
-    { ...base, body: "x".repeat(`+strconv.Itoa(MaxFetchBodyBytes+1)+`) },
+    { ...base, body: "x".repeat(1024 * 1024 + 1) },
     { ...base, get url() { return "https://memory.test/"; } },
     Array.from({ length: 9 }, () => base),
   ]) {
@@ -485,7 +484,7 @@ export function prepareTurn() {
 `),
 	}, settingsMap{"demo": enabled(CapabilityNetwork)}, Services{Fetcher: fetcherFunc(func(context.Context, *Plugin, HTTPRequest) HTTPResponse {
 		return HTTPResponse{Status: 200}
-	})}, Limits{ScriptTime: 10 * time.Second}) // builds a body past the limit; the shape is what is under test
+	})}, Limits{FetchBodyBytes: 1 << 20})
 	outcome := callWithin(t, context.Background(), loadedPlugin(t, manager, "demo"), HookPrepareTurn, nil, CallOptions{NetworkBudget: time.Second})
 	want := `["TypeError","TypeError","TypeError","TypeError","TypeError","TypeError","TypeError","TypeError","TypeError","TypeError","TypeError","RangeError"]`
 	if outcome.err != nil || string(outcome.result) != want {

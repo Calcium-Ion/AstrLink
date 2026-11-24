@@ -198,6 +198,9 @@ type Limits struct {
 	// length, and the number of values in it.
 	ResultBytes int
 	ResultNodes int
+	// FetchBodyBytes bounds the body of a request the call sends, by
+	// astrlink.http.fetch or fetch.
+	FetchBodyBytes int
 	// Concurrency is how many calls of one plugin may run JavaScript at the
 	// same time. A call waiting on the host gives up its place meanwhile.
 	Concurrency int
@@ -215,8 +218,11 @@ func DefaultLimits() Limits {
 		Memory:      512 << 20,
 		ResultBytes: 64 << 20,
 		ResultNodes: 4 << 20,
-		Concurrency: runtime.GOMAXPROCS(0),
-		DataBytes:   DefaultDataBytes,
+		// FetchBodyBytes is MaxFetchBodyBytes: a plugin may send a whole
+		// model request, as a hook may return one.
+		FetchBodyBytes: MaxFetchBodyBytes,
+		Concurrency:    runtime.GOMAXPROCS(0),
+		DataBytes:      DefaultDataBytes,
 	}
 }
 
@@ -233,6 +239,9 @@ func (limits Limits) withDefaults() Limits {
 	}
 	if limits.ResultNodes <= 0 {
 		limits.ResultNodes = defaults.ResultNodes
+	}
+	if limits.FetchBodyBytes <= 0 {
+		limits.FetchBodyBytes = defaults.FetchBodyBytes
 	}
 	if limits.Concurrency <= 0 {
 		limits.Concurrency = defaults.Concurrency

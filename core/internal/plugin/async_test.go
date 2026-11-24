@@ -3,7 +3,6 @@ package plugin
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -525,7 +524,7 @@ func TestFetchBodiesKeepToTheLimit(t *testing.T) {
 	})
 	manager := newTestManager(t, map[string]string{
 		"demo": pluginSourceV2("demo", []string{CapabilityNetwork}, `
-const large = new Uint8Array(`+strconv.Itoa(MaxFetchBodyBytes+1)+`);
+const large = new Uint8Array(1024 * 1024 + 1);
 const failure = (error) => error.name + ": " + error.message + " (" + (error.cause?.message ?? "") + ")";
 export async function prepareTurn() {
   const whole = await fetch("https://api.example/", { method: "POST", body: large }).then((r) => r.status, failure);
@@ -535,14 +534,14 @@ export async function prepareTurn() {
   return [whole, streamed, fits];
 }
 `),
-	}, settingsMap{"demo": enabled(CapabilityNetwork)}, Services{Fetcher: fetcher}, Limits{})
+	}, settingsMap{"demo": enabled(CapabilityNetwork)}, Services{Fetcher: fetcher}, Limits{FetchBodyBytes: 1 << 20})
 	outcome := callWithin(t, context.Background(), loadedPlugin(t, manager, "demo"), HookPrepareTurn, nil, CallOptions{NetworkBudget: 5 * time.Second})
 	var result []any
 	if outcome.err != nil || json.Unmarshal(outcome.result, &result) != nil || len(result) != 3 {
 		t.Fatalf("call = %s, %v", outcome.result, outcome.err)
 	}
 	for _, failed := range result[:2] {
-		if text, _ := failed.(string); !strings.HasPrefix(text, "TypeError: fetch failed") || !strings.Contains(text, fmt.Sprintf("larger than %d MiB", MaxFetchBodyBytes>>20)) {
+		if text, _ := failed.(string); !strings.HasPrefix(text, "TypeError: fetch failed") || !strings.Contains(text, "larger than 1 MiB") {
 			t.Errorf("a body past the limit = %v", failed)
 		}
 	}

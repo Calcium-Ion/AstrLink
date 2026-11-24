@@ -31,9 +31,10 @@ const (
 	// deadline bound it further.
 	MaxFetchTimeout     = 30 * time.Second
 	defaultFetchTimeout = 10 * time.Second
-	// MaxFetchBodyBytes bounds a request body, and MaxFetchResponseBytes a
-	// response body; a Fetcher answers FetchTooLarge past it. A plugin may
-	// send or read a whole model request or response, as hook results may.
+	// MaxFetchBodyBytes bounds a request body, unless Limits.FetchBodyBytes
+	// lowers it, and MaxFetchResponseBytes a response body; a Fetcher
+	// answers FetchTooLarge past it. A plugin may send or read a whole model
+	// request or response, as hook results may.
 	MaxFetchBodyBytes     = 64 << 20
 	MaxFetchResponseBytes = 64 << 20
 )
@@ -586,7 +587,7 @@ func hostFetch(c *call, realm *moejs.Realm, args []moejs.Value) (moejs.Value, er
 	if err != nil {
 		return moejs.Undefined(), err
 	}
-	data, err := plainArg(realm, argument, maxParallelFetches*(MaxFetchBodyBytes+64<<10), "request")
+	data, err := plainArg(realm, argument, maxParallelFetches*(c.pool.limits.FetchBodyBytes+64<<10), "request")
 	if err != nil {
 		return moejs.Undefined(), err
 	}
@@ -673,8 +674,8 @@ func decodeRequest(c *call, item any) (HTTPRequest, error) {
 		}
 		request.BodyBytes = decoded
 	}
-	if len(request.JSON) > MaxFetchBodyBytes || (request.Body != nil && len(*request.Body) > MaxFetchBodyBytes) || len(request.BodyBytes) > MaxFetchBodyBytes {
-		return HTTPRequest{}, fmt.Errorf("the body is larger than %d MiB", MaxFetchBodyBytes>>20)
+	if limit := c.pool.limits.FetchBodyBytes; len(request.JSON) > limit || (request.Body != nil && len(*request.Body) > limit) || len(request.BodyBytes) > limit {
+		return HTTPRequest{}, bodyTooLarge(limit)
 	}
 	if request.Credential != "" {
 		if _, declared := c.plugin.Meta.Credential(request.Credential); !declared {

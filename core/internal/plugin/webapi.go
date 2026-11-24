@@ -337,8 +337,9 @@ func (transport fetchTransport) RoundTrip(incoming *http.Request) (*http.Respons
 	if c == nil {
 		return nil, &FetchError{Reason: FetchNetwork, Err: errCallEnded}
 	}
-	if incoming.ContentLength > MaxFetchBodyBytes {
-		return nil, errBodyTooLarge
+	limit := c.pool.limits.FetchBodyBytes
+	if incoming.ContentLength > int64(limit) {
+		return nil, bodyTooLarge(limit)
 	}
 	fail := func(reason string, err error) (*http.Response, error) {
 		c.network.Lock()
@@ -389,7 +390,7 @@ func (transport fetchTransport) RoundTrip(incoming *http.Request) (*http.Respons
 	}
 	request.Host = ""
 	if request.Body != nil && request.Body != http.NoBody {
-		request.Body = &requestBody{ReadCloser: request.Body, left: MaxFetchBodyBytes}
+		request.Body = &requestBody{ReadCloser: request.Body, left: int64(limit), limit: limit}
 	}
 	fetcher := c.plugin.services.Fetcher
 	if streamer, ok := fetcher.(StreamFetcher); ok {
@@ -429,20 +430,23 @@ func (transport fetchTransport) RoundTrip(incoming *http.Request) (*http.Respons
 	return bufferedResponse(request, answer), nil
 }
 
-// errBodyTooLarge is the error of a request body past MaxFetchBodyBytes.
-var errBodyTooLarge = fmt.Errorf("the body is larger than %d MiB", MaxFetchBodyBytes>>20)
+// bodyTooLarge is the error of a request body past limit bytes.
+func bodyTooLarge(limit int) error {
+	return fmt.Errorf("the body is larger than %d MiB", limit>>20)
+}
 
 // requestBody is the body of a request of fetch, which may stream: it
-// fails past MaxFetchBodyBytes.
+// fails past limit bytes.
 type requestBody struct {
 	io.ReadCloser
-	left int64
+	left  int64
+	limit int
 }
 
 func (body *requestBody) Read(p []byte) (int, error) {
 	n, err := body.ReadCloser.Read(p)
 	if body.left -= int64(n); body.left < 0 {
-		return 0, errBodyTooLarge
+		return 0, bodyTooLarge(body.limit)
 	}
 	return n, err
 }
