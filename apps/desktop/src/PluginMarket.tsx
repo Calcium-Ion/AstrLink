@@ -137,7 +137,7 @@ const NEW_API_PLUGIN_DOCS = [
 
 /** The templates astrlink plugin new offers, named in the prompt for an AI. */
 const PLUGIN_TEMPLATES =
-  "basic, gate, route, forward, stream, response, schedule, http, provider, ui, files";
+  "basic, route, stream, response, schedule, http, ui, files";
 
 /** The commands that start, run and check a plugin, in the publish dialog. */
 const PUBLISH_COMMANDS = [
@@ -1048,11 +1048,12 @@ function PublishDialog({
   const publish = newAPIPage(locale, "community");
   const feedback = useCopyFeedback();
   const failed = feedback.state === "failed";
-  const copyButton = (key: "community" | "github", text: string) => {
-    const copied = feedback.activeKey === key && feedback.state === "copied";
+  const copyButton = (text: string) => {
+    const copied =
+      feedback.activeKey === "prompt" && feedback.state === "copied";
     return (
       <Button
-        onClick={() => feedback.copy(key, text)}
+        onClick={() => feedback.copy("prompt", text)}
         size="sm"
         type="button"
         variant="outline"
@@ -1072,6 +1073,14 @@ function PublishDialog({
           <DialogTitle>{t("plugins.publish.title")}</DialogTitle>
         </DialogHeader>
         <div className="grid min-h-0 gap-3 overflow-y-auto overscroll-contain">
+          <div className="flex">
+            {copyButton(
+              t("plugins.publish.prompt", {
+                astrlinkTemplates: PLUGIN_TEMPLATES,
+                docs: NEW_API_PLUGIN_DOCS,
+              }),
+            )}
+          </div>
           <Panel asChild>
             <ul>
               <li
@@ -1087,12 +1096,6 @@ function PublishDialog({
                   </span>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
-                  {copyButton(
-                    "community",
-                    t("plugins.publish.community.prompt", {
-                      docs: NEW_API_PLUGIN_DOCS,
-                    }),
-                  )}
                   <Button asChild size="sm" variant="outline">
                     <a
                       href={publish}
@@ -1136,14 +1139,6 @@ function PublishDialog({
                     </div>
                   ))}
                 </dl>
-                <div className="flex">
-                  {copyButton(
-                    "github",
-                    t("plugins.publish.github.prompt", {
-                      templates: PLUGIN_TEMPLATES,
-                    }),
-                  )}
-                </div>
               </li>
             </ul>
           </Panel>

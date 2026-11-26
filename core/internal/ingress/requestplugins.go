@@ -23,7 +23,7 @@ func (handler *Handler) beginRequestPlugins(writer http.ResponseWriter, request 
 	if handler.plugins == nil || session == nil || len(classified.body) == 0 {
 		return request, classified, false
 	}
-	run := handler.plugins.RequestPlugins(classified.Model, request.URL.Path)
+	run := handler.plugins.RequestPlugins(classified.Model, request.URL.Path, session.requestOrigin())
 	if run == nil {
 		return request, classified, false
 	}
@@ -78,6 +78,19 @@ func (session *recordSession) requestPluginRun() *pluginhost.RequestRun {
 		return nil
 	}
 	return session.requestPlugins
+}
+
+// requestOrigin is what the request processing hooks read of where the
+// request comes from: the recognized client and the conversation.
+func (session *recordSession) requestOrigin() pluginhost.RequestOrigin {
+	if session == nil {
+		return pluginhost.RequestOrigin{}
+	}
+	origin := pluginhost.RequestOrigin{Client: string(session.clientType), Session: string(session.sessionID)}
+	if session.turn != nil {
+		origin.Turn = session.turn.Index
+	}
+	return origin
 }
 
 // reportRequestPlugins hands the finished request to the report hooks of

@@ -257,7 +257,7 @@ func (handler *Handler) startTaskRecord(writer http.ResponseWriter, request *htt
 // its answer. A task submission is not under the privacy policy, so the
 // plugins read the body the vendor gets.
 func (current *taskRequest) ingressPlugins(model string) bool {
-	run := current.handler.plugins.RequestPlugins(model, current.request.URL.Path)
+	run := current.handler.plugins.RequestPlugins(model, current.request.URL.Path, current.session.requestOrigin())
 	if run == nil || current.body == nil {
 		return false
 	}

@@ -40,7 +40,7 @@ type command struct {
 
 func commands() []command {
 	return []command{
-		{"new", "astrlink plugin new <key> [--template <name>] [--dir <parent>]", "Start a plugin project from a template.", runNew},
+		{"new", "astrlink plugin new <key> [--template <name>] [--dir <parent>]", "Start a plugin project from a template, " + defaultTemplate + " when none is given. " + templateChoices() + ".", runNew},
 		{"build", "astrlink plugin build [dir] [--out <dir>]", "Build a project into plugin.js, its source map and client.js.", runBuild},
 		{"check", "astrlink plugin check [dir]", "Build a project and check it as the gateway would load it.", runCheck},
 		{"test", "astrlink plugin test [dir | plugin.js] [--run <text>] [--fixture <file>]", "Run the hook fixtures in the project's tests directory, or in a file.", runTest},

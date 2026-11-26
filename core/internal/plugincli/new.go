@@ -15,10 +15,13 @@ import (
 	builtinplugins "github.com/QuantumNous/astrlink/core/plugins"
 
 	"github.com/QuantumNous/astrlink/core/contract"
+	"github.com/QuantumNous/astrlink/core/internal/plugin"
 )
 
-// template is a starting point for a project: its src/plugin.ts and the test
-// cases that go with it.
+// template is a starting point for a project. An AstrLink template is its
+// src/plugin.ts and the test cases that go with it; a new-api template
+// (newAPI) is its plugin.js, the fixtures, the usage guide and the entries
+// of the first release's notes.
 type template struct {
 	summary string
 	plugin  string
@@ -29,11 +32,20 @@ type template struct {
 	// types of Node's modules.
 	keeps map[string]string
 	node  bool
+	// newAPI marks a template in new-api's plugin format, which both
+	// gateways run; readme is its README.md and changes the list of what
+	// its CHANGELOG.md says it adds.
+	newAPI  bool
+	readme  string
+	changes string
 }
+
+// defaultTemplate is the template new starts from without --template.
+const defaultTemplate = "request"
 
 func runNew(_ context.Context, env Environment, args []string) int {
 	flags := flag.NewFlagSet("new", flag.ContinueOnError)
-	name := flags.String("template", "basic", "the template to start from: "+strings.Join(templateNames(), ", "))
+	name := flags.String("template", defaultTemplate, "the template to start from, "+defaultTemplate+" when absent. "+templateChoices())
 	parent := flags.String("dir", ".", "the directory to create the project in")
 	positional, ok := parse(env, "new", flags, args, 1)
 	if !ok {
@@ -44,21 +56,36 @@ func runNew(_ context.Context, env Environment, args []string) int {
 		return 2
 	}
 	key := positional[0]
-	if !contract.ValidNativePluginKey(key) {
+	chosen, found := templates()[*name]
+	if !found {
+		fmt.Fprintf(env.Stderr, "error: no template %q. %s\n", *name, templateChoices())
+		return 2
+	}
+	switch {
+	case chosen.newAPI && !plugin.ValidPluginKey(key):
+		fmt.Fprintf(env.Stderr, "error: %q cannot be a New API plugin key: a lowercase letter or digit, then up to %d lowercase letters, digits, hyphens and underscores\n", key, plugin.NewAPIKeyLength-1)
+		return 2
+	case chosen.newAPI && plugin.NewAPIKeyProblem(key) != "":
+		fmt.Fprintf(env.Stderr, "error: %q cannot be a New API plugin key: %s\n", key, plugin.NewAPIKeyProblem(key))
+		return 2
+	case !chosen.newAPI && !contract.ValidNativePluginKey(key):
 		fmt.Fprintf(env.Stderr, "error: %q cannot be a plugin key: a lowercase letter, then up to 31 lowercase letters, digits and hyphens\n", key)
 		return 2
 	}
-	chosen, found := templates()[*name]
-	if !found {
-		fmt.Fprintf(env.Stderr, "error: no template %q; choose one of %s\n", *name, strings.Join(templateNames(), ", "))
-		return 2
+	files := projectFiles(key, chosen)
+	if chosen.newAPI {
+		// A key the rule lets through can still be a path of the gateway;
+		// the plugin's own check says so before anything is written.
+		if _, err := plugin.Check(plugin.Source{File: "plugin.js", Text: files["plugin.js"]}); err != nil {
+			fmt.Fprintf(env.Stderr, "error: %q cannot be a New API plugin key: %v\n", key, err)
+			return 2
+		}
 	}
 	dir := filepath.Join(*parent, key)
 	if entries, err := os.ReadDir(dir); err == nil && len(entries) > 0 {
 		fmt.Fprintf(env.Stderr, "error: %s already exists and is not empty\n", dir)
 		return 1
 	}
-	files := projectFiles(key, chosen)
 	names := make([]string, 0, len(files))
 	for file := range files {
 		names = append(names, file)
@@ -89,8 +116,25 @@ func templateNames() []string {
 	return names
 }
 
+// templateChoices names the templates by format.
+func templateChoices() string {
+	var newAPI, own []string
+	for _, name := range templateNames() {
+		if templates()[name].newAPI {
+			newAPI = append(newAPI, name)
+		} else {
+			own = append(own, name)
+		}
+	}
+	return "New API format, which New API and AstrLink both run: " + strings.Join(newAPI, ", ") +
+		"; AstrLink format, for what New API's cannot do: " + strings.Join(own, ", ")
+}
+
 // projectFiles are the files of a new project of key.
 func projectFiles(key string, chosen template) map[string]string {
+	if chosen.newAPI {
+		return newAPIFiles(key, chosen)
+	}
 	replace := strings.NewReplacer("{{key}}", key, "{{name}}", titleOf(key))
 	entries := `"plugin": "src/plugin.ts"`
 	if chosen.client != "" {
@@ -164,9 +208,10 @@ func projectFiles(key string, chosen template) map[string]string {
 	return files
 }
 
-// titleOf makes a display name of a key: memory-notes becomes Memory Notes.
+// titleOf makes a display name of a key: memory-notes becomes Memory Notes,
+// and alice_notes Alice Notes.
 func titleOf(key string) string {
-	words := strings.Split(key, "-")
+	words := strings.FieldsFunc(key, func(r rune) bool { return r == '-' || r == '_' })
 	for index, word := range words {
 		if word != "" {
 			words[index] = strings.ToUpper(word[:1]) + word[1:]
@@ -175,42 +220,17 @@ func titleOf(key string) string {
 	return strings.Join(words, " ")
 }
 
+// templates are the templates by name: those of newAPITemplates in
+// new-api's format, which both gateways run, and the rest in AstrLink's own
+// format, for what new-api's format cannot do.
 func templates() map[string]template {
-	return map[string]template{
-		"gate": {
-			summary: "An entry hook that tags requests and refuses those that break a rule.",
-			plugin: `// {{name}}: refuses requests outside working hours for expensive models,
-// and tags the rest.
-
-export const meta = {
-  apiVersion: 2,
-  key: "{{key}}",
-  name: "{{name}}",
-  version: "0.1.0",
-  capabilities: ["request.gate"],
-  settings: [{ key: "expensive", label: "Expensive models", type: "text", placeholder: "claude-opus" }],
-} satisfies AstrLinkPlugin.Meta;
-
-export async function onRequest(ctx: AstrLinkPlugin.RequestContext): Promise<AstrLinkPlugin.RequestDecision> {
-  const expensive = String(astrlink.config.get().expensive ?? "opus");
-  const hour = new Date(astrlink.clock.now() + astrlink.clock.offset() * 60_000).getUTCHours();
-  const afterHours = hour < 9 || hour >= 19;
-  if (afterHours && ctx.request.model.includes(expensive)) {
-    return { action: "deny", status: 403, code: "after_hours", message: "Expensive models are off after hours." };
-  }
-  return { action: "allow", tags: [afterHours ? "after-hours" : "working-hours"] };
+	all := newAPITemplates()
+	maps.Copy(all, astrlinkTemplates())
+	return all
 }
-`,
-			tests: `[
-  {
-    "name": "lets a cheap model in",
-    "hook": "onRequest",
-    "args": [{ "request": { "model": "gpt-4o-mini", "protocol": "openai.chat", "tags": [] } }],
-    "expect": { "match": { "action": "allow" } }
-  }
-]
-`,
-		},
+
+func astrlinkTemplates() map[string]template {
+	return map[string]template{
 		"route": {
 			summary: "A route hook that sends requests to the cheapest provider first.",
 			plugin: `// {{name}}: puts the providers whose names say "cheap" first.
@@ -238,36 +258,6 @@ export async function route(ctx: AstrLinkPlugin.RouteContext): Promise<AstrLinkP
       { "id": "b", "name": "Cheap backup", "kind": "openai", "model": "m" }
     ] }],
     "expect": { "result": { "order": ["b"], "reason": "cheap providers first" } }
-  }
-]
-`,
-		},
-		"forward": {
-			summary: "A beforeForward hook that adds house rules to the system prompt and caps the reply.",
-			plugin: `// {{name}}: appends the team's rules to the system prompt and caps the
-// length of replies.
-
-export const meta = {
-  apiVersion: 2,
-  key: "{{key}}",
-  name: "{{name}}",
-  version: "0.1.0",
-  capabilities: ["request.write"],
-  settings: [{ key: "rules", label: "Rules", type: "text", default: "Answer in the user's language." }],
-} satisfies AstrLinkPlugin.Meta;
-
-export async function beforeForward(): Promise<AstrLinkPlugin.ForwardEdits> {
-  const rules = String(astrlink.config.get().rules ?? "");
-  return { system: { append: rules }, params: { max_tokens: 4096 } };
-}
-`,
-			tests: `[
-  {
-    "name": "appends the rules",
-    "hook": "beforeForward",
-    "config": { "rules": "Be brief." },
-    "args": [{ "request": { "model": "m", "tags": [] } }],
-    "expect": { "result": { "system": { "append": "Be brief." }, "params": { "max_tokens": 4096 } } }
   }
 ]
 `,
@@ -388,84 +378,6 @@ export async function onHttp(request: AstrLinkPlugin.HttpServeRequest): Promise<
     "hook": "onHttp",
     "args": [{ "method": "GET", "path": "/health", "query": {}, "headers": {} }],
     "expect": { "result": { "json": { "ok": true } } }
-  }
-]
-`,
-		},
-		"provider": {
-			summary: "A provider adapter: Chat Completions requests to an API of its own, whole and streamed.",
-			plugin: `// {{name}}: serves Chat Completions with an API that takes a prompt and
-// answers text, whole or as a stream of deltas. Change the shapes below to
-// your API's; the gateway sends the key, keeps the requests on the
-// provider's address, and does routing, failover, records and prices.
-
-export const meta = {
-  apiVersion: 2,
-  key: "{{key}}",
-  name: "{{name}}",
-  version: "0.1.0",
-  capabilities: ["provider"],
-  providers: [
-    {
-      id: "{{key}}",
-      name: "{{name}}",
-      baseUrl: "https://api.example.com/v1",
-      auth: "bearer",
-      protocols: { "openai.chat": { stream: true } },
-      // Other protocols reach the plugin converted into Chat Completions.
-      convert: true,
-      models: ["example-1"],
-    },
-  ],
-} satisfies AstrLinkPlugin.Meta;
-
-type Chat = { messages: Array<{ role: string; content: unknown }> };
-
-export async function buildRequest(ctx: AstrLinkPlugin.ProviderContext): Promise<AstrLinkPlugin.ProviderRequest | null> {
-  if (ctx.purpose === "models") return { method: "GET", url: "/models" };
-  const body = ctx.body as Chat;
-  const prompt = body.messages.map((message) => message.role + ": " + String(message.content)).join("\n");
-  return { url: "/generate", body: { model: ctx.model, prompt, stream: ctx.stream } };
-}
-
-export async function parseResponse(ctx: AstrLinkPlugin.ProviderContext, res: AstrLinkPlugin.ProviderResponse): Promise<AstrLinkPlugin.ProviderResult> {
-  if (ctx.purpose === "models") return { models: (res.json.data as Array<{ id: string }>).map((model) => model.id) };
-  return {
-    json: {
-      id: "chatcmpl-" + astrlink.util.sha256(res.body).slice(0, 12),
-      object: "chat.completion",
-      model: ctx.model,
-      choices: [{ index: 0, message: { role: "assistant", content: res.json.output }, finish_reason: "stop" }],
-      usage: { prompt_tokens: res.json.usage.input, completion_tokens: res.json.usage.output, total_tokens: res.json.usage.input + res.json.usage.output },
-    },
-  };
-}
-
-export async function parseStreamEvent(ctx: AstrLinkPlugin.ProviderContext, event: AstrLinkPlugin.UpstreamEvent, state: number | null): Promise<AstrLinkPlugin.StreamStep<number>> {
-  const chunk = (delta: object, finish: string | null) => ({
-    id: "chatcmpl-stream", object: "chat.completion.chunk", model: ctx.model,
-    choices: [{ index: 0, delta, finish_reason: finish }],
-  });
-  if (event.json?.done) return { events: [{ data: chunk({}, "stop") }, { data: "[DONE]" }], done: true };
-  return { events: [{ data: chunk({ content: event.json?.delta ?? "" }, null) }], state: (state ?? 0) + 1 };
-}
-
-export async function parseError(_ctx: AstrLinkPlugin.ProviderContext, res: AstrLinkPlugin.ProviderResponse): Promise<AstrLinkPlugin.ProviderError> {
-  return { status: res.status, message: res.json?.error ?? res.body, retryable: res.status === 429 || res.status >= 500 };
-}
-`,
-			tests: `[
-  {
-    "name": "builds the request",
-    "hook": "buildRequest",
-    "args": [{ "purpose": "chat", "provider": "{{key}}", "baseUrl": "https://api.example.com/v1", "settings": {}, "service": { "id": "s", "name": "S" }, "protocol": "openai.chat", "model": "example-1", "stream": false, "body": { "messages": [{ "role": "user", "content": "hi" }] } }],
-    "expect": { "result": { "url": "/generate", "body": { "model": "example-1", "prompt": "user: hi", "stream": false } } }
-  },
-  {
-    "name": "turns a delta into a chunk",
-    "hook": "parseStreamEvent",
-    "args": [{ "purpose": "chat", "model": "example-1" }, { "data": "{\"delta\":\"he\"}", "json": { "delta": "he" } }, null],
-    "expect": { "match": { "state": 1 } }
   }
 ]
 `,

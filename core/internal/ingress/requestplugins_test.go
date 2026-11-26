@@ -509,3 +509,46 @@ func TestARequestPluginScopeLimitsItsModels(t *testing.T) {
 		t.Fatalf("placed instance sent %s and %s", gateway.sent[3], gateway.sent[4])
 	}
 }
+
+const originReader = `export const meta = { apiVersion: 1, key: "origin-reader", name: "Origin reader", version: "1.0.0", author: { name: "Test" } };
+const origin = (ctx) => ({ client: ctx.client ?? null, session: ctx.session ? { id: typeof ctx.session.id, turn: typeof ctx.session.turn } : null });
+export function ingress(ctx, req) {
+  return { action: "continue", effects: [{ type: "json.patch", ops: [{ op: "add", path: "/ingress", value: origin(ctx) }] }] };
+}
+export function outbound(ctx, req) {
+  return { action: "continue", effects: [{ type: "json.patch", ops: [{ op: "add", path: "/outbound", value: origin(ctx) }] }] };
+}
+`
+
+func TestRequestPluginsReadTheClientAndSession(t *testing.T) {
+	gateway := newRequestPluginGatewayWith(t, map[string]string{"origin-reader": originReader},
+		contract.RequestPluginInstance{ID: "rpi_origin001", Name: "Origin", Plugin: "origin-reader", Enabled: true, Models: []string{}})
+	send := func(userAgent string) {
+		t.Helper()
+		request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"m","messages":[{"role":"user","content":"hi"}]}`))
+		request.Header.Set("Content-Type", "application/json")
+		if userAgent != "" {
+			request.Header.Set("User-Agent", userAgent)
+		}
+		response := httptest.NewRecorder()
+		gateway.handler.ServeHTTP(response, request)
+		if response.Code != http.StatusOK {
+			t.Fatalf("status = %d %s", response.Code, response.Body)
+		}
+	}
+	send("claude-cli/2.1.310 (external, cli)")
+	// A client AstrLink does not recognize has no ctx.client, as on new-api.
+	send("")
+	if len(gateway.sent) != 2 {
+		t.Fatalf("sent %d requests", len(gateway.sent))
+	}
+	want := `{"client":"claude_code","session":{"id":"string","turn":"number"}}`
+	for _, stage := range []string{"ingress", "outbound"} {
+		if got := gjson.Get(gateway.sent[0], stage).Raw; got != want {
+			t.Fatalf("%s saw %s, want %s", stage, got, want)
+		}
+		if got := gjson.Get(gateway.sent[1], stage+".client").Raw; got != "null" {
+			t.Fatalf("%s of an unknown client saw client %s", stage, got)
+		}
+	}
+}

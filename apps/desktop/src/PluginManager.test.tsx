@@ -2697,7 +2697,7 @@ describe("PluginManager", () => {
       );
     });
 
-    it("copies the prompt for the format each way of sharing takes", async () => {
+    it("copies one prompt for both ways of sharing", async () => {
       const writeText = vi.fn((_text: string) => Promise.resolve());
       Object.defineProperty(navigator, "clipboard", {
         configurable: true,
@@ -2707,33 +2707,31 @@ describe("PluginManager", () => {
         await renderTasks();
         await chooseSegment("插件市场");
         await click(button("发布插件"));
-        const community = document.querySelector(
-          '[data-testid="plugin-publish-community"]',
+        const dialog = document.querySelector(
+          '[data-testid="plugin-publish-dialog"]',
         ) as HTMLElement;
         const github = document.querySelector(
           '[data-testid="plugin-publish-github"]',
         ) as HTMLElement;
-        // The astrlink plugin commands make plugins only a GitHub link
-        // shares; the community marketplace takes New API plugins.
-        expect(community.textContent).not.toContain("astrlink plugin new");
         expect(github.textContent).toContain("astrlink plugin new <key>");
+        // One prompt for both ways of sharing.
+        expect(
+          [...dialog.querySelectorAll("button")].filter(
+            (item) => item.textContent === "复制给 AI",
+          ),
+        ).toHaveLength(1);
 
-        await click(button("复制给 AI", community));
-        const marketPrompt = String(writeText.mock.calls.at(-1)?.[0]);
-        expect(marketPrompt).toContain(
+        await click(button("复制给 AI", dialog));
+        const prompt = String(writeText.mock.calls.at(-1)?.[0]);
+        expect(prompt).toContain(
           "https://raw.githubusercontent.com/QuantumNous/new-api/main/docs/plugin-api/v1.d.ts",
         );
-        expect(marketPrompt).toContain("apiVersion 1");
-        expect(marketPrompt).toContain("CHANGELOG.md");
-        expect(marketPrompt).not.toContain("{{");
-
-        await click(button("复制给 AI", github));
-        const githubPrompt = String(writeText.mock.calls.at(-1)?.[0]);
-        expect(githubPrompt).toContain("astrlink plugin new <key> --template");
-        expect(githubPrompt).toContain("basic, gate, route");
-        expect(githubPrompt).toContain("astrlink plugin check");
-        expect(githubPrompt).not.toContain("docs/plugin-api");
-        expect(githubPrompt).not.toContain("{{");
+        expect(prompt).toContain("astrlink plugin new <key> --template");
+        expect(prompt).toContain("apiVersion 1");
+        expect(prompt).toContain("basic, route, stream");
+        expect(prompt).not.toContain("gate");
+        expect(prompt).toContain("astrlink plugin check");
+        expect(prompt).not.toContain("{{");
         expect(
           (
             document.querySelector(

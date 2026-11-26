@@ -371,12 +371,12 @@ func (result *replyResult) check(due []int, outputs map[int]*replyOutput) error 
 func (check *ReplyCheck) call(stage *replyStage, outputs []map[string]any) (replyResult, error) {
 	started := time.Now()
 	defer func() { stage.elapsed += time.Since(started) }()
-	view := map[string]any{
+	view := check.run.origin.members(map[string]any{
 		"stage": contract.RequestStageReply, "format": check.format, "path": check.run.path, "model": check.run.model,
 		"upstreamModel": check.attempt.UpstreamModel, "attempt": check.attempt.Index,
 		"instance": map[string]any{"id": stage.instance.instance.ID, "name": stage.instance.instance.Name},
 		"config":   stage.instance.config,
-	}
+	})
 	raw, err := check.run.invoke(check.ctx, stage.instance, contract.RequestStageReply, nil, view, map[string]any{"stream": check.stream, "outputs": outputs})
 	if err != nil {
 		return replyResult{}, err

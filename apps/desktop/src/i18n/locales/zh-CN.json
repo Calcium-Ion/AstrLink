@@ -5723,16 +5723,15 @@
       "docs": "插件接口文档",
       "copyPrompt": "复制给 AI",
       "copied": "已复制，粘贴给 AI 并写上插件要做什么",
+      "prompt": "帮我写一个插件，AstrLink 和 New API 都要能用：<在这里写插件要做什么>\n\n先读 New API 的插件接口文档，以它为准：\n{{docs}}\n\n要求：\n1. 运行 `astrlink plugin new <key> --template <模板>` 新建项目。接入模型服务用 provider，检查或改写请求用 request，视频、图片这类异步任务用 task。这三种生成单个 plugin.js（New API 的 apiVersion 1 格式）和 README.md、CHANGELOG.md，两边都能装，也能发布到 New API 社区市场。\n2. 只有 New API 格式做不到时，才用 AstrLink 自己的格式，模板有：{{astrlinkTemplates}}。这种插件只有 AstrLink 能用，只能分享 GitHub 链接。用之前先告诉我 New API 格式为什么做不到。\n3. ctx 里有些字段只有一边有：channel、group、user、token 只有 New API 有，client、session 只有 AstrLink 有。用之前先判断它在不在，不在时插件也要能工作。\n4. 在 tests/ 写用例，用 `astrlink plugin test` 跑通；再运行 `astrlink plugin check`，改到没有报错。\n5. 写好后在 AstrLink 插件页点「安装插件」→「选择文件夹」选这个文件夹试装；改了代码就在插件的「⋯」菜单点「从文件夹重新安装」。\n6. 推到公开的 GitHub 仓库，给这个版本打 tag。\n\n做完告诉我改了哪些文件、在插件页启用它要设置什么，以及去 New API 网站发布时要填什么。",
       "community": {
         "title": "发布到社区市场",
         "body": "提供商和请求处理插件按 New API 插件格式写，在 New API 网站发布后会得到一个 8 位插件码，别人在插件市场搜这个码就能装。",
-        "action": "去发布",
-        "prompt": "帮我写一个 New API 插件，发布到 New API 社区插件市场：<在这里写插件要做什么>\n\n先读插件接口文档，一切以它为准：\n{{docs}}\n\n要求：\n1. 插件是单个 plugin.js，按文档的 apiVersion 1 格式写。不要用 astrlink plugin 命令，也不要用 AstrLink 自己的插件格式。\n2. 接入新的模型服务按文档「Provider part」写，改写或检查请求按「Request processing part」写，视频、图片这类异步任务按任务插件写。\n3. meta 按文档「Manifest」填。key 只用小写字母、数字、下划线和连字符，最长 30 位。\n4. plugin.js 旁边放 README.md 和 CHANGELOG.md，按文档「Usage guide」和「Changelog」的规则写，CHANGELOG 里的插件和版本要和 plugin.js 一致。社区市场会检查这两个文件，不合规就拒收。图标可以放 icon.svg 或 icon.png。\n5. 文件夹里不要放 package.json。写好后在 AstrLink 插件页点「安装插件」→「选择文件夹」选这个文件夹试装；改了代码就在插件的「⋯」菜单点「从文件夹重新安装」。\n6. 推到公开的 GitHub 仓库，给这个版本打 tag。\n\n做完告诉我改了哪些文件，以及去 New API 网站发布时要填什么。"
+        "action": "去发布"
       },
       "github": {
         "title": "分享 GitHub 链接",
-        "body": "放在公开仓库里，别人在「安装插件」里粘贴链接就能装。用 astrlink plugin 命令写的 AstrLink 插件只能这样分享，也只有 AstrLink 能用，功能扩展类插件都是这种。",
-        "prompt": "帮我写一个 AstrLink 插件：<在这里写插件要做什么>\n\n做法：\n1. 运行 `astrlink plugin new <key> --template <模板>` 新建项目。key 不合规时它会报错并说明规则。模板：{{templates}}，选最接近的一个。\n2. 先读项目里的 astrlink-plugin.d.ts（有界面的插件还有 astrlink-plugin-client.d.ts），只用里面有的 API。代码写在 src/plugin.ts，界面写在 src/client.tsx。这是 AstrLink 自己的插件格式，不要按 New API 插件文档写。\n3. 在 tests/ 写测试用例，用 `astrlink plugin test` 跑通。\n4. 运行 `astrlink plugin check`，改到没有报错。\n5. 需要实际试用时运行 `astrlink plugin dev`，它把插件装进本机运行中的 AstrLink 并持续输出日志，不会自己退出。\n\n做完告诉我改了哪些文件，以及在 AstrLink 插件页启用它要设置什么。"
+        "body": "New API 格式的插件两种方式都能分享。放在公开仓库里，别人在「安装插件」里粘贴链接就能装。AstrLink 自己格式的插件只能这样分享，也只有 AstrLink 能用。"
       }
     }
   },

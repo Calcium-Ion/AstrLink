@@ -15,6 +15,39 @@ AstrLink 负责机制：时间和内存上限、存储、确认，以及把插�
 函数和标准的 Web
 API，还能用 Node 的大部分内置模块，网络可以访问任何地址。它碰不到的是：插件自己目录以外的文件、子进程和线程、网关的端口、网关的环境变量，以及网关替它保存的密钥。插件声明的能力在安装审查里列出，启用插件即全部生效。
 
+## 选哪种格式
+
+AstrLink 和 [New API](https://github.com/QuantumNous/new-api) 共用 New
+API 的插件格式（[插件接口 v1](https://github.com/QuantumNous/new-api/blob/main/docs/plugin-api/v1.md)）：一个
+`plugin.js`，旁边放 `README.md` 和 `CHANGELOG.md`。两个网关都能做的事都用它写：
+
+- 接入模型服务：provider 部分
+- 检查或改写请求，检查或遮盖回复：请求处理部分，钩子有
+  `ingress`、`outbound`、`egress`、`reply` 和 `report`
+- 视频、图片这类异步任务：任务插件
+
+这样的插件两边都能装，也能发布到 New API 社区市场。`astrlink plugin new` 的
+`request`、`provider`、`task` 模板生成这种项目。
+
+本文主要讲 AstrLink 自己的格式。它只用于 New API 没有的功能：
+
+- 会话上下文注入、路由、改写回复
+- 界面、定时任务、HTTP 接口、给模型用的工具
+
+这种插件只有 AstrLink 能用，只能分享 GitHub 链接。
+
+### 只有一边有的字段
+
+请求处理部分的钩子收到的 `ctx` 里，有些字段只有一个网关提供：
+
+| 字段                                                | 提供方   | 内容                                                      |
+| --------------------------------------------------- | -------- | --------------------------------------------------------- |
+| `ctx.channel`、`ctx.group`、`ctx.user`、`ctx.token` | New API  | 渠道、用户分组、用户和令牌                                |
+| `ctx.client`                                        | AstrLink | 识别出的客户端，如 `claude_code`、`codex`；识别不出时没有 |
+| `ctx.session`                                       | AstrLink | 请求所在的会话 `{ id, turn }`；不属于任何会话时没有       |
+
+插件用到这些字段前先判断在不在，不在时也要能工作。
+
 ## 写一个插件
 
 最简单的插件是一个文件：导出清单 `meta`
@@ -43,15 +76,15 @@ MiB。`engines.astrlink`
 命令行 `astrlink plugin`
 和 Core 用同一套构建器，本机构建的结果和用户安装时一致：
 
-| 命令                        | 做什么                                                                                                                 |
-| --------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `astrlink plugin new <key>` | 从模板起项目：`basic`、`files`、`gate`、`route`、`forward`、`stream`、`response`、`schedule`、`http`、`provider`、`ui` |
-| `astrlink plugin build`     | 构建出 `plugin.js`、`client.js` 和 source map                                                                          |
-| `astrlink plugin check`     | 构建并在 moejs 里编译，检查清单、能力和不该用的 API                                                                    |
-| `astrlink plugin test`      | 按 `tests/` 里的用例跑钩子，可以伪造存储、网络应答和时钟                                                               |
-| `astrlink plugin dev`       | 监听改动、构建，装进本机 AstrLink 的插件目录并实时输出日志                                                             |
+| 命令                        | 做什么                                                                                                                                                      |
+| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `astrlink plugin new <key>` | 从模板起项目。New API 格式：`request`（默认）、`provider`、`task`；AstrLink 格式：`basic`、`files`、`route`、`stream`、`response`、`schedule`、`http`、`ui` |
+| `astrlink plugin build`     | 构建出 `plugin.js`、`client.js` 和 source map                                                                                                               |
+| `astrlink plugin check`     | 构建并在 moejs 里编译，检查清单、能力和不该用的 API                                                                                                         |
+| `astrlink plugin test`      | 按 `tests/` 里的用例跑钩子，可以伪造存储、网络应答和时钟                                                                                                    |
+| `astrlink plugin dev`       | 监听改动、构建，装进本机 AstrLink 的插件目录并实时输出日志                                                                                                  |
 
-`astrlink plugin new` 会把类型定义放进项目：后端是
+AstrLink 格式的模板会把类型定义放进项目：后端是
 [astrlink-plugin.d.ts](../../core/plugins/astrlink-plugin.d.ts)，界面是
 [astrlink-plugin-client.d.ts](../../core/plugins/astrlink-plugin-client.d.ts)。下文说到的字段以它们为准。
 

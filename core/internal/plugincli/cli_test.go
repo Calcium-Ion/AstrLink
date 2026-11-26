@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/astrlink/core/internal/plugin"
 	"github.com/QuantumNous/astrlink/core/internal/pluginbuild"
@@ -25,7 +27,7 @@ func run(t *testing.T, env Environment, args ...string) (int, string, string) {
 
 func TestNewTestCheckAndBuildAProject(t *testing.T) {
 	parent := t.TempDir()
-	if code, _, stderr := run(t, Environment{}, "new", "turn-counter", "--dir", parent); code != 0 {
+	if code, _, stderr := run(t, Environment{}, "new", "turn-counter", "--template", "basic", "--dir", parent); code != 0 {
 		t.Fatalf("new = %d: %s", code, stderr)
 	}
 	dir := filepath.Join(parent, "turn-counter")
@@ -49,16 +51,86 @@ func TestNewTestCheckAndBuildAProject(t *testing.T) {
 		}
 	}
 	// A second project in the same place is refused.
-	if code, _, stderr := run(t, Environment{}, "new", "turn-counter", "--dir", parent); code != 1 || !strings.Contains(stderr, "not empty") {
+	if code, _, stderr := run(t, Environment{}, "new", "turn-counter", "--template", "basic", "--dir", parent); code != 1 || !strings.Contains(stderr, "not empty") {
 		t.Fatalf("new again = %d: %s", code, stderr)
 	}
-	if code, _, stderr := run(t, Environment{}, "new", "Bad_Key"); code != 2 || !strings.Contains(stderr, "cannot be a plugin key") {
+	if code, _, stderr := run(t, Environment{}, "new", "Bad_Key", "--template", "basic"); code != 2 || !strings.Contains(stderr, "cannot be a plugin key") {
 		t.Fatalf("new with a bad key = %d: %s", code, stderr)
 	}
 	// new-api keys such as alice_foo install from a marketplace, but an
 	// AstrLink plugin with one would never load.
-	if code, _, stderr := run(t, Environment{}, "new", "alice_foo"); code != 2 || !strings.Contains(stderr, "cannot be a plugin key") {
+	if code, _, stderr := run(t, Environment{}, "new", "alice_foo", "--template", "basic"); code != 2 || !strings.Contains(stderr, "cannot be a plugin key") {
 		t.Fatalf("new alice_foo = %d, %q", code, stderr)
+	}
+}
+
+func TestNewStartsANewAPIPluginByDefault(t *testing.T) {
+	parent := t.TempDir()
+	// A community key of new-api's: the author's name and an underscore.
+	code, stdout, stderr := run(t, Environment{}, "new", "alice_filter", "--dir", parent)
+	if code != 0 {
+		t.Fatalf("new = %d: %s", code, stderr)
+	}
+	var created struct {
+		Template string   `json:"template"`
+		Files    []string `json:"files"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &created); err != nil || created.Template != "request" ||
+		strings.Join(created.Files, ",") != "CHANGELOG.md,README.md,plugin.js,tests/plugin.json" {
+		t.Fatalf("new = %s (%v)", stdout, err)
+	}
+	dir := filepath.Join(parent, "alice_filter")
+	changelog, err := os.ReadFile(filepath.Join(dir, "CHANGELOG.md"))
+	if err != nil || !strings.HasPrefix(string(changelog), "---\nchangelogVersion: 1\nplugin: \"alice_filter\"\nversion: \"0.1.0\"\nlocale: \"en\"\n---\n# Changelog\n\n## [0.1.0]\n\n### Added\n\n- ") {
+		t.Fatalf("CHANGELOG.md = %q (%v)", changelog, err)
+	}
+	if readme, err := os.ReadFile(filepath.Join(dir, "README.md")); err != nil || !strings.HasPrefix(string(readme), "# Alice Filter\n") {
+		t.Fatalf("README.md = %q (%v)", readme, err)
+	}
+	code, stdout, stderr = run(t, Environment{}, "check", dir)
+	var report checkReport
+	if code != 0 || json.Unmarshal([]byte(stdout), &report) != nil || report.Key != "alice_filter" || report.Version != "0.1.0" ||
+		report.APIVersion != 1 || strings.Join(report.Hooks, ",") != "ingress,outbound" {
+		t.Fatalf("check = %d: %s %s", code, stdout, stderr)
+	}
+	for _, key := range []string{
+		"Bad_Key",
+		"_filter",
+		strings.Repeat("a", plugin.NewAPIKeyLength+1),
+		// The paths of the gateways, and prefixes New API's built-in
+		// plugins own.
+		"v1",
+		"api",
+		"mj",
+		"dashboard",
+		"suno",
+	} {
+		if code, _, stderr := run(t, Environment{}, "new", key, "--dir", parent); code != 2 || !strings.Contains(stderr, "cannot be a New API plugin key") {
+			t.Errorf("new %s = %d: %s", key, code, stderr)
+		}
+	}
+	if code, _, stderr := run(t, Environment{}, "new", strings.Repeat("a", plugin.NewAPIKeyLength), "--template", "task", "--dir", parent); code != 0 {
+		t.Errorf("new with the longest key = %d: %s", code, stderr)
+	}
+}
+
+func TestCheckRefusesAKeyNewAPIRefuses(t *testing.T) {
+	parent := t.TempDir()
+	if code, _, stderr := run(t, Environment{}, "new", "filter", "--dir", parent); code != 0 {
+		t.Fatalf("new = %d: %s", code, stderr)
+	}
+	dir := filepath.Join(parent, "filter")
+	source, err := os.ReadFile(filepath.Join(dir, "plugin.js"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// AstrLink runs the plugin under the key mj, which New API serves itself.
+	renamed := strings.Replace(string(source), `key: "filter"`, `key: "mj"`, 1)
+	if err := os.WriteFile(filepath.Join(dir, "plugin.js"), []byte(renamed), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if code, _, stderr := run(t, Environment{}, "check", dir); code != 1 || !strings.Contains(stderr, "/mj is a path of New API") {
+		t.Fatalf("check = %d: %s", code, stderr)
 	}
 }
 
@@ -250,7 +322,7 @@ func (gateway *fakeGateway) Get(_ context.Context, path string, query url.Values
 
 func TestDevInstallsADevelopmentBuild(t *testing.T) {
 	parent := t.TempDir()
-	if code, _, stderr := run(t, Environment{}, "new", "notes", "--dir", parent); code != 0 {
+	if code, _, stderr := run(t, Environment{}, "new", "notes", "--template", "basic", "--dir", parent); code != 0 {
 		t.Fatalf("new = %d: %s", code, stderr)
 	}
 	project := filepath.Join(parent, "notes")
@@ -282,6 +354,32 @@ func TestDevInstallsADevelopmentBuild(t *testing.T) {
 	}
 }
 
+func TestDevWatchesANewAPIPlugin(t *testing.T) {
+	parent := t.TempDir()
+	if code, _, stderr := run(t, Environment{}, "new", "filter", "--dir", parent); code != 0 {
+		t.Fatalf("new = %d: %s", code, stderr)
+	}
+	project := filepath.Join(parent, "filter")
+	gateway := &fakeGateway{directory: t.TempDir()}
+	session := &devSession{env: Environment{Stderr: io.Discard}, gateway: gateway, project: project, pluginsDir: gateway.directory}
+	if !session.rebuild(context.Background()) {
+		t.Fatal("the first build failed")
+	}
+	if source, _ := os.ReadFile(filepath.Join(gateway.directory, "filter", "plugin.js")); !strings.Contains(string(source), "apiVersion: 1") {
+		t.Fatalf("installed plugin.js = %.80s", source)
+	}
+	if session.changed() {
+		t.Fatal("changed before an edit")
+	}
+	later := time.Now().Add(time.Minute)
+	if err := os.Chtimes(filepath.Join(project, "plugin.js"), later, later); err != nil {
+		t.Fatal(err)
+	}
+	if !session.changed() {
+		t.Fatal("an edit of plugin.js went unseen")
+	}
+}
+
 func TestEveryTemplateBuildsAndPassesItsTests(t *testing.T) {
 	for _, name := range templateNames() {
 		t.Run(name, func(t *testing.T) {
@@ -291,12 +389,50 @@ func TestEveryTemplateBuildsAndPassesItsTests(t *testing.T) {
 				t.Fatalf("new = %d: %s", code, stderr)
 			}
 			dir := filepath.Join(parent, key)
-			if code, stdout, stderr := run(t, Environment{}, "test", dir); code != 0 {
+			if code, stdout, stderr := run(t, Environment{}, "test", dir); code != 0 || strings.Contains(stdout, `"passed": 0`) {
 				t.Fatalf("test = %d: %s %s", code, stdout, stderr)
 			}
-			if code, _, stderr := run(t, Environment{}, "check", dir); code != 0 {
+			code, stdout, stderr := run(t, Environment{}, "check", dir)
+			if code != 0 {
 				t.Fatalf("check = %d: %s", code, stderr)
 			}
+			if !templates()[name].newAPI {
+				return
+			}
+			// AstrLink reads the folder as a plugin of new-api's: plugin.js
+			// without package.json.
+			if _, err := os.Stat(filepath.Join(dir, "package.json")); !os.IsNotExist(err) {
+				t.Fatalf("package.json: %v", err)
+			}
+			if _, ok := plugin.ReadTaskSource(dir); !ok {
+				t.Fatal("not read as a New API plugin")
+			}
+			var report checkReport
+			if err := json.Unmarshal([]byte(stdout), &report); err != nil || report.Key != key || report.APIVersion != 1 || report.Version != "0.1.0" {
+				t.Fatalf("check report = %s (%v)", stdout, err)
+			}
+			// As new-api runs its fixtures: the plugin's file and the
+			// fixture's.
+			if code, stdout, stderr := run(t, Environment{}, "test", filepath.Join(dir, "plugin.js"), "--fixture", filepath.Join(dir, "tests", "plugin.json")); code != 0 {
+				t.Fatalf("test --fixture = %d: %s %s", code, stdout, stderr)
+			}
 		})
+	}
+}
+
+func TestTheTemplatesAreNewAPIsWhereItsFormatServes(t *testing.T) {
+	var newAPI, own []string
+	for _, name := range templateNames() {
+		if templates()[name].newAPI {
+			newAPI = append(newAPI, name)
+		} else {
+			own = append(own, name)
+		}
+	}
+	if strings.Join(newAPI, ",") != "provider,request,task" || strings.Join(own, ",") != "basic,files,http,response,route,schedule,stream,ui" {
+		t.Fatalf("New API templates %v, AstrLink templates %v", newAPI, own)
+	}
+	if !templates()[defaultTemplate].newAPI {
+		t.Fatalf("the default template %s is not in New API's format", defaultTemplate)
 	}
 }

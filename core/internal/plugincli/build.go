@@ -20,6 +20,8 @@ import (
 type built struct {
 	result  *pluginbuild.Result
 	checked *plugin.Checked
+	// newAPI is a plugin in new-api's format, plugin.js as it is.
+	newAPI bool
 }
 
 // buildProject builds the project in dir and checks the plugin as the
@@ -33,7 +35,9 @@ func buildProject(env Environment, dir string) (*built, bool) {
 			reportCheckError(env, err)
 			return nil, false
 		}
-		return &built{result: &pluginbuild.Result{Plugin: []byte(text)}, checked: checked}, true
+		// plugin dev rebuilds when the plugin or its notes change.
+		inputs := []string{"plugin.js", "README.md", "CHANGELOG.md"}
+		return &built{result: &pluginbuild.Result{Plugin: []byte(text), Inputs: inputs}, checked: checked, newAPI: true}, true
 	}
 	result, err := pluginbuild.Build(dir)
 	if err != nil {
@@ -164,6 +168,13 @@ func runCheck(_ context.Context, env Environment, args []string) int {
 		report.Warnings = append(report.Warnings, fmt.Sprintf("package.json says version %s, meta.version says %s", manifest.Version, meta.Version))
 	}
 	code := 0
+	if project.newAPI {
+		// A plugin in new-api's format is meant for both gateways.
+		if problem := plugin.NewAPIKeyProblem(meta.Key); problem != "" {
+			fmt.Fprintf(env.Stderr, "error: meta.key %q: %s\n", meta.Key, problem)
+			code = 1
+		}
+	}
 	if report.Engines != "" {
 		if current, ok := pluginbuild.ParseVersion(buildinfo.Version); ok {
 			compatible, err := pluginbuild.Satisfies(current, report.Engines)

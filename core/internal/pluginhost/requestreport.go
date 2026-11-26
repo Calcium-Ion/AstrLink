@@ -158,12 +158,12 @@ func (run *RequestRun) report(record RequestReport) {
 		if !current.meta.HasStage(contract.RequestStageReport) {
 			continue
 		}
-		view := map[string]any{
+		view := run.origin.members(map[string]any{
 			"stage": contract.RequestStageReport, "format": RequestFormat(record.Format), "path": run.path, "model": run.model,
 			"attempt":  record.Attempt,
 			"instance": map[string]any{"id": current.instance.ID, "name": current.instance.Name},
 			"config":   current.config,
-		}
+		})
 		if record.UpstreamModel != "" {
 			view["upstreamModel"] = record.UpstreamModel
 		}

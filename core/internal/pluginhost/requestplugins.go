@@ -101,6 +101,7 @@ type RequestRun struct {
 	instances []*requestInstance
 	model     string
 	path      string
+	origin    RequestOrigin
 	language  string
 	started   time.Time
 
@@ -229,10 +230,35 @@ func (run *RequestRun) Request(ctx context.Context, protocol contract.ProtocolID
 	return reasoning, nil
 }
 
+// RequestOrigin is what AstrLink knows of where a request comes from, which
+// new-api does not: the client it recognized and the conversation. The
+// hooks read it as ctx.client and ctx.session, host-specific members that a
+// plugin written for both gateways checks before it uses them.
+type RequestOrigin struct {
+	// Client is the recognized client, such as claude_code; empty or
+	// unknown when none was.
+	Client string
+	// Session is the conversation's id, empty when the request has none,
+	// and Turn its turn.
+	Session string
+	Turn    int
+}
+
+// members adds ctx.client and ctx.session to a hook's ctx, when known.
+func (origin RequestOrigin) members(view map[string]any) map[string]any {
+	if origin.Client != "" && origin.Client != string(contract.ClientUnknown) {
+		view["client"] = origin.Client
+	}
+	if origin.Session != "" {
+		view["session"] = map[string]any{"id": origin.Session, "turn": origin.Turn}
+	}
+	return view
+}
+
 // RequestPlugins starts the request processing of a request for model on
-// path: nil when no enabled instance serves it, so the request runs no
-// JavaScript.
-func (host *Host) RequestPlugins(model, path string) *RequestRun {
+// path from origin: nil when no enabled instance serves it, so the request
+// runs no JavaScript.
+func (host *Host) RequestPlugins(model, path string, origin RequestOrigin) *RequestRun {
 	if host == nil || host.plugins == nil {
 		return nil
 	}
@@ -240,7 +266,7 @@ func (host *Host) RequestPlugins(model, path string) *RequestRun {
 	if settings.Paused || len(settings.RequestPlugins) == 0 {
 		return nil
 	}
-	run := &RequestRun{host: host, model: model, path: path, language: settings.Language, started: time.Now()}
+	run := &RequestRun{host: host, model: model, path: path, origin: origin, language: settings.Language, started: time.Now()}
 	generation := host.plugins.Current()
 	for _, instance := range settings.RequestPlugins {
 		if !instance.Enabled || !instance.Serves(model) {
@@ -465,11 +491,11 @@ func (run *RequestRun) call(ctx context.Context, current *requestInstance, stage
 	if stage == contract.RequestStageOutbound {
 		measureImages(media)
 	}
-	view := map[string]any{
+	view := run.origin.members(map[string]any{
 		"stage": stage, "format": RequestFormat(protocol), "path": run.path, "model": run.model, "attempt": attempt.Index,
 		"instance": map[string]any{"id": current.instance.ID, "name": current.instance.Name},
 		"config":   current.config,
-	}
+	})
 	if stage != contract.RequestStageIngress {
 		view["upstreamModel"] = attempt.UpstreamModel
 	}
