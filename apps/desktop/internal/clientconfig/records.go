@@ -152,7 +152,7 @@ type Records struct {
 
 func (r *Records) needsV2() bool {
 	for key, record := range r.places {
-		if !slices.Contains(v1Keys, key) || len(record.Backup) > 0 || record.File != nil {
+		if !slices.Contains(v1Keys, key) || len(record.Backup) > 0 || len(record.CreatedCompanions) > 0 || record.File != nil {
 			return true
 		}
 	}

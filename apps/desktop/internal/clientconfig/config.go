@@ -62,6 +62,26 @@ func FileSecret(f File) bool {
 	return false
 }
 
+// FileGenerated returns a whole file a client derives from the connection,
+// such as Codex's model catalog. ok is false for ordinary config files.
+func FileGenerated(f File, connection *Connection, details Catalog) (contents string, ok bool, err error) {
+	if generated, has := f.(interface {
+		Generated(*Connection, Catalog) (string, error)
+	}); has {
+		contents, err = generated.Generated(connection, details)
+		return contents, true, err
+	}
+	return "", false, nil
+}
+
+// FileIsGenerated reports whether f is written by FileGenerated.
+func FileIsGenerated(f File) bool {
+	_, ok := f.(interface {
+		Generated(*Connection, Catalog) (string, error)
+	})
+	return ok
+}
+
 // FileRead reads the settings the file represents, nil for a missing one.
 // A database client returns the rows it manages as JSON.
 func FileRead(f File, path string) (*string, error) {
@@ -202,6 +222,14 @@ type Config struct {
 // for a missing file.
 func ParseConfig(client Client, existing []*string) (*Config, *FileError) {
 	files := client.Files()
+	if len(existing) < len(files) {
+		// Callers that only carry the main file still see its companions as
+		// missing. Writes return every companion; removals keep the caller's
+		// shorter shape.
+		padded := make([]*string, len(files))
+		copy(padded, existing)
+		existing = padded
+	}
 	if len(existing) != len(files) {
 		return nil, &FileError{Message: "was read without its companion files"}
 	}
@@ -285,7 +313,7 @@ func (c *Config) Render(existing []*string) []string {
 		switch {
 		case c.Changed[i]:
 			contents[i] = document.Render()
-		case existing[i] != nil:
+		case i < len(existing) && existing[i] != nil:
 			contents[i] = *existing[i]
 		}
 	}

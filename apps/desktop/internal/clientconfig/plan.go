@@ -1,6 +1,7 @@
 package clientconfig
 
 import (
+	"fmt"
 	"maps"
 	"slices"
 	"strings"
@@ -49,6 +50,9 @@ type Connection struct {
 	// Protocols is the gateway protocol chosen for each model; see
 	// Protocol.
 	Protocols map[string]string
+	// ConfigDir is the directory the client reads its config from. It lets a
+	// generated file's path be written into the config as an absolute path.
+	ConfigDir string
 }
 
 // Model is the model in a Models field, by its camelCase name.
@@ -90,6 +94,9 @@ func (c *Connection) Protocol(client Client, model string) string {
 func connectionKept(client Client, config *Config, record *Record) bool {
 	keys := slices.Clone(client.ConnectionKeys())
 	for _, key := range slices.Sorted(maps.Keys(record.Keys)) {
+		if isCompanionKey(key) {
+			continue
+		}
 		if client.HoldsConnection(key) {
 			keys = append(keys, key)
 		}
@@ -112,6 +119,13 @@ func WrittenByUs(record *Record, path, value string, ok bool) bool {
 	fingerprint, written := record.Keys[path]
 	return written && fingerprint == SHA256Hex(value)
 }
+
+// companionKey fingerprints a whole companion file rather than a key in the
+// main config. The NUL-free prefix cannot collide with a TOML or JSON key in
+// the clients AstrLink writes.
+func companionKey(index int) string { return fmt.Sprintf("@file:%d", index) }
+
+func isCompanionKey(key string) bool { return strings.HasPrefix(key, "@file:") }
 
 // WritePlan is a write's result.
 type WritePlan struct {
@@ -226,12 +240,33 @@ func PlanWrite(client Client, existing []*string, connection *Connection, detail
 		}
 	}
 	contents := config.Render(existing)
+	generated := map[int]string{}
+	for index, file := range config.Files {
+		text, isGenerated, err := FileGenerated(file, connection, details)
+		if err != nil {
+			return nil, &FileError{File: index, Message: err.Error()}
+		}
+		if !isGenerated {
+			continue
+		}
+		generated[index] = text
+		if index < len(contents) {
+			contents[index] = text
+		}
+		key := companionKey(index)
+		if index < len(existing) && existing[index] != nil && !WrittenByUs(previous, key, *existing[index], true) {
+			backup[key] = *existing[index]
+		}
+	}
 	createdCompanion := func(index int) bool {
 		return existing[index] == nil || previous != nil && slices.Contains(previous.CreatedCompanions, index)
 	}
 	// A file AstrLink added beside the main one goes once a write empties
 	// it, as a removal would take it; an empty provider file breaks Goose.
 	for index := 1; index < len(contents); index++ {
+		if _, generated := generated[index]; generated {
+			continue
+		}
 		if createdCompanion(index) && config.Changed[index] && FileIsEmpty(config.Files[index], config.Documents[index]) {
 			contents[index] = ""
 		}
@@ -239,6 +274,9 @@ func PlanWrite(client Client, existing []*string, connection *Connection, detail
 	keys := make(map[string]string, len(desired))
 	for _, setting := range desired {
 		keys[setting.Key] = SHA256Hex(setting.Value)
+	}
+	for index, text := range generated {
+		keys[companionKey(index)] = SHA256Hex(text)
 	}
 	record := &Record{
 		TokenID:       connection.TokenID,
@@ -295,6 +333,9 @@ func PlanRestore(client Client, existing []*string, record *Record) ([]Removal, 
 	}
 	restored := 0
 	for _, path := range slices.Sorted(maps.Keys(record.Keys)) {
+		if isCompanionKey(path) {
+			continue
+		}
 		value, ok, _ := config.Get(path)
 		if !WrittenByUs(record, path, value, ok) {
 			continue
@@ -312,6 +353,9 @@ func PlanRestore(client Client, existing []*string, record *Record) ([]Removal, 
 		}
 	}
 	for _, path := range slices.Sorted(maps.Keys(record.Backup)) {
+		if isCompanionKey(path) {
+			continue
+		}
 		if _, written := record.Keys[path]; !written && !config.Has(path) {
 			if err := config.Set(path, record.Backup[path]); err != nil {
 				return nil, 0, err
@@ -319,8 +363,24 @@ func PlanRestore(client Client, existing []*string, record *Record) ([]Removal, 
 			restored++
 		}
 	}
-	removals := make([]Removal, len(config.Documents))
+	removals := make([]Removal, len(existing))
 	for index, document := range config.Documents {
+		if index >= len(removals) {
+			break
+		}
+		if FileIsGenerated(config.Files[index]) {
+			key := companionKey(index)
+			current := existing[index]
+			if !WrittenByUs(record, key, optionalText(current), current != nil) {
+				continue
+			}
+			if original, kept := record.Backup[key]; kept {
+				removals[index] = Removal{Kind: RemovalWrite, Contents: original}
+			} else if slices.Contains(record.CreatedCompanions, index) {
+				removals[index] = Removal{Kind: RemovalDelete}
+			}
+			continue
+		}
 		if !config.Changed[index] {
 			continue
 		}
@@ -337,6 +397,13 @@ func PlanRestore(client Client, existing []*string, record *Record) ([]Removal, 
 		}
 	}
 	return removals, restored, nil
+}
+
+func optionalText(text *string) string {
+	if text == nil {
+		return ""
+	}
+	return *text
 }
 
 // Inspect is the state of a client's files; origin is "" when the

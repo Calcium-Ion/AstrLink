@@ -75,8 +75,12 @@ func texts(files ...string) []*string {
 const missing = "\x00"
 
 func planWrite(t *testing.T, client cc.Client, existing []*string, connection *cc.Connection, previous *cc.Record) *cc.WritePlan {
+	return planWriteDetails(t, client, existing, connection, cc.Catalog{}, previous)
+}
+
+func planWriteDetails(t *testing.T, client cc.Client, existing []*string, connection *cc.Connection, details cc.Catalog, previous *cc.Record) *cc.WritePlan {
 	t.Helper()
-	plan, err := cc.PlanWrite(client, existing, connection, cc.Catalog{}, previous)
+	plan, err := cc.PlanWrite(client, existing, connection, details, previous)
 	if err != nil {
 		t.Fatalf("plan: %+v", err)
 	}

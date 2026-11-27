@@ -37,6 +37,7 @@ func Snippet(client Client, home agents.Home, connection *Connection, details Ca
 	if targets := client.Targets(); len(targets) > 0 {
 		target = targets[0]
 	}
+	connection = connectionInPlace(connection, home, Place{Client: client, Target: target})
 	paths := client.ConfigPaths(home, target, nil)
 	plan, err := PlanWrite(client, make([]*string, len(paths)), connection, details, nil)
 	if err != nil {

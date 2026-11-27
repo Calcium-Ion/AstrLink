@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	cc "github.com/QuantumNous/astrlink/desktop/internal/clientconfig"
+	"github.com/QuantumNous/astrlink/desktop/internal/clientconfig/format"
 )
 
 func onlyWrite(t *testing.T, removals []cc.Removal) string {
@@ -22,7 +23,7 @@ func TestCodexConfigKeepsCommentsAndOtherTables(t *testing.T) {
 	existing := "# user settings\nmodel = \"gpt-5\" # mine\napproval_policy = \"never\"\n\n[profiles.fast]\nmodel = \"o3\"\n\n[model_providers.other]\nname = \"Other\"\n"
 	plan := planWrite(t, Codex, texts(existing), connection(codexModels()), nil)
 	sameStrings(t, plan.Conflicts, "model")
-	want := "# user settings\nmodel = \"gpt-route\" # mine\napproval_policy = \"never\"\nmodel_provider = \"astrlink\"\n\n[profiles.fast]\nmodel = \"o3\"\n\n[model_providers.other]\nname = \"Other\"\n\n[model_providers.astrlink]\nname = \"AstrLink\"\nbase_url = \"http://127.0.0.1:18317/v1\"\nwire_api = \"responses\"\nexperimental_bearer_token = \"astr_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA0\"\nhttp_headers = { x-openai-actor-authorization = \"codex-imagegen\" }\n"
+	want := "# user settings\nmodel = \"gpt-route\" # mine\napproval_policy = \"never\"\nmodel_provider = \"astrlink\"\nmodel_catalog_json = \"astrlink-model-catalog.json\"\n\n[profiles.fast]\nmodel = \"o3\"\n\n[model_providers.other]\nname = \"Other\"\n\n[model_providers.astrlink]\nname = \"AstrLink\"\nbase_url = \"http://127.0.0.1:18317/v1\"\nwire_api = \"responses\"\nexperimental_bearer_token = \"astr_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA0\"\nhttp_headers = { x-openai-actor-authorization = \"codex-imagegen\" }\n"
 	if plan.Contents[0] != want {
 		t.Fatalf("%q", plan.Contents[0])
 	}
@@ -37,7 +38,7 @@ func TestCodexConfigKeepsCommentsAndOtherTables(t *testing.T) {
 
 func TestCodexConfigIsCreatedWithoutAuthSettings(t *testing.T) {
 	plan := planWrite(t, Codex, texts(missing), connection(codexModels()), nil)
-	want := "model_provider = \"astrlink\"\nmodel = \"gpt-route\"\n\n[model_providers.astrlink]\nname = \"AstrLink\"\nbase_url = \"http://127.0.0.1:18317/v1\"\nwire_api = \"responses\"\nexperimental_bearer_token = \"astr_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA0\"\nhttp_headers = { x-openai-actor-authorization = \"codex-imagegen\" }\n"
+	want := "model_provider = \"astrlink\"\nmodel = \"gpt-route\"\nmodel_catalog_json = \"astrlink-model-catalog.json\"\n\n[model_providers.astrlink]\nname = \"AstrLink\"\nbase_url = \"http://127.0.0.1:18317/v1\"\nwire_api = \"responses\"\nexperimental_bearer_token = \"astr_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA0\"\nhttp_headers = { x-openai-actor-authorization = \"codex-imagegen\" }\n"
 	if plan.Contents[0] != want {
 		t.Fatalf("%q", plan.Contents[0])
 	}
@@ -49,6 +50,56 @@ func TestCodexConfigIsCreatedWithoutAuthSettings(t *testing.T) {
 		}
 	}
 	sameRemovals(t, planRemove(t, Codex, texts(plan.Contents[0]), plan.Record), deleted)
+}
+
+func TestCodexWritesTheDesktopModelCatalog(t *testing.T) {
+	details := cc.Catalog{
+		"gpt-route": {HasReasoning: true, Reasoning: []string{"low", "high"}, ContextWindow: cc.Some(uint64(200_000))},
+		"other":     {HasReasoning: true, Reasoning: []string{"none", "max"}},
+	}
+	plan := planWriteDetails(t, Codex, texts(missing, missing), listed(codexModels(), "gpt-route", "other"), details, nil)
+	if len(plan.Contents) != 2 {
+		t.Fatalf("files: %d", len(plan.Contents))
+	}
+	if !strings.Contains(plan.Contents[0], `model_catalog_json = "astrlink-model-catalog.json"`) {
+		t.Fatal(plan.Contents[0])
+	}
+	catalog, ok := decode(t, plan.Contents[1]).(map[string]any)
+	if !ok {
+		t.Fatalf("catalog: %s", plan.Contents[1])
+	}
+	models, _ := catalog["models"].([]any)
+	if len(models) != 2 {
+		t.Fatalf("models: %#v", models)
+	}
+	first, _ := models[0].(map[string]any)
+	second, _ := models[1].(map[string]any)
+	if first["slug"] != "gpt-route" || first["display_name"] != "gpt-route" || first["context_window"] != format.Number("200000") {
+		t.Fatalf("first: %#v", first)
+	}
+	levels, _ := first["supported_reasoning_levels"].([]any)
+	if len(levels) != 2 || levels[0].(map[string]any)["effort"] != "low" || levels[1].(map[string]any)["effort"] != "high" {
+		t.Fatalf("levels: %#v", levels)
+	}
+	if second["slug"] != "other" {
+		t.Fatalf("second: %#v", second)
+	}
+	if !reflect.DeepEqual(plan.Record.CreatedCompanions, []int{1}) {
+		t.Fatalf("companions: %v", plan.Record.CreatedCompanions)
+	}
+	current := cc.CurrentModelsOf(Codex, texts(plan.Contents[0], plan.Contents[1]))
+	if !reflect.DeepEqual(current.Models, []string{"gpt-route", "other"}) {
+		t.Fatalf("current models: %#v", current.Models)
+	}
+}
+
+func TestCodexCatalogRestoresAFileItReplaced(t *testing.T) {
+	previous := "{\"models\":[{\"slug\":\"mine\"}]}\n"
+	plan := planWriteDetails(t, Codex, texts(missing, previous), listed(codexModels(), "gpt-route", "other"), cc.Catalog{}, nil)
+	removals := planRemove(t, Codex, texts(plan.Contents[0], plan.Contents[1]), plan.Record)
+	if len(removals) != 2 || removals[1] != write(previous) {
+		t.Fatalf("removals: %#v", removals)
+	}
 }
 
 func TestCodexToolsHeaderSitsBesideTheUsersOwnHeaders(t *testing.T) {
@@ -145,7 +196,7 @@ func TestAModelTheClientChangedDoesNotBlockSync(t *testing.T) {
 		t.Fatal(state)
 	}
 	synced, record := planSync(t, Codex, texts(edited), plan.Record, "http://127.0.0.1:9000")
-	if len(synced) != 1 || synced[0] != strings.ReplaceAll(edited, "127.0.0.1:18317", "127.0.0.1:9000") {
+	if len(synced) != 2 || synced[0] != strings.ReplaceAll(edited, "127.0.0.1:18317", "127.0.0.1:9000") {
 		t.Fatalf("%q", synced)
 	}
 	if record.BaseURL != "http://127.0.0.1:9000/v1" || record.TokenSHA256 != plan.Record.TokenSHA256 {
