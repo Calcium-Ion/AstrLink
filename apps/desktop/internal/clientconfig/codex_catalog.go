@@ -17,12 +17,23 @@ import (
 
 // CodexCatalogCache shares a token-scoped discovery read between the settings,
 // change preview and write. A different Core session or token starts fresh.
+// The lock guards only the cached state; network reads run outside it, and
+// callers for the same scope wait on one discovery read.
 type CodexCatalogCache struct {
-	mu                       sync.Mutex
-	session, tokenID, origin string
-	until                    time.Time
-	upstream                 map[string]json.RawMessage
-	details                  Catalog
+	mu       sync.Mutex
+	key      catalogKey
+	gen      uint64
+	until    time.Time
+	upstream map[string]json.RawMessage
+	details  Catalog
+	loading  *catalogLoad
+}
+
+type catalogKey struct{ session, tokenID, origin string }
+
+type catalogLoad struct {
+	key  catalogKey
+	done chan struct{}
 }
 
 var catalogHTTP = &http.Client{
@@ -74,55 +85,45 @@ func (c *CodexCatalogCache) Load(ctx context.Context, g Gateway, tokenID, url st
 	if err != nil {
 		return nil, err
 	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
 	active, session, ready := g.Session()
 	if !ready || active != url {
 		return nil, errSessionChanged
 	}
-	if err := ctx.Err(); err != nil {
+	key := catalogKey{session, tokenID, origin}
+	upstream, known, gen, err := c.snapshot(ctx, g, key, url)
+	if err != nil {
 		return nil, err
-	}
-	if c.session != session || c.tokenID != tokenID || c.origin != origin || time.Now().After(c.until) {
-		secret, err := RevealAccessToken(ctx, g, tokenID, url)
-		if err != nil {
-			return nil, err
-		}
-		entries, err := readUpstreamCodexCatalog(ctx, origin, secret)
-		ttl := time.Minute
-		if err != nil {
-			if ctx.Err() != nil {
-				return nil, ctx.Err()
-			}
-			fmt.Fprintf(os.Stderr, "Codex model discovery unavailable: %v\n", err)
-			ttl = 5 * time.Second
-		}
-		c.session, c.tokenID, c.origin, c.until = session, tokenID, origin, time.Now().Add(ttl)
-		c.upstream, c.details = entries, Catalog{}
 	}
 	result := make(Catalog, len(models))
 	var missing []string
 	for _, model := range models {
-		if info, ok := c.details[model]; ok {
-			result[model] = info
+		if _, seen := result[model]; seen {
 			continue
 		}
-		if _, seen := result[model]; seen {
+		if info, ok := known[model]; ok {
+			result[model] = info
 			continue
 		}
 		var declaration struct {
 			Slug      string            `json:"slug"`
 			Supported []json.RawMessage `json:"supported_reasoning_levels"`
 		}
-		raw := c.upstream[model]
+		raw := upstream[model]
 		if json.Unmarshal(raw, &declaration) != nil || declaration.Slug == "" {
 			raw = nil
 		}
-		result[model] = ModelDetails{CodexCatalog: raw}
+		info := ModelDetails{CodexCatalog: raw}
 		if raw == nil || declaration.Supported == nil {
 			missing = append(missing, model)
+		} else {
+			// A native declaration, even an empty one, settles whether the
+			// model's effort can be chosen.
+			info.ReasoningKnown = true
+			info.HasReasoning = len(contract.ModelReasoning(raw, nil).Supported) > 0
 		}
+		result[model] = info
 	}
+	metadataFailed := false
 	if len(missing) > 0 {
 		metadata, err := g.ModelMetadataForModels(ctx, tokenID, missing)
 		if err != nil {
@@ -130,7 +131,7 @@ func (c *CodexCatalogCache) Load(ctx context.Context, g Gateway, tokenID, url st
 				return nil, ctx.Err()
 			}
 			fmt.Fprintf(os.Stderr, "Codex official model metadata unavailable: %v\n", err)
-			c.until = time.Now().Add(5 * time.Second)
+			metadataFailed = true
 		}
 		for _, model := range missing {
 			info := detailsOf(metadata[model])
@@ -141,12 +142,84 @@ func (c *CodexCatalogCache) Load(ctx context.Context, g Gateway, tokenID, url st
 	if nowURL, now, ok := g.Session(); !ok || nowURL != url || now != session {
 		return nil, errSessionChanged
 	}
-	for model, info := range result {
-		if len(c.details) < 4096 {
-			c.details[model] = info
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	// A newer discovery read replaced this one meanwhile; keep its state.
+	if c.key == key && c.gen == gen {
+		if metadataFailed {
+			if soon := time.Now().Add(5 * time.Second); soon.Before(c.until) {
+				c.until = soon
+			}
+		}
+		for model, info := range result {
+			if len(c.details) < 4096 {
+				c.details[model] = info
+			}
 		}
 	}
 	return result, nil
+}
+
+// snapshot returns the fresh discovery state for key, reading it at most
+// once at a time. The returned maps are read-only for the caller.
+func (c *CodexCatalogCache) snapshot(ctx context.Context, g Gateway, key catalogKey, url string) (map[string]json.RawMessage, Catalog, uint64, error) {
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, nil, 0, err
+		}
+		c.mu.Lock()
+		if c.key == key && c.details != nil && time.Now().Before(c.until) {
+			known := make(Catalog, len(c.details))
+			for model, info := range c.details {
+				known[model] = info
+			}
+			upstream, gen := c.upstream, c.gen
+			c.mu.Unlock()
+			return upstream, known, gen, nil
+		}
+		if load := c.loading; load != nil {
+			c.mu.Unlock()
+			select {
+			case <-load.done:
+			case <-ctx.Done():
+				return nil, nil, 0, ctx.Err()
+			}
+			continue
+		}
+		load := &catalogLoad{key: key, done: make(chan struct{})}
+		c.loading = load
+		c.mu.Unlock()
+
+		entries, ttl, err := fetchUpstreamCodexCatalog(ctx, g, key, url)
+		c.mu.Lock()
+		c.loading = nil
+		if err == nil {
+			c.key, c.until = key, time.Now().Add(ttl)
+			c.gen++
+			c.upstream, c.details = entries, Catalog{}
+		}
+		close(load.done)
+		c.mu.Unlock()
+		if err != nil {
+			return nil, nil, 0, err
+		}
+	}
+}
+
+func fetchUpstreamCodexCatalog(ctx context.Context, g Gateway, key catalogKey, url string) (map[string]json.RawMessage, time.Duration, error) {
+	secret, err := RevealAccessToken(ctx, g, key.tokenID, url)
+	if err != nil {
+		return nil, 0, err
+	}
+	entries, err := readUpstreamCodexCatalog(ctx, key.origin, secret)
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, 0, ctx.Err()
+		}
+		fmt.Fprintf(os.Stderr, "Codex model discovery unavailable: %v\n", err)
+		return nil, 5 * time.Second, nil
+	}
+	return entries, time.Minute, nil
 }
 
 // CodexModelReasoning contains only the chooser data the webview displays.

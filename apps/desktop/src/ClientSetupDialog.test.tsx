@@ -1235,6 +1235,39 @@ describe("ClientSetupDialog", () => {
     );
   });
 
+  it("looks up only new Codex model names while the default is typed", async () => {
+    let typed: () => void = () => {};
+    const lookedUp = new Promise<void>((resolve) => (typed = resolve));
+    bridgeMocks.getCodexModelReasoning.mockImplementation(
+      async (_token: string, _url: string, models: string[]) => {
+        if (models.includes("typed-model")) typed();
+        return Object.fromEntries(
+          models.map((id) => [
+            id,
+            { levels: ["high"], default: null, reasoning: true },
+          ]),
+        );
+      },
+    );
+    bridgeMocks.getClientConfigStatus.mockResolvedValue(
+      overview({ codex: ours("configured", { model: "gpt-5.6" }) }),
+    );
+    await renderDialog();
+    await open("codex");
+    await click(button("选择显示的模型", pane()));
+    expect(pane().textContent).toContain("high");
+    const before = bridgeMocks.getCodexModelReasoning.mock.calls.length;
+    await setInput("#client-setup-model", "typed-mod");
+    await setInput("#client-setup-model", "typed-model");
+    // Known models keep their levels while the new name waits.
+    expect(pane().textContent?.split("high · ").length).toBe(5);
+    await act(async () => {
+      await lookedUp;
+    });
+    const later = bridgeMocks.getCodexModelReasoning.mock.calls.slice(before);
+    expect(later.map((call) => call[2])).toEqual([["typed-model"]]);
+  });
+
   it("fills Pi's limits from the official model and writes what the user keeps", async () => {
     pricingMocks.getOfficialModelLimits.mockImplementation(async (model) =>
       model === "gpt-5.6"

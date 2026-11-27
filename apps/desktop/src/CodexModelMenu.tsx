@@ -18,39 +18,58 @@ export function useCodexModelReasoning(
   models: readonly string[],
 ) {
   const ids = [...new Set(models.filter(Boolean))].join("\n");
-  const scope = JSON.stringify([tokenId, inferenceURL, ids]);
+  const scope = JSON.stringify([tokenId, inferenceURL]);
+  // Results stay for the token and address, so typing a default model only
+  // looks up the names not seen yet instead of reloading the whole list.
   const [result, setResult] = useState<{
     scope: string;
     items: Map<string, CodexModelReasoning | null>;
   } | null>(null);
+  const known = result?.scope === scope ? result.items : undefined;
+  const missing = ids ? ids.split("\n").filter((id) => !known?.has(id)) : [];
+  const wanted = missing.join("\n");
   useEffect(() => {
-    if (!ids) return;
+    if (!wanted) return;
     let current = true;
-    const names = ids.split("\n");
-    const items = new Map<string, CodexModelReasoning | null>();
+    const names = wanted.split("\n");
+    const merge = (entries: [string, CodexModelReasoning | null][]) =>
+      setResult((previous) => {
+        const items = new Map(
+          previous?.scope === scope ? previous.items : undefined,
+        );
+        for (const [id, value] of entries) items.set(id, value);
+        return { scope, items };
+      });
     async function load() {
       for (let i = 0; i < names.length && current; i += maxListModels) {
         const batch = names.slice(i, i + maxListModels);
+        let entries: [string, CodexModelReasoning | null][];
         try {
           const values = await getCodexModelReasoning(
             tokenId,
             inferenceURL,
             batch,
           );
-          for (const id of batch)
-            items.set(id, Object.hasOwn(values, id) ? values[id] : null);
+          entries = batch.map((id) => [
+            id,
+            Object.hasOwn(values, id) ? values[id] : null,
+          ]);
         } catch {
-          for (const id of batch) items.set(id, null);
+          entries = batch.map((id) => [id, null]);
         }
-        if (current) setResult({ scope, items: new Map(items) });
+        if (current) merge(entries);
       }
     }
-    void load();
+    // A known list loads at once; names typed afterwards wait for a pause.
+    const timer = setTimeout(() => void load(), known ? 300 : 0);
     return () => {
       current = false;
+      clearTimeout(timer);
     };
-  }, [ids, inferenceURL, scope, tokenId]);
-  return result?.scope === scope ? result.items : undefined;
+    // `known` only picks the delay; the effect reruns when names change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wanted, inferenceURL, scope, tokenId]);
+  return known;
 }
 
 export function CodexModelMenu({

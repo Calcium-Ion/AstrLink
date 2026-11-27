@@ -3,11 +3,13 @@ package clientconfig
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -18,6 +20,7 @@ import (
 type catalogGateway struct {
 	Gateway
 	origin   string
+	mu       sync.Mutex
 	requests [][]string
 }
 
@@ -26,7 +29,9 @@ func (g *catalogGateway) RevealAccessToken(_ context.Context, id string) (string
 	return "test-" + id, nil
 }
 func (g *catalogGateway) ModelMetadataForModels(_ context.Context, id string, models []string) (map[string]json.RawMessage, error) {
+	g.mu.Lock()
 	g.requests = append(g.requests, slices.Clone(models))
+	g.mu.Unlock()
 	level := "high"
 	if id == "two" {
 		level = "medium"
@@ -66,6 +71,12 @@ func TestCodexCatalogScopesNativeAndBulkOfficialChoices(t *testing.T) {
 	if !slices.Equal(first["native"].CodexReasoning().Levels, []string{"high"}) || first["empty"].CodexReasoning().Levels == nil || len(first["empty"].CodexReasoning().Levels) != 0 || first["unknown"].CodexReasoning().Default != nil || !slices.Equal(first["missing-field"].CodexReasoning().Levels, []string{"low"}) {
 		t.Fatalf("wrong choices: %+v", first)
 	}
+	if r := first["empty"].CodexReasoning().Reasoning; r == nil || *r {
+		t.Fatalf("an empty native declaration must read as not adjustable: %+v", first["empty"].CodexReasoning())
+	}
+	if r := first["native"].CodexReasoning().Reasoning; r == nil || !*r {
+		t.Fatalf("a native declaration with levels must read as adjustable: %+v", first["native"].CodexReasoning())
+	}
 	if len(g.requests) != 1 || !slices.Equal(g.requests[0], ids[2:]) {
 		t.Fatalf("wanted one bulk lookup for missing declarations, got %v", g.requests)
 	}
@@ -103,5 +114,54 @@ func TestRestoreRollsBackWhenCompanionChangedDuringCommit(t *testing.T) {
 		if err != nil || string(got) != want {
 			t.Fatalf("file %d = %q (%v)", i, got, err)
 		}
+	}
+}
+
+func TestCodexCatalogConcurrentLoadsShareOneDiscoveryRead(t *testing.T) {
+	var requests atomic.Int32
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		<-release
+		_, _ = w.Write([]byte(`{"native":{"slug":"native","supported_reasoning_levels":[{"effort":"high"}]}}`))
+	}))
+	defer srv.Close()
+	g := &catalogGateway{origin: srv.URL}
+	cache := CodexCatalogCache{}
+	const callers = 8
+	errs := make(chan error, callers)
+	for range callers {
+		go func() {
+			details, err := cache.Load(t.Context(), g, "one", srv.URL, []string{"native"})
+			if err == nil && !slices.Equal(details["native"].CodexReasoning().Levels, []string{"high"}) {
+				err = errors.New("wrong levels")
+			}
+			errs <- err
+		}()
+	}
+	// A caller blocked behind the read can still give up.
+	cancelled, cancel := context.WithCancel(t.Context())
+	cancelledDone := make(chan error, 1)
+	go func() {
+		_, err := cache.Load(cancelled, g, "one", srv.URL, []string{"native"})
+		cancelledDone <- err
+	}()
+	cancel()
+	select {
+	case err := <-cancelledDone:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("cancelled caller: %v", err)
+		}
+	case err := <-errs:
+		t.Fatalf("a caller finished before the discovery read was released: %v", err)
+	}
+	close(release)
+	for range callers {
+		if err := <-errs; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := requests.Load(); n != 1 {
+		t.Fatalf("discovery read %d times, want once", n)
 	}
 }
