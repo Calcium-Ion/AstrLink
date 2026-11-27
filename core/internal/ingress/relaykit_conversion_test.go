@@ -297,6 +297,46 @@ func TestRelayKitResponsesEffortReachesGemini4AsThinkingLevel(t *testing.T) {
 	}
 }
 
+// Claude rejects a top-level oneOf in input_schema; Codex Desktop's
+// automation_update tool has one.
+func TestRelayKitResponsesTopLevelOneOfToolReachesClaudeFlattened(t *testing.T) {
+	var sent []byte
+	handler := NewWithDependencies(Dependencies{
+		Resolver:         candidateResolver{candidates: []endpoint.Resolved{relayKitCandidate("endpoint_claude", contract.ProtocolAnthropicMessages, "claude-upstream")}},
+		ConversionEngine: relaykitbridge.NewEngine(),
+		Forwarder: transport.New(roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			sent, _ = io.ReadAll(request.Body)
+			return jsonResponse(http.StatusOK, `{"id":"msg_1","type":"message","role":"assistant","model":"claude-upstream","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}`), nil
+		})),
+	})
+	serveRelayKitResponses(t, handler, `{"model":"public-responses","input":"hello","max_output_tokens":64,"tools":[{"type":"function","name":"automation_update","parameters":{"oneOf":[{"type":"object","properties":{"id":{"type":"string"},"prompt":{"type":"string"}},"required":["id","prompt"]},{"type":"object","properties":{"id":{"type":"string"},"paused":{"type":"boolean"}},"required":["id","paused"]}]}}]}`)
+	var body struct {
+		Tools []struct {
+			Name        string         `json:"name"`
+			InputSchema map[string]any `json:"input_schema"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal(sent, &body); err != nil {
+		t.Fatalf("upstream body %s: %v", sent, err)
+	}
+	if len(body.Tools) != 1 {
+		t.Fatalf("tools = %d, want 1; upstream body %s", len(body.Tools), sent)
+	}
+	schema := body.Tools[0].InputSchema
+	if _, ok := schema["oneOf"]; ok || schema["type"] != "object" {
+		t.Fatalf("input_schema = %v, want a flattened object schema", schema)
+	}
+	properties, _ := schema["properties"].(map[string]any)
+	for _, name := range []string{"id", "prompt", "paused"} {
+		if _, ok := properties[name]; !ok {
+			t.Fatalf("input_schema.properties lacks %q: %v", name, schema)
+		}
+	}
+	if required, _ := schema["required"].([]any); len(required) != 1 || required[0] != "id" {
+		t.Fatalf("input_schema.required = %v, want [id]", schema["required"])
+	}
+}
+
 func TestRelayKitConversionDiagnosticsAreRecordedPerAttempt(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "records.db")
