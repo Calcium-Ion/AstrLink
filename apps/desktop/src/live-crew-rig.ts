@@ -1,11 +1,14 @@
 import type { Pen } from "./live-crew-draw";
+import claudeArt from "./live-crew-art/claude.json";
+import codexArt from "./live-crew-art/codex.json";
+import deepseekArt from "./live-crew-art/deepseek.json";
 import type { ClientType } from "./request-record-model";
 
 /**
- * The posable musume. Each girl is drawn from shapes in a 32 × 34 unit space
- * (hair, head, dress, tail) and sampled onto a cell grid, 1.5 cells a unit
- * where the cells land on whole device pixels and 1 cell a unit where they
- * would not. A pose solves each arm from shoulder through elbow to hand, lays
+ * The posable musume. Each girl's hair, head, dress and tail are pixel art in
+ * `live-crew-art/<client>.json`, drawn for each cell grid over a 32 × 34 unit
+ * space: 1.5 cells a unit where the cells land on whole device pixels, 1 cell
+ * a unit where they would not, and the desktop pet's finer grid. A pose solves each arm from shoulder through elbow to hand, lays
  * every part and held prop on the grid and outlines them there, so a raised
  * arm or a held book keeps the art's dark edge. Faces are placed cell by cell.
  *
@@ -42,18 +45,6 @@ const ell = (
 ) => ((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2 <= 1;
 const clamp = (v: number, lo: number, hi: number) =>
   Math.max(lo, Math.min(hi, v));
-
-/** Painter's order: the last shape that covers a point wins. */
-const stack =
-  (...fns: Shape[]): Shape =>
-  (x, y) => {
-    let c: string | null | undefined = null;
-    for (const f of fns) {
-      const v = f(x, y);
-      if (v) c = v;
-    }
-    return c;
-  };
 
 type Layer = Map<number, string>;
 
@@ -170,23 +161,6 @@ function segDist(x: number, y: number, a: P, b: P): [number, number, number] {
   return [Math.hypot(x - px, y - py), t, (x - px) * nx + (y - py) * ny];
 }
 
-/** Distance to the curve a→b→c and how far along it. */
-function curveDist(x: number, y: number, a: P, b: P, c: P): [number, number] {
-  let best = Infinity;
-  let at = 0;
-  for (let i = 0; i <= 16; i += 1) {
-    const t = i / 16;
-    const px = (1 - t) ** 2 * a.x + 2 * t * (1 - t) * b.x + t * t * c.x;
-    const py = (1 - t) ** 2 * a.y + 2 * t * (1 - t) * b.y + t * t * c.y;
-    const d = Math.hypot(x - px, y - py);
-    if (d < best) {
-      best = d;
-      at = t;
-    }
-  }
-  return [best, at];
-}
-
 // ---------- the girls ----------
 
 interface ArmStyle {
@@ -224,12 +198,30 @@ export interface Hand {
   elbow?: readonly [number, number];
 }
 
+/**
+ * Rows of palette letters from cell (x, y) of a grid, columns from the
+ * middle and rows up from the feet: `.` is clear and, in a change laid over
+ * another layer, a space keeps what is under it.
+ */
+export interface ArtPatch {
+  x: number;
+  y: number;
+  rows: string[];
+}
+
+/** One girl's parts sampled onto one grid. */
+interface GirlLayers {
+  torso: ArtPatch;
+  /** Hair behind her at sway 0, and what a sway of -1 or 1 changes. */
+  back: Record<"-1" | "0" | "1", ArtPatch>;
+  /** Face, fringe and what she wears in her hair, the same way. */
+  head: Record<"-1" | "0" | "1", ArtPatch>;
+  /** Her tail at rest and what a wag changes. */
+  tail?: Record<"0" | "1", ArtPatch>;
+}
+
 interface Girl {
   pal: Readonly<Record<string, string>>;
-  back: (sway: number) => Shape;
-  head: (sway: number) => Shape;
-  torso: Shape;
-  tail?: (wag: number) => Shape;
   arm: ArmStyle;
   /** How she stands with nothing to do: her own habit. */
   idle: { near: Hand; far: Hand };
@@ -237,623 +229,44 @@ interface Girl {
   rim: Readonly<Record<string, string>>;
   /** Darker shades, for the shadow under the chin. */
   shade: Readonly<Record<string, string>>;
+  /** Her parts on each grid, by cells a unit. */
+  grids: Readonly<Record<string, GirlLayers>>;
 }
 
-/** Alternates cell by cell, for frills and ribs; two cells on the pet's grid. */
-const odd = (x: number, grid = FINE) =>
-  ((grid === PET ? grid.col(x) >> 1 : grid.col(x)) & 1) === 1;
-
-/** The pet's scalloped lace hem. */
-const lace = (x: number) => 29.4 - 0.45 * Math.abs(Math.sin((x - CX) * 1.9));
-
-/**
- * Back hair, and the head in front: face, fringe, side locks, a shine ring.
- * Long hair is the desktop pet's: down past her hips in waves.
- */
-function common(o: { hairTo: number; spread: number; long: boolean }) {
-  const hy = 11.5;
-  const hem = o.hairTo;
-  const mass = (x: number, y: number) => {
-    if (ell(x, y, CX, hy, 11, 10.5))
-      return y > hy + 1 && Math.abs(x - CX) < 8.5 ? "h" : "H";
-    if (y >= hy && y <= hem + 1.6 * Math.sin(x * 1.3)) {
-      const half = 10.6 + 1.3 * Math.sin(y * 0.9) + (y - hy) * o.spread;
-      if (Math.abs(x - CX) <= half) return Math.abs(x - CX) < 7.5 ? "h" : "H";
-    }
-    return null;
-  };
-  // Long hair hangs in locks, front ones first: each waves, fans out a
-  // little, is shaded where it lies over the next, catches the light in a
-  // band, and curls out at its end.
-  const lock = (
-    d: number,
-    y: number,
-    l: readonly [number, number, number, number, number],
-  ) => {
-    const [at, w0, tip, phase, light] = l;
-    if (y > tip) return null;
-    const u = y - hy;
-    const end = clamp(1 - (tip - y) / 2.6, 0, 1);
-    const c =
-      at * (0.9 + u * 0.009) +
-      (0.3 + u * 0.055) * Math.sin(u * 0.6 + phase) +
-      end * end * 0.9;
-    const t = (d - c) / (w0 * (1 - end * 0.7));
-    if (Math.abs(t) >= 1) return null;
-    if (t < -0.5) return "h";
-    if (t > 0.1 && t < 0.65 && y > light && y < light + 2.4)
-      return y < light + 0.7 && t < 0.4 ? "i" : "L";
-    return "H";
-  };
-  const locks = [
-    [10.6, 1.25, 29.6, 0, 16.5],
-    [9.0, 1.35, 31.0, 1.3, 19.4],
-    [7.4, 1.3, 30.4, 2.4, 23.5],
-    [5.8, 1.3, 29.0, 3.3, 25.2],
-    [4.4, 1.4, 27.5, 0.7, 99],
-  ] as const;
-  const sideLock = [7.6, 1.1, 24.2, 0.5, 99] as const;
-  // A tufted crown rather than a smooth dome.
-  const crown = (x: number, y: number) => {
-    const dx = (x - CX) / 11;
-    const dy = (y - hy) / 10.5;
-    const bump = y < hy ? Math.abs(Math.sin(Math.atan2(dx, -dy) * 4.5)) : 0;
-    return Math.hypot(dx, dy) <= 1 + 0.04 * bump;
-  };
-  const flow = (x: number, y: number) => {
-    if (crown(x, y)) return y > hy + 1 && Math.abs(x - CX) < 8.5 ? "h" : "H";
-    if (y < hy) return null;
-    const d = Math.abs(x - CX);
-    for (const l of locks) {
-      const v = lock(d, y, l);
-      // Behind her face, in its shadow.
-      if (v) return y < 21.5 && d < 8.4 ? "h" : v;
-    }
-    return null;
-  };
-  const back =
-    (sway: number): Shape =>
-    (x0, y) => {
-      // The lower the hair, the further a sway carries it.
-      if (o.long) return flow(x0 - sway * clamp((y - 12) / 16, 0, 1) * 1.8, y);
-      const x = x0 - sway * clamp((y - 12) / 12, 0, 1) * 1.4;
-      const v = mass(x, y);
-      if (!v) return null;
-      const k = Math.abs(x - CX);
-      if (y > hy + 2 && k > 6.5) {
-        if (Math.abs(k - 8.6) < 0.35) return "h";
-        if (Math.abs(k - 10.0) < 0.3 && y > 15) return "L";
-        if (y > hem - 4) return "i";
-      }
-      return v;
-    };
-  const face: Shape = (x, y) =>
-    ell(x, y, CX, hy + 2.2, 7.2, 6.2) ? "S" : null;
-  // The pet's fringe falls in pointed strands, the longest between her eyes:
-  // where each is from the middle, how far below `hy` it reaches, how wide.
-  const strands = [
-    [-6.4, 0.5, 1.9],
-    [-3.6, 0.9, 2.0],
-    [-0.6, 2.2, 1.6],
-    [1.8, 1.0, 1.7],
-    [4.4, 0.8, 2.0],
-    [6.8, 0.4, 1.8],
-  ] as const;
-  const fringe = (x: number) => {
-    let tip = hy - 2;
-    for (const [dx, dy, hw] of strands) {
-      const a = 1 - Math.abs(x - CX - dx) / hw;
-      if (a > 0) tip = Math.max(tip, hy - 2 + (dy + 2) * a ** 0.7);
-    }
-    return tip;
-  };
-  const bangs =
-    (sway: number): Shape =>
-    (x0, y) => {
-      if (ell(x0, y, CX, hy, 10.6, 10.2)) {
-        if (o.long) {
-          const tip = fringe(x0);
-          if (y < tip) return y > tip - 0.7 && tip > hy - 1 ? "h" : "H";
-        } else {
-          const w = Math.abs(Math.sin((x0 - CX) * 0.7));
-          const tip = hy - 1.6 + 2.4 * w ** 0.8;
-          if (y < tip) return y > tip - 0.9 && w < 0.45 ? "h" : "H";
-        }
-      } else if (!(y > hy && Math.abs(x0 - CX) < 11.5)) return null;
-      // Side locks in front of the face edges; their ends swing.
-      if (o.long) {
-        // Two locks a side down over her shoulders, framing her face.
-        const x = x0 - sway * clamp((y - 14) / 10, 0, 1) * 1.3;
-        const d = Math.abs(x - CX);
-        return lock(d, y, [8.9, 1.3, 26.8, 1.8, 14.2]) ?? lock(d, y, sideLock);
-      }
-      const x = x0 - sway * clamp((y - 14) / 7, 0, 1) * 0.9;
-      const d = Math.abs(x - CX);
-      if (d > 6.2 && d < 10.4 && y < hy + 9.5 + 0.8 * Math.sin(x)) {
-        if (y > hy + 2 && Math.abs(d - 8.0) < 0.3) return "h";
-        return "H";
-      }
-      return null;
-    };
-  const ring: Shape = (x, y) => {
-    const d = Math.hypot(x - CX, (y - hy) / 0.95);
-    return d > 7.1 && d < 8.2 && y < hy - 3.5 && Math.abs(x - CX) > 1.5
-      ? "L"
-      : null;
-  };
-  return { back, head: (sway: number) => stack(face, bangs(sway), ring) };
+/** A girl as pixel data: the crew's small girl and the desktop pet's big one. */
+export interface GirlArt {
+  small: Girl;
+  big: Girl;
 }
 
-const ahoge =
-  (c: string): Shape =>
-  (x, y) =>
-    y >= 0 && y <= 2.5 && Math.abs(x - (CX + 1 + (2.5 - y) * 0.9)) < 0.55
-      ? c
-      : null;
-
-// Claude娘: orange wavy hair, a cream spark clip, a cream dress with a black
-// corset and an orange panel; hands behind her back.
-function claude(big: boolean): Girl {
-  const { back, head } = common({ hairTo: 25, spread: 0.08, long: big });
-  const hem = (x: number) => 29.4 + 0.35 * Math.sin(x * 1.9);
-  // The pet's skirt falls straighter, so her hair frames it.
-  const flare = big ? 0.45 : 0.82;
-  const corset: Shape = (x, y) => {
-    if (y >= 21.8 && y <= 24.6 && Math.abs(x - CX) <= 3.7 - (y - 21.8) * 0.15)
-      return Math.abs(x - CX) < 0.4 && Math.floor(y * 1.5) % 2 ? "G" : "B";
-    return null;
-  };
-  const torso: Shape = stack(
-    (x, y) => {
-      if (ell(x, y, CX, 21.4, 4.4, 4.2)) return "W";
-      if (
-        y >= 22.5 &&
-        y <= hem(x) &&
-        Math.abs(x - CX) <= 3.6 + (y - 22.5) * flare
-      )
-        return "W";
-      return null;
-    },
-    // Folds and the shaded side.
-    (x, y) => {
-      if (y < 24.2 || y > hem(x)) return null;
-      const half = 3.6 + (y - 22.5) * flare;
-      const d = x - CX;
-      if (Math.abs(d) > half) return null;
-      if (d > half - 1.2) return "w";
-      if (Math.abs(Math.abs(d) - half * 0.45) < 0.25 && y > 25) return "w";
-      return null;
-    },
-    (x, y) =>
-      y >= 28.8 && y <= hem(x) && Math.abs(x - CX) <= (big ? 6.9 : 9.2)
-        ? "w"
-        : null,
-    // Corset with gold lacing.
-    corset,
-    // The orange front panel.
-    (x, y) => {
-      if (y < 24.6 || y > 29.2) return null;
-      const d = Math.abs(x - CX);
-      if (d <= 0.6 + (y - 24.6) * 0.3) return "O";
-      if (d <= 1.4 + (y - 24.6) * 0.3) return "B";
-      return null;
-    },
-    // A black bow under the chin with an orange knot.
-    (x, y) => {
-      if (ell(x, y, CX, 20.6, 0.55, 0.55)) return "O";
-      if (
-        ell(x, y, CX - 1.4, 20.5, 1.2, 0.8) ||
-        ell(x, y, CX + 1.4, 20.5, 1.2, 0.8)
-      )
-        return "B";
-      return null;
-    },
-  );
-  // The pet's dress: a cream blouse, the corset, a chocolate skirt with a
-  // frilled white apron and petticoat, so her cream sleeves stand out on it.
-  const skirt = (y: number) => 3.6 + (y - 22.5) * 0.5;
-  const petTorso: Shape = stack(
-    (x, y) => {
-      if (ell(x, y, CX, 21.4, 4.4, 4.2)) return "W";
-      const half = skirt(y);
-      if (y < 22.5 || y > hem(x) || Math.abs(x - CX) > half) return null;
-      if (x - CX > half - 1.1) return "m";
-      // Pleats.
-      const d = Math.abs(x - CX);
-      return y > 26 && Math.abs(d - half * 0.62) < 0.25 ? "m" : "n";
-    },
-    (x, y) =>
-      y > hem(x) && y <= lace(x) + 0.6 && Math.abs(x - CX) <= skirt(29.4) + 0.2
-        ? "W"
-        : null,
-    (x, y) => {
-      if (y < 24.2 || y > hem(x) - 0.3) return null;
-      const half = 1.8 + (y - 24.2) * 0.42;
-      if (Math.abs(x - CX) > half) return null;
-      if (y > hem(x) - 1.1 && y > lace(x) - 1.1) return "w";
-      return x - CX > half - 0.6 ? "w" : "W";
-    },
-    corset,
-    // A black bow under the chin with an orange knot.
-    (x, y) => {
-      if (ell(x, y, CX, 20.6, 0.55, 0.55)) return "O";
-      if (
-        ell(x, y, CX - 1.4, 20.5, 1.2, 0.8) ||
-        ell(x, y, CX + 1.4, 20.5, 1.2, 0.8)
-      )
-        return "B";
-      return null;
-    },
-  );
-  // Claude's spark as a hair clip: cream rays round an orange core, edged in dark hair.
-  const spark: Shape = (x, y) => {
-    const dx = Math.abs(x - 22.4);
-    const dy = Math.abs(y - 4.4);
-    const s = dx ** 0.62 + dy ** 0.62;
-    if (Math.hypot(dx, dy) < 0.55) return "O";
-    if (s <= 2.5 ** 0.62)
-      return dx + dy > 1.4 && x > 22.4 && y > 4.4 ? "w" : "W";
-    if (s <= 3.0 ** 0.62) return "h";
-    return null;
-  };
-  return {
-    back,
-    head: (sway) => stack(head(sway), spark, ahoge("h")),
-    torso: big ? petTorso : torso,
-    arm: {
-      sleeve: "W",
-      shade: "w",
-      cuff: "O",
-      puff: big ? 1.1 : 1.3,
-      upper: big ? 0.85 : 1.0,
-      fore: big ? 0.8 : 0.95,
-      hand: big ? 0.9 : 0.95,
-      cuffFrom: 0.74,
-    },
-    // The pet folds her hands in front, where they show.
-    idle: big
-      ? { near: { x: CX + 1.0, y: 26.0 }, far: { x: CX - 1.0, y: 26.2 } }
-      : {
-          near: { x: CX + 2.0, y: 26.4, back: true },
-          far: { x: CX - 2.0, y: 26.4, back: true },
-        },
-    legs: { stocking: "b", shoe: "B", trim: "G" },
-    rim: { H: "h", L: "h", i: "L" },
-    shade: { W: "w", O: "o", n: "m" },
-    pal: {
-      K: "#4e2414",
-      k: "#a0532a",
-      h: "#b5461c",
-      H: "#e9743a",
-      L: "#f6a067",
-      i: "#ffc27a",
-      S: "#fde5d2",
-      s: "#f7a993",
-      Z: "#f4cdb6",
-      E: "#4a1d08",
-      d: "#8f3e12",
-      e: "#d9772a",
-      l: "#ffbe6a",
-      W: "#fbf4e8",
-      Y: "#ffffff",
-      w: "#e4d3bc",
-      M: "#b9483e",
-      Q: "#e8737a",
-      B: "#2b2530",
-      G: "#ebb84e",
-      O: "#f08a30",
-      o: "#c86a1e",
-      b: "#efe6d8",
-      // The pet's hair is a softer apricot, her skirt chocolate.
-      ...(big
-        ? {
-            h: "#d2703a",
-            H: "#f2964f",
-            L: "#f9b77a",
-            i: "#ffd6a2",
-            n: "#7a4630",
-            m: "#5c3222",
-          }
-        : {}),
-    },
-  };
-}
-
-// Codex娘: lavender hair, curled purple horns, a big white hoodie worn as a
-// dress with `>_` on it, sleeves longer than her hands, a thin tail.
-function codex(big: boolean): Girl {
-  const { back, head } = common({ hairTo: 25, spread: 0.14, long: big });
-  const horns: Shape = (x, y) => {
-    for (const s of [-1, 1])
-      for (let i = 0; i <= 20; i += 1) {
-        const t = i / 20;
-        const px =
-          (1 - t) ** 2 * (CX + s * 5.2) +
-          2 * t * (1 - t) * (CX + s * 9.4) +
-          t * t * (CX + s * 10.2);
-        const py = (1 - t) ** 2 * 4.2 + 2 * t * (1 - t) * 3.6 + t * t * 0.1;
-        const r = 1.55 * (1 - t) + 0.4;
-        if (Math.hypot(x - px, y - py) <= r)
-          return y - py < -0.2 * r && t < 0.75 ? "R" : "r";
-      }
-    return null;
-  };
-  // The pet's hoodie hangs straighter, so her hair frames it.
-  const flare = big ? 0.42 : 0.6;
-  const stroke = (a: P, b: P) => (x: number, y: number) =>
-    segDist(x, y, a, b)[0] <= 0.4;
-  const prompt = [
-    stroke({ x: 13.4, y: 21.7 }, { x: 14.7, y: 22.7 }),
-    stroke({ x: 14.7, y: 22.7 }, { x: 13.4, y: 23.7 }),
-    stroke({ x: 15.6, y: 23.8 }, { x: 17.8, y: 23.8 }),
-  ];
-  const torso: Shape = stack(
-    // The hood bunched behind the neck.
-    (x, y) =>
-      y >= 16.6 && y <= 19.6 && Math.abs(x - CX) <= 6.0 - (y - 16.6) * 0.5
-        ? "w"
-        : null,
-    (x, y) => {
-      if (ell(x, y, CX, 21.6, 4.8, 4.3)) return "W";
-      if (y >= 22 && y <= 28.6 && Math.abs(x - CX) <= 4.4 + (y - 22) * flare)
-        return "W";
-      return null;
-    },
-    (x, y) => {
-      if (y < 23.5 || y > 28.6) return null;
-      const half = 4.4 + (y - 22) * flare;
-      return x - CX > half - 1.1 && x - CX <= half ? "w" : null;
-    },
-    // Ribbed hem, drawstrings, a pocket seam, `>_` on the chest.
-    (x, y) =>
-      y >= 27.5 && y <= 28.6 && Math.abs(x - CX) <= (big ? 7.2 : 8.4)
-        ? odd(x, big ? PET : FINE)
-          ? "w"
-          : "W"
-        : null,
-    (x, y) =>
-      y >= 20.2 && y <= 22.6 && Math.abs(Math.abs(x - CX) - 1.3) < 0.35
-        ? "P"
-        : null,
-    (x, y) => (y >= 25.4 && y <= 25.9 && Math.abs(x - CX) <= 3.2 ? "w" : null),
-    (x, y) => (prompt.some((f) => f(x, y)) ? "P" : null),
-  );
-  const tail =
-    (wag: number): Shape =>
-    (x, y) => {
-      const tip = { x: 1.2 - wag * 0.5, y: 23.6 + wag * 0.6 };
-      if (ell(x, y, tip.x, tip.y - 0.3, 0.9, 0.9)) return "T";
-      const [d] = curveDist(
-        x,
-        y,
-        { x: 6.2, y: 28.4 },
-        { x: 1.4, y: 28.8 },
-        tip,
-      );
-      return d <= 0.5 ? "T" : null;
-    };
-  return {
-    back,
-    head: (sway) => stack(head(sway), horns, ahoge("h")),
-    torso,
-    tail,
-    arm: {
-      sleeve: "W",
-      shade: "w",
-      cuff: "w",
-      puff: big ? 1.15 : 1.3,
-      upper: big ? 1.0 : 1.15,
-      fore: big ? 1.05 : 1.2,
-      hand: big ? 0.7 : 0.75,
-      cuffFrom: 0.62,
-    },
-    idle: { near: { x: CX + 5.4, y: 27.6 }, far: { x: CX - 5.4, y: 27.6 } },
-    legs: { stocking: "S", shoe: "W", trim: "p" },
-    rim: { H: "h", L: "h", i: "L" },
-    shade: { W: "w" },
-    pal: {
-      K: "#4a4080",
-      k: "#8f82cf",
-      h: "#a397dc",
-      H: "#cbc3f2",
-      L: "#efecfd",
-      i: "#f6f4ff",
-      R: "#8f74e6",
-      r: "#5b43b4",
-      S: "#fde8dc",
-      s: "#f5aaa6",
-      Z: "#f3d0c4",
-      E: "#2a1f6e",
-      d: "#4936a8",
-      e: "#7f6ae6",
-      l: "#b3a3ff",
-      W: "#fbfaff",
-      Y: "#ffffff",
-      w: "#d9d4f0",
-      M: "#b9483e",
-      Q: "#e8737a",
-      P: "#6a55d6",
-      p: "#f4a9c0",
-      T: "#ad9fea",
-    },
-  };
-}
-
-// The blue whale maid (鲸鱼娘): a maid headband, fin ears, a navy dress with
-// a white apron and a whale on it, a whale's tail; hands folded on the apron.
-function whale(big: boolean): Girl {
-  const { back, head } = common({ hairTo: 24, spread: 0.16, long: big });
-  const fins: Shape = (x, y) => {
-    for (const s of [-1, 1]) {
-      const t = (x - (CX + s * 9.5)) * s;
-      const c = 12.6 + t * 0.35;
-      if (t >= 0 && t <= 5.5 && Math.abs(y - c) <= 2.4 - t * 0.42)
-        return Math.abs(y - c) < 0.9 - t * 0.12 && t < 4 ? "f" : "F";
-    }
-    return null;
-  };
-  const band: Shape = (x, y) => {
-    const d = Math.hypot(x - CX, (y - 11.5) * 1.05);
-    return d > 8.7 && d < 10.5 && y < 6.4
-      ? d > 10.0 && odd(x, big ? PET : FINE)
-        ? "w"
-        : "W"
-      : null;
-  };
-  // The pet's dress falls straighter, so her hair frames it.
-  const flare = big ? 0.62 : 0.85;
-  const bow: Shape = (x, y) =>
-    ell(x, y, CX + 8.6, 7.4, 1.5, 1.0)
-      ? x > CX + 8.6 && y > 7.4
-        ? "c"
-        : "b"
-      : null;
-  const torso: Shape = stack(
-    (x, y) => {
-      if (ell(x, y, CX, 21.4, 4.4, 4.1)) return "N";
-      if (
-        y >= 22.5 &&
-        y <= 28.4 &&
-        Math.abs(x - CX) <= 3.6 + (y - 22.5) * flare
-      )
-        return "N";
-      return null;
-    },
-    (x, y) => {
-      if (y < 24 || y > 28.4) return null;
-      const half = 3.6 + (y - 22.5) * flare;
-      return x - CX > half - 1.1 && x - CX <= half ? "m" : null;
-    },
-    // The apron: a bib and a skirt.
-    (x, y) => {
-      if (y >= 20.6 && y <= 23.2 && Math.abs(x - CX) <= 2.3) return "W";
-      if (y > 23.2 && y <= 27.8 && Math.abs(x - CX) <= 2.3 + (y - 23.2) * 0.6)
-        return "W";
-      return null;
-    },
-    (x, y) =>
-      y > 24 &&
-      y <= 27.8 &&
-      x - CX > 1.5 + (y - 23.2) * 0.6 &&
-      x - CX <= 2.3 + (y - 23.2) * 0.6
-        ? "w"
-        : null,
-    // A little whale on the apron.
-    (x, y) =>
-      ell(x, y, CX - 0.2, 25.0, 1.6, 0.85) ||
-      ell(x, y, CX + 1.7, 24.3, 0.55, 0.55)
-        ? "b"
-        : null,
-    (x, y) => {
-      if (y < 27.8 || Math.abs(x - CX) > (big ? 7.4 : 8.8)) return null;
-      if (!big) return y <= 29.3 ? (odd(x) ? "W" : "w") : null;
-      return y <= lace(x) ? (y < 28.4 ? "w" : "W") : null;
-    },
-    // A white collar and a blue bow.
-    (x, y) => {
-      if (ell(x, y, CX, 20.4, 0.5, 0.5)) return "c";
-      if (
-        ell(x, y, CX - 1.4, 20.3, 1.2, 0.75) ||
-        ell(x, y, CX + 1.4, 20.3, 1.2, 0.75)
-      )
-        return "b";
-      if (y >= 19.4 && y <= 21 && Math.abs(x - CX) <= 3.0) return "W";
-      return null;
-    },
-  );
-  const tail =
-    (wag: number): Shape =>
-    (x, y) => {
-      const tip = { x: 2.0 - wag * 0.4, y: 25.6 + wag * 0.5 };
-      for (const s of [-1, 1])
-        if (
-          ell(
-            x,
-            y,
-            tip.x + s * 1.0,
-            tip.y - 0.7 - Math.abs(x - tip.x) * 0.2,
-            1.0,
-            0.6,
-          )
-        )
-          return "T";
-      const [d, t] = curveDist(
-        x,
-        y,
-        { x: 6.0, y: 29.6 },
-        { x: 1.6, y: 29.8 },
-        tip,
-      );
-      return d <= 0.75 - t * 0.25 ? "T" : null;
-    };
-  return {
-    back,
-    head: (sway) => stack(head(sway), fins, band, bow, ahoge("h")),
-    torso,
-    tail,
-    arm: {
-      sleeve: "n",
-      shade: "N",
-      cuff: "W",
-      shine: "v",
-      puff: big ? 1.2 : 1.4,
-      upper: big ? 0.85 : 1.0,
-      fore: big ? 0.8 : 0.95,
-      hand: big ? 0.9 : 0.95,
-      cuffFrom: 0.72,
-    },
-    idle: { near: { x: CX + 0.9, y: 26.2 }, far: { x: CX - 0.9, y: 26.4 } },
-    legs: { stocking: "W", shoe: "N" },
-    rim: { H: "h", L: "h", i: "L" },
-    shade: { W: "w", N: "m", b: "c" },
-    pal: {
-      K: "#172045",
-      k: "#141c3c",
-      h: "#22408c",
-      H: "#3463c4",
-      L: "#5f97e6",
-      i: "#8cc8f6",
-      S: "#fde8dc",
-      s: "#f6aaa4",
-      Z: "#f2cfc4",
-      E: "#0f1f58",
-      d: "#1f3f92",
-      e: "#3a78d8",
-      l: "#5aa2ee",
-      W: "#ffffff",
-      Y: "#ffffff",
-      w: "#d2dbeb",
-      M: "#b9483e",
-      Q: "#e8737a",
-      F: "#2a4690",
-      f: "#dce9f8",
-      N: "#232f5e",
-      n: "#4862b4",
-      v: "#6a86d8",
-      m: "#1a2348",
-      b: "#6fb0f0",
-      c: "#3f86d6",
-      T: "#2c4b9a",
-      // The pet's hair is a brighter sea blue.
-      ...(big
-        ? { h: "#2c58b4", H: "#3f7ad8", L: "#6fa6ec", i: "#a8d2fa" }
-        : {}),
-    },
-  };
-}
-
-const GIRLS: Partial<Record<ClientType, (big: boolean) => Girl>> = {
-  claude_code: claude,
-  codex,
-  deepseek_harness: whale,
+const ARTS: Partial<Record<ClientType, GirlArt>> = {
+  claude_code: claudeArt as GirlArt,
+  codex: codexArt as GirlArt,
+  deepseek_harness: deepseekArt as GirlArt,
 };
 
 /** Clients drawn as a musume rather than a critter. */
-export const isGirl = (client: ClientType) => client in GIRLS;
+export const isGirl = (client: ClientType) => client in ARTS;
+
+/** Lays `p` over `base` (a copy), or reads it alone. */
+function paint(grid: Grid, p: ArtPatch, base?: Layer): Layer {
+  const out: Layer = new Map(base);
+  p.rows.forEach((line, i) => {
+    for (let j = 0; j < line.length; j += 1) {
+      const v = line[j];
+      if (v === " ") continue;
+      const at = grid.idx(p.x + j, p.y + i);
+      if (v === ".") out.delete(at);
+      else out.set(at, v);
+    }
+  });
+  return out;
+}
 
 interface Built {
   girl: Girl;
   grid: Grid;
+  layers: GirlLayers;
   back: Map<number, Layer>;
   head: Map<number, Layer>;
   tail: Map<number, Layer>;
@@ -862,23 +275,22 @@ interface Built {
 }
 
 const built = new Map<string, Built>();
-const girls = new Map<string, Girl>();
 
 function build(client: ClientType, grid: Grid, big: boolean): Built {
   const key = `${client}|${grid.k}|${big ? 1 : 0}`;
   let b = built.get(key);
   if (!b) {
-    let girl = girls.get(`${client}|${big ? 1 : 0}`);
-    if (!girl)
-      girls.set(`${client}|${big ? 1 : 0}`, (girl = GIRLS[client]!(big)));
+    const girl = ARTS[client]![big ? "big" : "small"];
+    const layers = girl.grids[String(grid.k)];
     b = {
       girl,
       grid,
+      layers,
       back: new Map(),
       head: new Map(),
       tail: new Map(),
       legs: new Map(),
-      torso: grid.sample(girl.torso),
+      torso: paint(grid, layers.torso),
     };
     built.set(key, b);
   }
@@ -891,25 +303,27 @@ function memo<K>(m: Map<K, Layer>, k: K, make: () => Layer): Layer {
   return v;
 }
 
+/** A part at rest, or with a sway's change laid over it. */
+function swayed(
+  grid: Grid,
+  part: Readonly<Record<string, ArtPatch>>,
+  k: number,
+): Layer {
+  const rest = paint(grid, part["0"]);
+  const change = k ? part[String(k)] : undefined;
+  return change ? paint(grid, change, rest) : rest;
+}
+
 const backOf = (b: Built, sway: number) =>
-  memo(b.back, sway, () => b.grid.sample(b.girl.back(sway)));
+  memo(b.back, sway, () => swayed(b.grid, b.layers.back, sway));
 
 const tailOf = (b: Built, wag: number) =>
   memo(b.tail, wag, () =>
-    b.girl.tail ? b.grid.sample(b.girl.tail(wag), [-2, 20, 8, 31]) : new Map(),
+    b.layers.tail ? swayed(b.grid, b.layers.tail, wag) : new Map(),
   );
 
 const headOf = (b: Built, sway: number) =>
-  memo(b.head, sway, () => {
-    const m = b.grid.sample(b.girl.head(sway));
-    // A soft shadow under the fringe.
-    for (const [i, v] of m) {
-      if (v !== "S") continue;
-      const up = m.get(i - b.grid.w);
-      if (up && "HhL".includes(up)) m.set(i, "Z");
-    }
-    return m;
-  });
+  memo(b.head, sway, () => swayed(b.grid, b.layers.head, sway));
 
 /**
  * Legs under the skirt; sitting, shoes poking out in front of it, or, perched
