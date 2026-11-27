@@ -32,9 +32,6 @@ func (host *Host) DryRunRequestPlugin(ctx context.Context, instance contract.Req
 	if target == nil || !target.Loaded() || target.NewAPI() == nil || !target.NewAPI().HasRequestPart() {
 		return RequestDryRun{}, errors.New("the plugin has no request processing part")
 	}
-	meta := target.NewAPI()
-	schema := meta.Config()
-	config, keywords := schema.HookConfig(schema.Defaults(instance.Config))
 	model := ""
 	var named struct {
 		Model string `json:"model"`
@@ -44,8 +41,7 @@ func (host *Host) DryRunRequestPlugin(ctx context.Context, instance contract.Req
 	}
 	run := &RequestRun{
 		host: host, model: model, path: dryRunPaths[protocol], language: host.Settings().Language,
-		instances: []*requestInstance{{instance: instance, plugin: target, meta: meta, config: config, keywords: keywords,
-			hosts: append(append([]string{}, meta.AllowedHosts...), schema.URLHosts(schema.Defaults(instance.Config))...)}},
+		instances: []*requestInstance{newRequestInstance(instance, target, target.NewAPI())},
 	}
 	result := RequestDryRun{Body: body}
 	changed, refusal := run.Ingress(ctx, protocol, body, nil)

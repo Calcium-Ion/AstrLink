@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/QuantumNous/astrlink/core/contract"
+	"github.com/QuantumNous/astrlink/core/internal/plugin"
+	"github.com/QuantumNous/new-api/pluginkit"
 )
 
 // The report hooks hear of each finished request, off the request path: a
@@ -41,8 +43,8 @@ type RequestReport struct {
 }
 
 type ReportRequest struct {
-	Body  json.RawMessage  `json:"body"`
-	Media []map[string]any `json:"media,omitempty"`
+	Body  json.RawMessage            `json:"body"`
+	Media []pluginkit.TransformMedia `json:"media,omitempty"`
 }
 
 type ReportResponse struct {
@@ -95,7 +97,7 @@ func (run *RequestRun) Report(record RequestReport) {
 	hidden, media, err := hideMedia(record.Request.Body)
 	if err == nil && len(record.Request.Body) > 0 {
 		record.Request.Body = hidden
-		record.Request.Media = mediaView(media)
+		record.Request.Media = reportMedia(media)
 	}
 	if len(record.Request.Body) == 0 {
 		record.Request.Body = json.RawMessage("null")
@@ -158,17 +160,24 @@ func (run *RequestRun) report(record RequestReport) {
 		if !current.meta.HasStage(contract.RequestStageReport) {
 			continue
 		}
-		view := run.origin.members(map[string]any{
-			"stage": contract.RequestStageReport, "format": RequestFormat(record.Format), "path": run.path, "model": run.model,
-			"attempt":  record.Attempt,
-			"instance": map[string]any{"id": current.instance.ID, "name": current.instance.Name},
-			"config":   current.config,
-		})
-		if record.UpstreamModel != "" {
-			view["upstreamModel"] = record.UpstreamModel
+		tctx := run.transformContext(current, contract.RequestStageReport, RequestFormat(record.Format), RequestAttempt{Index: record.Attempt, UpstreamModel: record.UpstreamModel})
+		encoded, err := json.Marshal(record)
+		if err == nil {
+			_, err = callRequestHook(context.Background(), current, contract.RequestStageReport, nil, func(ctx context.Context, loaded *plugin.NewAPIPlugin) (struct{}, error) {
+				return struct{}{}, loaded.CallReport(ctx, tctx, encoded)
+			})
 		}
-		if _, err := run.invoke(context.Background(), current, contract.RequestStageReport, nil, view, record); err != nil {
+		if err != nil {
 			run.host.logf("request plugin %s (%s): report failed", current.instance.ID, current.plugin.Key)
 		}
 	}
+}
+
+// reportMedia is how a report describes the inline files of its body.
+func reportMedia(media []requestMedia) []pluginkit.TransformMedia {
+	view := make([]pluginkit.TransformMedia, 0, len(media))
+	for index, item := range media {
+		view = append(view, pluginkit.TransformMedia{Index: index, Path: item.path, MimeType: item.mime, Bytes: int(item.bytes), Width: item.width, Height: item.height})
+	}
+	return view
 }

@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/endpoint"
 	"github.com/QuantumNous/astrlink/core/internal/pluginhost"
+	"github.com/QuantumNous/new-api/pluginkit"
 )
 
 // beginRequestPlugins starts the request processing instances of a request
@@ -139,10 +140,10 @@ func (handler *Handler) requestStagePlugins(ctx context.Context, session *record
 	if classified.ReasoningEffort != nil {
 		clientEffort = *classified.ReasoningEffort
 	}
-	summary := map[string]any{
-		"messageCount": signals.messages, "toolCount": signals.tools, "lastUserTextLength": signals.lastUserChars,
-		"totalTextLength": len(classified.body), "hasImages": bytes.Contains(classified.body, []byte("base64,")) || bytes.Contains(classified.body, []byte(`"image_url"`)),
-		"reasoningEffort": clientEffort,
+	summary := &pluginkit.TransformSummary{
+		MessageCount: signals.messages, ToolCount: signals.tools, LastUserTextLength: signals.lastUserChars,
+		TotalTextLength: len(classified.body), HasImages: bytes.Contains(classified.body, []byte("base64,")) || bytes.Contains(classified.body, []byte(`"image_url"`)),
+		ReasoningEffort: clientEffort,
 	}
 	reasoning, refusal := run.Request(ctx, classified.Protocol, classified.body, pluginhost.RequestAttempt{Protocol: classified.Protocol, UpstreamModel: model, Index: index, Summary: summary}, session.requestPluginView)
 	if refusal != nil || reasoning.Effort == "" || (clientEffort != "" && !reasoning.Override) {

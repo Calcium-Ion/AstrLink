@@ -1,19 +1,20 @@
 package taskplugin
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/plugin"
 	"github.com/QuantumNous/astrlink/core/internal/storage"
+	"github.com/QuantumNous/new-api/pluginkit"
 )
 
 // Bounds of the poller.
@@ -174,7 +175,7 @@ func (engine *Engine) expired(task *storage.PluginTask) bool {
 
 // taskProvider finds the plugin and provider a task runs on, the plugin
 // as it now is.
-func (engine *Engine) taskProvider(ctx context.Context, task storage.PluginTask) (*plugin.Plugin, *plugin.TaskMeta, contract.Service, credentials, error) {
+func (engine *Engine) taskProvider(ctx context.Context, task storage.PluginTask) (*plugin.Plugin, *plugin.NewAPIPlugin, contract.Service, credentials, error) {
 	target, meta, err := engine.plugin(task.PluginKey)
 	if err != nil {
 		return nil, nil, contract.Service{}, credentials{}, err
@@ -196,11 +197,7 @@ func (engine *Engine) taskProvider(ctx context.Context, task storage.PluginTask)
 // query runs one per_task poll: buildQueryRequest, the request, and
 // parseTaskResult, the HTTP status read as new-api reads it.
 func (call *exchange) query(ctx context.Context, query queryContext) pollOutcome {
-	raw, err := call.call(ctx, "buildQueryRequest", query)
-	if err != nil {
-		return pollOutcome{reason: describe(err)}
-	}
-	desc, err := parseDescriptor("buildQueryRequest", raw)
+	desc, err := call.buildRequest(ctx, "buildQueryRequest", plugin.NewAPIObject(query))
 	if err != nil {
 		return pollOutcome{reason: describe(err)}
 	}
@@ -216,13 +213,11 @@ func (call *exchange) query(ctx context.Context, query queryContext) pollOutcome
 	if outcome, done := classifyPoll(response.StatusCode); done {
 		return outcome
 	}
-	raw, err = call.call(ctx, "parseTaskResult", query, body, hookResponse{Status: response.StatusCode, Headers: firstHeaders(response.Header)})
+	result, err := callHook(ctx, call, "parseTaskResult", func(ctx context.Context, loaded *plugin.NewAPIPlugin) (taskResult, error) {
+		return loaded.CallParseTaskResult(ctx, plugin.NewAPIObject(query), pluginkit.RawJSON(body), pluginkit.HookHTTPResponse(response))
+	})
 	if err != nil {
 		return pollOutcome{reason: describe(err)}
-	}
-	var result taskResult
-	if err := json.Unmarshal(raw, &result); err != nil {
-		return pollOutcome{reason: "parseTaskResult returned something other than a task result"}
 	}
 	if response.StatusCode >= 300 && !contract.PluginTaskTerminal(result.Status) {
 		return pollOutcome{reason: fmt.Sprintf("the vendor answered %d", response.StatusCode)}
@@ -247,9 +242,6 @@ func classifyPoll(status int) (pollOutcome, bool) {
 	return pollOutcome{}, false
 }
 
-// batchItem is an item of what parseBatchResult returns.
-type batchItem = taskResult
-
 // queryBatch runs one batch poll and returns its outcome by upstream task
 // id; a task the answer leaves out gets a failed poll.
 func (call *exchange) queryBatch(ctx context.Context, queries []queryContext) (map[string]pollOutcome, error) {
@@ -257,11 +249,8 @@ func (call *exchange) queryBatch(ctx context.Context, queries []queryContext) (m
 		"baseUrl": call.credentials.baseURL, "apiKey": call.credentials.apiKey, "authHeader": call.credentials.authHeader,
 		"auth": call.credentials.auth, "upstream": call.credentials.upstream, "tasks": queries,
 	}
-	raw, err := call.call(ctx, "buildBatchQueryRequest", batch, queries)
-	if err != nil {
-		return nil, err
-	}
-	desc, err := parseDescriptor("buildBatchQueryRequest", raw)
+	batchValue := plugin.NewAPIObject(batch)
+	desc, err := call.buildRequest(ctx, "buildBatchQueryRequest", batchValue, plugin.NewAPIValue(queries))
 	if err != nil {
 		return nil, err
 	}
@@ -281,16 +270,14 @@ func (call *exchange) queryBatch(ctx context.Context, queries []queryContext) (m
 		}
 		return outcomes, nil
 	}
-	raw, err = call.call(ctx, "parseBatchResult", batch, body, hookResponse{Status: response.StatusCode, Headers: firstHeaders(response.Header)})
+	items, err := callHook(ctx, call, "parseBatchResult", func(ctx context.Context, loaded *plugin.NewAPIPlugin) ([]pluginkit.BatchResultItem, error) {
+		return loaded.CallParseBatchResult(ctx, batchValue, pluginkit.RawJSON(body), pluginkit.HookHTTPResponse(response))
+	})
 	if err != nil {
 		return nil, err
 	}
-	var items []batchItem
-	if err := json.Unmarshal(raw, &items); err != nil {
-		return nil, errors.New("parseBatchResult returned something other than a list of task results")
-	}
 	for _, item := range items {
-		id := text(item.TaskID)
+		id := strings.TrimSpace(item.TaskID)
 		if id == "" {
 			continue
 		}
@@ -298,11 +285,20 @@ func (call *exchange) queryBatch(ctx context.Context, queries []queryContext) (m
 			outcomes[id] = pollOutcome{reason: fmt.Sprintf("the vendor answered %d", response.StatusCode)}
 			continue
 		}
-		data := item.Data
-		if len(bytes.TrimSpace(data)) == 0 || bytes.Equal(bytes.TrimSpace(data), []byte("null")) {
-			data = nil
+		var data json.RawMessage
+		if item.Data != nil {
+			if data, err = marshalOrdered(item.Data); err != nil {
+				outcomes[id] = pollOutcome{reason: "parseBatchResult returned data that is not JSON"}
+				continue
+			}
 		}
-		result := item
+		result := taskResult{TaskID: id, Status: item.Status, Progress: item.Progress, Reason: item.Reason, URL: item.URL}
+		if item.State != nil {
+			if result.State, err = marshalOrdered(item.State); err != nil {
+				outcomes[id] = pollOutcome{reason: "parseBatchResult returned a state that is not JSON"}
+				continue
+			}
+		}
 		outcomes[id] = pollOutcome{result: &result, data: data}
 	}
 	for _, query := range queries {
@@ -407,10 +403,9 @@ func (engine *Engine) settle(ctx context.Context, call *exchange, task *storage.
 	if task.Status == contract.PluginTaskSuccess && call.hasHook("extractUsageOnComplete") {
 		completed := query
 		completed.Data, completed.State = jsonOrNull(task.Data), jsonOrNull(task.State)
-		if raw, err := call.call(ctx, "extractUsageOnComplete", completed, result, jsonOrNull(data)); err == nil {
-			facts := map[string]any{}
-			mergeFacts(facts, task.Usage)
-			mergeFacts(facts, raw)
+		facts := map[string]any{}
+		mergeFacts(facts, task.Usage)
+		if err := call.usage(ctx, facts, "extractUsageOnComplete", completed, resultValue(result), jsonOrNull(data)); err == nil {
 			if len(facts) > 0 {
 				task.Usage, _ = json.Marshal(facts)
 			}

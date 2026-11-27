@@ -3,11 +3,9 @@ package pluginhost
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"math/rand/v2"
 	"net/http"
 	"net/url"
@@ -18,6 +16,7 @@ import (
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/plugin"
 	"github.com/QuantumNous/astrlink/core/internal/transport"
+	"github.com/QuantumNous/new-api/pluginkit"
 )
 
 // A plugin may read the balance of its providers' accounts through
@@ -30,10 +29,6 @@ import (
 // Bounds of the balance and the maintenance of providers.
 const (
 	maxBalanceBody      = 1 << 20
-	maxBalanceWindows   = 32
-	scheduledDefault    = time.Hour
-	scheduledMin        = time.Minute
-	scheduledMax        = 24 * time.Hour
 	scheduledRetry      = 15 * time.Minute
 	scheduledFirstSpan  = 10 * time.Minute
 	scheduledSlots      = 4
@@ -51,11 +46,20 @@ type Balance struct {
 // BalanceWindow is a quota window: what is used of the limit, and when it
 // resets.
 type BalanceWindow struct {
-	Name    plugin.LocalizedText `json:"name"`
-	Used    float64              `json:"used"`
-	Limit   float64              `json:"limit"`
-	Unit    string               `json:"unit,omitempty"`
-	ResetAt int64                `json:"reset_at,omitempty"`
+	Name    pluginkit.LocalizedText `json:"name"`
+	Used    float64                 `json:"used"`
+	Limit   float64                 `json:"limit"`
+	Unit    string                  `json:"unit,omitempty"`
+	ResetAt int64                   `json:"reset_at,omitempty"`
+}
+
+// balanceOf is a balance pluginkit read as the provider page keeps it.
+func balanceOf(result pluginkit.BalanceResult) *Balance {
+	balance := &Balance{Amount: result.Amount, Currency: result.Currency, Unlimited: result.Unlimited}
+	for _, window := range result.Windows {
+		balance.Windows = append(balance.Windows, BalanceWindow{Name: window.Name, Used: window.Used, Limit: window.Limit, Unit: window.Unit, ResetAt: window.ResetAt})
+	}
+	return balance
 }
 
 // ProviderState is what the provider page shows of a plugin's provider
@@ -112,7 +116,7 @@ func (host *Host) resting(id contract.ServiceID) (bool, string) {
 type providerCall struct {
 	service contract.Service
 	target  *plugin.Plugin
-	meta    *plugin.TaskMeta
+	meta    *plugin.NewAPIPlugin
 	relay   *relayTarget
 	baseURL string
 	base    *url.URL
@@ -136,7 +140,7 @@ func (host *Host) providerCallFor(ctx context.Context, service contract.Service)
 		call.baseURL = strings.TrimRight(service.HTTP.BaseURL, "/")
 	}
 	if call.baseURL == "" {
-		call.baseURL = meta.BaseURL
+		call.baseURL = meta.Meta.BaseURL
 	}
 	call.base, _ = url.Parse(call.baseURL)
 	if host.credentials != nil {
@@ -159,31 +163,9 @@ func (host *Host) providerCallFor(ctx context.Context, service contract.Service)
 	return call, nil
 }
 
-// view is ctx of the balance and maintenance hooks.
-func (call *providerCall) view(state json.RawMessage) map[string]any {
-	view := map[string]any{"baseUrl": call.baseURL, "apiKey": call.key, "config": call.relay.config, "credential": nil}
-	if call.relay.credential != nil {
-		view["credential"] = jsonOrNull(call.relay.credential.Data)
-	}
-	if call.relay.token != nil {
-		view["token"] = call.relay.token
-	}
-	if state != nil {
-		view["state"] = jsonOrNull(state)
-	}
-	return view
-}
-
-// balanceRequest is what buildBalanceRequest or a next returns.
-type balanceRequest struct {
-	Method      string            `json:"method"`
-	Path        string            `json:"path"`
-	URL         string            `json:"url"`
-	Headers     map[string]string `json:"headers"`
-	Body        json.RawMessage   `json:"body"`
-	ContentType string            `json:"contentType"`
-	State       json.RawMessage   `json:"state"`
-	DelayMs     int               `json:"delayMs"`
+// credentialContext is ctx of the balance and maintenance hooks.
+func (call *providerCall) credentialContext() pluginkit.CredentialContext {
+	return call.relay.credentialContext(call.baseURL, call.key)
 }
 
 // ProviderBalance reads a provider's balance through its plugin and keeps
@@ -217,13 +199,12 @@ func (host *Host) ProviderStateOf(id contract.ServiceID) ProviderState {
 }
 
 func (host *Host) readBalance(ctx context.Context, call *providerCall) (*Balance, error) {
-	raw, err := call.relay.call(ctx, "buildBalanceRequest", call.view(json.RawMessage("null")))
+	hookCtx := call.credentialContext()
+	request, err := callProvider(ctx, call.relay, "buildBalanceRequest", func(ctx context.Context, loaded *plugin.NewAPIPlugin) (pluginkit.ConvertedRequest, error) {
+		return loaded.CallBuildBalanceRequest(ctx, hookCtx)
+	})
 	if err != nil {
 		return nil, fmt.Errorf("buildBalanceRequest: %w", err)
-	}
-	var request balanceRequest
-	if err := json.Unmarshal(raw, &request); err != nil {
-		return nil, errors.New("buildBalanceRequest returned no request")
 	}
 	state := request.State
 	for sent := 0; sent <= maxConvertedRequests; sent++ {
@@ -236,88 +217,36 @@ func (host *Host) readBalance(ctx context.Context, call *providerCall) (*Balance
 		if err != nil {
 			return nil, err
 		}
-		input := map[string]any{"status": response.StatusCode, "headers": firstHeaders(response.Header), "body": strings.ToValidUTF8(string(body), "�")}
-		raw, err := call.relay.call(ctx, "parseBalance", call.view(state), input)
+		upstream := pluginkit.UpstreamResponse{Status: response.StatusCode, Headers: firstHeaders(response.Header), Body: body}
+		step, err := callProvider(ctx, call.relay, "parseBalance", func(ctx context.Context, loaded *plugin.NewAPIPlugin) (pluginkit.BalanceStep, error) {
+			return loaded.CallParseBalance(ctx, hookCtx, state, upstream)
+		})
 		if err != nil {
 			return nil, fmt.Errorf("parseBalance: %w", err)
 		}
-		var result struct {
-			Balance
-			Next  *balanceRequest `json:"next"`
-			State json.RawMessage `json:"state"`
-			Error json.RawMessage `json:"error"`
+		if step.State != nil {
+			state = step.State
 		}
-		if err := json.Unmarshal(raw, &result); err != nil {
-			return nil, errors.New("parseBalance returned no balance")
-		}
-		if len(result.State) > 0 {
-			state = result.State
-		}
-		switch {
-		case len(result.Error) > 0:
-			var text string
-			if json.Unmarshal(result.Error, &text) != nil {
-				var object struct {
-					Message string `json:"message"`
-				}
-				_ = json.Unmarshal(result.Error, &object)
-				text = object.Message
-			}
-			return nil, errors.New(text)
-		case result.Next != nil:
-			request = *result.Next
-			if delay := time.Duration(min(max(request.DelayMs, 0), 10000)) * time.Millisecond; delay > 0 {
+		if step.Next != nil {
+			request = *step.Next
+			if request.Delay > 0 {
 				select {
 				case <-ctx.Done():
 					return nil, ctx.Err()
-				case <-time.After(delay):
+				case <-time.After(request.Delay):
 				}
 			}
 			continue
 		}
-		return checkBalance(result.Balance)
+		return balanceOf(*step.Balance), nil
 	}
 	return nil, fmt.Errorf("the balance took more than %d requests", maxConvertedRequests)
-}
-
-// checkBalance refuses a balance the contract does not allow.
-func checkBalance(balance Balance) (*Balance, error) {
-	switch {
-	case balance.Amount == nil && !balance.Unlimited && len(balance.Windows) == 0:
-		return nil, errors.New("the balance has no amount, unlimited or windows")
-	case balance.Amount != nil && (math.IsNaN(*balance.Amount) || math.IsInf(*balance.Amount, 0) || len(balance.Currency) != 3):
-		return nil, errors.New("an amount is a finite number with a three-letter currency")
-	case len(balance.Windows) > maxBalanceWindows:
-		return nil, fmt.Errorf("a balance has at most %d windows", maxBalanceWindows)
-	}
-	for index, window := range balance.Windows {
-		if math.IsNaN(window.Used) || math.IsInf(window.Used, 0) || math.IsNaN(window.Limit) || math.IsInf(window.Limit, 0) || len(window.Unit) > 32 {
-			return nil, fmt.Errorf("window %d is not finite numbers with a unit of at most 32 characters", index)
-		}
-	}
-	return &balance, nil
-}
-
-// UnmarshalJSON reads a window as the plugin writes it.
-func (window *BalanceWindow) UnmarshalJSON(data []byte) error {
-	var raw struct {
-		Name    plugin.LocalizedText `json:"name"`
-		Used    float64              `json:"used"`
-		Limit   float64              `json:"limit"`
-		Unit    string               `json:"unit"`
-		ResetAt int64                `json:"resetAt"`
-	}
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return err
-	}
-	*window = BalanceWindow{Name: raw.Name, Used: raw.Used, Limit: raw.Limit, Unit: raw.Unit, ResetAt: raw.ResetAt}
-	return nil
 }
 
 // sendBalance sends one balance request: a path on the provider's address,
 // or an address on its host or the plugin's allowed hosts, with the
 // credential and signRequest.
-func (host *Host) sendBalance(ctx context.Context, call *providerCall, request balanceRequest) (*http.Response, error) {
+func (host *Host) sendBalance(ctx context.Context, call *providerCall, request pluginkit.ConvertedRequest) (*http.Response, error) {
 	if call.base == nil || call.base.Host == "" {
 		return nil, errors.New("the provider has no address")
 	}
@@ -326,7 +255,7 @@ func (host *Host) sendBalance(ctx context.Context, call *providerCall, request b
 	case request.URL != "":
 		parsed, err := url.Parse(request.URL)
 		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.User != nil ||
-			(!strings.EqualFold(parsed.Host, call.base.Host) && !containsFold(call.meta.AllowedHosts, parsed.Host)) {
+			(!strings.EqualFold(parsed.Host, call.base.Host) && !containsFold(call.meta.Meta.AllowedHosts, parsed.Host)) {
 			return nil, errors.New("the balance request addresses a host the plugin may not reach")
 		}
 		address = parsed
@@ -337,8 +266,8 @@ func (host *Host) sendBalance(ctx context.Context, call *providerCall, request b
 		}
 		address = joined
 	}
-	body := convertedBody(request.Body)
-	method := strings.ToUpper(request.Method)
+	body := request.Body
+	method := request.Method
 	if method == "" {
 		method = http.MethodGet
 		if len(body) > 0 {
@@ -502,41 +431,27 @@ func (host *Host) RunScheduled(ctx context.Context, service contract.Service) ti
 		return scheduledRetry
 	}
 	resting, _ := host.resting(service.ID)
-	view := call.view(nil)
-	view["reason"] = "timer"
-	view["keyStatus"] = "enabled"
+	scheduled := pluginkit.ScheduledContext{CredentialContext: call.credentialContext(), Reason: "timer", KeyStatus: "enabled"}
 	if resting {
-		view["keyStatus"] = "auto_disabled"
+		scheduled.KeyStatus = "auto_disabled"
 	}
-	hookCtx, cancel := context.WithTimeout(ctx, time.Minute)
-	defer cancel()
-	raw, _, err := call.target.CallTask(hookCtx, "scheduled", []any{view}, credentialCallOptions(call.meta, call.baseURL))
+	result, err := callCredential(ctx, call.target, "scheduled", call.baseURL, func(ctx context.Context, loaded *plugin.NewAPIPlugin) (pluginkit.ScheduledResult, error) {
+		return loaded.CallScheduled(ctx, scheduled)
+	})
 	if err != nil {
 		host.logf("plugin %s: scheduled for %s failed", call.target.Key, service.ID)
 		return scheduledRetry
 	}
-	var result struct {
-		Next       *float64        `json:"next"`
-		Credential json.RawMessage `json:"credential"`
-		Balance    *Balance        `json:"balance"`
-		KeyStatus  string          `json:"keyStatus"`
-		Notify     json.RawMessage `json:"notify"`
-	}
-	if trimmed := bytes.TrimSpace(raw); len(trimmed) > 0 && !bytes.Equal(trimmed, []byte("null")) {
-		if err := json.Unmarshal(raw, &result); err != nil {
-			return scheduledRetry
-		}
-	}
-	if len(result.Credential) > 0 && call.relay.credential != nil {
+	if result.Credential != nil && call.relay.credential != nil {
 		updated := *call.relay.credential
 		updated.Data = result.Credential
 		host.saveCredential(ctx, service.ID, updated)
 	}
 	var balance *Balance
 	if result.Balance != nil {
-		balance, _ = checkBalance(*result.Balance)
+		balance = balanceOf(*result.Balance)
 	}
-	notice := localizedOf(result.Notify, host.Settings().Language)
+	notice := localizedIn(result.Notify, host.Settings().Language)
 	host.providers.update(service.ID, func(state *ProviderState) {
 		if balance != nil {
 			state.Balance, state.UpdatedAt, state.Error = balance, time.Now(), ""
@@ -556,9 +471,6 @@ func (host *Host) RunScheduled(ctx context.Context, service contract.Service) ti
 	if notice != "" {
 		host.logf("plugin %s about %s: %s", call.target.Key, service.Name, notice)
 	}
-	next := scheduledDefault
-	if result.Next != nil && !math.IsNaN(*result.Next) && !math.IsInf(*result.Next, 0) {
-		next = time.Duration(*result.Next * float64(time.Second))
-	}
-	return min(max(next, scheduledMin), scheduledMax)
+	next := result.Next
+	return next
 }

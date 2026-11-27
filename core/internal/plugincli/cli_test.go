@@ -15,6 +15,7 @@ import (
 
 	"github.com/QuantumNous/astrlink/core/internal/plugin"
 	"github.com/QuantumNous/astrlink/core/internal/pluginbuild"
+	"github.com/QuantumNous/new-api/pluginkit"
 )
 
 func run(t *testing.T, env Environment, args ...string) (int, string, string) {
@@ -96,7 +97,7 @@ func TestNewStartsANewAPIPluginByDefault(t *testing.T) {
 	for _, key := range []string{
 		"Bad_Key",
 		"_filter",
-		strings.Repeat("a", plugin.NewAPIKeyLength+1),
+		strings.Repeat("a", pluginkit.MaxPluginKeyLength+1),
 		// The paths of the gateways, and prefixes New API's built-in
 		// plugins own.
 		"v1",
@@ -109,7 +110,7 @@ func TestNewStartsANewAPIPluginByDefault(t *testing.T) {
 			t.Errorf("new %s = %d: %s", key, code, stderr)
 		}
 	}
-	if code, _, stderr := run(t, Environment{}, "new", strings.Repeat("a", plugin.NewAPIKeyLength), "--template", "task", "--dir", parent); code != 0 {
+	if code, _, stderr := run(t, Environment{}, "new", strings.Repeat("a", pluginkit.MaxPluginKeyLength), "--template", "task", "--dir", parent); code != 0 {
 		t.Errorf("new with the longest key = %d: %s", code, stderr)
 	}
 }

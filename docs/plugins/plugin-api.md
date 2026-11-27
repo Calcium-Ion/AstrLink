@@ -682,8 +682,10 @@ AstrLink 也能运行 [new-api](https://github.com/QuantumNous/new-api)
 - 一个任务插件就是一个 `plugin.js`：导出 `meta` 和一组同步钩子，不能
   `import`。目录里只有它、没有 `package.json`，并且导出 `buildSubmitRequest`
   时，AstrLink 把它当作任务插件：原样安装，不经过构建，文件的 sha256 和市场列出的一致。
-- 任务插件运行在单独的配置里：没有 `astrlink.*` 和 Node 的模块，有 new-api 的
-  `utils`（JSON、Base64、HMAC、JWT、火山引擎签名和只读的 `utils.fetch`）和
+- 任务插件由 new-api 的同一套代码加载和运行，检查规则和行为都和 new-api 一致：没有
+  `astrlink.*` 和 Node 的模块，有 new-api 的
+  `utils`（JSON、Base64、哈希、HMAC、JWT、RS256 签名、火山引擎签名和
+  `utils.fetch`）和只有 `console.log` 的
   `console`。时间、内存和输入大小照样有上限。
 - 插件只做数据转换：选提供商、发请求、存任务、查询进度和下载结果都由网关完成。插件构造的请求只能发往提供商的地址和插件声明的主机，密钥由网关加上。
 - 插件页把任务插件和供应商适配器一起放在「供应商」分组里。
@@ -761,6 +763,36 @@ astrlink plugin test plugin.js --fixture golden.json
 `openai_responses.decodeRequest`；`expected` 要求结果相等，`expectedError`
 要求失败的消息包含这段文字。不写 `--fixture` 时跑
 `tests/*.json`。`astrlink plugin check plugin.js` 按网关加载的方式检查。
+
+### 从旧版本升级
+
+装好的 new-api 插件不用重装，下次启动时按 new-api 的规则重新加载。旧版本放过、new-api 不认的插件这时会加载失败，插件页显示原因。下面这些会失败：
+
+- 插件 key 超过 30 个字符（旧版本允许 64 个）。
+- `usageSchema`、`usageExamples`、`usageProfiles`、`samples`
+  写得不对；旧版本不检查，原样保存。
+- 列表里有重复项：`models`（不分大小写）、`channelTypes`、`upstreams`、
+  `requiredCapabilities`、协议的 `supports`、`submitResponseTypes`。
+- 清单里有不认识的字段，`routes` 的方法、`taskIdParam`
+  或标识写得不对，声明了插件没有实现的协议。
+- `allowedHosts`、`website`、`icon`、`baseUrl` 和多语言文字的写法不对。
+- 用了 `async`、`await`、`import` 或 `export … from`。
+
+运行时的变化：
+
+- `console` 只有 `log`，调用 `console.warn`、`info`、`error`、`debug` 会出错。
+- `utils.volcSignV4` 只认大写开头的字段，不写 `method` 时不再默认
+  `POST`；查询串里有空格时算出的签名和旧版本不同。
+- `base64` 系列函数会把非字符串参数转成字符串，解码时严格校验。
+- 钩子返回的请求头必须是字符串。
+- 旧版本总会传 `req.media`，没有文件时为空数组；现在没有文件时不传这个成员。
+
+new-api 插件的新上限（AstrLink 自己格式的插件不变，仍是 64 MiB）：
+
+| 项                 | 上限                                                   |
+| ------------------ | ------------------------------------------------------ |
+| `utils.fetch`      | 请求体 1 MiB；每次应答 4 MiB，每次调用的应答合计 8 MiB |
+| `utils.json.clone` | 4 MiB，嵌套 32 层，32,768 个值                         |
 
 ## 宿主函数
 

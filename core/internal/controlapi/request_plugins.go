@@ -43,19 +43,13 @@ func (handler *Handler) checkRequestPlugins(ctx context.Context, instances []con
 		if target == nil || target.NewAPI() == nil || !target.NewAPI().HasRequestPart() {
 			return fmt.Errorf("%s: %s is not an installed plugin with a request processing part", instance.Name, instance.Plugin)
 		}
-		meta := target.NewAPI()
-		checked, err := meta.Config().CheckConfig(instance.Config)
+		call, cancel := context.WithTimeout(ctx, validateConfigTime)
+		_, _, err := plugin.CallNewAPI(call, target, "validateConfig", plugin.CallOptions{}, func(ctx context.Context, loaded *plugin.NewAPIPlugin) (json.RawMessage, error) {
+			return loaded.ValidateConfig(instance.Config)
+		})
+		cancel()
 		if err != nil {
-			return fmt.Errorf("%s: the config %v", instance.Name, err)
-		}
-		if target.HasTaskHook("validateConfig") {
-			config, _ := meta.Config().HookConfig(checked)
-			call, cancel := context.WithTimeout(ctx, validateConfigTime)
-			_, _, err := target.CallTask(call, "validateConfig", []any{json.RawMessage(config)}, plugin.CallOptions{})
-			cancel()
-			if err != nil {
-				return fmt.Errorf("%s: %s", instance.Name, validateConfigMessage(err))
-			}
+			return fmt.Errorf("%s: %s", instance.Name, validateConfigMessage(err))
 		}
 	}
 	return nil

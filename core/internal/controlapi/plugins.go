@@ -17,6 +17,7 @@ import (
 	"github.com/QuantumNous/astrlink/core/internal/plugin/view"
 	"github.com/QuantumNous/astrlink/core/internal/storage"
 	"github.com/QuantumNous/astrlink/core/internal/taskplugin"
+	"github.com/QuantumNous/new-api/pluginkit"
 )
 
 const PluginsPath = "/control/v1/plugins"
@@ -228,19 +229,19 @@ func (handler *Handler) pluginSummary(target *plugin.Plugin, language string) co
 		}
 	} else if meta := target.NewAPI(); meta != nil {
 		summary.Kind = contract.PluginKindProvider
-		if len(meta.Relay) == 0 && meta.HasRequestPart() {
+		if len(meta.Meta.Relay) == 0 && meta.HasRequestPart() {
 			summary.Kind = contract.PluginKindRequest
 		}
 	} else if target.Loaded() {
 		summary.Kind = contract.PluginKindExtension
 	}
-	if meta := target.NewAPI(); meta != nil && len(meta.Relay) > 0 && target.Enabled() {
+	if meta := target.NewAPI(); meta != nil && len(meta.Meta.Relay) > 0 && target.Enabled() {
 		summary.Providers = append(summary.Providers, handler.relayProvider(meta, language))
 	}
 	if meta := target.NewAPI(); meta.HasRequestPart() {
 		summary.Request = &contract.PluginRequestPart{
-			Stages: slices.Clone(meta.Stages()), ConfigSchema: meta.ConfigSchema, Optional: meta.Optional, Description: meta.Description.In(language),
-			Samples: meta.Samples,
+			Stages: slices.Clone(meta.TransformHooks()), ConfigSchema: meta.Meta.ConfigSchemaJSON(), Optional: meta.Meta.Optional,
+			Description: meta.Meta.Description.Text(language), Samples: requestSamples(meta.Meta.Samples),
 		}
 	}
 	if !target.Loaded() {
@@ -905,4 +906,17 @@ func serverOrigins(meta plugin.Meta, settings storage.PluginSettingsRecord, stor
 		return nil, nil, errors.New("a plugin may reach at most 16 origins")
 	}
 	return origins, binds, nil
+}
+
+// requestSamples are a plugin's samples as the plugin page reads them, nil
+// for none.
+func requestSamples(samples []pluginkit.Sample) json.RawMessage {
+	if len(samples) == 0 {
+		return nil
+	}
+	encoded, err := json.Marshal(samples)
+	if err != nil {
+		return nil
+	}
+	return encoded
 }

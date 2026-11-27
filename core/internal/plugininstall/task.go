@@ -106,10 +106,10 @@ func (installer *Installer) stageTask(ctx context.Context, text string, files ta
 		return nil, err
 	}
 	icon, iconName := files.icon, files.iconName
-	if icon == nil && checked.Task.Icon != "" && !strings.HasPrefix(checked.Task.Icon, "text") {
-		fetched, err := installer.lobeIcon(ctx, checked.Task.Icon)
+	if icon == nil && checked.Task.Meta.Icon != "" && !strings.HasPrefix(checked.Task.Meta.Icon, "text") {
+		fetched, err := installer.lobeIcon(ctx, checked.Task.Meta.Icon)
 		if err != nil {
-			staged.warnings = append(staged.warnings, contract.PluginInstallWarning{Code: contract.PluginWarningIcon, Detail: checked.Task.Icon})
+			staged.warnings = append(staged.warnings, contract.PluginInstallWarning{Code: contract.PluginWarningIcon, Detail: checked.Task.Meta.Icon})
 		} else {
 			icon, iconName = fetched, "icon.svg"
 		}
@@ -145,13 +145,13 @@ func (installer *Installer) taskReview(staged *stagedTask, pluginBytes int, reco
 	switch {
 	case meta.HasTaskPart():
 		review.Kind, review.Task = contract.PluginKindTask, taskplugin.Summary(meta, language)
-	case len(meta.Relay) == 0 && meta.HasRequestPart():
+	case len(meta.Meta.Relay) == 0 && meta.HasRequestPart():
 		review.Kind = contract.PluginKindRequest
 	default:
 		review.Kind = contract.PluginKindProvider
 	}
-	review.Description, review.Author = meta.Description.In(language), meta.Author.Name
-	for _, route := range meta.Relay {
+	review.Description, review.Author = meta.Meta.Description.Text(language), meta.Meta.Author.Name
+	for _, route := range meta.Meta.Relay {
 		if plugin.RelayProtocol(route.IncomingPath) == "" {
 			review.Warnings = append(review.Warnings, contract.PluginInstallWarning{Code: contract.PluginWarningRoute, Detail: route.IncomingPath})
 		}
@@ -217,13 +217,13 @@ func (installer *Installer) buildTask(ctx context.Context, from origin, work, so
 		return contract.PluginInstallReview{}, contract.PluginInstallRecord{}, err
 	}
 	sum := sha256.Sum256([]byte(text))
-	record := contract.PluginInstallRecord{Source: from.source, Version: staged.checked.Task.Version, Outputs: staged.outputs}
+	record := contract.PluginInstallRecord{Source: from.source, Version: staged.checked.Task.Meta.Version, Outputs: staged.outputs}
 	// A marketplace's own repository on GitHub installs as from the
 	// marketplace, which an update follows.
 	if index, err := os.ReadFile(filepath.Join(extras, "index.json")); err == nil && from.resolved != nil {
 		file := path.Join(from.resolved.Subdir, "plugin.js")
 		if market, err := parseIndex(index); err == nil {
-			if entry, version := market.find(staged.checked.Task.Key, staged.checked.Task.Version); version != nil && version.Path == file && strings.EqualFold(version.SHA256, hex.EncodeToString(sum[:])) {
+			if entry, version := market.find(staged.checked.Task.Meta.Key, staged.checked.Task.Meta.Version); version != nil && version.Path == file && strings.EqualFold(version.SHA256, hex.EncodeToString(sum[:])) {
 				record.Source = contract.PluginInstallSource{
 					Kind: contract.PluginSourceMarket, Repository: market.Name, URL: from.source.URL, Index: repositoryIndex(*from.resolved),
 					Key: entry.Key, Ref: version.Version, RefKind: contract.PluginRefVersion, Commit: version.SHA256,

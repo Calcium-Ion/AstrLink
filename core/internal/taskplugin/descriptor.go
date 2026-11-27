@@ -18,34 +18,13 @@ import (
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/plugin"
 	"github.com/QuantumNous/astrlink/core/internal/transport"
+	"github.com/QuantumNous/new-api/pluginkit"
 )
 
 // descriptor is a RequestDescriptor: the upstream request a hook
-// describes.
+// describes, as pluginkit read it.
 type descriptor struct {
-	ResponseType   string                     `json:"responseType"`
-	URL            string                     `json:"url"`
-	Method         string                     `json:"method"`
-	Headers        map[string]json.RawMessage `json:"headers"`
-	Body           json.RawMessage            `json:"body"`
-	Credentialless bool                       `json:"credentialless"`
-	Action         string                     `json:"action"`
-	Model          string                     `json:"model"`
-	RewriteModel   string                     `json:"rewriteModel"`
-	BodyType       string                     `json:"bodyType"`
-	Parts          []descriptorPart           `json:"parts"`
-	// ContentPath, of buildContentRequest alone, is where the artifact's
-	// bytes are in base64 in the JSON reply of a long-running operation;
-	// MimeType is their media type.
-	ContentPath []json.RawMessage `json:"contentPath"`
-	MimeType    string            `json:"mimeType"`
-}
-
-type descriptorPart struct {
-	Name     string          `json:"name"`
-	Value    json.RawMessage `json:"value"`
-	FileRef  string          `json:"fileRef"`
-	Filename string          `json:"filename"`
+	pluginkit.RequestDescriptor
 }
 
 // descriptorHeaders are the headers a descriptor may not set: the
@@ -59,44 +38,31 @@ var descriptorHeaders = map[string]bool{
 // maxRedirects bounds the redirects a credentialless download follows.
 const maxRedirects = 5
 
-func parseDescriptor(hook string, raw json.RawMessage) (*descriptor, error) {
-	var parsed descriptor
-	if len(bytes.TrimSpace(raw)) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
-		return nil, failure(http.StatusBadGateway, "plugin_error", "%s returned no request", hook)
+// buildRequest runs hook, one that describes an upstream request, with
+// args and checks what the host owns of its answer.
+func (call *exchange) buildRequest(ctx context.Context, hook string, args ...any) (*descriptor, error) {
+	built, err := callHook(ctx, call, hook, func(ctx context.Context, loaded *plugin.NewAPIPlugin) (pluginkit.RequestDescriptor, error) {
+		return loaded.CallRequestDescriptor(ctx, hook, args...)
+	})
+	if err != nil {
+		return nil, err
 	}
-	if err := json.Unmarshal(raw, &parsed); err != nil {
-		return nil, failure(http.StatusBadGateway, "plugin_error", "%s returned a request that is not a request descriptor", hook)
+	if built.ResponseType != "" && built.ResponseType != "json" && built.ResponseType != "sse" {
+		return nil, failure(http.StatusBadGateway, "plugin_error", "%s returned the responseType %q", hook, built.ResponseType)
 	}
-	if parsed.ResponseType != "" && parsed.ResponseType != "json" && parsed.ResponseType != "sse" {
-		return nil, failure(http.StatusBadGateway, "plugin_error", "%s returned the responseType %q", hook, parsed.ResponseType)
+	if built.BodyType != "" && built.BodyType != "json" && built.BodyType != "multipart" {
+		return nil, failure(http.StatusBadGateway, "plugin_error", "%s returned the bodyType %q", hook, built.BodyType)
 	}
-	if parsed.BodyType != "" && parsed.BodyType != "json" && parsed.BodyType != "multipart" {
-		return nil, failure(http.StatusBadGateway, "plugin_error", "%s returned the bodyType %q", hook, parsed.BodyType)
-	}
-	return &parsed, nil
+	return &descriptor{built}, nil
 }
 
-// headers are the descriptor's headers, each scalar as text.
+// headers are the descriptor's headers but those the transport owns.
 func (desc *descriptor) headers() (http.Header, error) {
 	headers := http.Header{}
-	for name, raw := range desc.Headers {
+	for name, value := range desc.Headers {
 		canonical := http.CanonicalHeaderKey(strings.TrimSpace(name))
 		if canonical == "" || descriptorHeaders[canonical] || strings.ContainsAny(canonical, " \t\r\n:") {
 			continue
-		}
-		var value string
-		if err := json.Unmarshal(raw, &value); err != nil {
-			var scalar any
-			if json.Unmarshal(raw, &scalar) != nil {
-				return nil, fmt.Errorf("the header %s is not text", canonical)
-			}
-			switch scalar.(type) {
-			case nil:
-				continue
-			case map[string]any, []any:
-				return nil, fmt.Errorf("the header %s is not text", canonical)
-			}
-			value = strings.TrimSpace(string(raw))
 		}
 		if strings.ContainsAny(value, "\r\n") {
 			return nil, fmt.Errorf("the header %s holds a line break", canonical)
@@ -106,13 +72,25 @@ func (desc *descriptor) headers() (http.Header, error) {
 	return headers, nil
 }
 
+// hasBody reports whether the descriptor has a body.
+func (desc *descriptor) hasBody() bool { return desc.Body != nil }
+
+// jsonBody is the descriptor's body as JSON text: as the plugin wrote it
+// for one that keeps JSON order, else its members sorted by key.
+func (desc *descriptor) jsonBody() (json.RawMessage, error) {
+	if desc.BodyText != nil {
+		return desc.BodyText, nil
+	}
+	return marshalOrdered(desc.Body)
+}
+
 // exchange is one upstream request a hook described, and the provider and
 // plugin it goes through.
 type exchange struct {
 	engine      *Engine
 	target      *plugin.Plugin
 	service     contract.Service
-	meta        *plugin.TaskMeta
+	meta        *plugin.NewAPIPlugin
 	credentials credentials
 	body        *Body
 }
@@ -127,7 +105,7 @@ func (call *exchange) send(ctx context.Context, hook string, desc *descriptor, c
 	}
 	target.Fragment = ""
 	method := strings.ToUpper(strings.TrimSpace(desc.Method))
-	hasBody := len(bytes.TrimSpace(desc.Body)) > 0 && !bytes.Equal(bytes.TrimSpace(desc.Body), []byte("null"))
+	hasBody := desc.hasBody()
 	if method == "" {
 		method = http.MethodGet
 		if hasBody || desc.BodyType == "multipart" {
@@ -159,11 +137,13 @@ func (call *exchange) send(ctx context.Context, hook string, desc *descriptor, c
 		payload = bytes.NewReader(data)
 		headers.Set("Content-Type", contentType)
 	case hasBody:
-		trimmed := bytes.TrimSpace(desc.Body)
-		var text string
-		if trimmed[0] == '"' && json.Unmarshal(trimmed, &text) == nil {
+		if text, ok := desc.Body.(string); ok {
 			payload = strings.NewReader(text)
 		} else {
+			trimmed, err := desc.jsonBody()
+			if err != nil {
+				return nil, failure(http.StatusBadGateway, "plugin_error", "%s returned a body that is not JSON", hook)
+			}
 			inlined, err := inlineFiles(trimmed, call.body)
 			if err != nil {
 				return nil, failure(http.StatusBadRequest, "invalid_request", "%v", err)
@@ -278,7 +258,7 @@ func publicAddress(ctx context.Context, target *url.URL) error {
 
 // multipartBody builds a multipart request from parts: values as text,
 // files from the client's uploads.
-func multipartBody(parts []descriptorPart, body *Body) ([]byte, string, error) {
+func multipartBody(parts []pluginkit.RequestPart, body *Body) ([]byte, string, error) {
 	var buffer bytes.Buffer
 	writer := multipart.NewWriter(&buffer)
 	for _, part := range parts {
@@ -310,14 +290,16 @@ func multipartBody(parts []descriptorPart, body *Body) ([]byte, string, error) {
 			}
 			continue
 		}
-		trimmed := bytes.TrimSpace(part.Value)
-		if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		if part.Value == nil {
 			continue
 		}
-		value := string(trimmed)
-		var text string
-		if trimmed[0] == '"' && json.Unmarshal(trimmed, &text) == nil {
-			value = text
+		value, ok := part.Value.(string)
+		if !ok {
+			encoded, err := marshalOrdered(part.Value)
+			if err != nil {
+				return nil, "", fmt.Errorf("the part %s is not text", part.Name)
+			}
+			value = string(encoded)
 		}
 		if err := writer.WriteField(part.Name, value); err != nil {
 			return nil, "", err
@@ -327,19 +309,6 @@ func multipartBody(parts []descriptorPart, body *Body) ([]byte, string, error) {
 		return nil, "", err
 	}
 	return buffer.Bytes(), writer.FormDataContentType(), nil
-}
-
-// upstreamResponse is the UpstreamResponse a parse hook reads.
-type upstreamResponse struct {
-	StatusCode int                 `json:"statusCode"`
-	Headers    map[string][]string `json:"headers"`
-	Body       json.RawMessage     `json:"body"`
-}
-
-// hookResponse is the HookHTTPResponse the poll hooks read beside the body.
-type hookResponse struct {
-	Status  int               `json:"status"`
-	Headers map[string]string `json:"headers"`
 }
 
 func firstHeaders(header http.Header) map[string]string {

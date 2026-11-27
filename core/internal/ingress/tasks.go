@@ -323,7 +323,7 @@ func writeTaskError(writer http.ResponseWriter, err error) {
 // taskCandidates are the providers a submission may run on: those routing
 // chooses for the model, bound to a task plugin that serves it on surface,
 // optionally only the plugins pluginKeys names.
-func (current *taskRequest) taskCandidates(protocol contract.ProtocolID, model string, stream bool, serves func(*plugin.TaskMeta) bool) ([]endpoint.Resolved, error) {
+func (current *taskRequest) taskCandidates(protocol contract.ProtocolID, model string, stream bool, serves func(*plugin.NewAPIPlugin) bool) ([]endpoint.Resolved, error) {
 	pinned, ok := requestedService(current.request)
 	if !ok {
 		return nil, &taskplugin.Error{Status: http.StatusBadRequest, Code: "invalid_request", Message: ServiceHeader + " must hold one API provider ID"}
@@ -355,7 +355,7 @@ func (current *taskRequest) taskCandidates(protocol contract.ProtocolID, model s
 
 // fixedCandidates keeps the given providers whose task plugin serves the
 // request, whether routing would choose them or not.
-func (current *taskRequest) fixedCandidates(fixed []endpoint.Resolved, model string, serves func(*plugin.TaskMeta) bool) ([]endpoint.Resolved, error) {
+func (current *taskRequest) fixedCandidates(fixed []endpoint.Resolved, model string, serves func(*plugin.NewAPIPlugin) bool) ([]endpoint.Resolved, error) {
 	var candidates []endpoint.Resolved
 	for _, candidate := range fixed {
 		service := candidate.CanonicalService()
@@ -479,7 +479,7 @@ func (handler *Handler) runTaskProtocol(writer http.ResponseWriter, request *htt
 			mode = plugin.TaskModeSync
 		}
 	}
-	serves := func(meta *plugin.TaskMeta) bool {
+	serves := func(meta *plugin.NewAPIPlugin) bool {
 		if !meta.ServesProtocol(protocol, model) {
 			return false
 		}
@@ -867,7 +867,7 @@ func (handler *Handler) remixVideo(writer http.ResponseWriter, request *http.Req
 		current.fail(&taskplugin.Error{Status: http.StatusBadRequest, Code: "invalid_request", Message: "a remix takes a JSON body"})
 		return
 	}
-	candidates, err := current.taskCandidates(contract.ProtocolOpenAIVideos, origin.Model, false, func(meta *plugin.TaskMeta) bool { return meta.Key == origin.PluginKey })
+	candidates, err := current.taskCandidates(contract.ProtocolOpenAIVideos, origin.Model, false, func(meta *plugin.NewAPIPlugin) bool { return meta.Meta.Key == origin.PluginKey })
 	if err != nil {
 		current.fail(err)
 		return
@@ -990,8 +990,8 @@ func (handler *Handler) submitTaskIntent(writer http.ResponseWriter, request *ht
 		intent.RequestBody = intent.RequestBodyV2
 	}
 	current.session.classified.Model = intent.Model
-	candidates, err := current.taskCandidates(contract.ProtocolPluginNative, intent.Model, false, func(found *plugin.TaskMeta) bool {
-		return found.Key == pluginKey && slices.Contains(found.Models, intent.Model)
+	candidates, err := current.taskCandidates(contract.ProtocolPluginNative, intent.Model, false, func(found *plugin.NewAPIPlugin) bool {
+		return found.Meta.Key == pluginKey && slices.Contains(found.Meta.Models, intent.Model)
 	})
 	if err != nil {
 		current.fail(err)
@@ -1108,8 +1108,8 @@ func (handler *Handler) serveNativeRoute(writer http.ResponseWriter, request *ht
 		return
 	}
 	native.Body = current.body
-	candidates, err := current.taskCandidates(contract.ProtocolPluginNative, intent.Model, false, func(meta *plugin.TaskMeta) bool {
-		return meta.Key == route.Plugin && slices.Contains(meta.Models, intent.Model)
+	candidates, err := current.taskCandidates(contract.ProtocolPluginNative, intent.Model, false, func(meta *plugin.NewAPIPlugin) bool {
+		return meta.Meta.Key == route.Plugin && slices.Contains(meta.Meta.Models, intent.Model)
 	})
 	if err != nil {
 		answerError(current.writer, err)

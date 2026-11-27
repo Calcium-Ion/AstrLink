@@ -18,6 +18,7 @@ import (
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/plugin"
 	"github.com/QuantumNous/astrlink/core/internal/storage"
+	"github.com/QuantumNous/new-api/pluginkit"
 )
 
 // Request is what the decoders, presenters and renderers read of a
@@ -95,13 +96,9 @@ func (engine *Engine) Decode(ctx context.Context, pluginKey, hook string, reques
 	if err != nil {
 		return Intent{}, err
 	}
-	raw, err := engine.renderCall(ctx, target, hook, request.view(meta.Has("json-order@1"), nil, nil))
+	intent, err := engine.decode(ctx, target, hook, request)
 	if err != nil {
 		return Intent{}, err
-	}
-	var intent Intent
-	if err := json.Unmarshal(raw, &intent); err != nil {
-		return Intent{}, failure(http.StatusBadGateway, "plugin_error", "%s returned something other than an intent", hook)
 	}
 	switch intent.Kind {
 	case "submit":
@@ -116,8 +113,8 @@ func (engine *Engine) Decode(ctx context.Context, pluginKey, hook string, reques
 		if strings.TrimSpace(intent.Model) == "" {
 			return Intent{}, failure(http.StatusBadRequest, "invalid_request", "the request names no model")
 		}
-		if !slices.Contains(meta.Models, intent.Model) {
-			return Intent{}, failure(http.StatusBadRequest, "model_not_supported", "the task plugin %s does not serve the model %s", meta.Key, intent.Model)
+		if !slices.Contains(meta.Meta.Models, intent.Model) {
+			return Intent{}, failure(http.StatusBadRequest, "model_not_supported", "the task plugin %s does not serve the model %s", meta.Meta.Key, intent.Model)
 		}
 	case "query":
 		if request.Protocol != "" || len(intent.TaskIDs) == 0 {
@@ -125,6 +122,52 @@ func (engine *Engine) Decode(ctx context.Context, pluginKey, hook string, reques
 		}
 	default:
 		return Intent{}, failure(http.StatusBadGateway, "plugin_error", "%s returned the intent kind %q", hook, intent.Kind)
+	}
+	return intent, nil
+}
+
+// decode runs hook, a protocol's decodeRequest or a native route's
+// decoder, through pluginkit, which gives the plugin the request as New API
+// does.
+func (engine *Engine) decode(ctx context.Context, target *plugin.Plugin, hook string, request Request) (Intent, error) {
+	headers := clientHeaders(request.Headers)
+	for _, name := range []string{"Content-Type", "Accept"} {
+		if _, ok := headers[name]; !ok {
+			headers[name] = ""
+		}
+	}
+	params, query := request.Params, map[string][]string(request.Query)
+	route := pluginkit.RouteRequestContext{
+		Path: request.Path, Method: request.Method, Params: params, Query: query, Headers: headers,
+		Body: plugin.NewAPIValue(request.Body.decoded(false)),
+	}
+	if request.Body != nil && request.Body.Kind == BodyJSON {
+		route.BodyText = request.Body.JSON
+	}
+	exchange := &exchange{engine: engine, target: target, meta: target.Task()}
+	decoded, err := callHook(ctx, exchange, hook, func(ctx context.Context, loaded *plugin.NewAPIPlugin) (pluginkit.DecodedRequest, error) {
+		if protocol, ok := strings.CutSuffix(strings.TrimPrefix(hook, "protocols."), ".decodeRequest"); ok && strings.HasPrefix(hook, "protocols.") {
+			upstream := request.UpstreamModel
+			if upstream == request.Model {
+				upstream = ""
+			}
+			return loaded.CallProtocolDecode(ctx, 0, protocol, pluginkit.ProtocolRequestContext{
+				RouteRequestContext: route, Protocol: request.Protocol, Operation: request.Operation, Model: request.Model,
+				UpstreamModel: upstream, Stream: request.Stream,
+			})
+		}
+		return loaded.CallRouteDecode(ctx, 0, strings.TrimPrefix(hook, "native."), route)
+	})
+	if err != nil {
+		return Intent{}, err
+	}
+	var intent Intent
+	encoded, err := json.Marshal(decoded.Result)
+	if err != nil || decoded.Result == nil || json.Unmarshal(encoded, &intent) != nil {
+		return Intent{}, failure(http.StatusBadGateway, "plugin_error", "%s returned something other than an intent", hook)
+	}
+	if decoded.RequestBodyText != nil {
+		intent.RequestBody = decoded.RequestBodyText
 	}
 	return intent, nil
 }
@@ -368,7 +411,7 @@ func (engine *Engine) fetchImage(ctx context.Context, service contract.Service, 
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	call := &exchange{engine: engine, service: service}
-	response, err := call.download(ctx, "openai_image", http.MethodGet, target, &descriptor{}, false, nil)
+	response, err := call.download(ctx, plugin.TaskProtocolImage, http.MethodGet, target, &descriptor{}, false, nil)
 	if err != nil {
 		return nil, err
 	}

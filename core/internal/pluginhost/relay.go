@@ -21,6 +21,7 @@ import (
 	"github.com/QuantumNous/astrlink/core/internal/jsonpatch"
 	"github.com/QuantumNous/astrlink/core/internal/plugin"
 	"github.com/QuantumNous/astrlink/core/internal/transport"
+	"github.com/QuantumNous/new-api/pluginkit"
 )
 
 // A provider of a new-api plugin's provider part relays requests over the
@@ -59,7 +60,7 @@ var relayBillingMembers = []string{
 // over.
 type relayTarget struct {
 	plugin *plugin.Plugin
-	meta   *plugin.TaskMeta
+	meta   *plugin.NewAPIPlugin
 	route  *plugin.RelayRoute
 	config json.RawMessage
 	// token is the exchangeKey token of the provider's key, nil without
@@ -138,15 +139,15 @@ func (host *Host) relayFor(service contract.Service, attempt ProviderAttempt) (*
 		return nil, errProviderUnavailable
 	}
 	meta := target.NewAPI()
-	if meta == nil || len(meta.Relay) == 0 {
+	if meta == nil || len(meta.Meta.Relay) == 0 {
 		return nil, errProviderUnavailable
 	}
 	route := meta.RelayRouteFor(attempt.ClientPath, attempt.Model)
 	switch {
 	case route == nil:
 		return nil, fmt.Errorf("the plugin's routes do not serve %s for %s", attempt.ClientPath, attempt.Model)
-	case route.UpstreamProtocol() != attempt.Protocol:
-		return nil, fmt.Errorf("the route of %s for %s sends %s, not %s", attempt.ClientPath, attempt.Model, route.UpstreamProtocol(), attempt.Protocol)
+	case plugin.RelayUpstreamProtocol(*route) != attempt.Protocol:
+		return nil, fmt.Errorf("the route of %s for %s sends %s, not %s", attempt.ClientPath, attempt.Model, plugin.RelayUpstreamProtocol(*route), attempt.Protocol)
 	}
 	return &relayTarget{plugin: target, meta: meta, route: route, config: RelayConfig(meta, service.Plugin.Settings)}, nil
 }
@@ -168,31 +169,20 @@ func (host *Host) RelayUpstreamProtocol(service contract.Service, clientPath, mo
 	if route == nil {
 		return "", false
 	}
-	return route.UpstreamProtocol(), true
+	return plugin.RelayUpstreamProtocol(*route), true
 }
 
 // RelayConfig is ctx.config of a relay provider's hooks: its settings over
-// the defaults of the plugin's channel config, with only the fields the
-// schema declares when it has one.
-func RelayConfig(meta *plugin.TaskMeta, settings json.RawMessage) json.RawMessage {
-	merged := meta.ChannelConfigDefaults()
-	var stored map[string]json.RawMessage
-	if len(settings) > 0 && json.Unmarshal(settings, &stored) == nil {
-		var schema struct {
-			Properties map[string]json.RawMessage `json:"properties"`
-		}
-		_ = json.Unmarshal(meta.ChannelConfig, &schema)
-		for name, value := range stored {
-			if _, declared := schema.Properties[name]; declared {
-				merged[name] = value
-			}
-		}
+// the defaults of the plugin's channel config, as New API reads a channel's
+// plugin config.
+func RelayConfig(meta *plugin.NewAPIPlugin, settings json.RawMessage) json.RawMessage {
+	if len(bytes.TrimSpace(settings)) == 0 {
+		settings = nil
 	}
-	encoded, err := json.Marshal(merged)
-	if err != nil {
-		return json.RawMessage("{}")
+	if config := meta.ChannelConfigFor(settings); len(config) > 0 {
+		return config
 	}
-	return encoded
+	return json.RawMessage("{}")
 }
 
 // serviceKey is the provider's key, as the gateway put it in the headers
@@ -220,7 +210,7 @@ func serviceKey(service contract.Service, headers http.Header) string {
 // root it returns is what a hook's path replaces the route's path on.
 func relayAddress(base *url.URL, route *plugin.RelayRoute, model string, stream bool, config json.RawMessage) (*url.URL, *url.URL, error) {
 	upstream := strings.ReplaceAll(route.UpstreamPath, "{model}", url.PathEscape(model))
-	if stream && route.UpstreamProtocol() == contract.ProtocolGoogleGenerateContent {
+	if stream && plugin.RelayUpstreamProtocol(*route) == contract.ProtocolGoogleGenerateContent {
 		upstream = strings.Replace(upstream, ":generateContent", ":streamGenerateContent", 1)
 	}
 	root := base
@@ -282,13 +272,6 @@ type relayEffect struct {
 	Remove []string              `json:"remove"`
 }
 
-// relayPrepared is what prepareRequest returns.
-type relayPrepared struct {
-	Effects []relayEffect `json:"effects"`
-	Path    string        `json:"path"`
-	URL     string        `json:"url"`
-}
-
 // relayRefusal is a request the plugin's effects cannot apply to: the
 // gateway answers it without trying another provider.
 type relayRefusal struct{ message string }
@@ -311,24 +294,24 @@ func (relay *relayTarget) prepare(ctx context.Context, baseURL, clientPath, mode
 		}
 		visible[canonical] = values[0]
 	}
-	view := map[string]any{"baseUrl": baseURL, "path": clientPath, "config": relay.config}
-	if relay.token != nil {
-		view["token"] = relay.token
-	}
-	request := map[string]any{
-		"path": clientPath, "upstreamPath": address.Path, "model": model, "stream": stream,
-		"body": json.RawMessage(body), "headers": visible,
-	}
-	raw, err := relay.call(ctx, "prepareRequest", view, request)
+	input := pluginkit.PrepareInput{Path: clientPath, UpstreamPath: address.Path, Model: model, Stream: stream, Body: body, Headers: visible}
+	hookCtx := relay.hookContext(baseURL, clientPath, nil)
+	result, err := callProvider(ctx, relay, "prepareRequest", func(ctx context.Context, loaded *plugin.NewAPIPlugin) (pluginkit.PreparedRequest, error) {
+		return loaded.CallPrepareRequest(ctx, hookCtx, input)
+	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("prepareRequest: %w", err)
 	}
-	if trimmed := bytes.TrimSpace(raw); len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
-		return body, address, nil
+	var prepared struct {
+		Effects []relayEffect
+		Path    string
+		URL     string
 	}
-	var prepared relayPrepared
-	if err := json.Unmarshal(raw, &prepared); err != nil {
-		return nil, nil, errors.New("prepareRequest returned neither null nor {effects, path, url}")
+	prepared.Path, prepared.URL = result.Path, result.URL
+	if result.Effects != nil {
+		if err := json.Unmarshal(result.Effects, &prepared.Effects); err != nil {
+			return nil, nil, &relayRefusal{"prepareRequest returned effects that are not a list of effects"}
+		}
 	}
 	if len(prepared.Effects) > maxRelayEffects {
 		return nil, nil, &relayRefusal{fmt.Sprintf("prepareRequest returned more than %d effects", maxRelayEffects)}
@@ -381,20 +364,15 @@ func (relay *relayTarget) prepare(ctx context.Context, baseURL, clientPath, mode
 	}
 	moved := address
 	switch {
-	case prepared.Path != "" && prepared.URL != "":
-		return nil, nil, errors.New("prepareRequest returned both path and url")
 	case prepared.Path != "":
-		if !strings.HasPrefix(prepared.Path, "/") || strings.HasPrefix(prepared.Path, "//") {
-			return nil, nil, fmt.Errorf("prepareRequest's path %q does not start with a single /", prepared.Path)
-		}
 		moved, err = joinPath(root, prepared.Path)
 		if err != nil {
 			return nil, nil, fmt.Errorf("prepareRequest's path: %w", err)
 		}
 	case prepared.URL != "":
 		parsed, err := url.Parse(prepared.URL)
-		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.User != nil || parsed.Fragment != "" {
-			return nil, nil, fmt.Errorf("prepareRequest's url %q is not an http or https address", prepared.URL)
+		if err != nil {
+			return nil, nil, fmt.Errorf("prepareRequest's url %q is not an address", prepared.URL)
 		}
 		moved = parsed
 	}
@@ -432,27 +410,12 @@ func (relay *relayTarget) sign(ctx context.Context, baseURL, key, method string,
 			headers[http.CanonicalHeaderKey(name)] = values[0]
 		}
 	}
-	var credential any
-	if relay.credential != nil {
-		credential = jsonOrNull(relay.credential.Data)
-	}
-	view := map[string]any{"baseUrl": baseURL, "credential": credential, "apiKey": key, "config": relay.config}
-	if relay.token != nil {
-		view["token"] = relay.token
-	}
-	request := map[string]any{"method": method, "url": address.String(), "headers": headers, "bodySha256": hex.EncodeToString(sum[:])}
-	raw, err := relay.call(ctx, "signRequest", view, request)
+	hookCtx := relay.credentialContext(baseURL, key)
+	signed, err := callProvider(ctx, relay, "signRequest", func(ctx context.Context, loaded *plugin.NewAPIPlugin) (pluginkit.SignResult, error) {
+		return loaded.CallSignRequest(ctx, hookCtx, method, address.String(), headers, hex.EncodeToString(sum[:]))
+	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("signRequest: %w", err)
-	}
-	var signed struct {
-		Headers map[string]string `json:"headers"`
-		Query   map[string]string `json:"query"`
-	}
-	if trimmed := bytes.TrimSpace(raw); len(trimmed) > 0 && !bytes.Equal(trimmed, []byte("null")) {
-		if err := json.Unmarshal(raw, &signed); err != nil {
-			return nil, nil, errors.New("signRequest returned neither {headers, query} nor nothing")
-		}
 	}
 	for name, value := range signed.Headers {
 		if !validHeader(name, value) || http.CanonicalHeaderKey(name) == "Host" || http.CanonicalHeaderKey(name) == "Content-Length" {
@@ -460,14 +423,6 @@ func (relay *relayTarget) sign(ctx context.Context, baseURL, key, method string,
 		}
 	}
 	return signed.Headers, signed.Query, nil
-}
-
-// call runs one of the plugin's provider hooks.
-func (relay *relayTarget) call(ctx context.Context, hook string, args ...any) (json.RawMessage, error) {
-	ctx, cancel := context.WithTimeout(ctx, relayHookTime)
-	defer cancel()
-	result, _, err := relay.plugin.CallTask(ctx, hook, args, plugin.CallOptions{})
-	return result, err
 }
 
 // forwardRelay sends an attempt on a provider of a new-api plugin's
@@ -488,8 +443,8 @@ func (host *Host) forwardRelay(writer http.ResponseWriter, request *http.Request
 			base = configured
 		}
 	}
-	if base == nil && relay.meta.BaseURL != "" {
-		base, _ = url.Parse(relay.meta.BaseURL)
+	if base == nil && relay.meta.Meta.BaseURL != "" {
+		base, _ = url.Parse(relay.meta.Meta.BaseURL)
 	}
 	address, root, err := relayAddress(base, relay.route, attempt.Model, attempt.Stream, relay.config)
 	if err != nil {
@@ -524,7 +479,7 @@ func (host *Host) forwardRelay(writer http.ResponseWriter, request *http.Request
 		}
 		return answerRelay(writer, target, failed)
 	}
-	if relay.route.Plugin() {
+	if plugin.RelayHooks(*relay.route) {
 		header.Del("Authorization")
 		plain := url.Values{}
 		for name, values := range query {
@@ -660,12 +615,11 @@ func (relay *relayTarget) rejected(ctx context.Context, baseURL, clientPath stri
 			headers[http.CanonicalHeaderKey(name)] = values[0]
 		}
 	}
-	view := map[string]any{"baseUrl": baseURL, "path": clientPath, "config": relay.config}
-	if relay.token != nil {
-		view["token"] = relay.token
-	}
-	raw, err := relay.call(ctx, "credentialRejected", view, map[string]any{"status": response.StatusCode, "headers": headers, "body": strings.ToValidUTF8(string(head), "\uFFFD")})
-	return err == nil && bytes.Equal(bytes.TrimSpace(raw), []byte("true")), response
+	hookCtx := relay.hookContext(baseURL, clientPath, nil)
+	rejected, err := callProvider(ctx, relay, "credentialRejected", func(ctx context.Context, loaded *plugin.NewAPIPlugin) (bool, error) {
+		return loaded.CallCredentialRejected(ctx, hookCtx, response.StatusCode, headers, strings.ToValidUTF8(string(head), "\uFFFD"))
+	})
+	return err == nil && rejected, response
 }
 
 // relayTokens keeps the exchangeKey tokens of relay providers in memory,
@@ -695,56 +649,31 @@ func (host *Host) exchange(ctx context.Context, service contract.Service, relay 
 	if base != nil {
 		baseURL = strings.TrimRight(base.String(), "/")
 	}
-	cacheKey := strings.Join([]string{string(service.ID), relay.meta.Version, hex.EncodeToString(sum[:]), baseURL}, "\x00")
+	cacheKey := strings.Join([]string{string(service.ID), relay.meta.Meta.Version, hex.EncodeToString(sum[:]), baseURL}, "\x00")
 	host.relayTokens.mutex.Lock()
 	defer host.relayTokens.mutex.Unlock()
 	if kept, ok := host.relayTokens.tokens[cacheKey]; ok && !renew && (kept.expires.IsZero() || time.Until(kept.expires) > relayTokenMargin) {
 		relay.token = kept.token
 		return nil, nil
 	}
-	allowed := slices.Clone(relay.meta.AllowedHosts)
-	if base != nil {
-		allowed = append(allowed, strings.ToLower(base.Host))
+	hookCtx := pluginkit.CredentialContext{BaseURL: baseURL, APIKey: key, Config: relay.config}
+	type exchanged struct {
+		token  pluginkit.ExchangedToken
+		failed *pluginkit.UpstreamError
 	}
-	call, cancel := context.WithTimeout(ctx, time.Minute)
-	defer cancel()
-	raw, _, err := relay.plugin.CallTask(call, "exchangeKey", []any{map[string]any{"baseUrl": baseURL, "config": relay.config, "apiKey": key}}, plugin.CallOptions{
-		NetworkBudget: time.Minute,
-		TaskFetch: &plugin.TaskFetch{
-			Allowed: func(target *url.URL) bool { return slices.Contains(allowed, strings.ToLower(target.Host)) },
-			Client:  &http.Client{}, Post: true,
-		},
+	result, err := callCredential(ctx, relay.plugin, "exchangeKey", baseURL, func(ctx context.Context, loaded *plugin.NewAPIPlugin) (exchanged, error) {
+		token, failed, err := loaded.CallExchangeKey(ctx, hookCtx)
+		return exchanged{token, failed}, err
 	})
 	if err != nil {
 		return nil, fmt.Errorf("exchangeKey: %w", err)
 	}
-	var result struct {
-		Token     json.RawMessage `json:"token"`
-		ExpiresAt int64           `json:"expiresAt"`
-		Error     *struct {
-			Status  int    `json:"status"`
-			Message string `json:"message"`
-			Type    string `json:"type"`
-			Code    string `json:"code"`
-		} `json:"error"`
+	if result.failed != nil {
+		return convertedFailure(*result.failed, http.StatusInternalServerError), nil
 	}
-	if err := json.Unmarshal(raw, &result); err != nil {
-		return nil, errors.New("exchangeKey returned neither {token} nor {error}")
-	}
-	if result.Error != nil {
-		status := result.Error.Status
-		if status < 400 || status > 599 {
-			status = http.StatusInternalServerError
-		}
-		data, _ := json.Marshal(map[string]any{"error": map[string]any{"message": truncateRunes(result.Error.Message, 4096), "type": result.Error.Type, "code": result.Error.Code}})
-		return &http.Response{StatusCode: status, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(bytes.NewReader(data)), ContentLength: int64(len(data))}, nil
-	}
-	if len(result.Token) == 0 || len(result.Token) > 64<<10 {
-		return nil, errors.New("exchangeKey returned no token, or one larger than 64 KiB")
-	}
-	kept := relayToken{token: result.Token}
-	if result.ExpiresAt > 0 {
-		kept.expires = time.Unix(result.ExpiresAt, 0)
+	kept := relayToken{token: result.token.Token}
+	if result.token.ExpiresAt > 0 {
+		kept.expires = time.Unix(result.token.ExpiresAt, 0)
 	}
 	if host.relayTokens.tokens == nil {
 		host.relayTokens.tokens = map[string]relayToken{}
@@ -785,13 +714,13 @@ func (host *Host) relayModels(ctx context.Context, service contract.Service, tar
 	}
 	meta := found.NewAPI()
 	var route *plugin.RelayRoute
-	for index := range meta.Relay {
-		if meta.Relay[index].IncomingPath == plugin.RelayModelsPath {
-			route = &meta.Relay[index]
+	for index := range meta.Meta.Relay {
+		if meta.Meta.Relay[index].IncomingPath == plugin.RelayModelsPath {
+			route = &meta.Meta.Relay[index]
 		}
 	}
 	if route == nil {
-		return slices.Clone(meta.Models), len(meta.Models) > 0, nil
+		return slices.Clone(meta.Meta.Models), len(meta.Meta.Models) > 0, nil
 	}
 	relay := &relayTarget{plugin: found, meta: meta, route: route, config: RelayConfig(meta, service.Plugin.Settings)}
 	var state json.RawMessage
@@ -800,7 +729,7 @@ func (host *Host) relayModels(ctx context.Context, service contract.Service, tar
 		base, _ = url.Parse(service.HTTP.BaseURL)
 	}
 	if base == nil || base.Host == "" {
-		base, _ = url.Parse(meta.BaseURL)
+		base, _ = url.Parse(meta.Meta.BaseURL)
 	}
 	address, _, err := relayAddress(base, route, "", false, relay.config)
 	if err != nil {
@@ -850,41 +779,33 @@ func (host *Host) relayModels(ctx context.Context, service contract.Service, tar
 		return nil, false, err
 	}
 	// A list the plugin converts may take several pages.
-	for page := 0; route.Plugin(); page++ {
+	for page := 0; plugin.RelayHooks(*route); page++ {
 		if page > maxConvertedRequests {
 			return nil, false, fmt.Errorf("the model list took more than %d requests", maxConvertedRequests)
 		}
-		view := map[string]any{"baseUrl": strings.TrimRight(base.String(), "/"), "path": plugin.RelayModelsPath, "config": relay.config, "state": jsonOrNull(state)}
-		if relay.token != nil {
-			view["token"] = relay.token
-		}
-		input := map[string]any{"status": response.StatusCode, "headers": firstHeaders(response.Header), "body": strings.ToValidUTF8(string(body), "\uFFFD")}
-		raw, err := relay.call(ctx, "convertResponse", view, input)
+		hookCtx := relay.hookContext(strings.TrimRight(base.String(), "/"), plugin.RelayModelsPath, state)
+		answer, err := convertResponse(ctx, relay, hookCtx, response.StatusCode, firstHeaders(response.Header), body)
 		if err != nil {
 			return nil, false, fmt.Errorf("convertResponse: %w", err)
 		}
-		var answer convertedAnswer
-		if err := json.Unmarshal(raw, &answer); err != nil {
-			return nil, false, errors.New("convertResponse returned no model list")
-		}
 		switch {
-		case answer.Error != nil:
-			return nil, false, errors.New(truncateRunes(answer.Error.Message, 512))
+		case answer.failed != nil:
+			return nil, false, errors.New(truncateRunes(answer.failed.Message, 512))
 		case answer.Next == nil:
-			body = convertedBody(answer.Body)
+			body = answer.Body
 			response.StatusCode = http.StatusOK
 		default:
-			if len(answer.State) > 0 {
+			if answer.State != nil {
 				state = answer.State
 			}
 			send := &relaySend{host: host, relay: relay, target: target, roundTrip: roundTrip, root: base, address: address, base: base, baseURL: strings.TrimRight(base.String(), "/"),
 				key: key, query: url.Values{}, header: http.Header{}}
 			next := *answer.Next
-			payload, contentType, err := payloadOf(next, convertedBody(next.Body), nil)
+			payload, contentType, err := payloadOf(next, next.Body, nil)
 			if err != nil {
 				return nil, false, err
 			}
-			method := strings.ToUpper(next.Method)
+			method := next.Method
 			if method == "" {
 				method = http.MethodGet
 				if len(payload) > 0 {

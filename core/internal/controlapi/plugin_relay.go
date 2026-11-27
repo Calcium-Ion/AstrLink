@@ -14,17 +14,18 @@ import (
 	"github.com/QuantumNous/astrlink/core/internal/plugin"
 	"github.com/QuantumNous/astrlink/core/internal/pluginhost"
 	"github.com/QuantumNous/astrlink/core/internal/storage"
+	"github.com/QuantumNous/new-api/pluginkit"
 )
 
 // relayProvider is the provider a new-api plugin's provider part offers on
 // the providers page, named in language.
-func (handler *Handler) relayProvider(meta *plugin.TaskMeta, language string) contract.PluginProvider {
+func (handler *Handler) relayProvider(meta *plugin.NewAPIPlugin, language string) contract.PluginProvider {
 	provider := contract.PluginProvider{
-		ID: contract.PluginProviderRelay, Name: meta.Name.In(language), BaseURL: meta.BaseURL, Auth: relayServiceAuth(meta),
-		Models: slices.Clone(meta.Models), Protocols: []contract.PluginProviderProtocol{},
-		ConfigSchema: meta.ChannelConfig, KeyHint: meta.KeyHint.In(language),
+		ID: contract.PluginProviderRelay, Name: meta.NameIn(language), BaseURL: meta.Meta.BaseURL, Auth: relayServiceAuth(meta),
+		Models: slices.Clone(meta.Meta.Models), Protocols: []contract.PluginProviderProtocol{},
+		ConfigSchema: meta.Meta.ChannelConfigSchemaJSON(), KeyHint: meta.Meta.KeyHint.Text(language),
 	}
-	if target := handler.plugins.Current().Plugin(meta.Key); target != nil {
+	if target := handler.plugins.Current().Plugin(meta.Meta.Key); target != nil {
 		provider.Login = target.HasTaskHook("login")
 		provider.Balance = target.HasTaskHook("buildBalanceRequest")
 	}
@@ -39,8 +40,8 @@ func (handler *Handler) relayProvider(meta *plugin.TaskMeta, language string) co
 // relayServiceAuth is how a relay provider keeps its key: as a bearer
 // token, which each route then sends as it says, or none when no route
 // sends one.
-func relayServiceAuth(meta *plugin.TaskMeta) contract.ServiceAuth {
-	for _, route := range meta.Relay {
+func relayServiceAuth(meta *plugin.NewAPIPlugin) contract.ServiceAuth {
+	for _, route := range meta.Meta.Relay {
 		if route.Auth == nil || route.Auth.Type != "none" {
 			return contract.ServiceAuth{Scheme: contract.AuthSchemeBearer}
 		}
@@ -54,7 +55,7 @@ func relayServiceAuth(meta *plugin.TaskMeta) contract.ServiceAuth {
 // does, when the gateway has it. An attempt then goes the way the route of
 // its model says. Routes the plugin's own hooks convert, and those of
 // paths the gateway does not answer, are left out.
-func (handler *Handler) relayCapabilities(meta *plugin.TaskMeta) []contract.Capability {
+func (handler *Handler) relayCapabilities(meta *plugin.NewAPIPlugin) []contract.Capability {
 	var capabilities []contract.Capability
 	add := func(capability contract.Capability) {
 		for index, have := range capabilities {
@@ -70,16 +71,16 @@ func (handler *Handler) relayCapabilities(meta *plugin.TaskMeta) []contract.Capa
 		}
 		capabilities = append(capabilities, capability)
 	}
-	for _, route := range meta.Relay {
+	for _, route := range meta.Meta.Relay {
 		protocol := plugin.RelayProtocol(route.IncomingPath)
 		if protocol == "" || protocol == contract.ProtocolOpenAIModels {
 			continue
 		}
 		descriptor, known := contract.LookupProtocolDescriptor(protocol)
 		streaming := known && descriptor.Streaming
-		upstream := route.UpstreamProtocol()
+		upstream := plugin.RelayUpstreamProtocol(route)
 		if upstream == protocol {
-			if route.Relaykit() == "" {
+			if plugin.RelayConverter(route) == "" {
 				add(contract.Capability{Protocol: protocol, Mode: contract.CapabilityModeNative, Streaming: streaming})
 			}
 			continue
@@ -116,7 +117,7 @@ func (handler *Handler) applyRelayProvider(service *contract.Service) error {
 		return errors.New("plugins are unavailable")
 	}
 	target := handler.plugins.Current().Plugin(service.Plugin.Key)
-	if target == nil || target.NewAPI() == nil || len(target.NewAPI().Relay) == 0 {
+	if target == nil || target.NewAPI() == nil || len(target.NewAPI().Meta.Relay) == 0 {
 		return fmt.Errorf("plugin %q is not an installed plugin with a provider part", service.Plugin.Key)
 	}
 	meta := target.NewAPI()
@@ -125,7 +126,7 @@ func (handler *Handler) applyRelayProvider(service *contract.Service) error {
 	}
 	service.Capabilities = handler.relayCapabilities(meta)
 	if len(service.Capabilities) == 0 {
-		return fmt.Errorf("none of the routes of %s is one AstrLink serves yet", meta.Key)
+		return fmt.Errorf("none of the routes of %s is one AstrLink serves yet", meta.Meta.Key)
 	}
 	settings, err := relaySettings(meta, service.Plugin.Settings)
 	if err != nil {
@@ -134,7 +135,7 @@ func (handler *Handler) applyRelayProvider(service *contract.Service) error {
 	service.Plugin.Settings = settings
 	if service.HTTP != nil {
 		if service.HTTP.BaseURL == "" {
-			service.HTTP.BaseURL = meta.BaseURL
+			service.HTTP.BaseURL = meta.Meta.BaseURL
 		}
 		service.HTTP.Auth = relayServiceAuth(meta)
 		service.HTTP.ModelListPath = ""
@@ -154,21 +155,21 @@ func (handler *Handler) checkRelayKey(ctx context.Context, service contract.Serv
 	if target == nil || target.NewAPI() == nil || !target.HasTaskHook("checkKey") {
 		return nil
 	}
-	view := map[string]any{"baseUrl": "", "config": pluginhost.RelayConfig(target.NewAPI(), service.Plugin.Settings)}
+	baseURL := ""
 	if service.HTTP != nil {
-		view["baseUrl"] = strings.TrimRight(service.HTTP.BaseURL, "/")
+		baseURL = strings.TrimRight(service.HTTP.BaseURL, "/")
 	}
+	config := pluginhost.RelayConfig(target.NewAPI(), service.Plugin.Settings)
 	call, cancel := context.WithTimeout(ctx, validateConfigTime)
 	defer cancel()
-	raw, _, err := target.CallTask(call, "checkKey", []any{view, string(credential.Secret)}, plugin.CallOptions{})
+	refused, _, err := plugin.CallNewAPI(call, target, "checkKey", plugin.CallOptions{}, func(ctx context.Context, loaded *plugin.NewAPIPlugin) (pluginkit.LocalizedText, error) {
+		return loaded.CallCheckKey(ctx, baseURL, config, string(credential.Secret))
+	})
 	if err != nil {
 		return fmt.Errorf("the plugin refused the key: %s", validateConfigMessage(err))
 	}
-	var result struct {
-		Error plugin.LocalizedText `json:"error"`
-	}
-	if json.Unmarshal(raw, &result) == nil && len(result.Error) > 0 {
-		return fmt.Errorf("%s", result.Error.In(handler.pluginPageView().Language))
+	if len(refused) > 0 {
+		return fmt.Errorf("%s", refused.Text(handler.pluginPageView().Language))
 	}
 	return nil
 }
@@ -177,32 +178,21 @@ func (handler *Handler) checkRelayKey(ctx context.Context, service contract.Serv
 // channelConfig: members the schema does not declare are dropped, and a
 // value it refuses fails the save, naming the field. Without a schema the
 // provider keeps none.
-func relaySettings(meta *plugin.TaskMeta, settings json.RawMessage) (json.RawMessage, error) {
-	if len(settings) == 0 {
+func relaySettings(meta *plugin.NewAPIPlugin, settings json.RawMessage) (json.RawMessage, error) {
+	if len(settings) == 0 || meta.Meta.ChannelConfig == nil {
 		return nil, nil
 	}
-	schema, err := plugin.ParseConfigSchema(meta.ChannelConfig, true)
-	if err != nil || schema == nil {
-		return nil, nil
-	}
-	var members map[string]json.RawMessage
-	if err := json.Unmarshal(settings, &members); err != nil {
-		return nil, errors.New("plugin.settings must be a JSON object")
-	}
-	kept := map[string]json.RawMessage{}
-	for _, property := range schema.Properties {
-		if value, ok := members[property.Name]; ok && string(value) != "null" {
-			kept[property.Name] = value
+	kept, err := meta.ValidateChannelConfig(settings)
+	if err != nil {
+		if strings.Contains(err.Error(), "must be a JSON object") {
+			return nil, errors.New("plugin.settings must be a JSON object")
 		}
-	}
-	encoded, _ := json.Marshal(kept)
-	if _, err := schema.CheckConfig(encoded); err != nil {
 		return nil, fmt.Errorf("the provider's settings: %v", err)
 	}
-	if len(kept) == 0 {
+	if string(kept) == "{}" {
 		return nil, nil
 	}
-	return encoded, nil
+	return kept, nil
 }
 
 // pluginLoginInput drives the login of a provider of the plugin: start,

@@ -570,6 +570,11 @@ func writeServerSentEvent(out io.Writer, name string, data json.RawMessage) erro
 	} else {
 		text = string(trimmed)
 	}
+	return writeServerSentText(out, name, text)
+}
+
+// writeServerSentText writes one event: its name when set, and text.
+func writeServerSentText(out io.Writer, name, text string) error {
 	var frame strings.Builder
 	if name = strings.TrimSpace(name); name != "" && !strings.ContainsAny(name, "\r\n") {
 		frame.WriteString("event: " + name + "\n")

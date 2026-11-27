@@ -188,12 +188,9 @@ type CallOptions struct {
 	// DryRun marks a call the plugin page runs by hand: its journal lines
 	// say so, and it does not count in the hook's timing.
 	DryRun bool
-	// TaskFetch lets a driver hook of a task plugin read upstream data with
-	// utils.fetch; without it utils.fetch throws.
-	TaskFetch *TaskFetch
-	// RequestFiles is what a request processing hook reads of its
-	// request's files and keyword lists; without it those utils throw.
-	RequestFiles *RequestFiles
+	// Fetch is what utils.fetch of a New API plugin's hook reaches;
+	// without it utils.fetch throws.
+	Fetch *Fetch
 }
 
 // CallInfo is what the host observed during a call, for request records and
@@ -266,11 +263,7 @@ type call struct {
 	fetchSeq int
 	failures map[string]string
 	stats    NetworkStats
-	// taskFetches and taskFetchTime count the utils.fetch requests of a
-	// task plugin's hook call and the time they took.
-	taskFetches   int
-	taskFetchTime time.Duration
-	info          CallInfo
+	info     CallInfo
 }
 
 func (c *call) granted(capability string) bool { return slices.Contains(c.plugin.granted, capability) }

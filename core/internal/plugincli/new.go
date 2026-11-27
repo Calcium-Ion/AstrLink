@@ -16,6 +16,7 @@ import (
 
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/plugin"
+	"github.com/QuantumNous/new-api/pluginkit"
 )
 
 // template is a starting point for a project. An AstrLink template is its
@@ -63,7 +64,7 @@ func runNew(_ context.Context, env Environment, args []string) int {
 	}
 	switch {
 	case chosen.newAPI && !plugin.ValidPluginKey(key):
-		fmt.Fprintf(env.Stderr, "error: %q cannot be a New API plugin key: a lowercase letter or digit, then up to %d lowercase letters, digits, hyphens and underscores\n", key, plugin.NewAPIKeyLength-1)
+		fmt.Fprintf(env.Stderr, "error: %q cannot be a New API plugin key: a lowercase letter or digit, then up to %d lowercase letters, digits, hyphens and underscores\n", key, pluginkit.MaxPluginKeyLength-1)
 		return 2
 	case chosen.newAPI && plugin.NewAPIKeyProblem(key) != "":
 		fmt.Fprintf(env.Stderr, "error: %q cannot be a New API plugin key: %s\n", key, plugin.NewAPIKeyProblem(key))

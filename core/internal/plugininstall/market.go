@@ -25,6 +25,7 @@ import (
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/plugin"
 	"github.com/QuantumNous/astrlink/core/internal/pluginbuild"
+	"github.com/QuantumNous/new-api/pluginkit"
 )
 
 // A plugin marketplace is new-api's index format: an index.json that lists
@@ -69,24 +70,24 @@ type marketIndex struct {
 }
 
 type marketRevoked struct {
-	SHA256 string               `json:"sha256"`
-	Key    string               `json:"key"`
-	Reason plugin.LocalizedText `json:"reason"`
+	SHA256 string                  `json:"sha256"`
+	Key    string                  `json:"key"`
+	Reason pluginkit.LocalizedText `json:"reason"`
 }
 
 type marketPlugin struct {
-	Key          string                     `json:"key"`
-	Name         plugin.LocalizedText       `json:"name"`
-	Icon         string                     `json:"icon"`
-	IconFile     *marketFile                `json:"iconFile"`
-	Description  plugin.LocalizedText       `json:"description"`
-	Website      string                     `json:"website"`
-	SortPriority int32                      `json:"sortPriority"`
-	Models       []string                   `json:"models"`
-	Latest       string                     `json:"latest"`
-	Versions     []marketVersion            `json:"versions"`
-	Routes       []plugin.TaskRoute         `json:"routes"`
-	Protocols    []plugin.TaskProtocolClaim `json:"protocols"`
+	Key          string                    `json:"key"`
+	Name         pluginkit.LocalizedText   `json:"name"`
+	Icon         string                    `json:"icon"`
+	IconFile     *marketFile               `json:"iconFile"`
+	Description  pluginkit.LocalizedText   `json:"description"`
+	Website      string                    `json:"website"`
+	SortPriority int32                     `json:"sortPriority"`
+	Models       []string                  `json:"models"`
+	Latest       string                    `json:"latest"`
+	Versions     []marketVersion           `json:"versions"`
+	Routes       []pluginkit.Route         `json:"routes"`
+	Protocols    []pluginkit.ProtocolClaim `json:"protocols"`
 	// Provider and Transform say the newest version has a provider part
 	// or a request processing part, which new-api's index lists beside
 	// the task part.
@@ -137,16 +138,50 @@ type marketDocFile struct {
 }
 
 type marketVersion struct {
-	Version       string          `json:"version"`
-	Path          string          `json:"path"`
-	SHA256        string          `json:"sha256"`
-	MinAPIVersion int             `json:"minApiVersion"`
-	Kind          string          `json:"kind"`
-	AllowedHosts  []string        `json:"allowedHosts"`
-	BaseURL       string          `json:"baseUrl"`
-	Auth          plugin.TaskAuth `json:"auth"`
-	Readme        *marketDoc      `json:"readme"`
-	Changelog     *marketDoc      `json:"changelog"`
+	Version       string     `json:"version"`
+	Path          string     `json:"path"`
+	SHA256        string     `json:"sha256"`
+	MinAPIVersion int        `json:"minApiVersion"`
+	Kind          string     `json:"kind"`
+	AllowedHosts  []string   `json:"allowedHosts"`
+	BaseURL       string     `json:"baseUrl"`
+	Auth          marketAuth `json:"auth"`
+	Readme        *marketDoc `json:"readme"`
+	Changelog     *marketDoc `json:"changelog"`
+}
+
+// marketAuth is how a version authenticates to its vendor, as the index
+// lists it: a name or {type}.
+type marketAuth string
+
+func (auth *marketAuth) UnmarshalJSON(data []byte) error {
+	var name string
+	if json.Unmarshal(data, &name) != nil {
+		var object struct {
+			Type string `json:"type"`
+		}
+		if err := json.Unmarshal(data, &object); err != nil {
+			return errors.New("auth is a name or {type}")
+		}
+		name = object.Type
+	}
+	switch name {
+	case "", "api_key", "none", "oauth2_jwt":
+		*auth = marketAuth(name)
+	case "vertex_oauth":
+		*auth = "oauth2_jwt"
+	default:
+		return fmt.Errorf("auth %q is not one of none, api_key and oauth2_jwt", name)
+	}
+	return nil
+}
+
+// kind is the auth, api_key when the index names none.
+func (auth marketAuth) kind() string {
+	if auth == "" {
+		return "api_key"
+	}
+	return string(auth)
 }
 
 func parseIndex(data []byte) (*marketIndex, error) {
@@ -363,7 +398,7 @@ func (installer *Installer) previewMarket(ctx context.Context, ref marketRef, li
 	if err != nil {
 		return contract.PluginInstallReview{}, contract.PluginInstallRecord{}, err
 	}
-	if staged.checked.Task.Key != entry.Key {
+	if staged.checked.Task.Meta.Key != entry.Key {
 		return contract.PluginInstallReview{}, contract.PluginInstallRecord{}, &Failure{contract.PluginInstallFailure{Reason: contract.PluginInstallInvalidPlugin, Messages: []string{"the plugin's key is not the one the index lists"}}}
 	}
 	name := index.Name
@@ -375,7 +410,7 @@ func (installer *Installer) previewMarket(ctx context.Context, ref marketRef, li
 			Kind: contract.PluginSourceMarket, Repository: name, URL: link, Index: ref.index, Key: entry.Key,
 			Ref: version.Version, RefKind: contract.PluginRefVersion, Commit: strings.ToLower(version.SHA256), Subdir: version.Path,
 		},
-		Version: staged.checked.Task.Version, Outputs: staged.outputs,
+		Version: staged.checked.Task.Meta.Version, Outputs: staged.outputs,
 	}
 	review := installer.taskReview(staged, len(text), record, files)
 	if existing != nil {
@@ -759,7 +794,7 @@ func (installer *Installer) readMarket(ctx context.Context, address string) (mar
 			continue
 		}
 		listed := contract.PluginMarketEntry{
-			Key: entry.Key, Name: entry.Name.In(language), Description: entry.Description.In(language), Icon: entry.Icon, Website: entry.Website,
+			Key: entry.Key, Name: entry.Name.Text(language), Description: entry.Description.Text(language), Icon: entry.Icon, Website: entry.Website,
 			SortPriority: entry.SortPriority, Latest: entry.Latest, Models: slices.Clone(entry.Models),
 			Protocols: []contract.PluginTaskProtocol{}, Routes: []contract.PluginTaskRoute{}, Versions: []contract.PluginMarketVersion{},
 			Link: MarketLink(address, entry.Key, entry.Latest), Recommended: entry.Recommended, Installs30d: entry.Installs30d,
@@ -787,7 +822,7 @@ func (installer *Installer) readMarket(ctx context.Context, address string) (mar
 		}
 		listed.Parts = entryParts(entry)
 		for _, route := range entry.Routes {
-			listed.Routes = append(listed.Routes, contract.PluginTaskRoute{Method: route.Method, Path: route.Path, Type: route.Type, Models: route.Models})
+			listed.Routes = append(listed.Routes, contract.PluginTaskRoute{Method: route.Method, Path: route.Path, Type: string(route.Type), Models: route.Models})
 		}
 		for _, version := range entry.Versions {
 			// A version of only a part this gateway does not run is listed
@@ -799,7 +834,7 @@ func (installer *Installer) readMarket(ctx context.Context, address string) (mar
 			}
 			listed.Versions = append(listed.Versions, contract.PluginMarketVersion{
 				Version: version.Version, MinAPIVersion: version.MinAPIVersion, BaseURL: version.BaseURL,
-				Auth: string(version.Auth.Kind()), AllowedHosts: version.AllowedHosts, Link: MarketLink(address, entry.Key, version.Version),
+				Auth: version.Auth.kind(), AllowedHosts: version.AllowedHosts, Link: MarketLink(address, entry.Key, version.Version),
 				Readme: version.Readme != nil && version.Readme.Path != "", Changelog: version.Changelog != nil && version.Changelog.Path != "",
 			})
 		}
@@ -819,7 +854,7 @@ func (installer *Installer) readMarket(ctx context.Context, address string) (mar
 	revoked := map[string]string{}
 	for _, entry := range index.Revoked {
 		if sum := strings.ToLower(strings.TrimSpace(entry.SHA256)); len(sum) == 64 {
-			revoked[sum] = entry.Reason.In(language)
+			revoked[sum] = entry.Reason.Text(language)
 		}
 	}
 	return marketListing{at: installer.options.Now(), market: market, entries: entries, base: base, revoked: revoked}, nil

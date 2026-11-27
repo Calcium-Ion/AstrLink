@@ -2,9 +2,6 @@ package pluginhost
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
-	"fmt"
 	"net/http"
 	"slices"
 	"sort"
@@ -12,6 +9,8 @@ import (
 	"unicode/utf16"
 
 	"github.com/QuantumNous/astrlink/core/contract"
+	"github.com/QuantumNous/astrlink/core/internal/plugin"
+	"github.com/QuantumNous/new-api/pluginkit"
 )
 
 // The reply check reads the text of the model's answer before the client
@@ -22,10 +21,7 @@ import (
 // event without text arrives behind unread text; it may hold back the end
 // of what it read until its next call.
 
-// Bounds of a reply check's result.
 const (
-	maxReplyMasks  = 1024
-	maxReplyHold   = 8192
 	replyCallUnits = 32
 	replyMask      = "***"
 )
@@ -56,8 +52,8 @@ type replyStage struct {
 	failed   bool
 	called   bool
 	masked   int
-	findings []requestFinding
-	notice   json.RawMessage
+	findings []pluginkit.TransformFinding
+	notice   pluginkit.LocalizedText
 	stop     string
 	started  time.Time
 	elapsed  time.Duration
@@ -218,26 +214,28 @@ func (check *ReplyCheck) stage(stage *replyStage, pieces []ReplyPiece, force boo
 		return out, nil
 	}
 	stage.called = true
-	outputs := []map[string]any{}
+	outputs := make([]pluginkit.ReplyOutput, 0, len(due))
 	for _, index := range due {
 		output := stage.outputs[index]
 		output.called = true
-		outputs = append(outputs, map[string]any{"index": index, "text": string(utf16.Decode(output.pending)), "offset": output.offset, "final": output.final})
+		outputs = append(outputs, pluginkit.ReplyOutput{Index: index, Text: string(utf16.Decode(output.pending)), Offset: output.offset, Final: output.final})
 	}
 	result, err := check.call(stage, outputs)
-	if err == nil {
-		err = result.check(due, stage.outputs)
-	}
 	if err != nil {
 		stage.failed = true
 		check.run.failed(stage.instance, contract.RequestStageReply, err)
-		if !stage.instance.meta.Optional {
+		if !stage.instance.meta.Meta.Optional {
 			return nil, &RequestRefusal{Status: http.StatusInternalServerError, Code: contract.RequestPluginFailedCode, Message: "A request plugin failed"}
 		}
 		for _, index := range due {
 			out = append(out, release(index))
 		}
 		return out, nil
+	}
+	for _, mask := range result.Masks {
+		if mask.Category != "" {
+			result.Findings = append(result.Findings, pluginkit.TransformFinding{Rule: mask.Category, Category: mask.Category, Count: 1})
+		}
 	}
 	stage.findings = append(stage.findings, result.Findings...)
 	if len(result.Notice) > 0 {
@@ -261,7 +259,7 @@ func (check *ReplyCheck) stage(stage *replyStage, pieces []ReplyPiece, force boo
 	for _, index := range due {
 		output := stage.outputs[index]
 		var spans [][2]int
-		for _, mask := range result.Mask {
+		for _, mask := range result.Masks {
 			if mask.Index == index {
 				spans = append(spans, [2]int{mask.Start, mask.End})
 			}
@@ -322,70 +320,15 @@ func maskUnits(units []uint16, spans [][2]int) string {
 	return string(utf16.Decode(out))
 }
 
-// replyResult is what a reply hook returns.
-type replyResult struct {
-	Action string `json:"action"`
-	Mask   []struct {
-		Index    int    `json:"index"`
-		Start    int    `json:"start"`
-		End      int    `json:"end"`
-		Category string `json:"category"`
-	} `json:"mask"`
-	Hold     int              `json:"hold"`
-	Findings []requestFinding `json:"findings"`
-	Notice   json.RawMessage  `json:"notice"`
-	Code     string           `json:"code"`
-	Message  string           `json:"message"`
-}
-
-func (result *replyResult) check(due []int, outputs map[int]*replyOutput) error {
-	switch result.Action {
-	case "continue":
-	case "pass":
-		if len(result.Mask) > 0 || result.Hold != 0 || len(result.Findings) > 0 || result.Code != "" {
-			return errors.New("pass takes no other member")
-		}
-	case "stop":
-		if !requestCodePattern.MatchString(result.Code) {
-			return fmt.Errorf("the code %q is not 1 to 64 lowercase letters, digits, _, . or -", result.Code)
-		}
-	default:
-		return fmt.Errorf("the action %q is not continue, pass or stop", result.Action)
-	}
-	if len(result.Mask) > maxReplyMasks || result.Hold < 0 || result.Hold > maxReplyHold || len(result.Findings) > maxRequestFindings {
-		return errors.New("a result has at most 1024 masks and 64 findings, and holds 0 to 8192 code units")
-	}
-	for index, mask := range result.Mask {
-		output := outputs[mask.Index]
-		if !slices.Contains(due, mask.Index) || output == nil || mask.Start < 0 || mask.Start >= mask.End || mask.End > len(output.pending) {
-			return fmt.Errorf("mask %d is not a span of an output of the call", index)
-		}
-		if mask.Category != "" {
-			result.Findings = append(result.Findings, requestFinding{Rule: mask.Category, Category: mask.Category, Count: 1})
-		}
-	}
-	return nil
-}
-
 // call runs one instance's reply hook.
-func (check *ReplyCheck) call(stage *replyStage, outputs []map[string]any) (replyResult, error) {
+func (check *ReplyCheck) call(stage *replyStage, outputs []pluginkit.ReplyOutput) (pluginkit.ReplyResult, error) {
 	started := time.Now()
 	defer func() { stage.elapsed += time.Since(started) }()
-	view := check.run.origin.members(map[string]any{
-		"stage": contract.RequestStageReply, "format": check.format, "path": check.run.path, "model": check.run.model,
-		"upstreamModel": check.attempt.UpstreamModel, "attempt": check.attempt.Index,
-		"instance": map[string]any{"id": stage.instance.instance.ID, "name": stage.instance.instance.Name},
-		"config":   stage.instance.config,
+	attempt := check.attempt
+	tctx := check.run.transformContext(stage.instance, contract.RequestStageReply, check.format, attempt)
+	return callRequestHook(check.ctx, stage.instance, contract.RequestStageReply, nil, func(ctx context.Context, loaded *plugin.NewAPIPlugin) (pluginkit.ReplyResult, error) {
+		return loaded.CallReply(ctx, tctx, check.stream, outputs)
 	})
-	raw, err := check.run.invoke(check.ctx, stage.instance, contract.RequestStageReply, nil, view, map[string]any{"stream": check.stream, "outputs": outputs})
-	if err != nil {
-		return replyResult{}, err
-	}
-	var result replyResult
-	if err := json.Unmarshal(raw, &result); err != nil {
-		return replyResult{}, errors.New("the result is not {action, ...}")
-	}
-	return result, nil
 }
 
 // Finish adds each instance's entry for the whole answer to the request
@@ -398,11 +341,11 @@ func (check *ReplyCheck) Finish() {
 		if !stage.called && !stage.failed && stage.stop == "" {
 			continue
 		}
-		result := &stageResult{Action: "continue", Findings: stage.findings, Notice: stage.notice}
+		result := &pluginkit.TransformResult{Action: "continue", Findings: stage.findings, Notice: stage.notice}
 		status := contract.PluginRecordOK
 		var effects []string
 		switch {
-		case stage.failed && !stage.instance.meta.Optional:
+		case stage.failed && !stage.instance.meta.Meta.Optional:
 			status = contract.PluginRecordFailed
 		case stage.failed:
 			status = contract.PluginRecordFailed

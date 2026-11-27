@@ -163,7 +163,7 @@ func hookFailure(hook string, err error) *Error {
 
 // plugin returns the task plugin key names in the current generation,
 // while it is enabled.
-func (engine *Engine) plugin(key string) (*plugin.Plugin, *plugin.TaskMeta, error) {
+func (engine *Engine) plugin(key string) (*plugin.Plugin, *plugin.NewAPIPlugin, error) {
 	if engine.plugins == nil {
 		return nil, nil, failure(http.StatusServiceUnavailable, "plugin_unavailable", "task plugins are unavailable")
 	}
