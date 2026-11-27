@@ -157,7 +157,7 @@ const builtinModelFields: Record<
   readonly (keyof ClientConfigModels)[]
 > = {
   claude: claudeFields,
-  codex: ["model", "reasoningEffort"],
+  codex: ["model", "models", "reasoningEffort"],
   gemini: ["model"],
   opencode: ["model", "models"],
   openclaw: ["model", "models"],

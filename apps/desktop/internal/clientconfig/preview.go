@@ -402,6 +402,7 @@ func PreviewPlace(home agents.Home, place Place, origin string, write *PreviewWr
 	}
 	if write != nil {
 		connection := write.Selection.Connection(place.Target, write.Secret.ID, write.Secret.Token, origin)
+		connection = connectionInPlace(connection, home, place)
 		plan, planErr := PlanWrite(client, before, connection, write.Details, record)
 		if planErr != nil {
 			return nil, planErr.At(paths)

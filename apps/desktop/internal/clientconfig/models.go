@@ -147,7 +147,7 @@ func (m *Models) list(client Client, model string) ([]string, error) {
 		return nil, nil
 	}
 	if !client.ListsModels() {
-		return nil, errors.New("a model list applies to OpenCode, OpenClaw, and Pi only")
+		return nil, errors.New("a model list applies to clients that switch models only")
 	}
 	if len(m.Models) > MaxListedModels {
 		return nil, errors.New("too many models")

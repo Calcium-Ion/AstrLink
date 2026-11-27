@@ -375,6 +375,7 @@ func check(home agents.Home, place Place, connection *Connection, details Catalo
 // from another token or another AstrLink. tokens is nil when unknown.
 func confirm(home agents.Home, place Place, records *Records, paths []string, existing []*string, connection *Connection, details Catalog, tokens Tokens) (*Confirmation, *ItemError) {
 	client := place.Client
+	connection = connectionInPlace(connection, home, place)
 	record := records.Get(place)
 	plan, err := PlanWrite(client, existing, connection, details, record)
 	if err != nil {
@@ -411,6 +412,17 @@ func confirm(home agents.Home, place Place, records *Records, paths []string, ex
 		out.Keys = append(out.Keys, replaced)
 	}
 	return out, nil
+}
+
+// connectionInPlace fills in the directory whose config the connection is
+// written to, for clients that need to name a generated companion file.
+func connectionInPlace(connection *Connection, home agents.Home, place Place) *Connection {
+	if connection == nil {
+		return nil
+	}
+	inPlace := *connection
+	inPlace.ConfigDir = place.Client.Dir(home, place.Target)
+	return &inPlace
 }
 
 // ReadFiles reads each of client's files, nil for a missing one.
@@ -471,6 +483,7 @@ func WriteWith(home agents.Home, place Place, connection *Connection, details Ca
 	if client.Running(home, place.Target) {
 		return false, nil, openError(client)
 	}
+	connection = connectionInPlace(connection, home, place)
 	defer agents.LockHostFiles()()
 	records, err := ReadRecords(home)
 	if err != nil {

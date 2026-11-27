@@ -191,7 +191,6 @@ describe("client-config status parsing", () => {
     ["a state CC Switch once had", { state: "cc_switch" }],
     ["models that are not an object", { models: ["gpt-5"] }],
     ["a tier outside Claude Code", { models: { opusModel: "x" } }],
-    ["a list outside list clients", { models: { models: ["x"] } }],
     ["a malformed effort", { models: { reasoningEffort: "x-high" } }],
     ["a limit outside Pi", { models: { maxTokens: 1 } }],
     ["an empty model", { models: { model: "" } }],
@@ -202,6 +201,13 @@ describe("client-config status parsing", () => {
     if ("home" in overrides && overrides.home === undefined) {
       delete value[1].home;
     }
+    expect(() => parseStatuses(value)).toThrow(
+      "Invalid client-config IPC response",
+    );
+  });
+
+  it("rejects a list outside list clients", () => {
+    const value = statuses({ gemini: { models: { models: ["x"] } } });
     expect(() => parseStatuses(value)).toThrow(
       "Invalid client-config IPC response",
     );

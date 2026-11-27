@@ -16,8 +16,10 @@ import (
 var Codex = cc.New(codex{})
 
 const (
-	CodexProvider       = "astrlink"
-	codexProviderPrefix = "model_providers.astrlink."
+	CodexProvider        = "astrlink"
+	CodexCatalogFilename = "astrlink-model-catalog.json"
+	codexProviderPrefix  = "model_providers.astrlink."
+	codexCatalogKey      = "model_catalog_json"
 	// codexHeadersKey: Codex shows its own image generation and web search
 	// tools only for a provider whose `http_headers` set this header. The
 	// gateway answers both tools and strips the header before forwarding;
@@ -68,13 +70,17 @@ func setCodexToolsHeader(provider *format.TOMLTable, value string) {
 func (codex) ID() string          { return "codex" }
 func (codex) Name() string        { return "Codex" }
 func (codex) Protocols() []string { return []string{"openai.responses"} }
+func (codex) ListsModels() bool   { return true }
 
 func (codex) Dir(home agents.Home, _ string) string { return home.CodexDir() }
 
-func (codex) Files() []cc.File { return []cc.File{codexConfig{}} }
+func (codex) Files() []cc.File { return []cc.File{codexConfig{}, codexCatalogFile{}} }
 
 func (codex) ConfigPaths(home agents.Home, _ string, _ *cc.Record) []string {
-	return []string{filepath.Join(home.CodexDir(), "config.toml")}
+	return []string{
+		filepath.Join(home.CodexDir(), "config.toml"),
+		filepath.Join(home.CodexDir(), CodexCatalogFilename),
+	}
 }
 
 func (codex) ReasoningEfforts() []string {
@@ -84,6 +90,7 @@ func (codex) ReasoningEfforts() []string {
 func (codex) ConnectionKeys() []string {
 	return []string{
 		"model_provider",
+		codexCatalogKey,
 		"model_providers.astrlink.base_url",
 		"model_providers.astrlink.wire_api",
 		"model_providers.astrlink.experimental_bearer_token",
@@ -98,6 +105,9 @@ func (codex) CurrentModels(config *cc.Config) cc.CurrentModels {
 	if effort, ok := config.Model(codexReasoningKey); ok {
 		models.ReasoningEffort = &effort
 	}
+	if entries := codexCatalogModels(config); len(entries) > 0 {
+		models.Models = entries
+	}
 	return models
 }
 
@@ -109,6 +119,7 @@ func (codex) DesiredKeys(connection *cc.Connection, _ cc.Catalog) []cc.Setting {
 	if effort, ok := connection.Model("reasoningEffort"); ok {
 		keys = append(keys, cc.Setting{Key: codexReasoningKey, Value: effort})
 	}
+	keys = append(keys, cc.Setting{Key: codexCatalogKey, Value: codexCatalogPointer(connection.ConfigDir)})
 	// The display name is local UI; a reserved ID or the name "OpenAI"
 	// would make Codex treat this as its built-in provider.
 	for _, kv := range [][2]string{
@@ -120,6 +131,53 @@ func (codex) DesiredKeys(connection *cc.Connection, _ cc.Catalog) []cc.Setting {
 		keys = append(keys, cc.Setting{Key: codexProviderPrefix + kv[0], Value: kv[1]})
 	}
 	return append(keys, cc.Setting{Key: codexHeadersKey, Value: codexToolsHeaderValue})
+}
+
+// codexCatalogPointer is the path Codex reads the generated catalog from.
+// A native config directory gets an absolute path. A WSL share keeps the
+// bare file name because the path Codex sees inside the distribution differs.
+func codexCatalogPointer(configDir string) string {
+	if configDir == "" {
+		return CodexCatalogFilename
+	}
+	path := filepath.Join(configDir, CodexCatalogFilename)
+	if strings.HasPrefix(path, `\\`) || strings.HasPrefix(path, "//") {
+		return CodexCatalogFilename
+	}
+	return path
+}
+
+func codexCatalogModels(config *cc.Config) []string {
+	if len(config.Documents) < 2 {
+		return nil
+	}
+	document, ok := config.Documents[1].(*format.JSONDocument)
+	if !ok {
+		return nil
+	}
+	value, ok := document.Value()
+	if !ok {
+		return nil
+	}
+	object, ok := value.(map[string]any)
+	if !ok {
+		return nil
+	}
+	entries, ok := object["models"].([]any)
+	if !ok {
+		return nil
+	}
+	var models []string
+	for _, entry := range entries {
+		object, ok := entry.(map[string]any)
+		if !ok {
+			continue
+		}
+		if model, ok := object["slug"].(string); ok && model != "" {
+			models = append(models, model)
+		}
+	}
+	return models
 }
 
 func (codex) BaseURLKey() string { return "model_providers.astrlink.base_url" }
@@ -145,7 +203,7 @@ func (c codexConfig) Group(document format.Document) []format.KeyValue {
 	if !ok {
 		return keys
 	}
-	for _, key := range []string{"model_provider", "model"} {
+	for _, key := range []string{"model_provider", "model", codexCatalogKey} {
 		if item := toml.Root().Get(key); item != nil {
 			value, ok := format.TOMLItemString(item)
 			keys = append(keys, format.KeyValue{Key: key, Value: value, Present: ok})

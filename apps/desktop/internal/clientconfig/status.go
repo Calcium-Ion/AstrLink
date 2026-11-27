@@ -100,7 +100,7 @@ func StatusOf(home agents.Home, clients []Client, inferenceURL string, tokens To
 			manual := ""
 			if config != nil && origin != "" && tokens != nil && record == nil &&
 				state == NotConfigured && slices.ContainsFunc(existing, func(file *string) bool { return file != nil }) {
-				manual, _ = manualToken(place, config, origin, tokens)
+				manual, _ = manualToken(home, place, config, origin, tokens)
 			}
 			if manual != "" {
 				state = Manual
@@ -162,15 +162,16 @@ const manualSentinel = "ASTRLINK_MANUAL_SETUP_TOKEN_0"
 // leaves this function; only its hint is compared. A client whose keys
 // this cannot tell apart, like one that lists its token per model, is
 // never manual.
-func manualToken(place Place, config *Config, origin string, tokens Tokens) (string, bool) {
+func manualToken(home agents.Home, place Place, config *Config, origin string, tokens Tokens) (string, bool) {
 	client := place.Client
 	render := func(token string) []Setting {
-		return client.DesiredKeys(&Connection{
+		connection := connectionInPlace(&Connection{
 			Target:    place.Target,
 			Token:     token,
 			Origin:    origin,
 			Protocols: map[string]string{},
-		}, Catalog{})
+		}, home, place)
+		return client.DesiredKeys(connection, Catalog{})
 	}
 	held := func(key string) (string, bool) {
 		value, ok, present := config.Get(key)
