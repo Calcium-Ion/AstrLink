@@ -7653,6 +7653,19 @@ components:
           minLength: 1
           maxLength: 80
           description: Bounded title from the newest visible user text. URLs and obvious secrets are stripped; absolute file paths are shortened to their file names.
+        input_text:
+          type: string
+          minLength: 1
+          maxLength: 4096
+          description: The whole user message behind input_preview, line breaks kept and obvious secrets cut out. Absent where input_preview is, and when the preview already says it all. Privacy redaction masks it like the preview.
+        mid_turn_messages:
+          type: array
+          maxItems: 8
+          description: Messages the user sent while the turn ran, which the client handed the model inside this call. Cleaned and masked like input_text.
+          items:
+            type: string
+            minLength: 1
+            maxLength: 4096
         turn_index:
           type: [integer, "null"]
           minimum: 1

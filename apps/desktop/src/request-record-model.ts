@@ -352,6 +352,10 @@ export interface RequestRecord {
   previous_response_id: string | null;
   output_response_id: string | null;
   input_preview: string | null;
+  /** The whole message behind input_preview, line breaks kept. */
+  input_text?: string;
+  /** Messages the user sent while the turn ran, delivered by this call. */
+  mid_turn_messages?: string[];
   /**
    * 1-based user turn within the session. Every model call of one agent loop
    * shares the same value; null for protocols without user turns and for
@@ -1620,6 +1624,8 @@ function parseRequestRecordAt(value: unknown, path: string): RequestRecord {
     input_preview: Object.hasOwn(record, "input_preview")
       ? nullableStringAt(record.input_preview, `${path}.input_preview`)
       : null,
+    ...optionalStringField(record, "input_text", path),
+    ...optionalStringList(record, "mid_turn_messages", path),
     turn_index: parseTurnIndex(record.turn_index, `${path}.turn_index`),
     session_link: parseSessionLink(record.session_link, `${path}.session_link`),
     ...optionalParentSession(record.parent_session_id, path),

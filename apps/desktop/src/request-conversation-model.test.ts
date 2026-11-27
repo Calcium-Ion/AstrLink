@@ -450,6 +450,32 @@ describe("conversationTurns", () => {
     usage: { input_tokens: 2000, output_tokens: 300, total_tokens: 2300 },
   });
 
+  it("prefers the whole message to the preview and keeps mid-turn messages", () => {
+    const opener = record({
+      ...first,
+      input_preview: "修一下",
+      input_text: "修一下\n1. 截断\n2. 中途消息",
+    });
+    const later = record({
+      ...second,
+      mid_turn_messages: ["进行到哪了"],
+    });
+    const [turn] = conversationTurns(
+      [opener, later, third, fourth],
+      {},
+      new Map(),
+    );
+    expect(turn.user.text).toBe("修一下\n1. 截断\n2. 中途消息");
+    expect(turn.calls[1].midTurn).toEqual(["进行到哪了"]);
+    // A call that carried a message never folds into a run.
+    expect(
+      turn.segments.some(
+        (segment) =>
+          segment.kind === "call" && segment.call.record.id === later.id,
+      ),
+    ).toBe(true);
+  });
+
   it("uses the preview when nothing has been read and counts the calls", () => {
     const [turn] = conversationTurns([first, second], {}, new Map());
     expect(turn.user).toEqual({

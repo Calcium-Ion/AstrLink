@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"testing"
 	"time"
 
@@ -1016,5 +1017,38 @@ func TestRequestRecordKeepsMetadataAndPluginRecords(t *testing.T) {
 	broken.Events = []contract.RequestEvent{{Kind: contract.RequestEventRouted, Plugin: "powercontext", StartedAt: started, Status: contract.RequestStatusSucceeded}}
 	if err := store.UpsertRequestRecord(ctx, broken); !errors.Is(err, storagecontract.ErrInvalidArgument) {
 		t.Fatalf("a routed event naming a plugin = %v", err)
+	}
+}
+
+func TestRequestRecordKeepsInputTextAndMidTurnMessages(t *testing.T) {
+	store := openTestStore(t, filepath.Join(t.TempDir(), "astrlink.db"))
+	defer store.Close()
+	ctx := context.Background()
+	start := time.Date(2026, 11, 26, 10, 0, 0, 0, time.UTC)
+	preview := "修一下"
+	text := "修一下\n1. 截断\n2. 中途消息"
+	record := contract.RequestRecord{
+		ID: "request_text", StartedAt: start, Status: contract.RequestStatusPending,
+		InputProtocol: contract.ProtocolAnthropicMessages, Audit: contract.NotCapturedAuditSummary(),
+		InputPreview: &preview, InputText: &text,
+	}
+	if err := store.InsertRequestRecord(ctx, record); err != nil {
+		t.Fatal(err)
+	}
+	record.Status = contract.RequestStatusSucceeded
+	record.CompletedAt = ptrTime(start.Add(time.Second))
+	record.MidTurnMessages = []string{"进行到哪了\n第二行"}
+	if err := store.UpsertRequestRecord(ctx, record); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.GetRequestRecord(ctx, record.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.InputText == nil || *got.InputText != text {
+		t.Fatalf("input text = %v", got.InputText)
+	}
+	if !slices.Equal(got.MidTurnMessages, record.MidTurnMessages) {
+		t.Fatalf("mid-turn = %q", got.MidTurnMessages)
 	}
 }

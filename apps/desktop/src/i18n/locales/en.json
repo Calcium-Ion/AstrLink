@@ -2734,6 +2734,7 @@
     "reasoning": "Reasoning",
     "reasoningTimed": "Reasoning · {{duration}}",
     "pasted": "Pasted content · {{count}} characters",
+    "midTurn": "Sent mid-turn",
     "systemNotes": "{{count}} system notes added by the client",
     "command": "Client command {{name}}",
     "privacyHits": "{{count}} values redacted",

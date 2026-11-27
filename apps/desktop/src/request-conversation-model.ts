@@ -35,7 +35,7 @@ export interface ClientWrapper {
 export interface UserText {
   text: string;
   wrappers: ClientWrapper[];
-  /** `preview` is the 80-rune summary Core keeps for every call. */
+  /** `preview` is the message Core keeps on the call that opened the turn. */
   source: "body" | "preview" | "none";
 }
 
@@ -85,6 +85,8 @@ export interface ConversationCall {
   reason: string | null;
   /** Text the model wrote around its tool calls, not the final reply. */
   narration: string[];
+  /** Messages the user sent while the turn ran, which this call delivered. */
+  midTurn: string[];
   /** What the model thought before answering, as the provider exposed it. */
   reasoning: string[];
   /**
@@ -722,6 +724,7 @@ function buildCall(
       conversionError,
     reply: false,
     reason: callReason(record, children),
+    midTurn: record.mid_turn_messages ?? [],
     narration: parsed
       ? parsed.outputs
           .filter((output) => output.kind === "text" && output.text.trim())
@@ -787,6 +790,7 @@ export function foldRoutineCalls(
       call.anomaly ||
       call.tone === "pending" ||
       call.reply ||
+      call.midTurn.length > 0 ||
       last ||
       standalone?.has(call.record.id)
     ) {
@@ -801,7 +805,7 @@ export function foldRoutineCalls(
 }
 
 function previewUser(record: RequestRecord): UserText {
-  const preview = record.input_preview?.trim() ?? "";
+  const preview = (record.input_text ?? record.input_preview)?.trim() ?? "";
   return preview
     ? { text: preview, wrappers: [], source: "preview" }
     : { text: "", wrappers: [], source: "none" };

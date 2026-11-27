@@ -1324,6 +1324,18 @@ const CallRow = memo(function CallRow({
   const replyCopyKey = `conversation-reply:${call.record.id}`;
   return (
     <li data-testid="conversation-call" data-tone={call.tone}>
+      {call.midTurn.map((text, index) => (
+        <div
+          className="my-1.5 max-w-[72ch] rounded-lg bg-muted px-3 py-2 text-sm leading-relaxed"
+          data-testid="conversation-mid-turn"
+          key={index}
+        >
+          <span className="mb-0.5 block text-xs text-muted-foreground">
+            {t("conversation.midTurn")}
+          </span>
+          <p className="whitespace-pre-wrap [overflow-wrap:anywhere]">{text}</p>
+        </div>
+      ))}
       {/* The heading stays put while its details scroll, so a long reply or
           tool output folds from where it is being read. */}
       <div

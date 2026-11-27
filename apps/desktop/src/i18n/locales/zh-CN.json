@@ -2734,6 +2734,7 @@
     "reasoning": "思考过程",
     "reasoningTimed": "思考过程 · {{duration}}",
     "pasted": "粘贴内容 · {{count}} 字符",
+    "midTurn": "中途发送",
     "systemNotes": "客户端附加 {{count}} 段系统提示",
     "command": "客户端命令 {{name}}",
     "privacyHits": "隐私脱敏 {{count}} 处",

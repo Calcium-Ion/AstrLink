@@ -2734,6 +2734,7 @@
     "reasoning": "思考",
     "reasoningTimed": "思考 · {{duration}}",
     "pasted": "貼り付け内容 · {{count}} 文字",
+    "midTurn": "途中で送信",
     "systemNotes": "クライアントが追加したシステムメモ {{count}} 件",
     "command": "クライアントコマンド {{name}}",
     "privacyHits": "マスキング {{count}} 件",

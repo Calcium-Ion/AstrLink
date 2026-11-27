@@ -1502,6 +1502,13 @@ END`,
 			`CREATE INDEX plugin_tasks_due ON plugin_tasks(next_poll_at) WHERE next_poll_at IS NOT NULL`,
 			`CREATE INDEX plugin_tasks_by_plugin ON plugin_tasks(plugin_key, created_at)`,
 		}},
+		// input_preview is a one-line title; input_text keeps the whole
+		// message the turn opened with, and mid_turn_json the messages the
+		// user sent while the turn ran.
+		{Version: 61, Name: "request_input_text", Statements: []string{
+			`ALTER TABLE request_records ADD COLUMN input_text TEXT`,
+			`ALTER TABLE request_records ADD COLUMN mid_turn_json TEXT`,
+		}},
 	}
 }
 

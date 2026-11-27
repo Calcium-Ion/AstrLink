@@ -675,6 +675,10 @@ func (session *recordSession) recordSnapshot(
 	if preview := session.visibleInputPreview(); preview != "" {
 		record.InputPreview = &preview
 	}
+	if text := session.visibleInputText(); text != "" {
+		record.InputText = &text
+	}
+	record.MidTurnMessages = session.visibleMidTurnMessages()
 	record.Context = session.recordContext()
 	if session.project != "" {
 		project := session.project
@@ -1399,6 +1403,8 @@ func (session *recordSession) demoteCurrentAttemptToChild(
 	// The root carries the turn's preview and what the call carried; an
 	// attempt would only repeat them.
 	child.InputPreview = nil
+	child.InputText = nil
+	child.MidTurnMessages = nil
 	// The plugins took part in the request once, before any attempt.
 	child.PluginRecords = nil
 	child.Context = nil

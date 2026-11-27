@@ -48,7 +48,12 @@ func (kind RequestEventKind) Valid() bool {
 }
 
 const (
-	MaxInputPreviewRunes   = 80
+	MaxInputPreviewRunes = 80
+	// MaxInputTextRunes bounds a record's whole user message and each
+	// message sent while the turn ran.
+	MaxInputTextRunes = 4096
+	// MaxMidTurnMessages bounds the messages one call carries.
+	MaxMidTurnMessages     = 8
 	MaxEventSummaryRunes   = 256
 	MaxProtocolCursorRunes = 256
 	MaxSessionTitleRunes   = 80
@@ -625,6 +630,14 @@ type RequestRecord struct {
 	PreviousResponseID *string          `json:"previous_response_id"`
 	OutputResponseID   *string          `json:"output_response_id"`
 	InputPreview       *string          `json:"input_preview"`
+	// InputText is the whole user message the turn opened with, line breaks
+	// kept, where InputPreview is its first line cut for a title. It follows
+	// the preview's rules and is absent where the preview is.
+	InputText *string `json:"input_text,omitempty"`
+	// MidTurnMessages are messages the user sent while the turn ran, which
+	// the client handed the model inside this call rather than as a turn of
+	// their own. They follow the preview's privacy rules.
+	MidTurnMessages []string `json:"mid_turn_messages,omitempty"`
 	// TurnIndex is the 1-based user turn within the session. Every model call
 	// of one agent loop shares the same value. Null when the protocol has no
 	// user turns or on legacy rows.
@@ -817,6 +830,19 @@ func (record RequestRecord) Validate() error {
 	}
 	if record.InputPreview != nil {
 		if err := validateBoundedText("input_preview", *record.InputPreview, MaxInputPreviewRunes, false); err != nil {
+			return err
+		}
+	}
+	if record.InputText != nil {
+		if err := validateMultilineText("input_text", *record.InputText, MaxInputTextRunes); err != nil {
+			return err
+		}
+	}
+	if len(record.MidTurnMessages) > MaxMidTurnMessages {
+		return fmt.Errorf("mid_turn_messages lists at most %d messages", MaxMidTurnMessages)
+	}
+	for _, message := range record.MidTurnMessages {
+		if err := validateMultilineText("mid_turn_messages", message, MaxInputTextRunes); err != nil {
 			return err
 		}
 	}

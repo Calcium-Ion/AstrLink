@@ -51,6 +51,9 @@ type Request struct {
 	Conversation convo.RequestSummary
 	// lastUserText is classifier input only. Never persist, log, or cache it.
 	lastUserText string
+	// midTurn are the messages the user sent while the turn ran that this
+	// call delivers, raw; records carry them only as visibleMidTurnMessages.
+	midTurn []string
 	// body is the client's body as classify read it, for the plugins to read
 	// the turn from. Never persist, log, or forward it.
 	body []byte
@@ -199,6 +202,9 @@ func classify(request *http.Request, maxBodyBytes int64) (Request, error) {
 	result.InputPreview = metadata.InputPreview
 	result.Conversation = metadata.Conversation
 	result.body = metadata.raw
+	if result.Protocol == contract.ProtocolAnthropicMessages {
+		result.midTurn = claudeMidTurnMessages(metadata.fields)
+	}
 	if result.Protocol == contract.ProtocolOpenAIResponses {
 		result.codexTurn = metadata.codexTurn.or(codexTurnFromHeader(request.Header))
 	}
