@@ -12,7 +12,7 @@ import {
   parseClientConfigPreview,
   parseClientConfigSnippet,
   parseClientProxyCheck,
-  reasoningEffortOptions,
+  parseCodexModelReasoning,
   type ClientCatalog,
   type ClientCatalogEntry,
   type ClientConfigClient,
@@ -41,7 +41,7 @@ const files: Record<ClientConfigClient, string[]> = {
 const builtinEntries: ClientCatalogEntry[] = (
   [
     ["claude", "Claude Code", "anthropic.messages", false],
-    ["codex", "Codex", "openai.responses", false],
+    ["codex", "Codex", "openai.responses", true],
     ["gemini", "Gemini CLI", "google.generate_content", false],
     ["opencode", "OpenCode", "openai.chat", true],
     ["openclaw", "OpenClaw", "openai.chat", true],
@@ -138,7 +138,11 @@ describe("client-config status parsing", () => {
         codex: {
           state: "configured",
           token_id: "token_01",
-          models: { model: "gpt-5", reasoningEffort: "xhigh" },
+          models: {
+            model: "gpt-5",
+            models: ["gpt-5", "glm"],
+            reasoningEffort: "xhigh",
+          },
         },
         gemini: {
           state: "outdated",
@@ -169,6 +173,7 @@ describe("client-config status parsing", () => {
     );
     expect(parsed[1].models).toEqual({
       model: "gpt-5",
+      models: ["gpt-5", "glm"],
       reasoningEffort: "xhigh",
     });
     expect(parsed[5].models).toMatchObject({ contextWindow: 400000 });
@@ -191,7 +196,7 @@ describe("client-config status parsing", () => {
     ["a state CC Switch once had", { state: "cc_switch" }],
     ["models that are not an object", { models: ["gpt-5"] }],
     ["a tier outside Claude Code", { models: { opusModel: "x" } }],
-    ["a list outside list clients", { models: { models: ["x"] } }],
+
     ["a malformed effort", { models: { reasoningEffort: "x-high" } }],
     ["a limit outside Pi", { models: { maxTokens: 1 } }],
     ["an empty model", { models: { model: "" } }],
@@ -719,21 +724,23 @@ describe("client-config snippets and proxy checks", () => {
   });
 });
 
-describe("reasoning effort options", () => {
-  it("offers the model's official levels Codex takes, else the common ones", () => {
-    expect(reasoningEffortOptions(["low", "high", "turbo"], "")).toEqual([
-      "low",
-      "high",
-    ]);
-    expect(reasoningEffortOptions(undefined, "")).toEqual([
-      "minimal",
-      "low",
-      "medium",
-      "high",
-      "xhigh",
-    ]);
-    // The config's own value stays visible.
-    expect(reasoningEffortOptions(["low"], "max")).toEqual(["low", "max"]);
+describe("Codex model reasoning", () => {
+  it("accepts only the confirmed choices for each requested model", () => {
+    const sample = {
+      a: { levels: ["low", "max"], default: "max", reasoning: true },
+      b: { levels: [], default: null, reasoning: null },
+    };
+    expect(parseCodexModelReasoning(sample, ["a", "b"])).toEqual(sample);
+    for (const altered of [
+      { levels: ["low", "turbo"], default: null, reasoning: true },
+      { levels: ["low"], default: "high", reasoning: true },
+    ]) {
+      expect(() => parseCodexModelReasoning({ a: altered }, ["a"])).toThrow();
+    }
+    expect(() => parseCodexModelReasoning(sample, ["a"])).toThrow();
+    expect(() =>
+      parseStatuses(statuses({ gemini: { models: { models: ["x"] } } })),
+    ).toThrow();
   });
 });
 

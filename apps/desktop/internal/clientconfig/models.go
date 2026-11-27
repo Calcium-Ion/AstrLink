@@ -147,7 +147,7 @@ func (m *Models) list(client Client, model string) ([]string, error) {
 		return nil, nil
 	}
 	if !client.ListsModels() {
-		return nil, errors.New("a model list applies to OpenCode, OpenClaw, and Pi only")
+		return nil, errors.New("this client does not take a model list")
 	}
 	if len(m.Models) > MaxListedModels {
 		return nil, errors.New("too many models")
@@ -164,6 +164,9 @@ func (m *Models) list(client Client, model string) ([]string, error) {
 	}
 	if model != "" && !slices.Contains(list, model) {
 		list = append([]string{model}, list...)
+	}
+	if client.ID() == "codex" && len(list) > MaxListedModels {
+		return nil, errors.New("too many models")
 	}
 	return list, nil
 }
@@ -303,6 +306,9 @@ func Some[T any](value T) *T { return &value }
 // ModelDetails is what AstrLink writes into a client's entry for a model
 // besides its id.
 type ModelDetails struct {
+	// CodexCatalog is the upstream declaration for this routed model, when available.
+	CodexCatalog   json.RawMessage
+	ReasoningKnown bool
 	// Reasoning holds the official reasoning levels; nil when the catalog
 	// lists no reasoning for the model. A model with no levels to choose
 	// keeps Pi's default range.
@@ -345,8 +351,11 @@ func detailsOf(metadata json.RawMessage) ModelDetails {
 		return &n
 	}
 	var details ModelDetails
-	var reasoning bool
-	if json.Unmarshal(fields["reasoning"], &reasoning) == nil && reasoning {
+	var reasoning *bool
+	if json.Unmarshal(fields["reasoning"], &reasoning) == nil && reasoning != nil {
+		details.ReasoningKnown = true
+	}
+	if reasoning != nil && *reasoning {
 		details.HasReasoning = true
 		details.Reasoning = []string{}
 		var levels []json.RawMessage
@@ -376,4 +385,16 @@ func catalogFor(selection *Selection, known Catalog) Catalog {
 		catalog[model] = entry
 	}
 	return catalog
+}
+
+// selectionDetails resolves the same capabilities for preview, snippets and
+// writes, sharing official lookups for clients in a batch.
+func selectionDetails(ctx context.Context, gateway Gateway, client Client, selection *Selection, known Catalog, tokenID, url string) (Catalog, error) {
+	if client.ID() == "codex" {
+		return gateway.CodexModels(ctx, tokenID, url, selection.List)
+	}
+	if client.ListsModels() {
+		officialDetails(ctx, gateway, selection.List, known)
+	}
+	return catalogFor(selection, known), nil
 }

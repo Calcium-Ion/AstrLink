@@ -386,6 +386,40 @@ paths:
         "400": { description: Invalid input. }
         "401": { description: Local control authentication required. }
         "404": { description: LLM Metadata lists no official model for it. }
+  /control/v1/model-metadata/resolve:
+    post:
+      x-astrlink-role: observer
+      x-astrlink-implementation-status: implemented
+      tags: [Services]
+      operationId: resolveModelMetadata
+      summary: Resolve official metadata for a token's Codex models in routing order.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [token_id, models]
+              properties:
+                token_id: { type: string, minLength: 1 }
+                models:
+                  type: array
+                  minItems: 1
+                  maxItems: 500
+                  items: { type: string, minLength: 1, maxLength: 256 }
+      responses:
+        "200":
+          description: Known entries keyed by the requested model ID.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  { $ref: "#/components/schemas/ModelMetadata" }
+        "400": { description: Invalid input. }
+        "401": { description: Local control authentication required. }
+        "404": { description: Unknown access token. }
   /control/v1/health:
     get:
       x-astrlink-role: public

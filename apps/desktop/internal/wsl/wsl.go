@@ -28,9 +28,14 @@ type Home struct {
 	MountRoot string
 }
 
-// LinuxPath returns a Windows drive path as the distribution sees it; false
-// for a path that is not on a drive letter.
+// LinuxPath returns a path inside this distribution or on a mounted Windows drive.
 func (h Home) LinuxPath(path string) (string, bool) {
+	if distro, linux, ok := insideShare(path); ok {
+		if !strings.EqualFold(distro, h.Distribution) {
+			return "", false
+		}
+		return linux, true
+	}
 	path = strings.TrimPrefix(path, `\\?\`)
 	if len(path) < 2 || !isASCIIAlpha(path[0]) || path[1] != ':' {
 		return "", false

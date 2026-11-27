@@ -3879,6 +3879,20 @@
     "testFailed": "连接失败，请检查代理地址、认证信息和目标地址后重试。"
   },
   "clientSetup": {
+    "codexMenu": {
+      "limit": "最多可选 {{count}} 个模型，含默认模型。",
+      "title": "Codex 模型菜单",
+      "choose": "选择显示的模型",
+      "levels": "每个模型优先使用上游声明的推理档位，缺少时从 LLM Metadata 补全。",
+      "defaultLevel": "默认档 {{level}}",
+      "noDefault": "默认档未指定",
+      "notAdjustable": "无可调推理强度",
+      "unknown": "未声明可选档位",
+      "savedEffort": "{{level}} · 原配置",
+      "restore": "恢复原配置",
+      "restoreTitle": "恢复 Codex 原配置？",
+      "restoreBody": "恢复接入前的配置，并移除 AstrLink 创建的模型目录。手动修改过的内容会保留。"
+    },
     "title": "配置客户端",
     "description": "勾选要使用这个令牌的客户端，一次写入它们的配置文件。",
     "client": "客户端",

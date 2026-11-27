@@ -2,12 +2,14 @@ package controlapi
 
 import (
 	"context"
+	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/QuantumNous/astrlink/core/contract"
+	"github.com/QuantumNous/astrlink/core/internal/accesstoken"
 	"github.com/QuantumNous/astrlink/core/internal/modelmeta"
 	"github.com/QuantumNous/astrlink/core/internal/pricing"
 )
@@ -19,7 +21,8 @@ func TestModelMetadataFollowsRoutingAndPriceBindings(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	handler, err := NewWithDependencies(contract.DefaultVersionResponse("test", "test"), Dependencies{ServiceStore: store, RequestRecords: store, ControlToken: testControlToken, PricingStore: store, PricingManager: pricing.NewManager(store, nil)})
+	tokens := &fakeAccessTokenManager{}
+	handler, err := NewWithDependencies(contract.DefaultVersionResponse("test", "test"), Dependencies{AccessTokenManager: tokens, ServiceStore: store, RequestRecords: store, ControlToken: testControlToken, PricingStore: store, PricingManager: pricing.NewManager(store, nil)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,4 +70,33 @@ func TestModelMetadataFollowsRoutingAndPriceBindings(t *testing.T) {
 	if r := accessTokenRequest(t, handler, "GET", ModelMetadataPath, "", ""); r.Code != 400 {
 		t.Fatalf("missing model %d %s", r.Code, r.Body)
 	}
+	// Two services publish the same public name with different price bindings.
+	other := createServiceForTest(t, handler, `{"name":"Other","kind":"openai_compatible","http":{"base_url":"https://example.com/v1","auth":{"scheme":"none"}},"models":["kimi-for-coding"],"capabilities":[{"protocol":"openai.responses","mode":"native","streaming":true}]}`)
+	if r := accessTokenRequest(t, handler, "PUT", PricingPath+"/services/"+string(other.ID), "application/json", `{"provider":"openai","bindings":{"kimi-for-coding":{"provider":"openai","model":"gpt-5.6"}},"billing_day":1,"time_zone":"UTC"}`); r.Code != 200 {
+		t.Fatalf("%d %s", r.Code, r.Body)
+	}
+	for _, tc := range []struct {
+		id      contract.AccessTokenID
+		allowed []contract.ServiceID
+		want    string
+	}{
+		{"token_first", []contract.ServiceID{service.ID}, "kimi-k2.7-code"},
+		{"token_second", []contract.ServiceID{other.ID}, "gpt-5.6"},
+		{"token_empty", []contract.ServiceID{}, ""},
+	} {
+		tokens.tokens = append(tokens.tokens, accesstoken.Token{ID: tc.id, Services: contract.AccessTokenServices{Scope: contract.AccessTokenServicesSelected, ServiceIDs: tc.allowed}})
+		input, _ := json.Marshal(map[string]any{"token_id": tc.id, "models": []string{"pi-coder", "unknown"}})
+		r := accessTokenRequest(t, handler, "POST", ModelMetadataPath+"/resolve", "application/json", string(input))
+		var entries map[string]modelmeta.Model
+		if r.Code != 200 || json.Unmarshal(r.Body.Bytes(), &entries) != nil || entries["pi-coder"].Model != tc.want {
+			t.Fatalf("scoped metadata: %d %s", r.Code, r.Body)
+		}
+		if _, ok := entries["unknown"]; ok {
+			t.Fatal("invented unknown model")
+		}
+	}
+	if r := accessTokenRequest(t, handler, "POST", ModelMetadataPath+"/resolve", "application/json", `{"token_id":"token_missing","models":["pi-coder"]}`); r.Code != 404 {
+		t.Fatalf("unknown token: %d", r.Code)
+	}
+
 }

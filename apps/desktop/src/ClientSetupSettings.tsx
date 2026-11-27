@@ -1,4 +1,6 @@
 import type { ReactNode } from "react";
+import { CodexModelMenu } from "./CodexModelMenu";
+import type { CodexModelReasoning } from "./mygo";
 
 import { Field } from "@/components/Field";
 import { FormMessage } from "@/components/FormMessage";
@@ -55,7 +57,7 @@ export function ClientSettingsForm({
   catalog,
   catalogStatus,
   engine,
-  efforts,
+  reasoning,
   disabled,
   onEdit,
 }: {
@@ -70,7 +72,7 @@ export function ClientSettingsForm({
   catalogStatus: "loading" | "ready" | "error";
   engine: ConversionEngineCapability | null | undefined;
   /** Codex's reasoning efforts for the chosen model. */
-  efforts: readonly string[];
+  reasoning: ReadonlyMap<string, CodexModelReasoning | null> | undefined;
   disabled: boolean;
   onEdit: (patch: Partial<ModelDraft>) => void;
 }) {
@@ -106,6 +108,7 @@ export function ClientSettingsForm({
             count: candidates.length,
           });
 
+  const efforts = reasoning?.get(draft.model.trim())?.levels ?? [];
   const modelField = (
     field:
       | "model"
@@ -128,7 +131,18 @@ export function ClientSettingsForm({
         disabled={disabled}
         id={`client-setup-${field}`}
         maxLength={256}
-        onValueChange={(value) => onEdit({ [field]: value })}
+        onValueChange={(value) => {
+          if (
+            client === "codex" &&
+            field === "model" &&
+            draft.reasoningEffort &&
+            !reasoning
+              ?.get(value.trim())
+              ?.levels.includes(draft.reasoningEffort)
+          )
+            onEdit({ model: value, reasoningEffort: "" });
+          else onEdit({ [field]: value });
+        }}
         optionAdornment={optionAdornment}
         options={candidates}
         placeholder={placeholder}
@@ -291,6 +305,14 @@ export function ClientSettingsForm({
                 <SelectItem value={defaultEffort}>
                   {t("clientSetup.effortDefault")}
                 </SelectItem>
+                {draft.reasoningEffort &&
+                !efforts.includes(draft.reasoningEffort) ? (
+                  <SelectItem value={draft.reasoningEffort} disabled>
+                    {t("clientSetup.codexMenu.savedEffort", {
+                      level: draft.reasoningEffort,
+                    })}
+                  </SelectItem>
+                ) : null}
                 {efforts.map((effort) => (
                   <SelectItem key={effort} value={effort}>
                     {effort}
@@ -301,6 +323,14 @@ export function ClientSettingsForm({
           </Field>
         </div>
         <p className="text-xs text-muted-foreground">{catalogHint}</p>
+        <CodexModelMenu
+          model={draft.model.trim()}
+          candidates={candidates}
+          list={list}
+          disabled={disabled}
+          reasoning={reasoning}
+          onChange={(models) => onEdit({ models })}
+        />
       </div>
     );
   } else if (!entry.list) {

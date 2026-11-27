@@ -1,5 +1,6 @@
 import {
   maxPiLimit,
+  maxListModels,
   type BuiltinClient,
   serviceUsable,
   type ClientCatalogEntry,
@@ -394,12 +395,16 @@ export function initialDraft(
  */
 export function listSelection(
   draft: ModelDraft,
-  status: Pick<ClientConfigStatus, "models">,
+  status: Pick<ClientConfigStatus, "models" | "client">,
   candidates: readonly string[],
   catalogKnown: boolean,
 ): string[] {
   if (draft.models) return draft.models;
   const current = status.models.models;
+  if (!current && status.client === "codex")
+    return [
+      ...new Set([draft.model.trim(), ...candidates].filter(Boolean)),
+    ].slice(0, maxListModels);
   if (!current) return [...candidates];
   return catalogKnown
     ? current.filter((model) => candidates.includes(model))
@@ -418,7 +423,13 @@ export function piLimit(text: string): number | null | undefined {
 export function draftProblem(
   client: ClientConfigClient,
   draft: ModelDraft,
-): "model" | "limits" | null {
+  list: readonly string[] = draft.models ?? [],
+): "model" | "limits" | "list" | null {
+  if (
+    client === "codex" &&
+    new Set([draft.model.trim(), ...list].filter(Boolean)).size > maxListModels
+  )
+    return "list";
   if (client !== "claude" && !draft.model.trim()) return "model";
   if (
     client === "pi" &&
@@ -449,7 +460,11 @@ export function draftModels(
   if (client === "codex" && draft.reasoningEffort) {
     models.reasoningEffort = draft.reasoningEffort;
   }
-  if (entry.list) models.models = [...list];
+  if (entry.list)
+    models.models =
+      client === "codex"
+        ? [...new Set([model, ...list].filter(Boolean))]
+        : [...list];
   if (client === "pi") {
     for (const key of ["contextWindow", "maxTokens"] as const) {
       const tokens = piLimit(draft[key]);

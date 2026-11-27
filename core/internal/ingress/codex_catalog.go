@@ -46,50 +46,41 @@ func encodeCodexModelCatalog(entries []discoveryEntry) ([]byte, error) {
 }
 
 func encodeCodexCatalogEntry(entry discoveryEntry) ([]byte, error) {
-	// Required ModelInfo fields for Codex 0.158.0. Unknown providers advertise
-	// text and ordinary shell tools only, with no guessed context limit,
-	// reasoning levels, image support, custom tools, or parallel tool calls.
-	model := map[string]any{
-		"slug":                         entry.id,
-		"display_name":                 entry.id,
-		"description":                  "",
-		"visibility":                   "list",
-		"supported_in_api":             true,
-		"priority":                     0,
-		"default_reasoning_level":      nil,
-		"supported_reasoning_levels":   []any{},
-		"shell_type":                   "shell_command",
-		"base_instructions":            "You are a coding assistant.",
-		"supports_reasoning_summaries": false,
-		"support_verbosity":            false,
-		"default_verbosity":            nil,
-		"apply_patch_tool_type":        nil,
-		"truncation_policy":            map[string]any{"mode": "tokens", "limit": 10000},
-		"supports_parallel_tool_calls": false,
-		"input_modalities":             []string{"text"},
-		"experimental_supported_tools": []any{},
+	return contract.CodexCatalogEntry(entry.id, entry.codexCatalog, nil, 0)
+}
+
+// A redirect takes precedence even when the upstream also lists its source.
+func withCodexRedirects(entries []discoveryEntry, rules []contract.ModelRedirect) []discoveryEntry {
+	if len(rules) == 0 {
+		return entries
 	}
-	if entry.id == "codex-auto-review" {
-		// Subscription discovery adds this internal model for routing, not for
-		// the user's picker. An explicit upstream visibility still wins below.
-		model["visibility"] = "hide"
+	indices := make(map[string]int, len(entries))
+	for i, entry := range entries {
+		indices[entry.id] = i
 	}
-	if len(entry.codexCatalog) != 0 {
-		var upstream map[string]json.RawMessage
-		if err := json.Unmarshal(entry.codexCatalog, &upstream); err != nil {
-			return nil, err
+	for _, rule := range rules {
+		target, exists := indices[rule.To]
+		if !rule.Enabled || !exists || rule.From == "" || rule.From == contract.AstrLinkAutoModelID {
+			continue
 		}
-		for key, value := range upstream {
-			model[key] = value
-		}
-		var slug string
-		_ = json.Unmarshal(upstream["slug"], &slug)
-		if strings.TrimSpace(slug) != entry.id {
-			// Redirect sources inherit their target's capabilities, while their
-			// public name must remain selectable independently of the target.
-			model["display_name"] = entry.id
+		raw := entries[target].codexCatalog
+		if source, ok := indices[rule.From]; ok {
+			entries[source].codexCatalog = raw
+		} else {
+			entries = append(entries, discoveryEntry{id: rule.From, codexCatalog: raw})
 		}
 	}
-	model["slug"] = entry.id
-	return json.Marshal(model)
+	return entries
+}
+
+// Only the original declarations are returned to the desktop. Missing fields
+// can then be filled from official metadata without overriding an empty list.
+func encodeUpstreamCodexCatalog(entries []discoveryEntry) ([]byte, error) {
+	models := map[string]json.RawMessage{}
+	for _, entry := range entries {
+		if len(entry.codexCatalog) > 0 {
+			models[entry.id] = entry.codexCatalog
+		}
+	}
+	return json.Marshal(models)
 }

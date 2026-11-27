@@ -28,7 +28,7 @@ import (
 // the configs this gateway wrote on its current address.
 func registerClientCommands(h *host.Host) {
 	api := &control.API{Caller: h}
-	gateway := clientGateway{host: h, tokens: control.Tokens{API: api}, pricing: control.Pricing{API: api}}
+	gateway := clientGateway{host: h, catalog: &cc.CodexCatalogCache{}, tokens: control.Tokens{API: api}, pricing: control.Pricing{API: api}}
 	mygo.Bind(Clients{host: h, gateway: gateway, writeClipboard: h.WriteClipboard})
 	h.OnStarted(func() {
 		if syncsClientConfigsAtStartup(h.Instance()) {
@@ -48,6 +48,7 @@ func syncsClientConfigsAtStartup(i instance.Instance) bool { return !i.Isolated 
 // clientGateway is the running gateway client configs are written for:
 // Core's session and its control API.
 type clientGateway struct {
+	catalog *cc.CodexCatalogCache
 	host    *host.Host
 	tokens  control.Tokens
 	pricing control.Pricing
@@ -82,6 +83,14 @@ func (g clientGateway) RevealAccessToken(ctx context.Context, tokenID string) (s
 	return control.RevealAccessToken(ctx, g.host, tokenID)
 }
 
+func (g clientGateway) ModelMetadataForModels(ctx context.Context, tokenID string, models []string) (map[string]json.RawMessage, error) {
+	return g.pricing.ResolveCodexModels(ctx, tokenID, models)
+}
+
+func (g clientGateway) CodexModels(ctx context.Context, tokenID, inferenceURL string, models []string) (cc.Catalog, error) {
+	return g.catalog.Load(ctx, g, tokenID, inferenceURL, models)
+}
+
 func (g clientGateway) ModelMetadata(ctx context.Context, model string) (json.RawMessage, error) {
 	input, err := json.Marshal(map[string]string{"model": model})
 	if err != nil {
@@ -102,6 +111,19 @@ type Clients struct {
 // ClientCatalog is every client the dialog lists, in its order: the ones
 // AstrLink writes, then the ones it explains.
 func (Clients) ClientCatalog() cc.ClientCatalog { return cc.CatalogOf() }
+
+// CodexModelReasoning lists the same model-specific choices the writer uses.
+func (c Clients) CodexModelReasoning(ctx context.Context, tokenID, inferenceURL string, models []string) (map[string]cc.CodexModelReasoning, error) {
+	details, err := c.gateway.CodexModels(ctx, tokenID, inferenceURL, models)
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[string]cc.CodexModelReasoning, len(details))
+	for id, entry := range details {
+		result[id] = entry.CodexReasoning()
+	}
+	return result, nil
+}
 
 // ClientConfigStatus is the client configs in the desktop user's home and
 // in running WSL distributions. A WSL home that cannot be read is reported

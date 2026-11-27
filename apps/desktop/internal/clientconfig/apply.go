@@ -239,16 +239,14 @@ func Apply(ctx context.Context, gateway Gateway, homes *agents.Homes, tokenID *s
 		}
 	}
 	known := Catalog{}
-	for i, item := range items {
-		if selections[i] != nil && item.Client.ListsModels() {
-			officialDetails(ctx, gateway, selections[i].List, known)
-		}
-	}
 	jobs := make([]Job, len(items))
 	for i, item := range items {
 		jobs[i] = Job{Home: HomeOf(homes, item.WSL), Place: places[i], WSL: item.WSL, Action: item.Action, Selection: selections[i], Details: Catalog{}}
 		if selections[i] != nil {
-			jobs[i].Details = catalogFor(selections[i], known)
+			jobs[i].Details, err = selectionDetails(ctx, gateway, item.Client, selections[i], known, *tokenID, inferenceURL)
+			if err != nil {
+				return BatchOutcome{}, err
+			}
 		}
 	}
 	return Run(jobs, secret, origin, tokens, confirmed), nil
@@ -376,6 +374,7 @@ func check(home agents.Home, place Place, connection *Connection, details Catalo
 func confirm(home agents.Home, place Place, records *Records, paths []string, existing []*string, connection *Connection, details Catalog, tokens Tokens) (*Confirmation, *ItemError) {
 	client := place.Client
 	record := records.Get(place)
+	connection = connection.atPaths(home, paths)
 	plan, err := PlanWrite(client, existing, connection, details, record)
 	if err != nil {
 		return nil, err.At(paths)
@@ -439,19 +438,37 @@ func expected(text *string) *agents.Expected {
 // writeFiles writes each file whose contents changed. When one fails, the
 // files already written get their old contents back.
 func writeFiles(client Client, paths []string, existing []*string, contents []string) error {
+	after := make([]*string, len(contents))
+	for i, text := range contents {
+		// Empty existing files that did not change remain present.
+		if text != "" || existing[i] != nil && *existing[i] == text {
+			after[i] = Some(text)
+		}
+	}
+	return commitFiles(client, paths, existing, after, true)
+}
+
+// commitFiles checks the expected text before each change and reverses
+// completed changes if a later file cannot be updated.
+func commitFiles(client Client, paths []string, before, after []*string, writing bool) error {
 	files := client.Files()
 	var done []int
-	for i, path := range paths {
-		before, after := existing[i], optional(contents[i])
-		if before == nil && after == nil || before != nil && *before == contents[i] {
+	replace := func(i int, old, next *string) error {
+		return FileWrite(files[i], paths[i], old, next, writing || FileSecret(files[i]))
+	}
+	for i := range paths {
+		if sameText(before[i], after[i]) {
 			continue
 		}
-		if err := FileWrite(files[i], path, before, after, true); err != nil {
+		if err := replace(i, before[i], after[i]); err != nil {
+			failures := []error{err}
 			for j := len(done) - 1; j >= 0; j-- {
 				k := done[j]
-				_ = FileWrite(files[k], paths[k], optional(contents[k]), existing[k], true)
+				if undo := replace(k, after[k], before[k]); undo != nil {
+					failures = append(failures, undo)
+				}
 			}
-			return err
+			return errors.Join(failures...)
 		}
 		done = append(done, i)
 	}
@@ -488,7 +505,7 @@ func WriteWith(home agents.Home, place Place, connection *Connection, details Ca
 	if confirmation.needed() && !replace {
 		return false, confirmation, nil
 	}
-	plan, planErr := PlanWrite(client, existing, connection, details, records.Get(place))
+	plan, planErr := PlanWrite(client, existing, connection.atPaths(home, paths), details, records.Get(place))
 	if planErr != nil {
 		return false, nil, planErr.At(paths)
 	}
@@ -535,22 +552,22 @@ func Remove(home agents.Home, place Place) *ItemError {
 	if planErr != nil {
 		return planErr.At(paths)
 	}
-	files := place.Client.Files()
+	after := slices.Clone(existing)
 	for i, removal := range removals {
-		var err error
 		switch removal.Kind {
 		case RemovalWrite:
-			err = FileWrite(files[i], paths[i], existing[i], &removal.Contents, FileSecret(files[i]))
+			after[i] = Some(removal.Contents)
 		case RemovalDelete:
-			err = FileWrite(files[i], paths[i], existing[i], nil, FileSecret(files[i]))
+			after[i] = nil
 		}
-		if err != nil {
-			return itemError(err)
-		}
+	}
+	if err := commitFiles(place.Client, paths, existing, after, false); err != nil {
+		return itemError(err)
 	}
 	records.Set(place, nil)
 	if err := WriteRecords(home, records); err != nil {
-		return itemError(err)
+		undo := commitFiles(place.Client, paths, after, existing, false)
+		return itemError(errors.Join(err, undo))
 	}
 	return nil
 }

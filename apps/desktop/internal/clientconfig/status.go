@@ -96,6 +96,8 @@ func StatusOf(home agents.Home, clients []Client, inferenceURL string, tokens To
 			config, fileErr := ParseConfig(client, existing)
 			if fileErr != nil {
 				config = nil
+			} else {
+				config.Paths = shownPaths(home, paths)
 			}
 			manual := ""
 			if config != nil && origin != "" && tokens != nil && record == nil &&
@@ -126,10 +128,10 @@ func StatusOf(home agents.Home, clients []Client, inferenceURL string, tokens To
 			case record != nil && state != NotConfigured:
 				status.TokenID = Some(record.TokenID)
 				status.PasteSinceUnix = record.PasteSinceUnix
-				status.Models = CurrentModelsOf(client, existing)
+				status.Models = currentModels(client, config)
 			case manual != "":
 				status.TokenID = Some(manual)
-				status.Models = CurrentModelsOf(client, existing)
+				status.Models = currentModels(client, config)
 			}
 			if config != nil && status.PasteSinceUnix != nil {
 				status.PasteInto = client.PasteInto(config)

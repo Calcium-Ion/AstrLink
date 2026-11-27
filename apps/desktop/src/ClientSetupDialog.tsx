@@ -84,7 +84,6 @@ import {
   availableModels,
   configAttention,
   configModels,
-  reasoningEffortOptions,
   writesConfig,
   type ClientCatalog,
   type ClientCatalogEntry,
@@ -137,6 +136,7 @@ import {
   rememberClientNames,
   targetName,
 } from "./client-setup-clients";
+import { useCodexModelReasoning } from "./CodexModelMenu";
 import { ClientSettingsForm } from "./ClientSetupSettings";
 import type { ConversionEngineCapability } from "./core-model";
 import type { ClientType } from "./request-record-model";
@@ -897,7 +897,8 @@ function DesktopClientSetupDialog({
   const writes = railPlaces.filter(isChecked);
   const removals = railPlaces.filter(isRemoval);
   const blocked = writes.filter(
-    (status) => draftProblem(status.client, draftOf(status)) !== null,
+    (status) =>
+      draftProblem(status.client, draftOf(status), listOf(status)) !== null,
   );
   const plan = (places: ClientConfigStatus[]): Planned[] =>
     places.flatMap((status): Planned[] =>
@@ -974,7 +975,17 @@ function DesktopClientSetupDialog({
     (selection === null ? null : resolve(selection)) ?? defaultSelection();
   const selectedKey = selected?.key ?? "";
   const selectedHome = selected?.kind === "home" ? selected : null;
-  const selectedDraft = selectedHome ? draftOf(selectedHome.lead) : null;
+  const reasoning = useCodexModelReasoning(
+    tokenId,
+    inferenceURL,
+    selectedHome?.entry.id === "codex"
+      ? [
+          ...candidatesOf("codex"),
+          ...listOf(selectedHome.lead),
+          draftOf(selectedHome.lead).model.trim(),
+        ]
+      : [],
+  );
   const guideEntry =
     selected?.kind === "static" && selected.entry.kind === "guide"
       ? selected.entry
@@ -984,16 +995,12 @@ function DesktopClientSetupDialog({
       defaultModel(candidatesOf(guideEntry.id), catalog.services))
     : "";
 
-  // Official details: Pi's limits for its default model, the reasoning
-  // levels of Codex's, and the context of a guide's model. Each model is
+  // Official details: Pi's limits and the context of a guide's model. Each model is
   // looked up once.
   const officialWanted = [
     ...shown
       .filter((status) => status.client === "pi")
       .map((status) => draftOf(status).model.trim()),
-    selectedHome?.entry.id === "codex"
-      ? (selectedDraft?.model.trim() ?? "")
-      : "",
     guideModel.trim(),
   ]
     .filter(Boolean)
@@ -1078,7 +1085,8 @@ function DesktopClientSetupDialog({
       ? selectedHome.places.filter(
           (status) =>
             (isChecked(status) &&
-              draftProblem(status.client, draftOf(status)) === null) ||
+              draftProblem(status.client, draftOf(status), listOf(status)) ===
+                null) ||
             isRemoval(status),
         )
       : [];
@@ -1290,6 +1298,11 @@ function DesktopClientSetupDialog({
           client: placeLabel(places[0].client, places[0].wsl),
         }),
       );
+      setDrafts((current) => {
+        const next = { ...current };
+        for (const place of places) delete next[placeKey(place)];
+        return next;
+      });
       // Removed on purpose, so the next write leaves them alone.
       setChecks((current) => ({
         ...current,
@@ -2034,10 +2047,7 @@ function DesktopClientSetupDialog({
                 catalogStatus={catalogStatus}
                 disabled={working}
                 draft={draft}
-                efforts={reasoningEffortOptions(
-                  official[draft.model.trim()]?.reasoningLevels,
-                  draft.reasoningEffort,
-                )}
+                reasoning={reasoning}
                 engine={conversionEngine}
                 entry={entry}
                 list={listOf(lead)}
@@ -2228,7 +2238,9 @@ function DesktopClientSetupDialog({
                 {t(
                   busy === "remove"
                     ? "clientSetup.removing"
-                    : "clientSetup.remove",
+                    : lead.client === "codex"
+                      ? "clientSetup.codexMenu.restore"
+                      : "clientSetup.remove",
                 )}
               </Button>
             ) : null}
@@ -2613,18 +2625,19 @@ function DesktopClientSetupDialog({
       onOpenChange={(open) => !open && !pending.current && onClose()}
     >
       <DialogContent
+        className="max-sm:h-[calc(100dvh-1rem-var(--window-chrome-height))] max-sm:max-h-none"
         onInteractOutside={(event) => event.preventDefault()}
         showCloseButton={!working}
         variant="workspace"
       >
-        <DialogHeader className="flex-row items-start gap-3.5 border-b px-5 pt-4 pb-3.5 pr-12 text-left">
+        <DialogHeader className="items-stretch gap-2 border-b px-4 py-2.5 pr-10 text-left sm:flex-row sm:items-start sm:gap-3.5 sm:px-5 sm:pt-4 sm:pb-3.5 sm:pr-12">
           <div className="grid min-w-0 flex-1 gap-1">
             <DialogTitle>{t("clientSetup.title")}</DialogTitle>
             <DialogDescription>
               {t("clientSetup.description")}
             </DialogDescription>
           </div>
-          <div className="flex shrink-0 items-center gap-2">
+          <div className="flex min-w-0 items-center gap-2 sm:shrink-0">
             <Label
               className="text-xs font-medium text-text-secondary"
               htmlFor="client-setup-token"
@@ -2636,7 +2649,10 @@ function DesktopClientSetupDialog({
               onValueChange={switchToken}
               value={tokenId}
             >
-              <SelectTrigger className="w-55" id="client-setup-token">
+              <SelectTrigger
+                className="min-w-0 flex-1 sm:w-55 sm:flex-none"
+                id="client-setup-token"
+              >
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -2653,12 +2669,12 @@ function DesktopClientSetupDialog({
           </div>
         </DialogHeader>
         <div className="@container min-h-0 flex-1">
-          <SplitWorkspace className="gap-0 @[720px]:grid-cols-[300px_minmax(0,1fr)]">
+          <SplitWorkspace className="gap-0 @max-[720px]:grid-rows-[minmax(0,min(8.5rem,30%))_minmax(0,1fr)] @max-[720px]:overflow-hidden @[720px]:grid-cols-[300px_minmax(0,1fr)]">
             <aside
               aria-label={t("clientSetup.client")}
               className="flex min-h-0 flex-col border-b @[720px]:border-r @[720px]:border-b-0"
             >
-              <div className="flex items-center gap-2 pt-3 pr-3.5 pb-2 pl-4">
+              <div className="flex items-center gap-2 px-4 py-1.5 @[720px]:pt-3 @[720px]:pr-3.5 @[720px]:pb-2">
                 <span className="shrink-0 text-xs font-medium text-text-secondary">
                   {t("clientSetup.client")}
                 </span>
@@ -2688,7 +2704,7 @@ function DesktopClientSetupDialog({
                   })}
                 </p>
               ) : null}
-              <p className="border-t px-4 py-2.5 text-xs text-muted-foreground">
+              <p className="border-t px-4 py-1 text-xs text-muted-foreground @[720px]:py-2.5">
                 {t("overview.apiAddress")}{" "}
                 <code className="font-mono break-all text-foreground">
                   {inferenceURL}
@@ -2884,8 +2900,20 @@ function DesktopClientSetupDialog({
         }
       />
       <ConfirmDialog
-        confirmLabel={t("clientSetup.remove")}
-        description={<p>{t("clientSetup.removeBody")}</p>}
+        confirmLabel={t(
+          removal?.[0]?.client === "codex"
+            ? "clientSetup.codexMenu.restore"
+            : "clientSetup.remove",
+        )}
+        description={
+          <p>
+            {t(
+              removal?.[0]?.client === "codex"
+                ? "clientSetup.codexMenu.restoreBody"
+                : "clientSetup.removeBody",
+            )}
+          </p>
+        }
         destructive
         onCancel={() => setRemoval(null)}
         onConfirm={() => {
@@ -2895,9 +2923,16 @@ function DesktopClientSetupDialog({
           void removePlaces(places);
         }}
         open={removal !== null}
-        title={t("clientSetup.removeTitle", {
-          client: removal ? placeLabel(removal[0].client, removal[0].wsl) : "",
-        })}
+        title={t(
+          removal?.[0]?.client === "codex"
+            ? "clientSetup.codexMenu.restoreTitle"
+            : "clientSetup.removeTitle",
+          {
+            client: removal
+              ? placeLabel(removal[0].client, removal[0].wsl)
+              : "",
+          },
+        )}
       />
     </Dialog>
   );

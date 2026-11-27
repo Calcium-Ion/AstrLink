@@ -3879,6 +3879,20 @@
     "testFailed": "Connection failed. Check the proxy address, authentication and target, then retry."
   },
   "clientSetup": {
+    "codexMenu": {
+      "limit": "Choose up to {{count}} models, including the default.",
+      "title": "Codex model menu",
+      "choose": "Choose visible models",
+      "levels": "Each model uses the reasoning levels its provider declares. LLM Metadata fills in missing levels.",
+      "defaultLevel": "Default {{level}}",
+      "noDefault": "Default unspecified",
+      "notAdjustable": "No adjustable effort",
+      "unknown": "No levels declared",
+      "savedEffort": "{{level}} · saved setting",
+      "restore": "Restore original configuration",
+      "restoreTitle": "Restore the original Codex configuration?",
+      "restoreBody": "Restore the previous settings and remove the model catalog AstrLink created. Later manual edits are preserved."
+    },
     "title": "Configure a client",
     "description": "Check the clients that use this token and write their config files at once.",
     "client": "Client",

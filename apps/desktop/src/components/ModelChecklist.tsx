@@ -26,6 +26,7 @@ export function ModelChecklist({
   onSelectedChange,
   label,
   disabled = false,
+  stackedDetails = false,
   className,
 }: {
   items: readonly ModelChecklistItem[];
@@ -33,6 +34,7 @@ export function ModelChecklist({
   onSelectedChange: (selected: string[]) => void;
   label: string;
   disabled?: boolean;
+  stackedDetails?: boolean;
   className?: string;
 }) {
   const t = useT();
@@ -110,11 +112,20 @@ export function ModelChecklist({
           {visible.map((item) => (
             <li key={item.id} className="min-w-0">
               <label
-                className="flex h-7 min-w-0 items-center gap-2 text-xs"
-                title={item.id}
+                className={cn(
+                  "flex h-7 min-w-0 items-center gap-2 text-xs",
+                  stackedDetails &&
+                    "grid h-auto min-h-12 grid-cols-[auto_minmax(0,1fr)_auto] content-center gap-x-2 gap-y-0.5 py-1.5",
+                )}
+                title={
+                  stackedDetails && item.detail
+                    ? `${item.id} · ${item.detail}`
+                    : item.id
+                }
               >
                 <Checkbox
                   aria-label={item.id}
+                  className={stackedDetails ? "row-span-2" : undefined}
                   checked={chosen.has(item.id)}
                   disabled={disabled || item.locked}
                   onCheckedChange={(checked) => {
@@ -127,7 +138,14 @@ export function ModelChecklist({
                 <code className="min-w-0 truncate font-mono">{item.id}</code>
                 {item.adornment}
                 {item.detail ? (
-                  <span className="ml-auto shrink-0 pl-2 text-micro whitespace-nowrap text-muted-foreground">
+                  <span
+                    className={cn(
+                      "text-micro text-muted-foreground",
+                      stackedDetails
+                        ? "col-span-2 col-start-2 row-start-2 min-w-0 leading-snug wrap-anywhere"
+                        : "ml-auto shrink-0 pl-2 whitespace-nowrap",
+                    )}
+                  >
                     {item.detail}
                   </span>
                 ) : null}

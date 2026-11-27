@@ -9,6 +9,7 @@ const bridgeMocks = vi.hoisted(() => ({
   checkClientProxy: vi.fn(),
   copyAccessToken: vi.fn(),
   getClientCatalog: vi.fn(),
+  getCodexModelReasoning: vi.fn(),
   getClientConfigStatus: vi.fn(),
   getRoutingSettings: vi.fn(),
   getService: vi.fn(),
@@ -68,7 +69,7 @@ const otherToken: AccessTokenSummary = {
 /** The six clients as the host lists them, in rail order. */
 const builtinEntries: ClientCatalogEntry[] = [
   ["claude", "Claude Code", "anthropic.messages", false],
-  ["codex", "Codex", "openai.responses", false],
+  ["codex", "Codex", "openai.responses", true],
   ["gemini", "Gemini CLI", "google.generate_content", false],
   ["opencode", "OpenCode", "openai.chat", true],
   ["openclaw", "OpenClaw", "openai.chat", true],
@@ -127,7 +128,7 @@ const dirs: Record<ClientConfigClient, string> = {
 };
 const files: Record<ClientConfigClient, string[]> = {
   claude: ["settings.json"],
-  codex: ["config.toml"],
+  codex: ["config.toml", "astrlink-model-catalog.json"],
   gemini: [".env", "settings.json"],
   opencode: ["opencode.jsonc"],
   openclaw: ["openclaw.json"],
@@ -411,6 +412,7 @@ describe("ClientSetupDialog", () => {
     ).IS_REACT_ACT_ENVIRONMENT = true;
     vi.clearAllMocks();
     bridgeMocks.getClientCatalog.mockResolvedValue(catalog);
+    bridgeMocks.getCodexModelReasoning.mockResolvedValue({});
     bridgeMocks.getClientConfigStatus.mockResolvedValue(overview());
     bridgeMocks.copyAccessToken.mockResolvedValue(true);
     bridgeMocks.isCCSwitchInstalled.mockResolvedValue(false);
@@ -562,7 +564,13 @@ describe("ClientSetupDialog", () => {
         wsl: null,
         target: null,
         action: "write",
-        models: { model: "gpt-5.6" },
+        models: {
+          model: "gpt-5.6",
+          models: [
+            "gpt-5.6",
+            ...gateway.models.filter((id) => id !== "gpt-5.6"),
+          ],
+        },
       },
       {
         client: "gemini",
@@ -1192,20 +1200,27 @@ describe("ClientSetupDialog", () => {
   });
 
   it("offers the reasoning efforts of Codex's model", async () => {
-    pricingMocks.getOfficialModelLimits.mockImplementation(async (model) =>
-      model === "gpt-5.6"
-        ? {
-            contextTokens: 400000,
-            outputTokens: 128000,
-            reasoningLevels: ["low", "medium", "high"],
-          }
-        : null,
-    );
+    bridgeMocks.getCodexModelReasoning.mockResolvedValue({
+      "gpt-5.6": {
+        levels: ["low", "medium", "high"],
+        default: "medium",
+        reasoning: true,
+      },
+      "vendor/glm-5": {
+        levels: ["high", "max"],
+        default: null,
+        reasoning: true,
+      },
+    });
     bridgeMocks.getClientConfigStatus.mockResolvedValue(
       overview({ codex: ours("configured", { model: "gpt-5.6" }) }),
     );
     await renderDialog();
     await open("codex");
+    await click(button("选择显示的模型", pane()));
+    expect(pane().textContent).toContain("low / medium / high");
+    expect(pane().textContent).toContain("high / max");
+    expect(pane().textContent).toContain("未声明");
     await chooseOption(
       document.querySelector<HTMLElement>("#client-setup-reasoningEffort")!,
       "high",
@@ -1215,6 +1230,7 @@ describe("ClientSetupDialog", () => {
       {
         model: "gpt-5.6",
         reasoningEffort: "high",
+        models: ["gpt-5.6", ...gateway.models.filter((id) => id !== "gpt-5.6")],
       },
     );
   });
@@ -1283,11 +1299,11 @@ describe("ClientSetupDialog", () => {
     bridgeMocks.removeClientConfig.mockResolvedValue(undefined);
     await renderDialog();
     await open("codex");
-    await click(button("移除", pane()));
+    await click(button("恢复原配置", pane()));
     const prompt = confirmation();
-    expect(prompt?.textContent).toContain("移除 Codex 中的配置？");
-    expect(prompt?.textContent).toContain("写入时替换掉的设置会恢复成原来的值");
-    await click(button("移除", prompt!));
+    expect(prompt?.textContent).toContain("恢复 Codex 原配置？");
+    expect(prompt?.textContent).toContain("手动修改过的内容会保留");
+    await click(button("恢复原配置", prompt!));
     await settleClosedLayer();
     expect(bridgeMocks.removeClientConfig).toHaveBeenCalledWith(
       "codex",

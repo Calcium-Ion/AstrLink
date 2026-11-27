@@ -293,6 +293,13 @@ export interface ClientupdatesClientStatus {
 /** CloseBehavior is what closing the main window does. */
 export type CloseBehavior = "hide_to_tray" | "quit";
 
+/** CodexModelReasoning contains only the chooser data the webview displays. */
+export interface CodexModelReasoning {
+  levels: string[];
+  default: string | null;
+  reasoning: boolean | null;
+}
+
 export interface ConversionEdge {
   from: ProtocolID;
   to: ProtocolID;
@@ -1436,6 +1443,10 @@ export const Pricing = {
   pricing(operation: string, serviceID: string | null, input: unknown): Promise<unknown> {
     return call("Pricing.Pricing", operation, serviceID, input);
   },
+  /** ResolveCodexModels follows each gateway model through the selected token's providers. */
+  resolveCodexModels(tokenID: string, models: string[]): Promise<Record<string, unknown>> {
+    return call("Pricing.ResolveCodexModels", tokenID, models);
+  },
 } as const;
 
 /** Sync is the configuration sync. */
@@ -2075,6 +2086,10 @@ export const Clients = {
    */
   clientConfigStatus(inferenceURL: string | null): Promise<ClientOverview> {
     return call("Clients.ClientConfigStatus", inferenceURL);
+  },
+  /** CodexModelReasoning lists the same model-specific choices the writer uses. */
+  codexModelReasoning(tokenID: string, inferenceURL: string, models: string[]): Promise<Record<string, CodexModelReasoning>> {
+    return call("Clients.CodexModelReasoning", tokenID, inferenceURL, models);
   },
   /**
    * CopyClientConfigSnippet copies one file of the real snippet straight to

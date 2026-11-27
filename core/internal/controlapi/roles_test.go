@@ -112,6 +112,8 @@ func TestControlRoleMatrix(t *testing.T) {
 		{http.MethodGet, LocalDataPath, "", RoleObserver},
 		{http.MethodGet, ClientIdentitiesPath, "", RoleObserver},
 		{http.MethodGet, ModelMetadataPath + "?model=gpt-5.6", "", RoleObserver},
+		{http.MethodPost, ModelMetadataPath + "/resolve", `{"token_id":"token_missing","models":["model"]}`, RoleObserver},
+		{http.MethodPut, ModelMetadataPath + "/resolve", `{}`, RoleOperator},
 
 		{http.MethodGet, AccessTokensPath + "/tok_missing/secret", "", RoleOperator},
 		// The full view needs the operator role or an approved raw grant.

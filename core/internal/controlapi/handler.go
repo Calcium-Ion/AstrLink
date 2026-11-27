@@ -301,6 +301,12 @@ func newHandler(version contract.VersionResponse, dependencies Dependencies) (*H
 	}
 	handler.mux.HandleFunc(PricingPath+"/", handler.authenticated(handler.pricingResource, RoleObserver))
 	handler.mux.HandleFunc(ModelMetadataPath, handler.authenticated(handler.getOnly(handler.getModelMetadata), RoleObserver))
+	handler.mux.HandleFunc(ModelMetadataPath+"/resolve", handler.authenticatedBy(handler.resolveModelMetadata, func(r *http.Request) Role {
+		if r.Method == http.MethodPost {
+			return RoleObserver
+		}
+		return RoleOperator
+	}))
 	handler.mux.HandleFunc(BuiltinToolsPath, handler.authenticated(handler.builtinToolResource, RoleOperator))
 	handler.mux.HandleFunc(PluginsPath, handler.authenticatedBy(handler.pluginsResource, pluginsRequiredRole))
 	handler.mux.HandleFunc(PluginsPath+"/", handler.authenticatedBy(handler.pluginsResource, pluginsRequiredRole))

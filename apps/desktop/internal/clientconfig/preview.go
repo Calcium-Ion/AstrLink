@@ -231,13 +231,15 @@ func diffLines(before, after string) []DiffLine {
 			changed = append(changed, i)
 		}
 	}
-	shown := func(index int) bool {
-		return slices.ContainsFunc(changed, func(at int) bool { return index+context >= at && index <= at+context })
-	}
+	// Both sequences are ordered, so one pass also handles large startup catalogs.
 	lines := []DiffLine{}
 	skipped := false
+	at := 0
 	for i, op := range ops {
-		if !shown(i) {
+		for at < len(changed) && changed[at] < i-context {
+			at++
+		}
+		if at == len(changed) || changed[at] > i+context {
 			skipped = true
 			continue
 		}
@@ -246,6 +248,15 @@ func diffLines(before, after string) []DiffLine {
 		}
 		skipped = false
 		lines = append(lines, op)
+	}
+	// Keep the preview inside the desktop IPC contract, even for a catalog
+	// with hundreds of full upstream descriptions. A gap marks omitted lines.
+	const maxLines = 20000
+	if len(lines) > maxLines {
+		tail := lines[len(lines)-(maxLines/2-1):]
+		lines[maxLines/2] = DiffLine{Kind: LineGap}
+		copy(lines[maxLines/2+1:], tail)
+		lines = lines[:maxLines]
 	}
 	return lines
 }
@@ -322,7 +333,15 @@ func describe(client Client, paths []string, before, after []*string, keys []str
 					line = strings.ReplaceAll(line, hidden.Secret, hidden.Hint)
 				}
 			}
-			lines[j].Text = maskValues(line, FileSecret(files[i]))
+			line = maskValues(line, FileSecret(files[i]))
+			if len(line) > 65536 {
+				end := 65530
+				for !utf8.RuneStart(line[end]) {
+					end--
+				}
+				line = line[:end] + "…"
+			}
+			lines[j].Text = line
 		}
 		out = append(out, FileChanges{
 			Path:    path,
@@ -372,11 +391,11 @@ func PreviewChanges(ctx context.Context, gateway Gateway, homes *agents.Homes, t
 		if err != nil {
 			return nil, err
 		}
-		known := Catalog{}
-		if place.Client.ListsModels() {
-			officialDetails(ctx, gateway, selection.List, known)
+		details, err := selectionDetails(ctx, gateway, place.Client, selection, Catalog{}, *tokenID, inferenceURL)
+		if err != nil {
+			return nil, err
 		}
-		write = &PreviewWrite{selection, Secret{*tokenID, token}, hint, catalogFor(selection, known)}
+		write = &PreviewWrite{selection, Secret{*tokenID, token}, hint, details}
 	}
 	home := HomeOf(homes, wsl)
 	if home == nil {
@@ -402,7 +421,7 @@ func PreviewPlace(home agents.Home, place Place, origin string, write *PreviewWr
 	}
 	if write != nil {
 		connection := write.Selection.Connection(place.Target, write.Secret.ID, write.Secret.Token, origin)
-		plan, planErr := PlanWrite(client, before, connection, write.Details, record)
+		plan, planErr := PlanWrite(client, before, connection.atPaths(home, paths), write.Details, record)
 		if planErr != nil {
 			return nil, planErr.At(paths)
 		}

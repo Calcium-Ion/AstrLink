@@ -39,11 +39,18 @@ func TestAConfigPastedFromTheManualSetupNamesItsToken(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(files) != 1 {
+			wantFiles := 1
+			if tc.client.ID() == Codex.ID() {
+				wantFiles = 2
+			}
+			if len(files) != wantFiles {
 				t.Fatalf("%s: %d snippet files", tc.client, len(files))
 			}
-			if err := os.WriteFile(path, []byte(files[0].Contents), 0o600); err != nil {
-				t.Fatal(err)
+			for _, file := range files {
+				target := filepath.Join(filepath.Dir(path), filepath.Base(file.Path))
+				if err := os.WriteFile(target, []byte(file.Contents), 0o600); err != nil {
+					t.Fatal(err)
+				}
 			}
 		}
 		paste(token)
@@ -52,7 +59,16 @@ func TestAConfigPastedFromTheManualSetupNamesItsToken(t *testing.T) {
 			t.Fatalf("%s: %s %v", tc.client, found, tokenID)
 		}
 		text, _ := readFile(t, path)
-		if want := cc.CurrentModelsOf(tc.client, texts(text)); !reflect.DeepEqual(current, want) {
+		currentFiles := texts(text)
+		if tc.client.ID() == Codex.ID() {
+			catalog, exists := readFile(t, filepath.Join(filepath.Dir(path), CodexCatalogFilename))
+			if exists {
+				currentFiles = append(currentFiles, &catalog)
+			} else {
+				currentFiles = append(currentFiles, nil)
+			}
+		}
+		if want := cc.CurrentModelsOf(tc.client, currentFiles); !reflect.DeepEqual(current, want) {
 			t.Fatalf("%s: models %+v, want %+v", tc.client, current, want)
 		}
 		// Writing over it is a plain write: nothing to confirm.

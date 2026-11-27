@@ -5,6 +5,11 @@ import type { CommandTable } from "./types";
 // snippets, import links, the client proxy check and CC Switch. Optional
 // arguments the frontend leaves out arrive as null.
 export const clientsCommands = {
+  codex_model_reasoning: (a: {
+    tokenId: string;
+    inferenceURL: string;
+    models: string[];
+  }) => Clients.codexModelReasoning(a.tokenId, a.inferenceURL, a.models),
   client_catalog: () => Clients.clientCatalog(),
   client_config_status: (a: { inferenceUrl?: string | null }) =>
     Clients.clientConfigStatus(a.inferenceUrl ?? null),

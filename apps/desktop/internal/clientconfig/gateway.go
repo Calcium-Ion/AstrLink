@@ -40,6 +40,8 @@ func LocalOrigin(inferenceURL string) (string, error) {
 // Gateway is the running gateway client configs are written for. The
 // desktop host provides it from Core and its control API.
 type Gateway interface {
+	ModelMetadataForModels(ctx context.Context, tokenID string, models []string) (map[string]json.RawMessage, error)
+	CodexModels(ctx context.Context, tokenID, inferenceURL string, models []string) (Catalog, error)
 	// Session is the gateway's current session: ok only while Core is
 	// ready. Identity changes whenever Core starts again or announces
 	// another address.

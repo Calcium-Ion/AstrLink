@@ -3879,6 +3879,20 @@
     "testFailed": "接続に失敗しました。プロキシのアドレス、認証、接続先を確認してから再試行してください。"
   },
   "clientSetup": {
+    "codexMenu": {
+      "limit": "デフォルトを含めて {{count}} 個まで選択できます。",
+      "title": "Codex モデルメニュー",
+      "choose": "表示するモデルを選択",
+      "levels": "モデルごとに提供元が指定した推論強度を使います。指定がない場合は LLM Metadata の情報を使います。",
+      "defaultLevel": "既定 {{level}}",
+      "noDefault": "既定値の指定なし",
+      "notAdjustable": "調整できる推論強度なし",
+      "unknown": "選択可能な段階は未指定",
+      "savedEffort": "{{level}} · 保存済みの設定",
+      "restore": "元の設定に戻す",
+      "restoreTitle": "Codex の元の設定に戻しますか？",
+      "restoreBody": "接続前の設定に戻し、AstrLink が作成したモデルカタログを削除します。後から手動で変更した内容は保持されます。"
+    },
     "title": "クライアントを設定",
     "description": "このトークンを使うクライアントを選び、設定ファイルをまとめて書き込みます。",
     "client": "クライアント",

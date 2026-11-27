@@ -1,3 +1,4 @@
+import type { CodexModelReasoning } from "./mygo";
 /**
  * A client id from the host's catalog, such as `claude` or `workbuddy`. The
  * host lists which clients exist; the UI keys icons and copy by id.
@@ -81,31 +82,44 @@ export const codexReasoningEfforts = [
   "persistent",
 ] as const;
 
-/** The efforts offered while the catalog names none for the model. */
-export const defaultReasoningEfforts = [
-  "minimal",
-  "low",
-  "medium",
-  "high",
-  "xhigh",
-] as const;
-
-/**
- * The efforts to offer for a Codex model: the official levels Codex takes,
- * else the common ones, plus the config's own value so it stays visible.
- */
-export function reasoningEffortOptions(
-  official: readonly string[] | undefined,
-  current: string,
-): string[] {
-  const known = (official ?? []).filter((level) =>
-    (codexReasoningEfforts as readonly string[]).includes(level),
+/** Only choices the host confirmed for a requested model may reach the picker. */
+export function parseCodexModelReasoning(
+  value: unknown,
+  requested: readonly string[],
+): Record<string, CodexModelReasoning> {
+  const entries = objectAt(value, "reasoning");
+  const allowed = new Set(requested);
+  return Object.fromEntries(
+    Object.entries(entries).map(([id, raw]) => {
+      if (!allowed.has(id)) invalid("reasoning", "unexpected model");
+      const item = objectAt(raw, id);
+      exactKeys(item, ["levels", "default", "reasoning"], id);
+      const levels = distinctAt(
+        item.levels,
+        id,
+        codexReasoningEfforts.length,
+        (value, at) => {
+          const effort = lineAt(value, at, 20);
+          if (!(codexReasoningEfforts as readonly string[]).includes(effort))
+            invalid(at, "unknown reasoning effort");
+          return effort;
+        },
+      );
+      const chosen =
+        item.default === null ? null : lineAt(item.default, id, 20);
+      if (chosen !== null && !levels.includes(chosen))
+        invalid(id, "unsupported default effort");
+      return [
+        id,
+        {
+          levels,
+          default: chosen,
+          reasoning:
+            item.reasoning === null ? null : booleanAt(item.reasoning, id),
+        },
+      ];
+    }),
   );
-  const options: string[] =
-    known.length > 0 ? known : [...defaultReasoningEfforts];
-  return current && !options.includes(current)
-    ? [...options, current]
-    : options;
 }
 
 export interface ClientConfigModels {
@@ -157,7 +171,7 @@ const builtinModelFields: Record<
   readonly (keyof ClientConfigModels)[]
 > = {
   claude: claudeFields,
-  codex: ["model", "reasoningEffort"],
+  codex: ["model", "models", "reasoningEffort"],
   gemini: ["model"],
   opencode: ["model", "models"],
   openclaw: ["model", "models"],

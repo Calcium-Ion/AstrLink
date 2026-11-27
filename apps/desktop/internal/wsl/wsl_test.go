@@ -20,6 +20,9 @@ func TestDrivePathsMapThroughTheMountRoot(t *testing.T) {
 		{"/mnt", `C:\`, "/mnt/c", true},
 		{"", `C:\Users\ada`, "/c/Users/ada", true},
 		{"/mnt", `\\server\share\x`, "", false},
+		{"/mnt", `\\wsl$\Ubuntu\home\ada\.codex\catalog.json`, "/home/ada/.codex/catalog.json", true},
+		{"/mnt", `\\?\UNC\wsl.localhost\UBUNTU\tools\codex\catalog.json`, "/tools/codex/catalog.json", true},
+		{"/mnt", `\\wsl$\Other\home\ada\catalog.json`, "", false},
 		{"/mnt", `C:relative`, "", false},
 		{"/mnt", "/home/ada", "", false},
 	} {

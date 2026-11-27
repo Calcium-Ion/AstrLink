@@ -610,6 +610,17 @@ func (s Services) ListServiceRiskEvents(ctx context.Context, serviceID string, l
 // provider.
 type Pricing struct{ *API }
 
+// ResolveCodexModels follows each gateway model through the selected token's providers.
+func (p Pricing) ResolveCodexModels(ctx context.Context, tokenID string, models []string) (map[string]json.RawMessage, error) {
+	response, err := p.send(ctx, http.MethodPost, "/control/v1/model-metadata/resolve", map[string]any{"token_id": tokenID, "models": models}, "")
+	if err != nil {
+		return nil, err
+	}
+	var entries map[string]json.RawMessage
+	err = json.Unmarshal(response.Body, &entries)
+	return entries, err
+}
+
 // Pricing runs one pricing operation: status, catalog, estimates, model,
 // sync, summary, report, configure or backfill.
 func (p Pricing) Pricing(ctx context.Context, operation string, serviceID *string, input json.RawMessage) (json.RawMessage, error) {

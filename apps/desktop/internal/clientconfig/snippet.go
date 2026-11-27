@@ -38,7 +38,7 @@ func Snippet(client Client, home agents.Home, connection *Connection, details Ca
 		target = targets[0]
 	}
 	paths := client.ConfigPaths(home, target, nil)
-	plan, err := PlanWrite(client, make([]*string, len(paths)), connection, details, nil)
+	plan, err := PlanWrite(client, make([]*string, len(paths)), connection.atPaths(home, paths), details, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -71,9 +71,9 @@ func SnippetFiles(ctx context.Context, gateway Gateway, host, tokenID string, cl
 	if err != nil {
 		return nil, err
 	}
-	known := Catalog{}
-	if client.ListsModels() {
-		officialDetails(ctx, gateway, selection.List, known)
+	details, err := selectionDetails(ctx, gateway, client, selection, Catalog{}, tokenID, inferenceURL)
+	if err != nil {
+		return nil, err
 	}
-	return Snippet(client, agents.Local(host), selection.Connection("", tokenID, token, origin), catalogFor(selection, known))
+	return Snippet(client, agents.Local(host), selection.Connection("", tokenID, token, origin), details)
 }

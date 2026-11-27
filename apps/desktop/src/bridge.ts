@@ -260,6 +260,7 @@ import {
   parseClientConfigSnippet,
   parseClientConfigOverview,
   parseClientProxyCheck,
+  parseCodexModelReasoning,
   type ClientCatalog,
   type ClientConfigAction,
   type ClientConfigApplyOutcome,
@@ -1341,6 +1342,23 @@ export async function getClientConfigStatus(
   return parseClientConfigOverview(
     await invoke<unknown>("client_config_status", { inferenceUrl }),
     catalog,
+  );
+}
+
+/** The model-specific choices the desktop host will write to the startup catalog. */
+export async function getCodexModelReasoning(
+  tokenId: string,
+  inferenceURL: string,
+  models: string[],
+) {
+  requireNativeBridge();
+  return parseCodexModelReasoning(
+    await invoke<unknown>("codex_model_reasoning", {
+      tokenId,
+      inferenceURL,
+      models,
+    }),
+    models,
   );
 }
 

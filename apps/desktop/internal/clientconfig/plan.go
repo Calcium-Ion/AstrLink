@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/QuantumNous/astrlink/desktop/internal/agents"
 	"github.com/QuantumNous/astrlink/desktop/internal/clientconfig/format"
 )
 
@@ -36,6 +37,8 @@ const (
 
 // Connection is what a write connects a client with.
 type Connection struct {
+	// Paths are the config files as seen by the client, including inside WSL.
+	Paths []string
 	// Target is the place's write target, for a client that names what it
 	// writes after it; "" for a client without.
 	Target  string
@@ -49,6 +52,19 @@ type Connection struct {
 	// Protocols is the gateway protocol chosen for each model; see
 	// Protocol.
 	Protocols map[string]string
+}
+
+func (c Connection) atPaths(home agents.Home, paths []string) *Connection {
+	c.Paths = shownPaths(home, paths)
+	return &c
+}
+
+func shownPaths(home agents.Home, paths []string) []string {
+	shown := make([]string, len(paths))
+	for i, path := range paths {
+		shown[i] = home.Shown(path)
+	}
+	return shown
 }
 
 // Model is the model in a Models field, by its camelCase name.
@@ -375,6 +391,13 @@ func PlaceState(records *Records, place Place, existing []*string, origin string
 func CurrentModelsOf(client Client, existing []*string) CurrentModels {
 	config, err := ParseConfig(client, existing)
 	if err != nil {
+		return CurrentModels{}
+	}
+	return currentModels(client, config)
+}
+
+func currentModels(client Client, config *Config) CurrentModels {
+	if config == nil {
 		return CurrentModels{}
 	}
 	models := client.CurrentModels(config)

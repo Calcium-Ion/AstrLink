@@ -24,6 +24,13 @@ func (snippetGateway) RevealAccessToken(context.Context, string) (string, error)
 	return "sk-local", nil
 }
 
+func (snippetGateway) ModelMetadataForModels(context.Context, string, []string) (map[string]json.RawMessage, error) {
+	return nil, nil
+}
+
+func (snippetGateway) CodexModels(context.Context, string, string, []string) (cc.Catalog, error) {
+	return cc.Catalog{}, nil
+}
 func (snippetGateway) ModelMetadata(context.Context, string) (json.RawMessage, error) {
 	return json.RawMessage(`null`), nil
 }

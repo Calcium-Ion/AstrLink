@@ -46,6 +46,7 @@ func codexCatalogTestHandler(t *testing.T) *Handler {
 	t.Helper()
 	codex := codexVersionCandidate("https://codex.example/backend-api/codex")
 	codex.Service.Models = []string{"gpt-model", "codex-auto-review"}
+	codex.Service.ModelRedirects = []contract.ModelRedirect{enabledRedirect("service-alias", "gpt-model")}
 	kimi := discoveryEndpoint("kimi", contract.ProtocolOpenAIModels, contract.CapabilityModeNative)
 	kimi.Models = []string{"kimi-for-coding", "manual-model", "gpt-model", contract.AstrLinkAutoModelID}
 	return NewWithDependencies(Dependencies{
@@ -57,7 +58,7 @@ func codexCatalogTestHandler(t *testing.T) *Handler {
 			enabledRedirect("missing-alias", "missing-model"),
 		),
 		Forwarder: transport.New(roundTripFunc(func(request *http.Request) (*http.Response, error) {
-			if request.Header.Get("X-AstrLink-Debug") != "" {
+			if request.Header.Get("X-AstrLink-Debug") != "" || request.Header.Get(contract.CodexUpstreamCatalogHeader) != "" {
 				t.Error("gateway-owned header reached upstream")
 			}
 			body := `{"data":[{"id":"kimi-for-coding"},{"id":"gpt-model"},{"id":"blocked-model"},{"id":"astrlink/auto"}]}`
@@ -204,6 +205,28 @@ func TestCodexCatalogMetadataFollowsFirstRoutingCandidate(t *testing.T) {
 		})
 		if len(merged) != 1 || !reflect.DeepEqual(merged[0], entries[0]) {
 			t.Fatalf("capabilities came from a different provider than routing: %+v", merged)
+		}
+	}
+}
+
+func TestDesktopCatalogContainsOnlyTokenRouteDeclarations(t *testing.T) {
+	handler := codexCatalogTestHandler(t)
+	r := httptest.NewRequest(http.MethodGet, "/v1/models?client_version="+contract.MinCodexClientVersion, nil)
+	r.Header.Set(contract.CodexUpstreamCatalogHeader, "1")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+	var declarations map[string]struct{ Slug string }
+	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &declarations) != nil {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+	for _, id := range []string{"gpt-model", "coding-alias", "service-alias"} {
+		if declarations[id].Slug != "gpt-model" {
+			t.Fatalf("wrong source for %s: %+v", id, declarations)
+		}
+	}
+	for _, id := range []string{"manual-model", "kimi-alias", "blocked-model"} {
+		if _, ok := declarations[id]; ok {
+			t.Fatalf("unexpected native declaration for %s", id)
 		}
 	}
 }

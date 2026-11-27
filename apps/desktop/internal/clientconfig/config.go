@@ -193,6 +193,8 @@ func FileIsEmpty(f File, document format.Document) bool {
 // Config is every config file of one client, opened together. Each key
 // lives in exactly one of them.
 type Config struct {
+	// Paths are the locations as seen by the client when reading models from disk.
+	Paths     []string
 	Files     []File
 	Documents []format.Document
 	Changed   []bool
@@ -207,6 +209,10 @@ func ParseConfig(client Client, existing []*string) (*Config, *FileError) {
 	}
 	config := &Config{Files: files, Changed: make([]bool, len(files))}
 	for i, file := range files {
+		if opener, ok := file.(interface{ Open(*string) format.Document }); ok {
+			config.Documents = append(config.Documents, opener.Open(existing[i]))
+			continue
+		}
 		text := ""
 		if existing[i] != nil {
 			text = *existing[i]

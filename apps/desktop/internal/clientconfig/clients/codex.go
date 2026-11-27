@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/desktop/internal/agents"
 	cc "github.com/QuantumNous/astrlink/desktop/internal/clientconfig"
 	"github.com/QuantumNous/astrlink/desktop/internal/clientconfig/format"
@@ -69,16 +70,18 @@ func (codex) ID() string          { return "codex" }
 func (codex) Name() string        { return "Codex" }
 func (codex) Protocols() []string { return []string{"openai.responses"} }
 
+func (codex) ListsModels() bool { return true }
+
 func (codex) Dir(home agents.Home, _ string) string { return home.CodexDir() }
 
-func (codex) Files() []cc.File { return []cc.File{codexConfig{}} }
+func (codex) Files() []cc.File { return []cc.File{codexConfig{}, codexCatalogFile{}} }
 
 func (codex) ConfigPaths(home agents.Home, _ string, _ *cc.Record) []string {
-	return []string{filepath.Join(home.CodexDir(), "config.toml")}
+	return []string{filepath.Join(home.CodexDir(), "config.toml"), filepath.Join(home.CodexDir(), CodexCatalogFilename)}
 }
 
 func (codex) ReasoningEfforts() []string {
-	return []string{"none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra", "persistent"}
+	return contract.CodexReasoningEfforts()
 }
 
 func (codex) ConnectionKeys() []string {
@@ -98,16 +101,34 @@ func (codex) CurrentModels(config *cc.Config) cc.CurrentModels {
 	if effort, ok := config.Model(codexReasoningKey); ok {
 		models.ReasoningEffort = &effort
 	}
+	if pointer, ok := config.String("model_catalog_json"); ok {
+		same := pointer == CodexCatalogFilename
+		if len(config.Paths) > 1 {
+			same = same || pointer == config.Paths[1]
+		} else {
+			same = same || strings.HasSuffix(strings.ReplaceAll(pointer, `\`, "/"), "/"+CodexCatalogFilename)
+		}
+		if same {
+			models.Models = catalogModelIDs(config)
+		}
+	}
 	return models
 }
 
-func (codex) DesiredKeys(connection *cc.Connection, _ cc.Catalog) []cc.Setting {
+func (codex) DesiredKeys(connection *cc.Connection, details cc.Catalog) []cc.Setting {
 	keys := []cc.Setting{{Key: "model_provider", Value: CodexProvider}}
 	if model, ok := connection.Model("model"); ok {
 		keys = append(keys, cc.Setting{Key: "model", Value: model})
 	}
 	if effort, ok := connection.Model("reasoningEffort"); ok {
 		keys = append(keys, cc.Setting{Key: codexReasoningKey, Value: effort})
+	}
+	if len(connection.ModelList()) != 0 {
+		path := CodexCatalogFilename
+		if len(connection.Paths) > 1 {
+			path = connection.Paths[1]
+		}
+		keys = append(keys, cc.Setting{Key: "model_catalog_json", Value: path}, cc.Setting{Key: CodexCatalogFilename, Value: codexCatalogText(connection, details)})
 	}
 	// The display name is local UI; a reserved ID or the name "OpenAI"
 	// would make Codex treat this as its built-in provider.
@@ -127,6 +148,8 @@ func (codex) BaseURLKey() string { return "model_providers.astrlink.base_url" }
 func (codex) AddedKeys() []cc.Setting {
 	return []cc.Setting{{Key: codexHeadersKey, Value: codexToolsHeaderValue}}
 }
+
+func (codexConfig) Holds(key string) bool { return key != CodexCatalogFilename }
 
 func (codexConfig) Format() format.Format { return format.TOMLFormat{} }
 

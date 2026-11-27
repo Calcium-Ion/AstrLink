@@ -128,6 +128,15 @@ func (handler *Handler) aggregateModelDiscovery(
 		session.notePrivacyDecision(decision, contract.RequestStatusSucceeded)
 		session.notePrivacyOutcome(outcome, nil, nil, nil)
 	}
+	upstreamOnly := classified.Protocol == contract.ProtocolOpenAIModels && request.Header.Get(contract.CodexUpstreamCatalogHeader) == "1"
+	if upstreamOnly {
+		for i, result := range results {
+			if result.outcome != discoveryOutcomeFetched {
+				continue
+			}
+			results[i].entries = withCodexRedirects(result.entries, candidates[i].CanonicalService().EffectiveModelRedirects())
+		}
+	}
 	merged, succeeded := mergeDiscoveryEntries(results)
 	if succeeded == 0 {
 		handler.writeDiscoveryFailure(writer, request, classified, results)
@@ -139,15 +148,21 @@ func (handler *Handler) aggregateModelDiscovery(
 			visible = append(visible, entry)
 		}
 	}
-	merged, err := appendRedirectDiscoveryEntries(classified.Protocol, visible, redirects)
 	var body []byte
-	if err == nil {
-		if wantsCodexModelCatalog(request, classified.Protocol) {
-			body, err = encodeCodexModelCatalog(merged)
-		} else {
-			body, err = encodeDiscoveryList(classified.Protocol, merged)
+	var err error
+	if upstreamOnly {
+		body, err = encodeUpstreamCodexCatalog(withCodexRedirects(visible, redirects))
+	} else {
+		merged, err = appendRedirectDiscoveryEntries(classified.Protocol, visible, redirects)
+		if err == nil {
+			if wantsCodexModelCatalog(request, classified.Protocol) {
+				body, err = encodeCodexModelCatalog(merged)
+			} else {
+				body, err = encodeDiscoveryList(classified.Protocol, merged)
+			}
 		}
 	}
+
 	if err != nil {
 		writeInferenceError(
 			writer,
@@ -243,6 +258,7 @@ func (handler *Handler) fetchModelDiscovery(
 	fetchRequest.ContentLength = 0
 	// The aggregate reply is synthesized locally from one bounded page per
 	// endpoint; conditional or partial upstream responses cannot be merged.
+	fetchRequest.Header.Del(contract.CodexUpstreamCatalogHeader)
 	fetchRequest.Header.Del("If-None-Match")
 	fetchRequest.Header.Del("If-Modified-Since")
 	fetchRequest.Header.Del("Range")
