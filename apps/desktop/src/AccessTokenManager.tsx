@@ -731,7 +731,7 @@ export function AccessTokenManager({
               return (
                 <DataRow
                   asChild
-                  className="grid grid-cols-1 gap-x-4 gap-y-3 py-3 @[480px]/token-list:grid-cols-[minmax(0,1fr)_auto] @[720px]/token-list:grid-cols-[minmax(9rem,1fr)_minmax(0,1.6fr)_auto]"
+                  className="grid grid-cols-1 gap-x-4 gap-y-3 py-3 @max-[160px]/token-list:px-2 @[480px]/token-list:grid-cols-[minmax(0,1fr)_auto] @[720px]/token-list:grid-cols-[minmax(9rem,1fr)_minmax(0,1.6fr)_auto]"
                   key={token.id}
                 >
                   <article data-testid="access-token-row">
@@ -841,7 +841,7 @@ export function AccessTokenManager({
                         scopeDescription={t("tokens.performanceScope")}
                       />
                     </div>
-                    <ActionGroup className="row-start-3 shrink-0 flex-nowrap gap-1 @[480px]/token-list:col-start-2 @[480px]/token-list:row-start-1 @[720px]/token-list:col-start-3">
+                    <ActionGroup className="row-start-3 gap-1 *:h-auto *:min-h-7 *:max-w-full *:flex-wrap *:wrap-anywhere *:whitespace-normal @max-[480px]/token-list:ml-0 @max-[480px]/token-list:justify-start @[480px]/token-list:col-start-2 @[480px]/token-list:row-start-1 @[720px]/token-list:col-start-3">
                       <Button
                         size="sm"
                         variant="ghost"
@@ -862,9 +862,7 @@ export function AccessTokenManager({
                         })}
                       >
                         <Cable aria-hidden="true" />
-                        <span className="@[480px]/token-list:sr-only @[800px]/token-list:not-sr-only">
-                          {t("clientSetup.title")}
-                        </span>
+                        {t("clientSetup.title")}
                       </Button>
                       <IconButton
                         disabled={!isReady || deletingID !== null}

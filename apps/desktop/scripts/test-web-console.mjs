@@ -99,18 +99,34 @@ try {
     `${origin}/control/v1/audit/raw-sealing`,
   );
   assert.equal((await rawStatus.json()).unlocked, false);
-  await page
-    .getByRole("button", { name: "Access tokens", exact: true })
-    .click();
+  const navigation = page.getByRole("navigation", { name: "Main navigation" });
+  await navigation.getByRole("button", { name: "Tokens", exact: true }).click();
   await page.getByRole("button", { name: "Create token", exact: true }).click();
   await page
     .getByLabel("Token name", { exact: true })
     .fill("Browser verification");
   await page.getByRole("button", { name: "Create", exact: true }).click();
   await page.getByText("Browser verification", { exact: true }).waitFor();
-  await page
+  const tokenCard = page
+    .getByTestId("access-token-row")
+    .filter({ hasText: "Browser verification" });
+  await page.setViewportSize({ width: 482, height: 720 });
+  const clippedActions = await tokenCard.evaluate((card) => {
+    const bounds = card.getBoundingClientRect();
+    return [...card.querySelectorAll('[data-slot="action-group"] button')]
+      .filter((button) => {
+        const { left, right } = button.getBoundingClientRect();
+        return left < bounds.left || right > bounds.right;
+      })
+      .map((button) => button.getAttribute("title"));
+  });
+  assert.deepEqual(
+    clippedActions,
+    [],
+    "Token actions should fit inside the card",
+  );
+  await tokenCard
     .getByRole("button", { name: /Configure a client for/ })
-    .first()
     .click();
   assert.match(
     await page
@@ -127,8 +143,9 @@ try {
     ).includes(`${origin}/v1`),
   );
   await page.getByRole("button", { name: "Close", exact: true }).click();
-  await page
-    .getByRole("button", { name: "API providers", exact: true })
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await navigation
+    .getByRole("button", { name: "Providers", exact: true })
     .click();
   const help = page.getByRole("button", { name: "Got it", exact: true });
   if (await help.isVisible()) await help.click();
@@ -161,6 +178,12 @@ try {
     .getByRole("switch")
     .first()
     .click();
+  // Supply a model so saving this fixture never needs upstream discovery.
+  await page.getByTestId("service-editor-tab-models").click();
+  await page.getByRole("button", { name: "Add model", exact: true }).click();
+  const modelInput = page.getByRole("textbox", { name: "Model IDs to add" });
+  await modelInput.fill("test-model-0");
+  await modelInput.press("Enter");
   const saved = page.waitForResponse(
     (response) =>
       response.url() === `${origin}/control/v1/services` &&
@@ -245,11 +268,11 @@ try {
       });
   }
   await page.setViewportSize({ width: 1280, height: 720 });
-  await page
-    .getByRole("button", { name: "API providers", exact: true })
+  await navigation
+    .getByRole("button", { name: "Providers", exact: true })
     .click();
   await page
-    .getByRole("button", { name: "Edit Browser test provider", exact: true })
+    .getByRole("button", { name: "Browser test provider", exact: true })
     .click();
   await page.getByTestId("service-editor-tab-models").click();
   const expand = page.getByRole("button", { name: "Expand all", exact: true });
@@ -271,9 +294,7 @@ try {
       .evaluate((el) => el.scrollTop),
     workspaceTop,
   );
-  await page
-    .getByRole("button", { name: "Safety policy", exact: true })
-    .click();
+  await navigation.getByRole("button", { name: "Safety", exact: true }).click();
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   assert.equal(
     await page.getByText("Console settings", { exact: true }).count(),
