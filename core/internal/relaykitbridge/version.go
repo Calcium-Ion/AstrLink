@@ -7,7 +7,7 @@ import (
 	"github.com/QuantumNous/astrlink/core/contract"
 )
 
-const relayKitFallbackVersion = "v0.3.1"
+const relayKitFallbackVersion = "v0.3.9"
 
 func relayKitVersion() string {
 	if info, ok := debug.ReadBuildInfo(); ok {

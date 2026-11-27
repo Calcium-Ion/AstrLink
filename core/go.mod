@@ -7,7 +7,7 @@ require (
 	github.com/MoeForge/moejs v0.1.0
 	github.com/QuantumNous/astrlink/convo v0.0.0
 	github.com/QuantumNous/new-api/pluginkit v0.1.0
-	github.com/QuantumNous/new-api/relaykit v0.3.9-0.20261127111611-5ff8157dd22c
+	github.com/QuantumNous/new-api/relaykit v0.3.9
 	github.com/andybalholm/brotli v1.2.8
 	github.com/deepteams/webp v1.2.8
 	github.com/evanw/esbuild v0.28.2
