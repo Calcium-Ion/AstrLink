@@ -351,7 +351,7 @@ export function request(ctx, req) {
   return { action: "continue", effects: [{ type: "reasoning.set", effort: "high" }] };
 }
 export function outbound(ctx, req) {
-  const effects = req.media.filter((item) => item.mimeType.startsWith("image/") && item.width > 64)
+  const effects = (req.media || []).filter((item) => item.mimeType.startsWith("image/") && item.width > 64)
     .map((item) => ({ type: "media.reencode", media: item.index, format: "auto", maxSide: 64 }));
   return { action: "continue", effects };
 }

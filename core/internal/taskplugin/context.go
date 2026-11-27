@@ -51,7 +51,8 @@ var channelBaseURLs = map[int]string{
 
 // DefaultBaseURL is the address a new provider of a task plugin starts
 // with: its own, else that of the first of its channel types that has one.
-func DefaultBaseURL(meta *plugin.TaskMeta) string {
+func DefaultBaseURL(loaded *plugin.NewAPIPlugin) string {
+	meta := loaded.Meta
 	if meta.BaseURL != "" {
 		return meta.BaseURL
 	}
@@ -65,7 +66,7 @@ func DefaultBaseURL(meta *plugin.TaskMeta) string {
 
 // credentialsFor reads a provider's address and key, and exchanges a
 // service account for a token when the plugin authenticates that way.
-func (engine *Engine) credentialsFor(ctx context.Context, service contract.Service, meta *plugin.TaskMeta) (credentials, error) {
+func (engine *Engine) credentialsFor(ctx context.Context, service contract.Service, meta *plugin.NewAPIPlugin) (credentials, error) {
 	var found credentials
 	found.upstream = upstreamKind{Kind: "vendor"}
 	if service.Plugin != nil {
@@ -94,14 +95,14 @@ func (engine *Engine) credentialsFor(ctx context.Context, service contract.Servi
 		defer clear(secret)
 	}
 	key := strings.TrimSpace(string(secret))
-	auth := meta.Auth.Kind()
+	auth := meta.AuthKind()
 	switch {
 	case found.upstream.Kind == contract.PluginUpstreamNewAPI:
 		// The key of another gateway is its token, whatever the vendor
 		// takes: that gateway runs the vendor's authentication itself.
 		found.apiKey, found.authHeader = key, "Bearer "+key
-	case auth == plugin.TaskAuthNone:
-	case auth == plugin.TaskAuthOAuth2JWT:
+	case auth == "none":
+	case auth == "oauth2_jwt":
 		token, account, err := engine.tokens.token(ctx, engine, service, key)
 		if account != nil {
 			found.auth = map[string]any{"projectId": account.ProjectID, "clientEmail": account.ClientEmail}
@@ -296,7 +297,7 @@ func marshalOrdered(value any) (json.RawMessage, error) {
 
 // allowedHost reports whether a request with credentials may go to target:
 // the provider's own host or one the plugin declares.
-func allowedHost(target *url.URL, baseURL string, meta *plugin.TaskMeta) bool {
+func allowedHost(target *url.URL, baseURL string, meta *plugin.NewAPIPlugin) bool {
 	if target == nil || target.Host == "" || target.User != nil {
 		return false
 	}
@@ -318,7 +319,7 @@ func allowedHost(target *url.URL, baseURL string, meta *plugin.TaskMeta) bool {
 			return true
 		}
 	}
-	for _, allowed := range meta.AllowedHosts {
+	for _, allowed := range meta.Meta.AllowedHosts {
 		name, allowedPort := allowed, ""
 		if strings.HasPrefix(allowed, "[") {
 			if end := strings.Index(allowed, "]"); end > 0 {

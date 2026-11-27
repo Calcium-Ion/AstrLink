@@ -269,7 +269,7 @@ func (handler *Handler) pluginMarket(writer http.ResponseWriter, request *http.R
 		record := target.Installed
 		var now plugininstall.Installed
 		if meta := target.NewAPI(); meta != nil {
-			now.Version = meta.Version
+			now.Version = meta.Meta.Version
 		} else if record != nil {
 			now.Version = record.Version
 		}

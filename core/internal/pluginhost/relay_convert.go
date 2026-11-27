@@ -3,7 +3,6 @@ package pluginhost
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,11 +13,11 @@ import (
 	"net/url"
 	"slices"
 	"strconv"
-	"strings"
 	"time"
-	"unicode/utf8"
 
+	"github.com/QuantumNous/astrlink/core/internal/plugin"
 	"github.com/QuantumNous/astrlink/core/internal/transport"
+	"github.com/QuantumNous/new-api/pluginkit"
 )
 
 // A route with converter plugin has the plugin's hooks convert it:
@@ -36,38 +35,25 @@ const (
 )
 
 // convertedRequest is a request the hooks describe: convertRequest's
-// result, or the next of a chain.
-type convertedRequest struct {
-	Body           json.RawMessage   `json:"body"`
-	ContentType    string            `json:"contentType"`
-	Path           string            `json:"path"`
-	URL            string            `json:"url"`
-	Method         string            `json:"method"`
-	Headers        map[string]string `json:"headers"`
-	Stream         *bool             `json:"stream"`
-	State          json.RawMessage   `json:"state"`
-	NativeResponse bool              `json:"nativeResponse"`
-	DelayMs        int               `json:"delayMs"`
-	Websocket      json.RawMessage   `json:"websocket"`
-	Form           json.RawMessage   `json:"form"`
-	File           json.RawMessage   `json:"file"`
-}
+// result, or the next of a chain, as pluginkit read it.
+type convertedRequest = pluginkit.ConvertedRequest
 
-// convertedAnswer is what convertResponse returns.
+// convertError is a vendor error a convert hook made.
+type convertError = pluginkit.UpstreamError
+
+// convertedAnswer is what convertResponse returns: the reply or the next
+// request, or the vendor error the plugin made of the response.
 type convertedAnswer struct {
-	Body        json.RawMessage   `json:"body"`
-	BodyBase64  *string           `json:"bodyBase64"`
-	ContentType string            `json:"contentType"`
-	Next        *convertedRequest `json:"next"`
-	State       json.RawMessage   `json:"state"`
-	Error       *convertError     `json:"error"`
+	pluginkit.ConvertedResponse
+	failed *convertError
 }
 
-type convertError struct {
-	Status  int    `json:"status"`
-	Message string `json:"message"`
-	Type    string `json:"type"`
-	Code    string `json:"code"`
+// convertResponse runs convertResponse on an upstream response.
+func convertResponse(ctx context.Context, relay *relayTarget, hookCtx pluginkit.HookContext, status int, headers map[string]string, body []byte) (convertedAnswer, error) {
+	return callProvider(ctx, relay, "convertResponse", func(ctx context.Context, loaded *plugin.NewAPIPlugin) (convertedAnswer, error) {
+		converted, failed, err := loaded.CallConvertResponse(ctx, hookCtx, status, headers, body)
+		return convertedAnswer{converted, failed}, err
+	})
 }
 
 // relaySend is how a converted route sends each of its requests: on the
@@ -92,13 +78,9 @@ type relaySend struct {
 	renewed bool
 }
 
-// view is ctx of the convert hooks.
-func (send *relaySend) view(clientPath string) map[string]any {
-	view := map[string]any{"baseUrl": send.baseURL, "path": clientPath, "config": send.relay.config}
-	if send.relay.token != nil {
-		view["token"] = send.relay.token
-	}
-	return view
+// hookContext is ctx of the convert hooks.
+func (send *relaySend) hookContext(clientPath string, state json.RawMessage) pluginkit.HookContext {
+	return send.relay.hookContext(send.baseURL, clientPath, state)
 }
 
 // renewable reports whether a rejection may still renew the credential or
@@ -125,12 +107,7 @@ func (send *relaySend) renew(ctx context.Context) (*http.Response, error) {
 // route's address, an absolute url, or the route's own address.
 func (send *relaySend) addressOf(path, rawURL string) (url.URL, error) {
 	switch {
-	case path != "" && rawURL != "":
-		return url.URL{}, errors.New("a converted request has a path or a url, not both")
 	case path != "":
-		if !strings.HasPrefix(path, "/") || strings.HasPrefix(path, "//") {
-			return url.URL{}, fmt.Errorf("the path %q does not start with a single /", path)
-		}
 		joined, err := joinPath(send.root, path)
 		if err != nil {
 			return url.URL{}, err
@@ -138,8 +115,8 @@ func (send *relaySend) addressOf(path, rawURL string) (url.URL, error) {
 		return *joined, nil
 	case rawURL != "":
 		parsed, err := url.Parse(rawURL)
-		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.User != nil || parsed.Fragment != "" {
-			return url.URL{}, fmt.Errorf("the url %q is not an http or https address", rawURL)
+		if err != nil {
+			return url.URL{}, fmt.Errorf("the url %q is not an address", rawURL)
 		}
 		return *parsed, nil
 	}
@@ -224,20 +201,6 @@ func (send *relaySend) send(ctx context.Context, method string, request converte
 	return send.roundTrip(outbound, sent)
 }
 
-// convertedBody is the bytes a converted request sends: a string as it
-// is, anything else as JSON.
-func convertedBody(raw json.RawMessage) []byte {
-	trimmed := bytes.TrimSpace(raw)
-	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
-		return nil
-	}
-	var text string
-	if trimmed[0] == '"' && json.Unmarshal(trimmed, &text) == nil {
-		return []byte(text)
-	}
-	return trimmed
-}
-
 // forwardConverted sends an attempt over a route the plugin's hooks
 // convert, and answers in the route's protocol.
 func (host *Host) forwardConverted(ctx context.Context, writer http.ResponseWriter, target transport.Target, attempt ProviderAttempt, send *relaySend, method string, body []byte, stream bool) error {
@@ -247,30 +210,26 @@ func (host *Host) forwardConverted(ctx context.Context, writer http.ResponseWrit
 		return transport.NewUpstreamError(err)
 	}
 	send.form = form
-	input := map[string]any{"model": attempt.Model, "stream": stream}
+	input := pluginkit.ConvertInput{Path: attempt.ClientPath, Model: attempt.Model, Stream: stream}
 	if form != nil {
-		input["form"] = form.view(attempt.Model)
+		input.Form = form.input(attempt.Model)
 	} else {
-		input["body"] = json.RawMessage(body)
+		input.Body = body
 	}
-	raw, err := relay.call(ctx, "convertRequest", send.view(attempt.ClientPath), input)
+	hookCtx := send.hookContext(attempt.ClientPath, nil)
+	request, err := callProvider(ctx, relay, "convertRequest", func(ctx context.Context, loaded *plugin.NewAPIPlugin) (convertedRequest, error) {
+		return loaded.CallConvertRequest(ctx, hookCtx, input)
+	})
 	if err != nil {
 		return transport.NewUpstreamError(fmt.Errorf("convertRequest: %w", err))
 	}
-	var request convertedRequest
-	if err := json.Unmarshal(raw, &request); err != nil {
-		return transport.NewUpstreamError(errors.New("convertRequest returned no request"))
-	}
 	state := request.State
-	if present(request.Websocket) {
-		if present(request.Body) || present(request.Form) || present(request.File) {
-			return transport.NewUpstreamError(errors.New("a converted request has more than one of body, form, file and websocket"))
-		}
-		return host.converseWebSocket(ctx, writer, target, attempt, send, request.Websocket, state)
+	if request.WebSocket != nil {
+		return host.converseWebSocket(ctx, writer, target, attempt, send, *request.WebSocket, state)
 	}
-	payload := convertedBody(request.Body)
+	payload := request.Body
 	// prepareRequest runs on a JSON body, its $file markers still in it.
-	if relay.plugin.HasTaskHook("prepareRequest") && present(request.Body) && json.Valid(payload) {
+	if relay.plugin.HasTaskHook("prepareRequest") && request.Body != nil && json.Valid(payload) {
 		prepared, moved, err := relay.prepare(ctx, send.baseURL, attempt.ClientPath, attempt.Model, stream, send.address, send.root, payload, send.header, send.authHeader)
 		var refusal *relayRefusal
 		if errors.As(err, &refusal) {
@@ -293,7 +252,7 @@ func (host *Host) forwardConverted(ctx context.Context, writer http.ResponseWrit
 		if sent > maxConvertedRequests {
 			return transport.NewUpstreamError(fmt.Errorf("the conversion sent more than %d requests", maxConvertedRequests))
 		}
-		requestMethod := strings.ToUpper(request.Method)
+		requestMethod := request.Method
 		switch {
 		case requestMethod == "" && first:
 			requestMethod = method
@@ -301,9 +260,6 @@ func (host *Host) forwardConverted(ctx context.Context, writer http.ResponseWrit
 			requestMethod = http.MethodPost
 		case requestMethod == "":
 			requestMethod = http.MethodGet
-		}
-		if !slices.Contains([]string{http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete, http.MethodOptions}, requestMethod) {
-			return transport.NewUpstreamError(fmt.Errorf("the method %q is not one a converted request takes", request.Method))
 		}
 		if requestMethod == http.MethodGet || requestMethod == http.MethodHead {
 			payload = nil
@@ -365,19 +321,7 @@ func (host *Host) forwardConverted(ctx context.Context, writer http.ResponseWrit
 		if err != nil || len(whole) > maxProviderResponseBytes {
 			return transport.NewUpstreamError(errors.New("the upstream answer could not be read whole"))
 		}
-		answerInput := map[string]any{"status": response.StatusCode, "headers": firstHeaders(response.Header)}
-		if textual(response.Header.Get("Content-Type"), whole) {
-			answerInput["body"] = string(whole)
-		} else {
-			answerInput["bodyBase64"] = base64.StdEncoding.EncodeToString(whole)
-		}
-		stateView := send.view(attempt.ClientPath)
-		stateView["state"] = jsonOrNull(state)
-		raw, err := relay.call(ctx, "convertResponse", stateView, answerInput)
-		var answer convertedAnswer
-		if err == nil {
-			err = json.Unmarshal(raw, &answer)
-		}
+		answer, err := convertResponse(ctx, relay, send.hookContext(attempt.ClientPath, state), response.StatusCode, firstHeaders(response.Header), whole)
 		original := func() *http.Response {
 			response.Body = io.NopCloser(bytes.NewReader(whole))
 			response.ContentLength = int64(len(whole))
@@ -388,19 +332,26 @@ func (host *Host) forwardConverted(ctx context.Context, writer http.ResponseWrit
 			return transport.NewUpstreamError(fmt.Errorf("convertResponse: %w", err))
 		case err != nil:
 			return answerRelay(writer, target, original())
+		case answer.failed != nil && answer.failed.Status == http.StatusUnauthorized && send.renewable():
+			if failed, err := send.renew(ctx); failed != nil {
+				return answerRelay(writer, target, failed)
+			} else if err == nil {
+				sent--
+				continue
+			}
+			return answerRelay(writer, target, convertedFailure(*answer.failed, response.StatusCode))
+		case answer.failed != nil:
+			return answerRelay(writer, target, convertedFailure(*answer.failed, response.StatusCode))
 		case answer.Next != nil:
-			if len(answer.State) > 0 {
+			if answer.State != nil {
 				state = answer.State
 			}
 			request = *answer.Next
-			if present(request.Websocket) {
-				return transport.NewUpstreamError(errors.New("the next request of a chain cannot open a WebSocket session"))
-			}
-			payload, contentType, err = payloadOf(request, convertedBody(request.Body), form)
+			payload, contentType, err = payloadOf(request, request.Body, form)
 			if err != nil {
 				return transport.NewUpstreamError(err)
 			}
-			if delay := time.Duration(min(max(request.DelayMs, 0), int(maxConvertedDelay/time.Millisecond))) * time.Millisecond; delay > 0 {
+			if delay := min(request.Delay, maxConvertedDelay); delay > 0 {
 				select {
 				case <-time.After(delay):
 				case <-ctx.Done():
@@ -409,31 +360,10 @@ func (host *Host) forwardConverted(ctx context.Context, writer http.ResponseWrit
 			}
 			first = false
 			continue
-		case answer.Error != nil && answer.Error.Status == http.StatusUnauthorized && send.renewable():
-			if failed, err := send.renew(ctx); failed != nil {
-				return answerRelay(writer, target, failed)
-			} else if err == nil {
-				sent--
-				continue
-			}
-			return answerRelay(writer, target, convertedFailure(*answer.Error, response.StatusCode))
-		case answer.Error != nil:
-			return answerRelay(writer, target, convertedFailure(*answer.Error, response.StatusCode))
 		case !success:
 			return answerRelay(writer, target, original())
 		}
-		data := convertedBody(answer.Body)
-		if answer.BodyBase64 != nil {
-			decoded, err := base64.StdEncoding.DecodeString(*answer.BodyBase64)
-			if err != nil {
-				return transport.NewUpstreamError(errors.New("convertResponse returned bodyBase64 that is not base64"))
-			}
-			data = decoded
-		}
-		contentType := answer.ContentType
-		if contentType == "" {
-			contentType = "application/json"
-		}
+		data, contentType := answer.Body, answer.ContentType
 		return answerRelay(writer, target, &http.Response{
 			StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {contentType}},
 			Body: io.NopCloser(bytes.NewReader(data)), ContentLength: int64(len(data)),
@@ -458,19 +388,6 @@ func convertedFailure(failure convertError, upstream int) *http.Response {
 func streamedType(contentType string) bool {
 	media, _, _ := mime.ParseMediaType(contentType)
 	return media == "text/event-stream" || media == "application/vnd.amazon.eventstream"
-}
-
-// textual reports whether a response comes to the hooks as text.
-func textual(contentType string, body []byte) bool {
-	media, _, _ := mime.ParseMediaType(contentType)
-	switch {
-	case media == "":
-		return utf8.Valid(body)
-	case strings.HasPrefix(media, "text/"), strings.HasSuffix(media, "json"), strings.HasSuffix(media, "xml"),
-		strings.Contains(media, "ndjson"), media == "application/x-www-form-urlencoded":
-		return true
-	}
-	return false
 }
 
 func firstHeaders(header http.Header) map[string]string {

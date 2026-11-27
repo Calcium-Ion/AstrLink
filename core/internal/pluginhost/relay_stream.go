@@ -2,12 +2,10 @@ package pluginhost
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"maps"
 	"mime"
 	"net"
 	"net/http"
@@ -15,7 +13,9 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"github.com/QuantumNous/astrlink/core/internal/plugin"
 	"github.com/QuantumNous/astrlink/core/internal/transport"
+	"github.com/QuantumNous/new-api/pluginkit"
 )
 
 // A converted answer read as a stream goes through convertStreamEvent
@@ -27,30 +27,9 @@ import (
 
 // Bounds of a converted stream.
 const (
-	maxStreamEvents    = 1024
-	maxSocketMessages  = 1024
-	maxSocketProtocols = 16
 	// convertedStreamIdle fails a stream that sends nothing this long.
 	convertedStreamIdle = 5 * time.Minute
 )
-
-// convertedStep is what convertStreamEvent returns.
-type convertedStep struct {
-	Events []struct {
-		Event string          `json:"event"`
-		Data  json.RawMessage `json:"data"`
-	} `json:"events"`
-	Chunks []struct {
-		BodyBase64 string `json:"bodyBase64"`
-	} `json:"chunks"`
-	Body        json.RawMessage   `json:"body"`
-	BodyBase64  *string           `json:"bodyBase64"`
-	ContentType string            `json:"contentType"`
-	Send        []json.RawMessage `json:"send"`
-	Close       bool              `json:"close"`
-	State       json.RawMessage   `json:"state"`
-	Error       *convertError     `json:"error"`
-}
 
 // conversionStart is how a converted stream begins: its response once it
 // has output, or the error before any.
@@ -62,13 +41,13 @@ type conversionStart struct {
 
 // eventSource reads an upstream's events, calling each until it says done
 // or the stream ends.
-type eventSource func(each func(map[string]any) (bool, error)) error
+type eventSource func(each func(pluginkit.StreamEvent) (bool, error)) error
 
 // conversion converts one stream.
 type conversion struct {
 	ctx    context.Context
 	relay  *relayTarget
-	view   map[string]any
+	hook   pluginkit.HookContext
 	state  json.RawMessage
 	client bool
 	socket *websocket.Conn
@@ -83,7 +62,7 @@ type conversion struct {
 
 func (host *Host) newConversion(ctx context.Context, send *relaySend, attempt ProviderAttempt, state json.RawMessage) *conversion {
 	reader, out := io.Pipe()
-	return &conversion{ctx: ctx, relay: send.relay, view: send.view(attempt.ClientPath), state: state, client: attempt.Stream,
+	return &conversion{ctx: ctx, relay: send.relay, hook: send.hookContext(attempt.ClientPath, nil), state: state, client: attempt.Stream,
 		reader: reader, out: out, ready: make(chan conversionStart, 1)}
 }
 
@@ -92,9 +71,9 @@ func (host *Host) newConversion(ctx context.Context, send *relaySend, attempt Pr
 func (conversion *conversion) run(source eventSource, done func()) conversionStart {
 	go func() {
 		defer done()
-		err := source(conversion.step)
+		err := source(func(event pluginkit.StreamEvent) (bool, error) { return conversion.step(&event) })
 		if err == nil && !conversion.ended && conversion.failure == nil {
-			_, err = conversion.step(map[string]any{"done": true})
+			_, err = conversion.step(nil)
 		}
 		conversion.finish(err)
 	}()
@@ -137,54 +116,49 @@ func (conversion *conversion) finish(err error) {
 	}
 }
 
-// step has convertStreamEvent convert one input and writes its output.
-func (conversion *conversion) step(input map[string]any) (bool, error) {
-	view := maps.Clone(conversion.view)
-	view["state"] = jsonOrNull(conversion.state)
-	raw, err := conversion.relay.call(conversion.ctx, "convertStreamEvent", view, input)
+// step has convertStreamEvent convert one event, or end the stream for
+// nil, and writes its output.
+func (conversion *conversion) step(event *pluginkit.StreamEvent) (bool, error) {
+	hookCtx := conversion.hook
+	hookCtx.State = conversion.state
+	type converted struct {
+		result pluginkit.StreamResult
+		state  json.RawMessage
+		failed *convertError
+	}
+	output, err := callProvider(conversion.ctx, conversion.relay, "convertStreamEvent", func(ctx context.Context, loaded *plugin.NewAPIPlugin) (converted, error) {
+		result, state, failed, err := loaded.CallConvertStreamEvent(ctx, hookCtx, event, event == nil)
+		return converted{result, state, failed}, err
+	})
 	if err != nil {
 		return true, fmt.Errorf("convertStreamEvent: %w", err)
 	}
-	var step convertedStep
-	if present(raw) {
-		if err := json.Unmarshal(raw, &step); err != nil {
-			return true, errors.New("convertStreamEvent returned no events")
-		}
-	}
-	if present(step.State) {
-		conversion.state = step.State
-	}
-	if step.Error != nil {
+	step := output.result
+	conversion.state = output.state
+	if output.failed != nil {
 		if !conversion.started {
-			conversion.failure = step.Error
+			conversion.failure = output.failed
 			return true, nil
 		}
-		return true, errors.New(truncateRunes(step.Error.Message, 4096))
+		return true, errors.New(truncateRunes(output.failed.Message, 4096))
 	}
-	body := present(step.Body) || step.BodyBase64 != nil
 	switch {
-	case len(step.Events) > maxStreamEvents:
-		return true, fmt.Errorf("convertStreamEvent returned more than %d events", maxStreamEvents)
-	case conversion.client && (len(step.Chunks) > 0 || body):
+	case conversion.client && (len(step.Chunks) > 0 || step.HasBody):
 		return true, errors.New("convertStreamEvent returned chunks or a body for a streaming client")
 	case !conversion.client && len(step.Events) > 0:
 		return true, errors.New("convertStreamEvent returned events for a client that does not stream")
-	case body && conversion.chunked:
+	case step.HasBody && conversion.chunked:
 		return true, errors.New("convertStreamEvent returned a body after chunks")
 	case (len(step.Send) > 0 || step.Close) && conversion.socket == nil:
 		return true, errors.New("convertStreamEvent sent to a WebSocket session the request did not open")
 	}
 	for _, event := range step.Events {
 		conversion.begin("text/event-stream")
-		if err := writeServerSentEvent(conversion.out, event.Event, event.Data); err != nil {
+		if err := writeServerSentText(conversion.out, event.Event, event.Data); err != nil {
 			return true, err
 		}
 	}
-	for _, chunk := range step.Chunks {
-		data, err := base64.StdEncoding.DecodeString(chunk.BodyBase64)
-		if err != nil {
-			return true, errors.New("convertStreamEvent returned a chunk that is not base64")
-		}
+	for _, data := range step.Chunks {
 		if !conversion.chunked {
 			conversion.chunked = true
 			contentType := step.ContentType
@@ -197,33 +171,21 @@ func (conversion *conversion) step(input map[string]any) (bool, error) {
 			return true, err
 		}
 	}
-	if body {
-		data := convertedBody(step.Body)
-		if step.BodyBase64 != nil {
-			decoded, err := base64.StdEncoding.DecodeString(*step.BodyBase64)
-			if err != nil {
-				return true, errors.New("convertStreamEvent returned bodyBase64 that is not base64")
-			}
-			data = decoded
-		}
+	if step.HasBody {
 		contentType := step.ContentType
 		if contentType == "" {
 			contentType = "application/json"
 		}
 		conversion.begin(contentType)
-		if _, err := conversion.out.Write(data); err != nil {
+		if _, err := conversion.out.Write(step.Body); err != nil {
 			return true, err
 		}
 		// A body is the whole response: the upstream is closed.
 		conversion.ended = true
 	}
 	if conversion.socket != nil && !conversion.closed {
-		messages, err := socketMessages(step.Send)
-		if err != nil {
-			return true, err
-		}
-		for _, message := range messages {
-			if err := message.write(conversion.socket); err != nil {
+		for _, message := range step.Send {
+			if err := writeSocketMessage(conversion.socket, message); err != nil {
 				return true, transport.NewUpstreamError(err)
 			}
 		}
@@ -238,70 +200,37 @@ func (conversion *conversion) step(input map[string]any) (bool, error) {
 // httpEvents reads a streamed HTTP answer: server-sent events, an AWS
 // event stream, or else each non-empty line.
 func httpEvents(response *http.Response) eventSource {
-	return func(each func(map[string]any) (bool, error)) error {
+	return func(each func(pluginkit.StreamEvent) (bool, error)) error {
+		read := func(event map[string]any) (bool, error) {
+			data, _ := event["data"].(string)
+			name, _ := event["event"].(string)
+			return each(pluginkit.StreamEvent{Event: name, Data: data})
+		}
 		media, _, _ := mime.ParseMediaType(response.Header.Get("Content-Type"))
 		if media == "application/vnd.amazon.eventstream" {
-			return readAWSEvents(response.Body, each)
+			return readAWSEvents(response.Body, read)
 		}
 		mode := streamLines
 		if media == "text/event-stream" {
 			mode = streamSSE
 		}
-		return readEvents(response.Body, mode, func(event map[string]any) (bool, error) {
-			input := map[string]any{"data": event["data"]}
-			if name, ok := event["event"]; ok {
-				input["event"] = name
-			}
-			return each(input)
-		})
+		return readEvents(response.Body, mode, read)
 	}
 }
 
-// socketMessage is a message for an upstream WebSocket: text, or binary
-// from {bodyBase64}.
-type socketMessage struct {
-	binary bool
-	data   []byte
-}
-
-func (message socketMessage) write(conn *websocket.Conn) error {
-	kind := websocket.TextMessage
-	if message.binary {
-		kind = websocket.BinaryMessage
+// writeSocketMessage sends a message to an upstream WebSocket: text, or
+// binary.
+func writeSocketMessage(conn *websocket.Conn, message pluginkit.WebSocketMessage) error {
+	if message.IsBinary {
+		return conn.WriteMessage(websocket.BinaryMessage, message.Binary)
 	}
-	return conn.WriteMessage(kind, message.data)
-}
-
-func socketMessages(raw []json.RawMessage) ([]socketMessage, error) {
-	if len(raw) > maxSocketMessages {
-		return nil, fmt.Errorf("a WebSocket session takes at most %d messages at a time", maxSocketMessages)
-	}
-	messages := make([]socketMessage, 0, len(raw))
-	for _, item := range raw {
-		var text string
-		if json.Unmarshal(item, &text) == nil {
-			messages = append(messages, socketMessage{data: []byte(text)})
-			continue
-		}
-		var binary struct {
-			BodyBase64 *string `json:"bodyBase64"`
-		}
-		if json.Unmarshal(item, &binary) != nil || binary.BodyBase64 == nil {
-			return nil, errors.New("a WebSocket message is a string or {bodyBase64}")
-		}
-		data, err := base64.StdEncoding.DecodeString(*binary.BodyBase64)
-		if err != nil {
-			return nil, errors.New("a WebSocket message's bodyBase64 is not base64")
-		}
-		messages = append(messages, socketMessage{binary: true, data: data})
-	}
-	return messages, nil
+	return conn.WriteMessage(websocket.TextMessage, []byte(message.Text))
 }
 
 // socketEvents reads the frames of an upstream WebSocket session, text as
 // {data} and binary as {dataBase64}, until either side closes it.
 func socketEvents(conn *websocket.Conn) eventSource {
-	return func(each func(map[string]any) (bool, error)) error {
+	return func(each func(pluginkit.StreamEvent) (bool, error)) error {
 		for {
 			_ = conn.SetReadDeadline(time.Now().Add(convertedStreamIdle))
 			kind, data, err := conn.ReadMessage()
@@ -316,40 +245,20 @@ func socketEvents(conn *websocket.Conn) eventSource {
 				}
 				return err
 			}
-			input := map[string]any{"data": string(data)}
+			event := pluginkit.StreamEvent{Data: string(data)}
 			if kind == websocket.BinaryMessage {
-				input = map[string]any{"dataBase64": base64.StdEncoding.EncodeToString(data)}
+				event = pluginkit.StreamEvent{Binary: data}
 			}
-			if done, err := each(input); err != nil || done {
+			if done, err := each(event); err != nil || done {
 				return err
 			}
 		}
 	}
 }
 
-// websocketRequest is the session convertRequest asks to open.
-type websocketRequest struct {
-	Path      string            `json:"path"`
-	URL       string            `json:"url"`
-	Headers   map[string]string `json:"headers"`
-	Protocols []string          `json:"protocols"`
-	Messages  []json.RawMessage `json:"messages"`
-}
-
 // converseWebSocket talks to the vendor over the WebSocket session
 // convertRequest asked for, and answers in the route's protocol.
-func (host *Host) converseWebSocket(ctx context.Context, writer http.ResponseWriter, target transport.Target, attempt ProviderAttempt, send *relaySend, raw json.RawMessage, state json.RawMessage) error {
-	var request websocketRequest
-	if err := json.Unmarshal(raw, &request); err != nil {
-		return transport.NewUpstreamError(errors.New("convertRequest's websocket is {path, url, headers, protocols, messages}"))
-	}
-	if len(request.Protocols) > maxSocketProtocols {
-		return transport.NewUpstreamError(fmt.Errorf("a WebSocket session takes at most %d subprotocols", maxSocketProtocols))
-	}
-	messages, err := socketMessages(request.Messages)
-	if err != nil {
-		return transport.NewUpstreamError(err)
-	}
+func (host *Host) converseWebSocket(ctx context.Context, writer http.ResponseWriter, target transport.Target, attempt ProviderAttempt, send *relaySend, request pluginkit.WebSocketRequest, state json.RawMessage) error {
 	for {
 		address, err := send.addressOf(request.Path, request.URL)
 		if err != nil {
@@ -388,8 +297,8 @@ func (host *Host) converseWebSocket(ctx context.Context, writer http.ResponseWri
 			}
 			return answerRelay(writer, target, response)
 		}
-		for _, message := range messages {
-			if err := message.write(conn); err != nil {
+		for _, message := range request.Messages {
+			if err := writeSocketMessage(conn, message); err != nil {
 				_ = conn.Close()
 				return transport.NewUpstreamError(err)
 			}

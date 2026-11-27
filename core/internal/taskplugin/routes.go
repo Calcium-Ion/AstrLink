@@ -8,6 +8,7 @@ import (
 
 	"github.com/QuantumNous/astrlink/core/internal/plugin"
 	"github.com/QuantumNous/astrlink/core/internal/storage"
+	"github.com/QuantumNous/new-api/pluginkit"
 )
 
 // Route is a native route of an enabled task plugin.
@@ -39,7 +40,7 @@ func (engine *Engine) Store() storage.PluginTaskStore { return engine.store }
 
 // TaskPlugin returns the manifest of the enabled task plugin key names,
 // nil when there is none.
-func (engine *Engine) TaskPlugin(key string) *plugin.TaskMeta {
+func (engine *Engine) TaskPlugin(key string) *plugin.NewAPIPlugin {
 	_, meta, err := engine.plugin(key)
 	if err != nil {
 		return nil
@@ -107,8 +108,9 @@ func (engine *Engine) nativeRoutes() []Route {
 		if !found.Enabled() || found.Task() == nil {
 			continue
 		}
-		for _, route := range found.Task().Routes {
-			for index, path := range plugin.TaskRoutePaths(found.Key, route.Path) {
+		for _, binding := range pluginkit.PluginRouteBindings(found.Task().LoadedPlugin) {
+			route, path := binding.Route, binding.Route.Path
+			{
 				shape := route.Method + " " + strings.ToLower(normalizedShape(path))
 				if owner, taken := shapes[shape]; taken {
 					// A copy under /{key} that the plugin declares as well
@@ -120,9 +122,9 @@ func (engine *Engine) nativeRoutes() []Route {
 				}
 				shapes[shape] = found.Key
 				indexed = append(indexed, Route{
-					Plugin: found.Key, Method: route.Method, Path: path, Type: route.Type, Action: route.Action,
-					TaskIDParam: route.TaskIDName(), Decode: route.Decode, Render: route.Render, Models: route.Models,
-					Retain: route.Retains(), Vendor: index == 0, segments: strings.Split(strings.Trim(path, "/"), "/"),
+					Plugin: found.Key, Method: route.Method, Path: path, Type: string(route.Type), Action: route.Action,
+					TaskIDParam: route.TaskIDParam, Decode: route.Decode, Render: route.Render, Models: route.Models,
+					Retain: route.RetainResult == nil || *route.RetainResult, Vendor: !binding.Pinned, segments: strings.Split(strings.Trim(path, "/"), "/"),
 				})
 			}
 		}

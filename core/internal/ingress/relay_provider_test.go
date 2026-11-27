@@ -370,12 +370,12 @@ const loginVendorPlugin = `export const meta = {
   relay: [{ incoming_path: "/v1/chat/completions", upstream_path: "/login/chat" }],
 };
 export function login(ctx, input) {
-  if (input === null && ctx.login.session === null) return { step: "redirect", url: "https://vendor.example/auth?state=" + ctx.login.state + "&challenge=" + ctx.login.codeChallenge + "&redirect=" + encodeURIComponent(ctx.login.redirectUri), session: { started: true } };
+  if (input === null && ctx.login.session === null) return { type: "redirect", url: "https://vendor.example/auth?state=" + ctx.login.state + "&challenge=" + ctx.login.codeChallenge + "&redirect=" + encodeURIComponent(ctx.login.redirectUri), session: { started: true } };
   if (input && input.callback) {
     if (input.callback.code !== "abc") throw new Error("bad code");
-    return { step: "fields", fields: [{ name: "token", label: { en: "Token", "zh-CN": "令牌" }, type: "password", required: true }] };
+    return { type: "fields", fields: [{ name: "token", label: { en: "Token", "zh-CN": "令牌" }, type: "password", required: true }] };
   }
-  if (input && input.fields) return { step: "done", credential: { n: 1, verifier: ctx.login.codeVerifier.length }, headers: { Authorization: "Bearer " + input.fields.token }, expiresAt: Math.floor(Date.now() / 1000) + 3600, accountId: "acct-1", label: "Test account" };
+  if (input && input.fields) return { type: "done", credential: { n: 1, verifier: ctx.login.codeVerifier.length }, headers: { Authorization: "Bearer " + input.fields.token }, expiresAt: Math.floor(Date.now() / 1000) + 3600, accountId: "acct-1", label: "Test account" };
   throw new Error("unexpected input");
 }
 export function refresh(ctx) {
@@ -491,7 +491,7 @@ func TestAPluginReadsTheBalanceAndRestsAProvider(t *testing.T) {
 	ctx := context.Background()
 	state, err := host.ProviderBalance(ctx, service)
 	if err != nil || state.Balance == nil || state.Balance.Amount == nil || *state.Balance.Amount != 12.5 || state.Balance.Currency != "USD" ||
-		len(state.Balance.Windows) != 1 || state.Balance.Windows[0].Name.In("zh-CN") != "每日" || state.Balance.Windows[0].Used != 3 {
+		len(state.Balance.Windows) != 1 || state.Balance.Windows[0].Name.Text("zh-CN") != "每日" || state.Balance.Windows[0].Used != 3 {
 		t.Fatalf("balance = %+v %v", state, err)
 	}
 	if next := host.RunScheduled(ctx, service); next != 2*time.Minute || host.ProviderStateOf(service.ID).Resting {

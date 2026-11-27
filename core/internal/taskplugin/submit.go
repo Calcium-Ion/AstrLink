@@ -15,6 +15,7 @@ import (
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/plugin"
 	"github.com/QuantumNous/astrlink/core/internal/storage"
+	"github.com/QuantumNous/new-api/pluginkit"
 )
 
 // hookTimeout bounds one hook call, its utils.fetch requests included.
@@ -92,28 +93,8 @@ type Submitted struct {
 	Attempts []Attempt
 }
 
-// submitAnswer is what parseSubmitResponse returns.
-type submitAnswer struct {
-	TaskID    json.RawMessage `json:"taskId"`
-	TaskData  json.RawMessage `json:"taskData"`
-	Immediate *taskResult     `json:"immediate"`
-	State     json.RawMessage `json:"state"`
-}
-
 // taskResult is the NormalizedTaskResult the parse hooks return.
-type taskResult struct {
-	TaskID           json.RawMessage `json:"taskId"`
-	Status           string          `json:"status"`
-	Progress         json.RawMessage `json:"progress"`
-	Reason           string          `json:"reason"`
-	URL              string          `json:"url"`
-	RemoteURL        string          `json:"remoteUrl"`
-	CompletionTokens json.Number     `json:"completionTokens"`
-	TotalTokens      json.Number     `json:"totalTokens"`
-	// Data and State come with an item of parseBatchResult.
-	Data  json.RawMessage `json:"data"`
-	State json.RawMessage `json:"state"`
-}
+type taskResult = pluginkit.TaskResult
 
 // statuses are the statuses a parse hook may report.
 var statuses = []string{
@@ -140,8 +121,8 @@ func text(raw json.RawMessage) string {
 }
 
 // progressText reads a progress: "50%", 50 or 0.5 all read 50%.
-func progressText(raw json.RawMessage) string {
-	value := text(raw)
+func progressText(value string) string {
+	value = strings.TrimSpace(value)
 	if value == "" {
 		return ""
 	}
@@ -159,23 +140,52 @@ func progressText(raw json.RawMessage) string {
 
 func (call *exchange) hasHook(name string) bool { return call.target.HasTaskHook(name) }
 
-// call runs a hook of the plugin with args; the driver hooks that may
-// fetch reach the provider's hosts.
-func (call *exchange) call(ctx context.Context, hook string, args ...any) (json.RawMessage, error) {
+// callHook runs call, a call of hook into the plugin, with the time a hook
+// has; the driver hooks that may fetch reach the provider's hosts.
+func callHook[T any](ctx context.Context, exchange *exchange, hook string, call func(context.Context, *plugin.NewAPIPlugin) (T, error)) (T, error) {
 	ctx, cancel := context.WithTimeout(ctx, hookTimeout)
 	defer cancel()
 	options := plugin.CallOptions{}
 	if slices.Contains(fetchHooks, hook) {
-		options.TaskFetch = &plugin.TaskFetch{
-			Allowed: func(target *url.URL) bool { return allowedHost(target, call.credentials.baseURL, call.meta) },
-			Client:  call.engine.fetchClient(call.service),
+		options.Fetch = &plugin.Fetch{
+			Allowed: func(target *url.URL) bool { return allowedHost(target, exchange.credentials.baseURL, exchange.meta) },
+			Client:  exchange.engine.fetchClient(exchange.service),
 		}
 	}
-	raw, _, err := call.target.CallTask(ctx, hook, args, options)
+	result, _, err := plugin.CallNewAPI(ctx, exchange.target, hook, options, call)
+	if err != nil {
+		var zero T
+		return zero, hookFailure(hook, err)
+	}
+	return result, nil
+}
+
+// call runs a hook pluginkit has no typed call for, a renderer or a
+// presenter, with args, and returns its result as JSON text.
+func (call *exchange) call(ctx context.Context, hook string, args ...any) (json.RawMessage, error) {
+	ctx, cancel := context.WithTimeout(ctx, hookTimeout)
+	defer cancel()
+	raw, _, err := call.target.CallTask(ctx, hook, args, plugin.CallOptions{})
 	if err != nil {
 		return nil, hookFailure(hook, err)
 	}
 	return raw, nil
+}
+
+// usage runs a usage hook and adds the facts it returned.
+func (call *exchange) usage(ctx context.Context, facts map[string]any, hook string, args ...any) error {
+	values := make([]any, len(args))
+	for index, arg := range args {
+		values[index] = plugin.NewAPIValue(arg)
+	}
+	returned, err := callHook(ctx, call, hook, func(ctx context.Context, loaded *plugin.NewAPIPlugin) (map[string]any, error) {
+		return loaded.CallUsage(ctx, hook, values...)
+	})
+	if err != nil {
+		return err
+	}
+	addFacts(facts, returned)
+	return nil
 }
 
 // fetchClient is the client utils.fetch sends through: the provider's
@@ -197,18 +207,11 @@ func (function roundTripFunc) RoundTrip(request *http.Request) (*http.Response, 
 // clientHeaders are the client's headers a driver reads: none that carry
 // its credentials or the gateway's.
 func clientHeaders(header http.Header) map[string]string {
-	headers := map[string]string{}
-	for name, values := range header {
-		canonical := http.CanonicalHeaderKey(name)
-		lower := strings.ToLower(canonical)
-		switch {
-		case len(values) == 0,
-			lower == "authorization", lower == "cookie", lower == "x-api-key", lower == "x-goog-api-key",
-			lower == "proxy-authorization", lower == "host", lower == "forwarded", lower == "via",
-			strings.HasPrefix(lower, "x-astrlink-"), strings.HasPrefix(lower, "x-forwarded-"), strings.HasPrefix(lower, "sec-"):
-			continue
+	headers := pluginkit.ClientRequestHeaders(header)
+	for name := range headers {
+		if lower := strings.ToLower(name); strings.HasPrefix(lower, "x-astrlink-") {
+			delete(headers, name)
 		}
-		headers[canonical] = values[0]
 	}
 	return headers
 }
@@ -265,12 +268,12 @@ func (engine *Engine) Submit(ctx context.Context, submission Submission, candida
 // originTasks reads the earlier tasks a submission continues: the
 // client's own, of the same plugin, on one provider, which the submission
 // then runs on.
-func (engine *Engine) originTasks(ctx context.Context, submission Submission, meta *plugin.TaskMeta) ([]originTask, contract.ServiceID, error) {
+func (engine *Engine) originTasks(ctx context.Context, submission Submission, meta *plugin.NewAPIPlugin) ([]originTask, contract.ServiceID, error) {
 	var origins []originTask
 	var pinned contract.ServiceID
 	for _, id := range submission.Intent.OriginTaskIDs {
 		task, err := engine.store.GetPluginTask(ctx, id)
-		if err != nil || task.Owner != submission.Owner || task.PluginKey != meta.Key {
+		if err != nil || task.Owner != submission.Owner || task.PluginKey != meta.Meta.Key {
 			return nil, "", failure(http.StatusBadRequest, "origin_task_not_found", "the task %s is not one of yours", id)
 		}
 		if pinned != "" && task.ServiceID != pinned {
@@ -288,7 +291,7 @@ func (engine *Engine) originTasks(ctx context.Context, submission Submission, me
 
 // submitOn tries a submission on one provider. The status is the vendor's,
 // 0 when it did not answer.
-func (engine *Engine) submitOn(ctx context.Context, target *plugin.Plugin, meta *plugin.TaskMeta, submission Submission, candidate Candidate, origins []originTask) (*Submitted, int, error) {
+func (engine *Engine) submitOn(ctx context.Context, target *plugin.Plugin, meta *plugin.NewAPIPlugin, submission Submission, candidate Candidate, origins []originTask) (*Submitted, int, error) {
 	found, err := engine.credentialsFor(ctx, candidate.Service, meta)
 	if err != nil {
 		return nil, 0, err
@@ -313,17 +316,11 @@ func (engine *Engine) submitOn(ctx context.Context, target *plugin.Plugin, meta 
 	if call.hasHook("extractUsage") {
 		usage := driver
 		usage.UsagePurpose = "facts"
-		raw, err := call.call(ctx, "extractUsage", usage)
-		if err != nil {
+		if err := call.usage(ctx, facts, "extractUsage", usage); err != nil {
 			return nil, 0, err
 		}
-		mergeFacts(facts, raw)
 	}
-	raw, err := call.call(ctx, "buildSubmitRequest", driver)
-	if err != nil {
-		return nil, 0, err
-	}
-	desc, err := parseDescriptor("buildSubmitRequest", raw)
+	desc, err := call.buildRequest(ctx, "buildSubmitRequest", plugin.NewAPIObject(driver))
 	if err != nil {
 		return nil, 0, err
 	}
@@ -333,8 +330,12 @@ func (engine *Engine) submitOn(ctx context.Context, target *plugin.Plugin, meta 
 	if desc.Action != "" {
 		driver.Action = desc.Action
 	}
-	if submission.Egress != nil && desc.BodyType != "multipart" && json.Valid(desc.Body) {
-		if err := submission.Egress(ctx, desc.Body); err != nil {
+	if _, text := desc.Body.(string); submission.Egress != nil && desc.BodyType != "multipart" && desc.hasBody() && !text {
+		body, err := desc.jsonBody()
+		if err != nil {
+			return nil, 0, failure(http.StatusBadGateway, "plugin_error", "buildSubmitRequest returned a body that is not JSON")
+		}
+		if err := submission.Egress(ctx, body); err != nil {
 			return nil, 0, err
 		}
 	}
@@ -360,32 +361,27 @@ func (engine *Engine) submitOn(ctx context.Context, target *plugin.Plugin, meta 
 		// could pay for the work twice.
 		return nil, response.StatusCode, notRetryable(err)
 	}
-	answerRaw, err := call.call(ctx, "parseSubmitResponse", driver, upstreamResponse{StatusCode: response.StatusCode, Headers: allHeaders(response.Header), Body: body})
+	answer, err := callHook(ctx, call, "parseSubmitResponse", func(ctx context.Context, loaded *plugin.NewAPIPlugin) (pluginkit.SubmitResult, error) {
+		return loaded.CallParseSubmitResponse(ctx, plugin.NewAPIObject(driver), pluginkit.SubmitResponse{StatusCode: response.StatusCode, Headers: allHeaders(response.Header), Body: pluginkit.RawJSON(body)})
+	})
 	if err != nil {
 		return nil, response.StatusCode, notRetryable(err)
 	}
-	var answer submitAnswer
-	if err := strictJSON(answerRaw, &answer); err != nil {
-		return nil, response.StatusCode, failure(http.StatusBadGateway, "plugin_error", "parseSubmitResponse returned something other than {taskId, taskData, immediate, state}")
-	}
-	upstreamID := text(answer.TaskID)
-	if upstreamID == "" && answer.Immediate == nil {
-		return nil, response.StatusCode, failure(http.StatusBadGateway, "plugin_error", "parseSubmitResponse returned no taskId")
-	}
-	data := answer.TaskData
-	if len(bytes.TrimSpace(data)) == 0 || bytes.Equal(bytes.TrimSpace(data), []byte("null")) {
-		data = body
+	upstreamID := strings.TrimSpace(answer.TaskID)
+	data := body
+	if answer.TaskData != nil {
+		if data, err = marshalOrdered(answer.TaskData); err != nil {
+			return nil, response.StatusCode, notRetryable(failure(http.StatusBadGateway, "plugin_error", "parseSubmitResponse returned taskData that is not JSON"))
+		}
 	}
 	if call.hasHook("extractUsageOnSubmit") {
-		if raw, err := call.call(ctx, "extractUsageOnSubmit", driver, data); err == nil {
-			mergeFacts(facts, raw)
-		} else {
-			engine.logf("task plugin %s: extractUsageOnSubmit: %v", meta.Key, err)
+		if err := call.usage(ctx, facts, "extractUsageOnSubmit", driver, data); err != nil {
+			engine.logf("task plugin %s: extractUsageOnSubmit: %v", meta.Meta.Key, err)
 		}
 	}
 	now := engine.now()
 	task := storage.PluginTask{
-		ID: id, PluginKey: meta.Key, PluginVersion: meta.Version, ServiceID: candidate.Service.ID, Owner: submission.Owner,
+		ID: id, PluginKey: meta.Meta.Key, PluginVersion: meta.Meta.Version, ServiceID: candidate.Service.ID, Owner: submission.Owner,
 		Surface: submission.Surface, Operation: submission.Operation, Action: driver.Action, Model: intent.Model, UpstreamModel: upstreamModel,
 		UpstreamTaskID: upstreamID, Status: contract.PluginTaskSubmitted, Retain: true, State: nullable(answer.State),
 		Request: submission.Request, RequestID: submission.RequestID, CreatedAt: now, UpdatedAt: now,
@@ -401,9 +397,7 @@ func (engine *Engine) submitOn(ctx context.Context, target *plugin.Plugin, meta 
 		}
 		engine.applyResult(&task, result, data)
 		if task.Status == contract.PluginTaskSuccess && call.hasHook("extractUsageOnComplete") {
-			if raw, err := call.call(ctx, "extractUsageOnComplete", found.query(task), result, data); err == nil {
-				mergeFacts(facts, raw)
-			}
+			_ = call.usage(ctx, facts, "extractUsageOnComplete", found.query(task), resultValue(result), data)
 		}
 		if task.Terminal() && !submission.Retain {
 			// The route answers with the whole result now and keeps none.
@@ -508,8 +502,8 @@ func clip(message string) string {
 	return message
 }
 
-// mergeFacts adds the usage facts a hook returned: a plain object of
-// strings, numbers and booleans.
+// mergeFacts adds the usage facts a task kept: a plain object of strings,
+// numbers and booleans.
 func mergeFacts(facts map[string]any, raw json.RawMessage) {
 	var returned map[string]any
 	decoder := json.NewDecoder(bytes.NewReader(raw))
@@ -517,9 +511,15 @@ func mergeFacts(facts map[string]any, raw json.RawMessage) {
 	if decoder.Decode(&returned) != nil {
 		return
 	}
+	addFacts(facts, returned)
+}
+
+// addFacts adds the usage facts a hook returned: its strings, numbers and
+// booleans.
+func addFacts(facts map[string]any, returned map[string]any) {
 	for name, value := range returned {
 		switch value.(type) {
-		case string, json.Number, bool:
+		case string, json.Number, bool, float64, int64, int:
 			if len(name) <= 64 && len(facts) < 64 {
 				facts[name] = value
 			}
@@ -555,4 +555,17 @@ func (engine *Engine) applyResult(task *storage.PluginTask, result taskResult, d
 		task.FinishedAt, task.NextPollAt = now, time.Time{}
 	}
 	task.UpdatedAt = now
+}
+
+// resultValue is a task result as the usage hooks read it: what the parse
+// hook returned, its state as JSON.
+func resultValue(result taskResult) map[string]any {
+	value := plugin.NewAPIObject(result)
+	if value == nil {
+		return nil
+	}
+	if result.State != nil {
+		value["state"] = pluginkit.RawJSON(result.State)
+	}
+	return value
 }

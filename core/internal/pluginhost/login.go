@@ -18,6 +18,7 @@ import (
 
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/plugin"
+	"github.com/QuantumNous/new-api/pluginkit"
 )
 
 // A plugin that exports login logs a provider in to an account: the host
@@ -81,7 +82,7 @@ type loginFlow struct {
 	view     LoginView
 	service  contract.Service
 	target   *plugin.Plugin
-	meta     *plugin.TaskMeta
+	meta     *plugin.NewAPIPlugin
 	baseURL  string
 	language string
 	// login is ctx.login: what the host made for this login.
@@ -151,7 +152,7 @@ func (host *Host) StartLogin(ctx context.Context, service contract.Service) (Log
 		flow.baseURL = strings.TrimRight(service.HTTP.BaseURL, "/")
 	}
 	if flow.baseURL == "" {
-		flow.baseURL = flow.meta.BaseURL
+		flow.baseURL = flow.meta.Meta.BaseURL
 	}
 	if secret, err := host.credentials.ReadServiceSecret(ctx, service); err == nil {
 		if existing, ok := decodeCredential(string(secret)); ok {
@@ -325,65 +326,34 @@ func (host *Host) callback(ctx context.Context, flow *loginFlow, query url.Value
 func (host *Host) advance(ctx context.Context, flow *loginFlow, input any) {
 	flow.busy = true
 	defer func() { flow.busy = false }()
-	view := map[string]any{
-		"baseUrl": flow.baseURL,
-		"login": map[string]any{
-			"state": flow.state, "nonce": flow.nonce, "codeVerifier": flow.verifier, "codeChallenge": flow.challenge,
-			"codeChallengeMethod": "S256", "redirectUri": flow.redirect, "session": jsonOrNull(flow.session),
-		},
+	login := pluginkit.LoginContext{
+		State: flow.state, Nonce: flow.nonce, CodeVerifier: flow.verifier, CodeChallenge: flow.challenge,
+		RedirectURI: flow.redirect, Session: flow.session, Config: RelayConfig(flow.meta, flow.service.Plugin.Settings),
 	}
-	if flow.replaced != nil {
-		view["credential"] = flow.replaced
-	}
-	call, cancel := context.WithTimeout(context.WithoutCancel(ctx), loginHookTime)
-	defer cancel()
-	raw, _, err := flow.target.CallTask(call, "login", []any{view, input}, credentialCallOptions(flow.meta, flow.baseURL))
+	step, err := callLogin(context.WithoutCancel(ctx), flow, login, input)
 	if err != nil {
 		flow.view.Error = "the plugin's login failed: " + truncateRunes(loginMessage(err), 512)
 		return
 	}
-	var step struct {
-		Step                    string            `json:"step"`
-		URL                     string            `json:"url"`
-		Hint                    json.RawMessage   `json:"hint"`
-		Issuer                  string            `json:"issuer"`
-		Session                 *json.RawMessage  `json:"session"`
-		UserCode                string            `json:"userCode"`
-		VerificationURI         string            `json:"verificationUri"`
-		VerificationURIComplete string            `json:"verificationUriComplete"`
-		Interval                int               `json:"interval"`
-		ExpiresIn               int               `json:"expiresIn"`
-		Fields                  []map[string]any  `json:"fields"`
-		Credential              json.RawMessage   `json:"credential"`
-		Headers                 map[string]string `json:"headers"`
-		Query                   map[string]string `json:"query"`
-		ExpiresAt               int64             `json:"expiresAt"`
-		AccountID               string            `json:"accountId"`
-		Label                   string            `json:"label"`
-	}
-	if err := json.Unmarshal(raw, &step); err != nil {
-		flow.view.Error = "the plugin's login returned no step"
-		return
-	}
 	if step.Session != nil {
-		if len(*step.Session) > maxLoginState {
+		if len(step.Session) > maxLoginState {
 			flow.view.Error = "the plugin's login kept more than 16 KiB"
 			return
 		}
-		flow.session = *step.Session
+		flow.session = step.Session
 	}
 	flow.view.Error = ""
-	switch step.Step {
+	switch step.Type {
 	case "redirect", "paste":
 		if !loginURL(step.URL) {
 			flow.view.Error = "the plugin's login returned an address that is not http or https"
 			return
 		}
-		flow.view.Step, flow.view.URL = step.Step, step.URL
-		flow.view.Hint = localizedOf(step.Hint, flow.language)
+		flow.view.Step, flow.view.URL = step.Type, step.URL
+		flow.view.Hint = localizedIn(step.Hint, flow.language)
 		flow.issuer = step.Issuer
 	case "device", "pending":
-		if step.Step == "device" {
+		if step.Type == pluginkit.LoginStepDevice {
 			if step.UserCode == "" || !loginURL(step.VerificationURI) || (step.VerificationURIComplete != "" && !loginURL(step.VerificationURIComplete)) {
 				flow.view.Error = "the plugin's login returned no code or address"
 				return
@@ -407,35 +377,23 @@ func (host *Host) advance(ctx context.Context, flow *loginFlow, input any) {
 			return
 		}
 		fields := make([]LoginField, 0, len(step.Fields))
-		for _, raw := range step.Fields {
-			encoded, _ := json.Marshal(raw)
-			var field struct {
-				Name        string          `json:"name"`
-				Label       json.RawMessage `json:"label"`
-				Type        string          `json:"type"`
-				Required    bool            `json:"required"`
-				Placeholder json.RawMessage `json:"placeholder"`
-				Description json.RawMessage `json:"description"`
-			}
-			if json.Unmarshal(encoded, &field) != nil || field.Name == "" {
-				flow.view.Error = "the plugin's login asked for a field without a name"
-				return
-			}
+		for _, field := range step.Fields {
 			if field.Type != "" && field.Type != "text" && field.Type != "password" && field.Type != "textarea" {
 				field.Type = "text"
 			}
 			fields = append(fields, LoginField{
-				Name: field.Name, Label: localizedOf(field.Label, flow.language), Type: field.Type, Required: field.Required,
-				Placeholder: localizedOf(field.Placeholder, flow.language), Description: localizedOf(field.Description, flow.language),
+				Name: field.Name, Label: localizedIn(field.Label, flow.language), Type: field.Type, Required: field.Required,
+				Placeholder: localizedIn(field.Placeholder, flow.language), Description: localizedIn(field.Description, flow.language),
 			})
 		}
 		flow.view.Step, flow.view.Fields = "fields", fields
 	case "done":
+		done := step.Result
 		credential := PluginCredential{
-			Plugin: flow.target.Key, Data: step.Credential, Headers: step.Headers, Query: step.Query,
-			ExpiresAt: step.ExpiresAt, AccountID: step.AccountID, Label: truncateRunes(step.Label, 128),
+			Plugin: flow.target.Key, Data: done.Credential, Headers: done.Headers, Query: done.Query,
+			ExpiresAt: done.ExpiresAt, AccountID: done.AccountID, Label: truncateRunes(done.Label, 128),
 		}
-		for name, value := range step.Headers {
+		for name, value := range done.Headers {
 			if !validHeader(name, value) || relayProtected(http.CanonicalHeaderKey(name), "") && http.CanonicalHeaderKey(name) != "Authorization" && http.CanonicalHeaderKey(name) != "Cookie" {
 				flow.view.Error = "the plugin's login returned a header a request cannot send: " + name
 				return
@@ -451,7 +409,7 @@ func (host *Host) advance(ctx context.Context, flow *loginFlow, input any) {
 		}
 		flow.view = LoginView{ID: flow.view.ID, Step: "done", ExpiresAt: flow.view.ExpiresAt, Account: credential.AccountID, Label: credential.Label}
 	default:
-		flow.view.Error = fmt.Sprintf("the plugin's login returned the step %q", step.Step)
+		flow.view.Error = fmt.Sprintf("the plugin's login returned the step %q", step.Type)
 	}
 }
 
@@ -460,21 +418,27 @@ func loginURL(raw string) bool {
 	return err == nil && len(raw) <= maxLoginURL && (parsed.Scheme == "http" || parsed.Scheme == "https") && parsed.Host != "" && parsed.User == nil
 }
 
-func localizedOf(raw json.RawMessage, language string) string {
-	if len(raw) == 0 {
-		return ""
-	}
-	var text plugin.LocalizedText
-	if json.Unmarshal(raw, &text) != nil {
-		return ""
-	}
-	if value := text.In(language); value != "" {
+// localizedIn is text in language, else in Chinese for a Chinese reader;
+// "" when the plugin wrote neither.
+func localizedIn(text pluginkit.LocalizedText, language string) string {
+	if value := text.Text(language); value != "" {
 		return truncateRunes(value, 512)
 	}
 	if strings.HasPrefix(language, "zh") {
-		return truncateRunes(text.In("zh"), 512)
+		return truncateRunes(text.Text("zh"), 512)
 	}
 	return ""
+}
+
+// callLogin runs the plugin's login with input, its utils.fetch reaching
+// the provider's address and the plugin's allowed hosts.
+func callLogin(ctx context.Context, flow *loginFlow, login pluginkit.LoginContext, input any) (pluginkit.LoginStep, error) {
+	ctx, cancel := context.WithTimeout(ctx, loginHookTime)
+	defer cancel()
+	step, _, err := plugin.CallNewAPI(ctx, flow.target, "login", credentialCallOptions(flow.meta, flow.baseURL), func(ctx context.Context, loaded *plugin.NewAPIPlugin) (pluginkit.LoginStep, error) {
+		return loaded.CallLogin(ctx, flow.baseURL, login, flow.replaced, input)
+	})
+	return step, err
 }
 
 // loginMessage is what a failed login hook says: what it threw.

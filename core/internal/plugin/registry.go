@@ -311,6 +311,9 @@ func (plugin *Plugin) Hooks() []string {
 	if plugin.program == nil {
 		return nil
 	}
+	if plugin.program.newAPI != nil {
+		return plugin.program.newAPI.exports()
+	}
 	hooks := make([]string, 0, len(plugin.program.hooks))
 	for name := range plugin.program.hooks {
 		hooks = append(hooks, name)
@@ -323,6 +326,9 @@ func (plugin *Plugin) Hooks() []string {
 func (plugin *Plugin) Has(hook string) bool {
 	if plugin.program == nil {
 		return false
+	}
+	if plugin.program.newAPI != nil {
+		return plugin.program.newAPI.HasHook(hook)
 	}
 	_, exported := plugin.program.hooks[hook]
 	return exported
@@ -345,6 +351,9 @@ func (plugin *Plugin) Call(ctx context.Context, hook string, arg any, options Ca
 func (plugin *Plugin) CallArgs(ctx context.Context, hook string, args []any, options CallOptions) (json.RawMessage, CallInfo, error) {
 	if plugin.program == nil {
 		return nil, CallInfo{}, &CallError{Reason: ReasonUnavailable, Message: "the plugin did not load"}
+	}
+	if plugin.program.newAPI != nil {
+		return plugin.CallTask(ctx, hook, args, options)
 	}
 	exported, ok := plugin.program.hooks[hook]
 	if !ok {
@@ -386,12 +395,13 @@ func (plugin *Plugin) invoke(ctx context.Context, name string, exported moejs.Ho
 var errCallEnded = errors.New("the plugin call ended")
 
 // Checked is a plugin that compiled and passed its checks before it is
-// installed: its manifest and the hooks it exports. Task is the manifest of
-// a task plugin, whose Meta carries only its key, name and version.
+// installed: its manifest and the hooks it exports. Task is a plugin written
+// for New API's plugin API v1, whose Meta carries only its key, name and
+// version.
 type Checked struct {
 	Meta  Meta
 	Hooks []string
-	Task  *TaskMeta
+	Task  *NewAPIPlugin
 }
 
 // Check compiles a plugin's source as the host would load it, under the key
@@ -406,7 +416,11 @@ func Check(source Source) (*Checked, error) {
 	if err != nil {
 		return nil, asLoadError(source, err)
 	}
-	checked := &Checked{Meta: loaded.meta, Task: loaded.task}
+	checked := &Checked{Meta: loaded.meta, Task: loaded.newAPI}
+	if loaded.newAPI != nil {
+		checked.Hooks = loaded.newAPI.exports()
+		return checked, nil
+	}
 	for name := range loaded.hooks {
 		checked.Hooks = append(checked.Hooks, name)
 	}
@@ -622,6 +636,9 @@ func (manager *Manager) publish(settings map[string]Settings) {
 			plugin.granted = slices.Clone(result.program.meta.Capabilities)
 			plugin.config = result.program.meta.WithDefaults(current.Config)
 			plugin.pool = newPool(result.program, manager.limits)
+			if result.program.newAPI != nil {
+				result.program.newAPI.log.attach(count)
+			}
 		}
 		plugins = append(plugins, plugin)
 	}

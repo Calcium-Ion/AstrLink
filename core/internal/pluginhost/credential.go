@@ -6,15 +6,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
-	"net/url"
-	"slices"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/plugin"
+	"github.com/QuantumNous/new-api/pluginkit"
 )
 
 // A provider of a plugin that exports login holds, in place of a key, the
@@ -136,10 +134,9 @@ func (host *Host) liveCredential(ctx context.Context, service contract.Service, 
 			}
 		}
 	}
-	call, cancel := context.WithTimeout(ctx, time.Minute)
-	defer cancel()
-	view := map[string]any{"baseUrl": baseURL, "credential": jsonOrNull(credential.Data), "apiKey": ""}
-	raw, _, err := relay.plugin.CallTask(call, "refresh", []any{view}, credentialCallOptions(relay.meta, baseURL))
+	result, err := callCredential(ctx, relay.plugin, "refresh", baseURL, func(ctx context.Context, loaded *plugin.NewAPIPlugin) (pluginkit.CredentialResult, error) {
+		return loaded.CallRefresh(ctx, pluginkit.CredentialContext{BaseURL: baseURL, Credential: jsonOrNull(credential.Data), Config: relay.config})
+	})
 	if err != nil {
 		// A temporary failure: the credential goes on until it expires.
 		host.logf("plugin %s: refresh of the credential of %s failed", relay.plugin.Key, service.ID)
@@ -147,18 +144,6 @@ func (host *Host) liveCredential(ctx context.Context, service contract.Service, 
 			return credential, fmt.Errorf("the provider's credential expired and could not be refreshed")
 		}
 		return credential, nil
-	}
-	var result struct {
-		Relogin    bool              `json:"relogin"`
-		Credential json.RawMessage   `json:"credential"`
-		Headers    map[string]string `json:"headers"`
-		Query      map[string]string `json:"query"`
-		ExpiresAt  int64             `json:"expiresAt"`
-		AccountID  string            `json:"accountId"`
-		Label      string            `json:"label"`
-	}
-	if err := json.Unmarshal(raw, &result); err != nil {
-		return credential, errors.New("refresh returned neither a credential nor relogin")
 	}
 	if result.Relogin {
 		credential.NeedsLogin = true
@@ -191,22 +176,6 @@ func (host *Host) saveCredential(ctx context.Context, id contract.ServiceID, cre
 	}
 	if err != nil {
 		host.logf("plugin %s: could not keep the credential of %s: %v", credential.Plugin, id, err)
-	}
-}
-
-// credentialCallOptions let the credential hooks POST to the provider's
-// address and the plugin's allowed hosts.
-func credentialCallOptions(meta *plugin.TaskMeta, baseURL string) plugin.CallOptions {
-	allowed := slices.Clone(meta.AllowedHosts)
-	if parsed, err := url.Parse(baseURL); err == nil && parsed.Host != "" {
-		allowed = append(allowed, strings.ToLower(parsed.Host))
-	}
-	return plugin.CallOptions{
-		NetworkBudget: time.Minute,
-		TaskFetch: &plugin.TaskFetch{
-			Allowed: func(target *url.URL) bool { return slices.Contains(allowed, strings.ToLower(target.Host)) },
-			Client:  &http.Client{}, Post: true,
-		},
 	}
 }
 
@@ -249,12 +218,12 @@ func (host *Host) RevokePluginCredential(ctx context.Context, service contract.S
 	if service.HTTP != nil {
 		baseURL = strings.TrimRight(service.HTTP.BaseURL, "/")
 	}
-	meta := target.NewAPI()
+	config := RelayConfig(target.NewAPI(), service.Plugin.Settings)
 	go func() {
-		call, cancel := context.WithTimeout(context.Background(), time.Minute)
-		defer cancel()
-		view := map[string]any{"baseUrl": baseURL, "credential": jsonOrNull(credential.Data), "apiKey": ""}
-		if _, _, err := target.CallTask(call, "revoke", []any{view}, credentialCallOptions(meta, baseURL)); err != nil {
+		_, err := callCredential(context.Background(), target, "revoke", baseURL, func(ctx context.Context, loaded *plugin.NewAPIPlugin) (struct{}, error) {
+			return struct{}{}, loaded.CallRevoke(ctx, pluginkit.CredentialContext{BaseURL: baseURL, Credential: jsonOrNull(credential.Data), Config: config})
+		})
+		if err != nil {
 			host.logf("plugin %s: revoke of the credential of %s failed", target.Key, service.ID)
 		}
 	}()

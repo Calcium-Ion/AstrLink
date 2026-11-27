@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"maps"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -22,6 +24,7 @@ import (
 	"github.com/QuantumNous/astrlink/core/internal/imagecompress"
 	"github.com/QuantumNous/astrlink/core/internal/jsonpatch"
 	"github.com/QuantumNous/astrlink/core/internal/plugin"
+	"github.com/QuantumNous/new-api/pluginkit"
 )
 
 // The request processing part of new-api plugins: the instances the user
@@ -35,14 +38,8 @@ import (
 // requestHookTime bounds one call of a stage hook.
 const requestHookTime = 10 * time.Second
 
-// Bounds of a stage hook's result.
-const (
-	maxRequestEffects  = 32
-	maxRequestFindings = 64
-	maxRequestText     = 256
-)
-
-var requestCodePattern = regexp.MustCompile(`^[a-z0-9_.-]{1,64}$`)
+// maxRequestEffects bounds the effects of a stage hook's result.
+const maxRequestEffects = 32
 
 // RequestFormat is new-api's protocol name of a gateway protocol, as
 // ctx.format names it.
@@ -78,10 +75,12 @@ func RequestFormat(protocol contract.ProtocolID) string {
 type requestInstance struct {
 	instance contract.RequestPluginInstance
 	plugin   *plugin.Plugin
-	meta     *plugin.TaskMeta
-	config   json.RawMessage
-	keywords map[string][]string
-	hosts    []string
+	meta     *plugin.NewAPIPlugin
+	// config is the instance config with its defaults, configErr why it is
+	// not one the plugin takes.
+	config    json.RawMessage
+	configErr error
+	hosts     []string
 	// skipped marks an optional instance that failed in the reply check.
 	skipped bool
 }
@@ -119,10 +118,8 @@ type RequestAttempt struct {
 	Protocol      contract.ProtocolID
 	UpstreamModel string
 	Index         int
-	// Summary is what the request stage reads of the client's request:
-	// messageCount, toolCount, lastUserTextLength, totalTextLength,
-	// hasImages and reasoningEffort.
-	Summary map[string]any
+	// Summary is what the request stage reads of the client's request.
+	Summary *pluginkit.TransformSummary
 	// Form marks the text fields of a form body, which take only replaces
 	// of a field with a string.
 	Form bool
@@ -205,7 +202,7 @@ func (run *RequestRun) Request(ctx context.Context, protocol contract.ProtocolID
 		if err != nil {
 			run.note(current, contract.RequestStageRequest, contract.PluginRecordFailed, "", nil, started, nil)
 			run.failed(current, contract.RequestStageRequest, err)
-			if current.meta.Optional {
+			if current.meta.Meta.Optional {
 				continue
 			}
 			return reasoning, &RequestRefusal{Status: http.StatusInternalServerError, Code: contract.RequestPluginFailedCode, Message: "A request plugin failed"}
@@ -244,15 +241,34 @@ type RequestOrigin struct {
 	Turn    int
 }
 
-// members adds ctx.client and ctx.session to a hook's ctx, when known.
-func (origin RequestOrigin) members(view map[string]any) map[string]any {
-	if origin.Client != "" && origin.Client != string(contract.ClientUnknown) {
-		view["client"] = origin.Client
+// transformContext is the ctx of an instance's hook at stage: ctx.client
+// and ctx.session when known.
+func (run *RequestRun) transformContext(current *requestInstance, stage, format string, attempt RequestAttempt) pluginkit.TransformContext {
+	tctx := pluginkit.TransformContext{
+		Stage: stage, Format: format, Path: run.path, Model: run.model, Attempt: attempt.Index,
+		Instance: pluginkit.TransformInstance{ID: current.instance.ID, Name: current.instance.Name},
+		Config:   current.config, Client: run.origin.Client,
 	}
-	if origin.Session != "" {
-		view["session"] = map[string]any{"id": origin.Session, "turn": origin.Turn}
+	if stage != contract.RequestStageIngress {
+		tctx.UpstreamModel = attempt.UpstreamModel
 	}
-	return view
+	if run.origin.Session != "" {
+		tctx.Session = &pluginkit.TransformSession{ID: run.origin.Session, Turn: run.origin.Turn}
+	}
+	return tctx
+}
+
+// newRequestInstance is an instance of meta's plugin as its hooks read it.
+func newRequestInstance(instance contract.RequestPluginInstance, target *plugin.Plugin, meta *plugin.NewAPIPlugin) *requestInstance {
+	config, err := meta.InstanceConfig(instance.Config)
+	hosts := slices.Clone(meta.Meta.AllowedHosts)
+	if err == nil {
+		hosts = append(hosts, meta.ConfigURLHosts(config)...)
+	}
+	for index, host := range hosts {
+		hosts[index] = strings.ToLower(host)
+	}
+	return &requestInstance{instance: instance, plugin: target, meta: meta, config: config, configErr: err, hosts: hosts}
 }
 
 // RequestPlugins starts the request processing of a request for model on
@@ -283,11 +299,7 @@ func (host *Host) RequestPlugins(model, path string, origin RequestOrigin) *Requ
 		if len(instance.Models) == 0 && !meta.InScope(model) {
 			continue
 		}
-		schema := meta.Config()
-		config, keywords := schema.HookConfig(schema.Defaults(instance.Config))
-		hosts := slices.Clone(meta.AllowedHosts)
-		hosts = append(hosts, schema.URLHosts(schema.Defaults(instance.Config))...)
-		run.instances = append(run.instances, &requestInstance{instance: instance, plugin: target, meta: meta, config: config, keywords: keywords, hosts: hosts})
+		run.instances = append(run.instances, newRequestInstance(instance, target, meta))
 	}
 	if len(run.instances) == 0 {
 		return nil
@@ -321,24 +333,6 @@ func (run *RequestRun) Records() []contract.RequestPluginRecord {
 
 // RequestView shows a plugin a body as the privacy check leaves it.
 type RequestView func(ctx context.Context, protocol contract.ProtocolID, body []byte) (BodyView, error)
-
-// stageResult is what a stage hook returns.
-type stageResult struct {
-	Action   string            `json:"action"`
-	Effects  []json.RawMessage `json:"effects"`
-	Findings []requestFinding  `json:"findings"`
-	Notice   json.RawMessage   `json:"notice"`
-	Code     string            `json:"code"`
-	Message  string            `json:"message"`
-	RuleID   string            `json:"ruleId"`
-}
-
-type requestFinding struct {
-	Rule     string `json:"rule"`
-	Category string `json:"category,omitempty"`
-	Path     string `json:"path,omitempty"`
-	Count    int    `json:"count"`
-}
 
 type stageEffect struct {
 	Type     string                `json:"type"`
@@ -438,7 +432,7 @@ func (run *RequestRun) stage(ctx context.Context, stage string, protocol contrac
 		if err != nil {
 			run.note(current, stage, contract.PluginRecordFailed, "", nil, started, nil)
 			run.failed(current, stage, err)
-			if current.meta.Optional {
+			if current.meta.Meta.Optional {
 				continue
 			}
 			return body, &RequestRefusal{Status: http.StatusInternalServerError, Code: contract.RequestPluginFailedCode, Message: "A request plugin failed"}
@@ -483,53 +477,51 @@ type stageEdit struct {
 
 // call runs one instance's hook for a stage over seen, the body as the
 // plugin may see it, and reads its result.
-func (run *RequestRun) call(ctx context.Context, current *requestInstance, stage string, protocol contract.ProtocolID, attempt RequestAttempt, seen []byte, setHeaders map[string]string) (stageEdit, stageResult, error) {
+func (run *RequestRun) call(ctx context.Context, current *requestInstance, stage string, protocol contract.ProtocolID, attempt RequestAttempt, seen []byte, setHeaders map[string]string) (stageEdit, pluginkit.TransformResult, error) {
 	shown, media, err := hideMedia(seen)
 	if err != nil {
-		return stageEdit{}, stageResult{}, err
+		return stageEdit{}, pluginkit.TransformResult{}, err
 	}
 	if stage == contract.RequestStageOutbound {
 		measureImages(media)
 	}
-	view := run.origin.members(map[string]any{
-		"stage": stage, "format": RequestFormat(protocol), "path": run.path, "model": run.model, "attempt": attempt.Index,
-		"instance": map[string]any{"id": current.instance.ID, "name": current.instance.Name},
-		"config":   current.config,
-	})
-	if stage != contract.RequestStageIngress {
-		view["upstreamModel"] = attempt.UpstreamModel
+	tctx := run.transformContext(current, stage, RequestFormat(protocol), attempt)
+	request := pluginkit.TransformRequest{Body: shown, Form: attempt.Form}
+	for index, item := range media {
+		request.Media = append(request.Media, pluginkit.TransformMedia{Index: index, Path: item.path, MimeType: item.mime, Bytes: int(item.bytes), Width: item.width, Height: item.height})
 	}
-	request := map[string]any{"body": json.RawMessage(shown), "media": mediaView(media)}
-	if attempt.Form {
-		request["form"] = true
-	}
-	if stage == contract.RequestStageRequest && attempt.Summary != nil {
-		request["summary"] = attempt.Summary
+	if stage == contract.RequestStageRequest {
+		request.Summary = attempt.Summary
 	}
 	if stage == contract.RequestStageOutbound || stage == contract.RequestStageEgress {
-		headers := map[string]string{}
-		for name, value := range setHeaders {
-			headers[name] = value
+		request.Headers = maps.Clone(setHeaders)
+		if request.Headers == nil {
+			request.Headers = map[string]string{}
 		}
-		request["headers"] = headers
 	}
-	raw, err := run.invoke(ctx, current, stage, media, view, request)
+	result, err := callRequestHook(ctx, current, stage, media, func(ctx context.Context, loaded *plugin.NewAPIPlugin) (pluginkit.TransformResult, error) {
+		tctx.Media = requestMediaSource(media)
+		return loaded.CallTransform(ctx, tctx, request)
+	})
 	if err != nil {
-		return stageEdit{}, stageResult{}, err
+		return stageEdit{}, pluginkit.TransformResult{}, err
 	}
-	var result stageResult
-	if err := json.Unmarshal(raw, &result); err != nil {
-		return stageEdit{}, stageResult{}, errors.New("the result is not {action, ...}")
+	var effects []json.RawMessage
+	if len(result.Effects) > 0 && json.Unmarshal(result.Effects, &effects) != nil {
+		return stageEdit{}, pluginkit.TransformResult{}, errors.New("the effects are not an array")
 	}
-	if err := result.check(stage); err != nil {
-		return stageEdit{}, stageResult{}, err
+	switch {
+	case len(effects) > maxRequestEffects:
+		return stageEdit{}, pluginkit.TransformResult{}, fmt.Errorf("a result has at most %d effects", maxRequestEffects)
+	case stage == contract.RequestStageEgress && len(effects) > 0:
+		return stageEdit{}, pluginkit.TransformResult{}, errors.New("egress only reads: it returns no effects")
 	}
 	edit := stageEdit{headers: map[string]string{}, media: media}
 	operations := 0
-	for index, raw := range result.Effects {
+	for index, raw := range effects {
 		var effect stageEffect
 		if err := json.Unmarshal(raw, &effect); err != nil {
-			return stageEdit{}, stageResult{}, fmt.Errorf("effect %d is malformed", index)
+			return stageEdit{}, pluginkit.TransformResult{}, fmt.Errorf("effect %d is malformed", index)
 		}
 		allowed := map[string][]string{
 			contract.RequestStageIngress:  {"json.patch", "media.text"},
@@ -537,62 +529,62 @@ func (run *RequestRun) call(ctx context.Context, current *requestInstance, stage
 			contract.RequestStageOutbound: {"json.patch", "header.patch", "media.reencode", "media.text"},
 		}[stage]
 		if !slices.Contains(allowed, effect.Type) {
-			return stageEdit{}, stageResult{}, fmt.Errorf("effect %d: %s does not take %q", index, stage, effect.Type)
+			return stageEdit{}, pluginkit.TransformResult{}, fmt.Errorf("effect %d: %s does not take %q", index, stage, effect.Type)
 		}
 		if attempt.Form && effect.Type != "json.patch" && effect.Type != "media.text" {
-			return stageEdit{}, stageResult{}, fmt.Errorf("effect %d: a form body takes json.patch replaces alone", index)
+			return stageEdit{}, pluginkit.TransformResult{}, fmt.Errorf("effect %d: a form body takes json.patch replaces alone", index)
 		}
 		switch effect.Type {
 		case "json.patch":
 			for _, operation := range effect.Ops {
 				var text string
 				if attempt.Form && (operation.Op != "replace" || json.Unmarshal(operation.Value, &text) != nil) {
-					return stageEdit{}, stageResult{}, errors.New("a form body takes replaces of a text field with a string alone")
+					return stageEdit{}, pluginkit.TransformResult{}, errors.New("a form body takes replaces of a text field with a string alone")
 				}
 			}
 			operations += len(effect.Ops)
 			if operations > maxRelayOperations {
-				return stageEdit{}, stageResult{}, fmt.Errorf("the effects hold more than %d operations", maxRelayOperations)
+				return stageEdit{}, pluginkit.TransformResult{}, fmt.Errorf("the effects hold more than %d operations", maxRelayOperations)
 			}
 			for _, operation := range effect.Ops {
 				if mediaRefPattern.Match(operation.Value) {
-					return stageEdit{}, stageResult{}, errors.New("a json.patch value names a file")
+					return stageEdit{}, pluginkit.TransformResult{}, errors.New("a json.patch value names a file")
 				}
 			}
 		case "header.patch":
 			if len(effect.Set)+len(effect.Remove) > maxRelayHeaders {
-				return stageEdit{}, stageResult{}, fmt.Errorf("effect %d changes more than %d headers", index, maxRelayHeaders)
+				return stageEdit{}, pluginkit.TransformResult{}, fmt.Errorf("effect %d changes more than %d headers", index, maxRelayHeaders)
 			}
 			for _, name := range effect.Remove {
 				if relayProtected(http.CanonicalHeaderKey(name), "") {
-					return stageEdit{}, stageResult{}, fmt.Errorf("effect %d removes the protected header %s", index, name)
+					return stageEdit{}, pluginkit.TransformResult{}, fmt.Errorf("effect %d removes the protected header %s", index, name)
 				}
 				edit.headers[http.CanonicalHeaderKey(name)] = ""
 			}
 			for name, value := range effect.Set {
 				if relayProtected(http.CanonicalHeaderKey(name), "") || !validHeader(name, value) || value == "" {
-					return stageEdit{}, stageResult{}, fmt.Errorf("effect %d sets the protected or malformed header %s", index, name)
+					return stageEdit{}, pluginkit.TransformResult{}, fmt.Errorf("effect %d sets the protected or malformed header %s", index, name)
 				}
 				edit.headers[http.CanonicalHeaderKey(name)] = value
 			}
 		case "media.text":
 			if effect.Media == nil || *effect.Media < 0 || *effect.Media >= len(media) || effect.Text == nil || len(*effect.Text) > 1<<20 {
-				return stageEdit{}, stageResult{}, fmt.Errorf("effect %d names no file of the call, or its text is over 1 MiB", index)
+				return stageEdit{}, pluginkit.TransformResult{}, fmt.Errorf("effect %d names no file of the call, or its text is over 1 MiB", index)
 			}
 		case "media.reencode":
 			switch {
 			case effect.Media == nil || *effect.Media < 0 || *effect.Media >= len(media):
-				return stageEdit{}, stageResult{}, fmt.Errorf("effect %d names no file of the call", index)
+				return stageEdit{}, pluginkit.TransformResult{}, fmt.Errorf("effect %d names no file of the call", index)
 			case !slices.Contains([]string{"auto", "jpeg", "png", "webp"}, effect.Format):
-				return stageEdit{}, stageResult{}, fmt.Errorf("effect %d: the format %q is not auto, jpeg, png or webp", index, effect.Format)
+				return stageEdit{}, pluginkit.TransformResult{}, fmt.Errorf("effect %d: the format %q is not auto, jpeg, png or webp", index, effect.Format)
 			case effect.Quality != nil && (*effect.Quality < 1 || *effect.Quality > 100 || effect.Format == "webp"):
-				return stageEdit{}, stageResult{}, fmt.Errorf("effect %d: quality is 1 to 100, and webp takes none", index)
+				return stageEdit{}, pluginkit.TransformResult{}, fmt.Errorf("effect %d: quality is 1 to 100, and webp takes none", index)
 			case effect.MaxSide != nil && (*effect.MaxSide < 16 || *effect.MaxSide > 16384):
-				return stageEdit{}, stageResult{}, fmt.Errorf("effect %d: maxSide is 16 to 16384", index)
+				return stageEdit{}, pluginkit.TransformResult{}, fmt.Errorf("effect %d: maxSide is 16 to 16384", index)
 			}
 		case "reasoning.set":
 			if !slices.Contains(requestEfforts, effect.Effort) {
-				return stageEdit{}, stageResult{}, fmt.Errorf("effect %d: the effort %q is not one of %s", index, effect.Effort, strings.Join(requestEfforts, ", "))
+				return stageEdit{}, pluginkit.TransformResult{}, fmt.Errorf("effect %d: the effort %q is not one of %s", index, effect.Effort, strings.Join(requestEfforts, ", "))
 			}
 		}
 		edit.effects = append(edit.effects, effect)
@@ -698,62 +690,26 @@ func (run *RequestRun) applied(stage string, seen BodyView, body []byte, edit st
 	return edit, nil
 }
 
-// check refuses a result the stage does not take.
-func (result stageResult) check(stage string) error {
-	switch result.Action {
-	case "continue":
-	case "reject":
-		if stage == contract.RequestStageReply {
-			return errors.New("a reply check stops, it does not reject")
-		}
-		if !requestCodePattern.MatchString(result.Code) {
-			return fmt.Errorf("the code %q is not 1 to 64 lowercase letters, digits, _, . or -", result.Code)
-		}
-	default:
-		return fmt.Errorf("the action %q is not continue or reject", result.Action)
+// callRequestHook runs call, one call of hook into an instance's plugin,
+// with what its utils read: the call's inline files, and in ingress,
+// egress, reply and report utils.fetch to the plugin's allowed hosts and
+// those of the instance config.
+func callRequestHook[T any](ctx context.Context, current *requestInstance, hook string, media []requestMedia, call func(ctx context.Context, loaded *plugin.NewAPIPlugin) (T, error)) (T, error) {
+	if current.configErr != nil {
+		var zero T
+		return zero, fmt.Errorf("the instance config is not one the plugin takes: %w", current.configErr)
 	}
-	switch {
-	case len(result.Findings) > maxRequestFindings:
-		return fmt.Errorf("a result has at most %d findings", maxRequestFindings)
-	case len(result.Effects) > maxRequestEffects:
-		return fmt.Errorf("a result has at most %d effects", maxRequestEffects)
-	case stage == contract.RequestStageEgress && len(result.Effects) > 0:
-		return errors.New("egress only reads: it returns no effects")
-	case utf8.RuneCountInString(result.Message) > maxRequestText || utf8.RuneCountInString(result.RuleID) > maxRequestText:
-		return errors.New("the message and the rule id are at most 256 characters")
-	}
-	for _, finding := range result.Findings {
-		if finding.Rule == "" || finding.Count < 0 || utf8.RuneCountInString(finding.Rule) > maxRequestText ||
-			utf8.RuneCountInString(finding.Category) > maxRequestText || utf8.RuneCountInString(finding.Path) > maxRequestText {
-			return errors.New("a finding names its rule, at most 256 characters, with a count of 0 or more")
-		}
-	}
-	return nil
-}
-
-// invoke calls a request processing hook with what its utils read.
-func (run *RequestRun) invoke(ctx context.Context, current *requestInstance, hook string, media []requestMedia, args ...any) (json.RawMessage, error) {
 	ctx, cancel := context.WithTimeout(ctx, requestHookTime)
 	defer cancel()
-	options := plugin.CallOptions{RequestFiles: requestFiles(media, current.keywords)}
+	var options plugin.CallOptions
 	if hook != contract.RequestStageRequest && hook != contract.RequestStageOutbound {
 		hosts := current.hosts
-		options.TaskFetch = &plugin.TaskFetch{
+		options.Fetch = &plugin.Fetch{
 			Allowed: func(target *url.URL) bool { return slices.Contains(hosts, strings.ToLower(target.Host)) },
 			Client:  &http.Client{},
-			Post:    true,
-			Refs: func(ref string) (string, bool) {
-				for _, item := range media {
-					if item.ref == ref {
-						return "data:" + item.mime + ";base64," + item.data, true
-					}
-				}
-				return "", false
-			},
 		}
-		options.NetworkBudget = requestHookTime
 	}
-	result, _, err := current.plugin.CallTask(ctx, hook, args, options)
+	result, _, err := plugin.CallNewAPI(ctx, current.plugin, hook, options, call)
 	return result, err
 }
 
@@ -766,12 +722,12 @@ func (run *RequestRun) failed(current *requestInstance, stage string, err error)
 }
 
 // note adds an instance's entry for a stage to the request record.
-func (run *RequestRun) note(current *requestInstance, stage string, status contract.PluginRecordStatus, skipped string, result *stageResult, started time.Time, effects []string) {
+func (run *RequestRun) note(current *requestInstance, stage string, status contract.PluginRecordStatus, skipped string, result *pluginkit.TransformResult, started time.Time, effects []string) {
 	record := contract.RequestPluginRecord{
-		Plugin: current.plugin.Key, PluginVersion: current.meta.Version, Hook: stage, Title: truncateRunes(current.instance.Name, 64),
+		Plugin: current.plugin.Key, PluginVersion: current.meta.Meta.Version, Hook: stage, Title: truncateRunes(current.instance.Name, 64),
 		Status: status, SkippedReason: skipped, ElapsedMs: int(time.Since(started).Milliseconds()), Effects: effects,
 	}
-	step := map[string]any{"plugin": current.plugin.Key, "name": current.meta.Name, "stage": stage}
+	step := map[string]any{"plugin": current.plugin.Key, "name": current.meta.Meta.Name, "stage": stage}
 	if result != nil {
 		record.Summary = run.summary(*result)
 		if len(result.Findings) > 0 {
@@ -811,9 +767,9 @@ func (run *RequestRun) note(current *requestInstance, stage string, status contr
 
 // summary describes a result for the request record: the plugin's notice
 // in the user's language, else what it found or why it rejected.
-func (run *RequestRun) summary(result stageResult) string {
+func (run *RequestRun) summary(result pluginkit.TransformResult) string {
 	var parts []string
-	if notice := noticeIn(result.Notice, run.language); notice != "" {
+	if notice := localizedIn(result.Notice, run.language); notice != "" {
 		parts = append(parts, notice)
 	}
 	if result.Action == "reject" {
@@ -842,24 +798,6 @@ func (run *RequestRun) summary(result stageResult) string {
 		parts = append(parts, strings.Join(found, ", "))
 	}
 	return truncateRunes(strings.Join(parts, " · "), 512)
-}
-
-// noticeIn reads a notice, a string or LocalizedText, in language.
-func noticeIn(raw json.RawMessage, language string) string {
-	if len(raw) == 0 {
-		return ""
-	}
-	var text plugin.LocalizedText
-	if json.Unmarshal(raw, &text) != nil {
-		return ""
-	}
-	if value := text.In(language); value != "" {
-		return value
-	}
-	if strings.HasPrefix(language, "zh") {
-		return text.In("zh")
-	}
-	return ""
 }
 
 func truncateRunes(text string, limit int) string {
@@ -952,18 +890,6 @@ func memberText(object *jsonpatch.Object, key string) string {
 	return text
 }
 
-func mediaView(media []requestMedia) []map[string]any {
-	view := []map[string]any{}
-	for index, item := range media {
-		entry := map[string]any{"index": index, "path": item.path, "mimeType": item.mime, "bytes": item.bytes}
-		if item.width > 0 {
-			entry["width"], entry["height"] = item.width, item.height
-		}
-		view = append(view, entry)
-	}
-	return view
-}
-
 // mediaKind is the kind of file a media type names.
 func mediaKind(mime string) string {
 	switch {
@@ -980,33 +906,94 @@ func mediaKind(mime string) string {
 	return "other"
 }
 
-// requestFiles are the utils' view of a call's inline files.
-func requestFiles(media []requestMedia, keywords map[string][]string) *plugin.RequestFiles {
-	files := &plugin.RequestFiles{Keywords: keywords}
-	for _, item := range media {
-		size := item.bytes
-		attachment := plugin.Attachment{Ref: item.ref, Kind: mediaKind(item.mime), Mime: item.mime, Size: &size, Path: item.path, Rewritable: item.rewritable}
-		files.Attachments = append(files.Attachments, attachment)
-	}
-	files.Text = func(ref string, maxChars int) map[string]any {
-		for _, item := range media {
-			if item.ref != ref {
-				continue
-			}
-			if !item.rewritable {
-				return map[string]any{"unchecked": "unsupported"}
-			}
-			decoded, err := base64.StdEncoding.DecodeString(item.data)
-			if err != nil || !utf8.Valid(decoded) {
-				return map[string]any{"unchecked": "unreadable"}
-			}
-			units := utf16.Encode([]rune(string(decoded)))
-			if len(units) <= maxChars {
-				return map[string]any{"text": string(decoded), "truncated": false}
-			}
-			return map[string]any{"text": string(utf16.Decode(units[:maxChars])), "truncated": true}
-		}
+// requestMediaSource is what the utils of a hook read of a call's inline
+// files, nil for none.
+func requestMediaSource(media []requestMedia) pluginkit.MediaSource {
+	if len(media) == 0 {
 		return nil
 	}
-	return files
+	return mediaSource(media)
 }
+
+type mediaSource []requestMedia
+
+func (source mediaSource) find(ref string) *requestMedia {
+	for index := range source {
+		if source[index].ref == ref {
+			return &source[index]
+		}
+	}
+	return nil
+}
+
+func (source mediaSource) Attachments() []pluginkit.Attachment {
+	attachments := make([]pluginkit.Attachment, 0, len(source))
+	for _, item := range source {
+		attachments = append(attachments, pluginkit.Attachment{Ref: item.ref, Kind: mediaKind(item.mime), Mime: item.mime, Size: int(item.bytes), Path: item.path, Rewritable: item.rewritable})
+	}
+	return attachments
+}
+
+func (source mediaSource) Media(ref string) (pluginkit.MediaInfo, bool) {
+	item := source.find(ref)
+	if item == nil {
+		return pluginkit.MediaInfo{}, false
+	}
+	return pluginkit.MediaInfo{Kind: mediaKind(item.mime), Mime: item.mime, Size: int(item.bytes), Width: item.width, Height: item.height, Rewritable: item.rewritable}, true
+}
+
+func (source mediaSource) MediaText(_ context.Context, ref string, maxChars int) (pluginkit.MediaText, bool) {
+	item := source.find(ref)
+	if item == nil {
+		return pluginkit.MediaText{}, false
+	}
+	if !item.rewritable {
+		return pluginkit.MediaText{Unchecked: "unsupported"}, true
+	}
+	decoded, err := base64.StdEncoding.DecodeString(item.data)
+	if err != nil || !utf8.Valid(decoded) {
+		return pluginkit.MediaText{Unchecked: "unreadable"}, true
+	}
+	units := utf16.Encode([]rune(string(decoded)))
+	if len(units) <= maxChars {
+		return pluginkit.MediaText{Text: string(decoded)}, true
+	}
+	return pluginkit.MediaText{Text: string(utf16.Decode(units[:maxChars])), Truncated: true}, true
+}
+
+// FetchBody sends each JSON string of body that names a file of the call,
+// "[media:N]", as that file's data URL.
+func (source mediaSource) FetchBody(body string) (io.Reader, int64, error) {
+	var parts []io.Reader
+	var size int64
+	rest := body
+	for {
+		at := mediaQuotedPattern.FindStringIndex(rest)
+		if at == nil {
+			break
+		}
+		// A quote after an odd run of backslashes is inside a string.
+		escapes := 0
+		for index := at[0] - 1; index >= 0 && rest[index] == '\\'; index-- {
+			escapes++
+		}
+		item := source.find(rest[at[0]+1 : at[1]-1])
+		if escapes%2 == 1 || item == nil {
+			parts = append(parts, strings.NewReader(rest[:at[1]-1]))
+			size += int64(at[1] - 1)
+			rest = rest[at[1]-1:]
+			continue
+		}
+		head := rest[:at[0]] + `"data:` + item.mime + ";base64,"
+		parts = append(parts, strings.NewReader(head), strings.NewReader(item.data), strings.NewReader(`"`))
+		size += int64(len(head) + len(item.data) + 1)
+		rest = rest[at[1]:]
+	}
+	if len(parts) == 0 {
+		return nil, 0, nil
+	}
+	parts = append(parts, strings.NewReader(rest))
+	return io.MultiReader(parts...), size + int64(len(rest)), nil
+}
+
+var mediaQuotedPattern = regexp.MustCompile(`"\[media:\d+\]"`)

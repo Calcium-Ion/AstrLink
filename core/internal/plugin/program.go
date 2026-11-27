@@ -43,8 +43,9 @@ type program struct {
 	dirs *pluginDirs
 	// importer serves import() and import.meta in the program's runtimes.
 	importer *moejs.Importer
-	// task is the manifest of a task plugin, nil for any other plugin.
-	task *TaskMeta
+	// newAPI is a plugin written for New API's plugin API v1, which
+	// pluginkit compiled and runs; nil for a plugin in AstrLink's format.
+	newAPI *NewAPIPlugin
 }
 
 // async reports whether the plugin's hooks may return promises: those of
@@ -73,7 +74,7 @@ func load(source Source, limits Limits, dirs *pluginDirs) (*program, error) {
 		return nil, err
 	}
 	if isTaskModule(module) {
-		return loadTask(source, module, parsed, limits, dirs)
+		return loadNewAPI(source, dirs)
 	}
 	loaded := &program{key: source.Key, file: source.File, module: module, hooks: make(map[string]moejs.Hook), sources: parseSourceMap(source.SourceMap, source.File), dirs: dirs}
 	loaded.importer = &moejs.Importer{Resolve: resolveNode, Meta: loaded.importMeta}
@@ -85,7 +86,7 @@ func load(source Source, limits Limits, dirs *pluginDirs) (*program, error) {
 	stop := interruptAfter(instance.interrupt, loadTime, errLoadTime)
 	defer stop()
 	if isNewAPIMeta(instance.runtime) {
-		return loadTask(source, module, parsed, limits, dirs)
+		return loadNewAPI(source, dirs)
 	}
 	meta, err := readMeta(instance.runtime, source.File)
 	if err != nil {
@@ -184,8 +185,7 @@ type instance struct {
 	// cleanup closes them once the runtime is gone.
 	resources *nodeResources
 
-	// loop runs the runtime's callbacks (async.go); nil for a task
-	// plugin, whose hooks are synchronous and which has no web APIs.
+	// loop runs the runtime's callbacks (async.go).
 	loop *eventloop.Loop
 	// web are the web APIs of moejs and files its node:fs and Buffer.
 	web   *webapi.API
@@ -213,34 +213,21 @@ func newInstance(loaded *program, limits Limits) (*instance, error) {
 	})
 	created := &instance{runtime: runtime, program: loaded, resources: &nodeResources{}}
 	goruntime.AddCleanup(created, (*nodeResources).close, created.resources)
-	if loaded.task != nil {
-		// A task plugin gets new-api's utils and a console, as its
-		// contract says, and nothing of AstrLink's or Node's.
-		if err := created.installTask(); err != nil {
-			return nil, err
-		}
-	} else {
-		if err := created.newLoop(); err != nil {
-			return nil, err
-		}
-		if err := created.install(); err != nil {
-			created.close()
-			return nil, err
-		}
-		if err := created.installNode(); err != nil {
-			created.close()
-			return nil, err
-		}
+	if err := created.newLoop(); err != nil {
+		return nil, err
+	}
+	if err := created.install(); err != nil {
+		created.close()
+		return nil, err
+	}
+	if err := created.installNode(); err != nil {
+		created.close()
+		return nil, err
 	}
 	stop := interruptAfter(created.interrupt, loadTime, errLoadTime)
-	var err error
-	if created.loop == nil {
-		err = runtime.Load(loaded.module)
-	} else {
-		// The loop runs until what the top level started settled, the
-		// promises of node:fs among them; its timers never fire.
-		err = created.loop.Run(func(runtime *moejs.Runtime) error { return runtime.Load(loaded.module) })
-	}
+	// The loop runs until what the top level started settled, the
+	// promises of node:fs among them; its timers never fire.
+	err := created.loop.Run(func(runtime *moejs.Runtime) error { return runtime.Load(loaded.module) })
 	stop()
 	created.resources.endCall()
 	if err != nil {

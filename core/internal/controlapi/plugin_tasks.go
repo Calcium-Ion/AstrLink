@@ -24,14 +24,14 @@ type PluginTasks interface {
 
 // taskProvider is the provider a task plugin offers on the providers page,
 // named in language.
-func taskProvider(meta *plugin.TaskMeta, language string) contract.PluginProvider {
+func taskProvider(meta *plugin.NewAPIPlugin, language string) contract.PluginProvider {
 	auth := contract.ServiceAuth{Scheme: contract.AuthSchemeBearer}
-	if meta.Auth.Kind() == plugin.TaskAuthNone {
+	if meta.AuthKind() == "none" {
 		auth = contract.ServiceAuth{Scheme: contract.AuthSchemeNone}
 	}
 	provider := contract.PluginProvider{
-		ID: contract.PluginProviderTask, Name: meta.Name.In(language), BaseURL: taskplugin.DefaultBaseURL(meta), Auth: auth,
-		Models: slices.Clone(meta.Models), Protocols: []contract.PluginProviderProtocol{},
+		ID: contract.PluginProviderTask, Name: meta.NameIn(language), BaseURL: taskplugin.DefaultBaseURL(meta), Auth: auth,
+		Models: slices.Clone(meta.Meta.Models), Protocols: []contract.PluginProviderProtocol{},
 	}
 	for _, capability := range taskCapabilities(meta) {
 		provider.Protocols = append(provider.Protocols, contract.PluginProviderProtocol{Protocol: capability.Protocol, Stream: capability.Streaming, Sync: true})
@@ -42,9 +42,9 @@ func taskProvider(meta *plugin.TaskMeta, language string) contract.PluginProvide
 // taskCapabilities are what routing reads of a task plugin's provider:
 // the gateway protocols the plugin claims, and its native routes and
 // /v1/tasks.
-func taskCapabilities(meta *plugin.TaskMeta) []contract.Capability {
+func taskCapabilities(meta *plugin.NewAPIPlugin) []contract.Capability {
 	var capabilities []contract.Capability
-	for _, claim := range meta.Protocols {
+	for _, claim := range meta.Meta.Protocols {
 		switch claim.Name {
 		case plugin.TaskProtocolImage:
 			capabilities = append(capabilities, contract.Capability{Protocol: contract.ProtocolOpenAIImages, Mode: contract.CapabilityModeNative})
@@ -78,14 +78,14 @@ func (handler *Handler) applyTaskProvider(service *contract.Service) (bool, erro
 		return true, fmt.Errorf("plugin %q is not an installed task plugin", service.Plugin.Key)
 	}
 	meta := target.Task()
-	if service.Plugin.Upstream == contract.PluginUpstreamNewAPI && !slices.Contains(meta.Upstreams, contract.PluginUpstreamNewAPI) {
-		return true, fmt.Errorf("the task plugin %s cannot drive another new-api gateway", meta.Key)
+	if service.Plugin.Upstream == contract.PluginUpstreamNewAPI && !slices.Contains(meta.Meta.Upstreams, contract.PluginUpstreamNewAPI) {
+		return true, fmt.Errorf("the task plugin %s cannot drive another new-api gateway", meta.Meta.Key)
 	}
 	service.Capabilities = taskCapabilities(meta)
 	if service.HTTP != nil && service.HTTP.BaseURL == "" {
 		service.HTTP.BaseURL = taskplugin.DefaultBaseURL(meta)
 	}
-	if meta.Auth.Kind() == plugin.TaskAuthNone && service.HTTP != nil {
+	if meta.AuthKind() == "none" && service.HTTP != nil {
 		service.HTTP.Auth = contract.ServiceAuth{Scheme: contract.AuthSchemeNone}
 	}
 	return true, nil

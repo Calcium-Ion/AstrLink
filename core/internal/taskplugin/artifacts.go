@@ -18,6 +18,7 @@ import (
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/plugin"
 	"github.com/QuantumNous/astrlink/core/internal/storage"
+	"github.com/QuantumNous/new-api/pluginkit"
 )
 
 // Artifact is an output of a finished task the plugin lists: a key, its
@@ -57,23 +58,18 @@ func (engine *Engine) listArtifacts(ctx context.Context, target *plugin.Plugin, 
 	artifacts := []Artifact{}
 	if target.HasTaskHook("listArtifacts") {
 		argument := map[string]any{"taskId": task.ID, "status": task.Status, "action": task.Action, "data": jsonOrNull(task.Data), "producerVersion": task.PluginVersion}
-		raw, err := engine.renderCall(ctx, target, "listArtifacts", argument)
+		listed, err := callHook(ctx, &exchange{engine: engine, target: target, meta: target.Task()}, "listArtifacts", func(ctx context.Context, loaded *plugin.NewAPIPlugin) ([]pluginkit.Artifact, error) {
+			return loaded.CallListArtifacts(ctx, plugin.NewAPIObject(argument))
+		})
 		if err != nil {
 			return nil, err
 		}
-		if err := json.Unmarshal(raw, &artifacts); err != nil {
-			return nil, failure(http.StatusBadGateway, "plugin_error", "listArtifacts returned something other than a list of artifacts")
+		for _, artifact := range listed {
+			artifacts = append(artifacts, Artifact{Key: artifact.Key, Type: artifact.Type, MimeType: artifact.MimeType})
 		}
-		valid := artifacts[:0]
-		for _, artifact := range artifacts {
-			if artifact.Key != "" && len(artifact.Key) <= 64 && !strings.ContainsAny(artifact.Key, "/?#") {
-				valid = append(valid, artifact)
-			}
+		if len(artifacts) > 0 || task.ResultURL == "" {
+			return artifacts, nil
 		}
-		if len(valid) > 0 || task.ResultURL == "" {
-			return valid, nil
-		}
-		artifacts = valid
 	}
 	if task.ResultURL != "" {
 		kind, mediaType := "file", ""
@@ -188,11 +184,7 @@ func (engine *Engine) ServeContent(ctx context.Context, writer http.ResponseWrit
 			"artifactKey": key, "data": jsonOrNull(task.Data), "state": jsonOrNull(task.State), "upstreamTaskId": upstreamTaskID(task),
 			"clientRequest": map[string]any{"method": method, "headers": firstHeaders(client)},
 		}
-		raw, err := call.call(ctx, "buildContentRequest", driver)
-		if err != nil {
-			return err
-		}
-		desc, err := parseDescriptor("buildContentRequest", raw)
+		desc, err := call.buildRequest(ctx, "buildContentRequest", plugin.NewAPIObject(driver))
 		if err != nil {
 			return err
 		}
@@ -254,22 +246,16 @@ const maxInlineContent = (64<<20)/3*4 + 1<<20
 
 // contentPath reads a contentPath: string keys and non-negative integer
 // indices, at most 32 of them.
-func contentPath(raw []json.RawMessage) ([]any, error) {
-	if len(raw) > 32 {
-		return nil, failure(http.StatusBadGateway, "plugin_error", "buildContentRequest returned a contentPath of more than 32 segments")
+func contentPath(raw []any) ([]any, error) {
+	if err := pluginkit.ValidateJSONPath(raw); err != nil {
+		return nil, failure(http.StatusBadGateway, "plugin_error", "buildContentRequest returned a contentPath that is not a JSON path: %v", err)
 	}
 	path := make([]any, 0, len(raw))
 	for _, segment := range raw {
-		var key string
-		if json.Unmarshal(segment, &key) == nil {
-			path = append(path, key)
-			continue
+		if number, ok := segment.(float64); ok {
+			segment = int(number)
 		}
-		var index int
-		if json.Unmarshal(segment, &index) != nil || index < 0 {
-			return nil, failure(http.StatusBadGateway, "plugin_error", "buildContentRequest returned a contentPath segment that is neither a key nor an index")
-		}
-		path = append(path, index)
+		path = append(path, segment)
 	}
 	return path, nil
 }
