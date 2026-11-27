@@ -348,6 +348,7 @@ function sessionSummaryKey(session: RequestSession): string {
     session.model_redirect?.from ?? "",
     session.model_redirect?.to ?? "",
     session.reasoning_effort ?? "",
+    session.reasoning_effort_update ?? "",
     session.turn_count,
     session.call_count,
     session.last_started_at,
@@ -381,6 +382,7 @@ function sessionDetailKey(detail: RequestSessionDetail): string {
       turn.model_redirect?.from ?? "",
       turn.model_redirect?.to ?? "",
       turn.reasoning_effort ?? "",
+      turn.reasoning_effort_update ?? "",
       turn.http_status ?? "",
       turn.latency_ms ?? "",
       turn.completed_at ?? "",
@@ -3129,6 +3131,7 @@ const SessionRow = memo(function SessionRow({
           fallback={t("records.unspecifiedModel")}
           model={session.requested_model}
           reasoningEffort={session.reasoning_effort}
+          reasoningUpdate={session.reasoning_effort_update}
           redirectedTo={session.model_redirect?.to}
         />
       </Button>
@@ -3214,6 +3217,7 @@ const SessionLane = memo(function SessionLane({
             fallback={t("records.unspecifiedModel")}
             model={session.requested_model}
             reasoningEffort={session.reasoning_effort}
+            reasoningUpdate={session.reasoning_effort_update}
             redirectDisplay="target"
             redirectedTo={session.model_redirect?.to}
           />
@@ -4065,6 +4069,7 @@ function RecordDetail({
                   className="max-w-56 text-xs"
                   model={session.requested_model}
                   reasoningEffort={session.reasoning_effort}
+                  reasoningUpdate={session.reasoning_effort_update}
                   redirectedTo={session.model_redirect?.to}
                 />
               </>

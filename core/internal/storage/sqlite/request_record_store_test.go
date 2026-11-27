@@ -1052,3 +1052,28 @@ func TestRequestRecordKeepsInputTextAndMidTurnMessages(t *testing.T) {
 		t.Fatalf("mid-turn = %q", got.MidTurnMessages)
 	}
 }
+
+func TestRequestRecordKeepsReasoningUpdate(t *testing.T) {
+	store := openTestStore(t, filepath.Join(t.TempDir(), "astrlink.db"))
+	defer store.Close()
+	ctx := context.Background()
+	start := time.Date(2026, 11, 27, 10, 0, 0, 0, time.UTC)
+	effort, update := "medium", "high"
+	sessionID := contract.SessionID("session_update")
+	record := contract.RequestRecord{
+		ID: "request_update", StartedAt: start, Status: contract.RequestStatusSucceeded, CompletedAt: ptrTime(start.Add(time.Second)),
+		InputProtocol: contract.ProtocolOpenAIResponses, Audit: contract.NotCapturedAuditSummary(),
+		ReasoningEffort: &effort, ReasoningUpdate: &update, SessionID: &sessionID,
+	}
+	if err := store.InsertRequestRecord(ctx, record); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.GetRequestRecord(ctx, record.ID)
+	if err != nil || got.ReasoningEffort == nil || *got.ReasoningEffort != effort || got.ReasoningUpdate == nil || *got.ReasoningUpdate != update {
+		t.Fatalf("record = %+v, %v", got, err)
+	}
+	sessions, err := store.ListRequestSessions(ctx, storagecontract.RequestSessionListOptions{})
+	if err != nil || len(sessions.Items) != 1 || sessions.Items[0].ReasoningUpdate == nil || *sessions.Items[0].ReasoningUpdate != update || *sessions.Items[0].ReasoningEffort != effort {
+		t.Fatalf("sessions = %+v, %v", sessions, err)
+	}
+}

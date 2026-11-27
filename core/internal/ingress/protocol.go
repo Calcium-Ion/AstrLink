@@ -37,10 +37,13 @@ func (err methodNotAllowedError) Error() string {
 // Request describes the protocol facts needed before routing. It deliberately
 // contains no converted DTO: Alpha forwards the original HTTP request body.
 type Request struct {
-	ThinkingEnabled    *bool
-	Protocol           contract.ProtocolID
-	Model              string
-	ReasoningEffort    *string
+	ThinkingEnabled *bool
+	Protocol        contract.ProtocolID
+	Model           string
+	ReasoningEffort *string
+	// ReasoningUpdate is the level the latest configuration_update input
+	// item set; nil when the call carries none.
+	ReasoningUpdate    *string
 	Streaming          bool
 	PreviousResponseID string
 	ConversationID     string
@@ -196,6 +199,7 @@ func classify(request *http.Request, maxBodyBytes int64) (Request, error) {
 		result.Model = metadata.Model
 	}
 	result.ReasoningEffort = metadata.ReasoningEffort
+	result.ReasoningUpdate = metadata.ReasoningUpdate
 	result.ThinkingEnabled = metadata.ThinkingEnabled
 	result.PreviousResponseID = metadata.PreviousResponseID
 	result.ConversationID = metadata.ConversationID
@@ -263,6 +267,7 @@ type requestMetadata struct {
 	ThinkingEnabled    *bool
 	Model              string
 	ReasoningEffort    *string
+	ReasoningUpdate    *string
 	Stream             bool
 	PreviousResponseID string
 	ConversationID     string
@@ -298,6 +303,7 @@ func inspectConversationBestEffort(result *Request, request *http.Request, maxBo
 		return raw, nil
 	}
 	result.ReasoningEffort = extractReasoningEffort(result.Protocol, fields)
+	result.ReasoningUpdate = extractReasoningUpdate(result.Protocol, fields)
 	summary, err := conversationPolicyFor(detectClientType(request.Header)).InspectFields(convoProto, fields)
 	if err != nil {
 		return raw, nil
@@ -393,6 +399,7 @@ func inspectJSONMetadata(request *http.Request, protocol contract.ProtocolID, ma
 		}
 	}
 	metadata.ReasoningEffort = extractReasoningEffort(protocol, fields)
+	metadata.ReasoningUpdate = extractReasoningUpdate(protocol, fields)
 	if raw, ok := fields["enable_thinking"]; ok {
 		var enabled bool
 		if json.Unmarshal(raw, &enabled) == nil {

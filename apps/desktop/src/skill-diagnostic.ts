@@ -45,6 +45,7 @@ export interface SkillDiagnosticRecord {
   requested_model: string | null;
   model_redirect: RequestModelRedirect | null;
   reasoning_effort: string | null;
+  reasoning_effort_update: string | null;
   input_protocol: string;
   entry: string;
   streaming: boolean;
@@ -86,6 +87,7 @@ export interface SkillDiagnosticPayload {
     requested_model: string | null;
     model_redirect: RequestModelRedirect | null;
     reasoning_effort: string | null;
+    reasoning_effort_update: string | null;
     input_protocol: string;
     entry: string;
     service_id: string | null;
@@ -140,6 +142,7 @@ export function buildSkillDiagnosticPayload(
       requested_model: options.session.requested_model,
       model_redirect: options.session.model_redirect ?? null,
       reasoning_effort: options.session.reasoning_effort ?? null,
+      reasoning_effort_update: options.session.reasoning_effort_update ?? null,
       input_protocol: options.session.input_protocol,
       entry: protocolEntryPath(options.session.input_protocol),
       service_id: options.session.service_id,
@@ -175,6 +178,7 @@ function diagnosticRecord(
     requested_model: record.requested_model,
     model_redirect: record.model_redirect ?? null,
     reasoning_effort: record.reasoning_effort ?? null,
+    reasoning_effort_update: record.reasoning_effort_update ?? null,
     input_protocol: record.input_protocol,
     entry: protocolEntryPath(record.input_protocol, {
       streaming: record.streaming,

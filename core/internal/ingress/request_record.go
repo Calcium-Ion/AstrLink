@@ -625,6 +625,7 @@ func (session *recordSession) recordSnapshot(
 		InputProtocol:      session.classified.Protocol,
 		RequestedModel:     requestedModel,
 		ReasoningEffort:    session.reasoningEffort(),
+		ReasoningUpdate:    session.reasoningUpdate(),
 		Streaming:          session.classified.Streaming,
 		ServiceID:          session.endpointID,
 		LocalAccessTokenID: session.accessTokenID,
@@ -2471,4 +2472,13 @@ func errorSummaryFromInference(code, message string, retryable bool) contract.Er
 		Message:   message,
 		Retryable: retryable,
 	}
+}
+
+// reasoningUpdate is the level the client's latest configuration_update set.
+func (session *recordSession) reasoningUpdate() *string {
+	if session.classified.ReasoningUpdate == nil {
+		return nil
+	}
+	level := *session.classified.ReasoningUpdate
+	return &level
 }

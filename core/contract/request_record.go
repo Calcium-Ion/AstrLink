@@ -588,7 +588,11 @@ type RequestRecord struct {
 	// requested one, or the gateway's when its reasoning settings changed it
 	// ("none" when they turned reasoning off). Nil means unspecified or
 	// historical.
-	ReasoningEffort *string    `json:"reasoning_effort"`
+	ReasoningEffort *string `json:"reasoning_effort"`
+	// ReasoningUpdate is the level the latest configuration_update item in
+	// a Responses input set, which a client sends to change the level mid
+	// conversation without touching ReasoningEffort. Nil when none.
+	ReasoningUpdate *string    `json:"reasoning_effort_update,omitempty"`
 	Streaming       bool       `json:"streaming"`
 	RouteID         *RouteID   `json:"route_id"`
 	ServiceID       *ServiceID `json:"service_id"`
@@ -731,6 +735,11 @@ func (record RequestRecord) Validate() error {
 	}
 	if record.ReasoningEffort != nil {
 		if err := validateBoundedText("reasoning_effort", *record.ReasoningEffort, 32, false); err != nil {
+			return err
+		}
+	}
+	if record.ReasoningUpdate != nil {
+		if err := validateBoundedText("reasoning_effort_update", *record.ReasoningUpdate, 32, false); err != nil {
 			return err
 		}
 	}
@@ -945,11 +954,13 @@ type RequestSession struct {
 	ModelRedirect *RequestModelRedirect `json:"model_redirect,omitempty"`
 	// Output mirrors the latest call's output, so a list can tell what a
 	// conversation is doing: thinking, answering, or running tools.
-	Output             *OutputActivity `json:"output,omitempty"`
-	ReasoningEffort    *string         `json:"reasoning_effort"`
-	InputProtocol      ProtocolID      `json:"input_protocol"`
-	ServiceID          *ServiceID      `json:"service_id"`
-	LocalAccessTokenID *AccessTokenID  `json:"local_access_token_id"`
+	Output          *OutputActivity `json:"output,omitempty"`
+	ReasoningEffort *string         `json:"reasoning_effort"`
+	// ReasoningUpdate mirrors the latest call's configuration_update level.
+	ReasoningUpdate    *string        `json:"reasoning_effort_update,omitempty"`
+	InputProtocol      ProtocolID     `json:"input_protocol"`
+	ServiceID          *ServiceID     `json:"service_id"`
+	LocalAccessTokenID *AccessTokenID `json:"local_access_token_id"`
 	// PrivacyWarned is set when the warn action let at least one call of the
 	// session through, so the list can mark it without loading every call.
 	PrivacyWarned bool `json:"privacy_warned,omitempty"`
@@ -1054,6 +1065,11 @@ func (session RequestSession) Validate() error {
 	}
 	if session.ReasoningEffort != nil {
 		if err := validateBoundedText("reasoning_effort", *session.ReasoningEffort, 32, false); err != nil {
+			return err
+		}
+	}
+	if session.ReasoningUpdate != nil {
+		if err := validateBoundedText("reasoning_effort_update", *session.ReasoningUpdate, 32, false); err != nil {
 			return err
 		}
 	}

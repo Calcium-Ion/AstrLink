@@ -1509,6 +1509,12 @@ END`,
 			`ALTER TABLE request_records ADD COLUMN input_text TEXT`,
 			`ALTER TABLE request_records ADD COLUMN mid_turn_json TEXT`,
 		}},
+		// A Responses client can change the reasoning level mid conversation
+		// with a configuration_update input item, leaving reasoning_effort
+		// as it was; the record keeps both.
+		{Version: 62, Name: "request_reasoning_effort_update", Statements: []string{
+			`ALTER TABLE request_records ADD COLUMN reasoning_effort_update TEXT`,
+		}},
 	}
 }
 

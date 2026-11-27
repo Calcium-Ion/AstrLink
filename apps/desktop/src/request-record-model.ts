@@ -57,11 +57,7 @@ export const GATEWAY_REWRITES = [
 export type GatewayRewrite = (typeof GATEWAY_REWRITES)[number];
 
 export type RequestStatus =
-  | "pending"
-  | "succeeded"
-  | "failed"
-  | "cancelled"
-  | "blocked";
+  "pending" | "succeeded" | "failed" | "cancelled" | "blocked";
 
 /**
  * Outcome of a whole conversation. `interrupted` has no record-level
@@ -120,13 +116,7 @@ export interface PrivacyHitCount {
  * decisions existed.
  */
 export type PrivacyDecision =
-  | "none"
-  | "trusted"
-  | "allow"
-  | "warn"
-  | "redact"
-  | "block"
-  | "fail_open";
+  "none" | "trusted" | "allow" | "warn" | "redact" | "block" | "fail_open";
 
 /** One privacy hit, by kind and structural path only. Never a value. */
 export interface PrivacyFinding {
@@ -321,6 +311,8 @@ export interface RequestRecord {
   /** Absent before any output and on historical records. */
   output?: OutputActivity;
   reasoning_effort?: string | null;
+  /** Level the latest configuration_update input item set, when any. */
+  reasoning_effort_update?: string;
   streaming: boolean;
   route_id: string | null;
   service_id: string | null;
@@ -652,6 +644,8 @@ export interface RequestSession {
   /** Absent before any output and on historical records. */
   output?: OutputActivity;
   reasoning_effort?: string | null;
+  /** Level the latest configuration_update input item set, when any. */
+  reasoning_effort_update?: string;
   input_protocol: string;
   service_id: string | null;
   local_access_token_id: string | null;
@@ -1568,6 +1562,7 @@ function parseRequestRecordAt(value: unknown, path: string): RequestRecord {
       record.reasoning_effort == null
         ? null
         : nullableStringAt(record.reasoning_effort, `${path}.reasoning_effort`),
+    ...optionalStringField(record, "reasoning_effort_update", path),
     streaming: boolAt(record.streaming, `${path}.streaming`),
     route_id: nullableStringAt(record.route_id, `${path}.route_id`),
     service_id: nullableStringAt(record.service_id, `${path}.service_id`),
@@ -1862,6 +1857,7 @@ function parseRequestSessionAt(value: unknown, path: string): RequestSession {
             session.reasoning_effort,
             `${path}.reasoning_effort`,
           ),
+    ...optionalStringField(session, "reasoning_effort_update", path),
     input_protocol: stringAt(session.input_protocol, `${path}.input_protocol`),
     service_id: nullableStringAt(session.service_id, `${path}.service_id`),
     local_access_token_id: nullableStringAt(

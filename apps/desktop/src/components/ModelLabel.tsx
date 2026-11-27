@@ -9,12 +9,15 @@ import { useT } from "@/i18n";
  * `redirectedTo` adds the model a routing redirect sent the call to, drawn as
  * "model → redirectedTo" so both names keep their brand marks.
  * Narrow columns can show the target with the full redirect in its hint.
+ * `reasoningUpdate` is the level a configuration_update item set mid
+ * conversation, shown next to the request's own level when they differ.
  */
 export function ModelLabel({
   className,
   fallback = "—",
   model,
   reasoningEffort,
+  reasoningUpdate,
   redirectDisplay = "inline",
   redirectedTo,
 }: {
@@ -22,6 +25,7 @@ export function ModelLabel({
   fallback?: string;
   model: string | null;
   reasoningEffort?: string | null;
+  reasoningUpdate?: string | null;
   redirectDisplay?: "inline" | "target";
   redirectedTo?: string;
 }) {
@@ -77,6 +81,20 @@ export function ModelLabel({
           variant="secondary"
         >
           {reasoningEffort}
+        </Badge>
+      ) : null}
+      {reasoningUpdate && reasoningUpdate !== reasoningEffort ? (
+        <Badge
+          aria-label={`${t("records.reasoningEffortUpdate")}: ${reasoningUpdate}`}
+          title={`${t("records.reasoningEffortUpdate")}: ${reasoningUpdate}`}
+          variant="secondary"
+        >
+          {reasoningEffort ? (
+            <span aria-hidden="true" className="mr-1 text-muted-foreground">
+              →
+            </span>
+          ) : null}
+          {reasoningUpdate}
         </Badge>
       ) : null}
     </span>

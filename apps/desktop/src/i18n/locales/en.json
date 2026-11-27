@@ -2477,6 +2477,7 @@
     "clientType": "Client: {{client}}",
     "unknownClient": "Unknown client",
     "reasoningEffort": "Reasoning effort",
+    "reasoningEffortUpdate": "Reasoning level update",
     "redirectedTo": "redirected to",
     "modelRedirectNote": "Model redirect: {{from}} → {{to}}",
     "title": "Request records",

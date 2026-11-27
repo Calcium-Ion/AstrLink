@@ -2477,6 +2477,7 @@
     "clientType": "クライアント：{{client}}",
     "unknownClient": "不明なクライアント",
     "reasoningEffort": "思考の強度",
+    "reasoningEffortUpdate": "思考の強度の更新",
     "redirectedTo": "のリダイレクト先",
     "modelRedirectNote": "モデルのリダイレクト：{{from}} → {{to}}",
     "title": "リクエスト",

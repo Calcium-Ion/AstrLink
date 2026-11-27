@@ -35,12 +35,50 @@ func extractReasoningEffort(protocol contract.ProtocolID, fields map[string]json
 	if json.Unmarshal(fields[path[len(path)-1]], &value) != nil {
 		return nil
 	}
+	return knownReasoningLevel(value)
+}
+
+// knownReasoningLevel keeps this metadata a known level, never arbitrary
+// client text.
+func knownReasoningLevel(value string) *string {
 	value = strings.ToLower(strings.TrimSpace(value))
-	// Keep this metadata a known level, never arbitrary client text.
 	switch value {
 	case "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra":
 		return &value
 	default:
 		return nil
 	}
+}
+
+// extractReasoningUpdate reads the level the latest configuration_update
+// item in a Responses input set. Clients such as Pi change the level mid
+// conversation this way and leave the top-level reasoning as it was, so the
+// record shows both. It follows extractReasoningEffort's rules: a known level
+// or nothing.
+func extractReasoningUpdate(protocol contract.ProtocolID, fields map[string]json.RawMessage) *string {
+	switch protocol {
+	case contract.ProtocolOpenAIResponses, contract.ProtocolOpenAIResponsesCompact:
+	default:
+		return nil
+	}
+	var items []struct {
+		Type      string                     `json:"type"`
+		Reasoning map[string]json.RawMessage `json:"reasoning"`
+	}
+	if json.Unmarshal(fields["input"], &items) != nil {
+		return nil
+	}
+	for i := len(items) - 1; i >= 0; i-- {
+		if items[i].Type != "configuration_update" || items[i].Reasoning == nil {
+			continue
+		}
+		var value string
+		if json.Unmarshal(items[i].Reasoning["effort"], &value) != nil {
+			continue
+		}
+		if level := knownReasoningLevel(value); level != nil {
+			return level
+		}
+	}
+	return nil
 }

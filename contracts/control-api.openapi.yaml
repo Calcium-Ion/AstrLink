@@ -7605,6 +7605,11 @@ components:
           minLength: 1
           maxLength: 32
           description: Reasoning level of the final attempt, in lowercase. It is the level the gateway's reasoning settings sent when they changed the request ("none" when they turned reasoning off), and otherwise the client's explicit level. A client's token budget or model name is never read as a level. Null when the client named no level and the settings left reasoning unchanged, and for historical records.
+        reasoning_effort_update:
+          type: string
+          minLength: 1
+          maxLength: 32
+          description: Reasoning level, in lowercase, that the latest configuration_update item in a Responses input set. Clients such as Pi change the level mid conversation this way and leave the top-level reasoning, which reasoning_effort reports, as it was. Absent when the call carries no such item with a known level.
         streaming:
           type: boolean
         route_id:
@@ -8253,6 +8258,11 @@ components:
           minLength: 1
           maxLength: 32
           description: Reasoning level of the final attempt, in lowercase. It is the level the gateway's reasoning settings sent when they changed the request ("none" when they turned reasoning off), and otherwise the client's explicit level. A client's token budget or model name is never read as a level. Null when the client named no level and the settings left reasoning unchanged, and for historical records.
+        reasoning_effort_update:
+          type: string
+          minLength: 1
+          maxLength: 32
+          description: The latest call's configuration_update reasoning level; see RequestRecord.reasoning_effort_update.
         input_protocol:
           $ref: ./protocol-capabilities.schema.json#/$defs/ProtocolId
         service_id:

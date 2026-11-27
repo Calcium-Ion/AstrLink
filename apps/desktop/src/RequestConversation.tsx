@@ -935,6 +935,7 @@ const TurnView = memo(function TurnView({
                   className="font-medium text-text-secondary"
                   model={reply.record.requested_model}
                   reasoningEffort={reply.record.reasoning_effort}
+                  reasoningUpdate={reply.record.reasoning_effort_update}
                   redirectedTo={reply.record.model_redirect?.to}
                 />
                 <FadeLine className="w-full" text={excerpt} />

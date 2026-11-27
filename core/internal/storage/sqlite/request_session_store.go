@@ -746,7 +746,7 @@ const requestSessionSummaryColumns = `
     http_status, turn_index, input_preview,
     (SELECT COUNT(*) FROM request_records children
      WHERE children.parent_request_id = request_records.id), model_redirect_json, client_type, privacy_decision,
-    output_json, parent_session_id`
+    output_json, parent_session_id, reasoning_effort_update`
 
 // sessionSummaryQuery reads the root turns of sessions, each session's in
 // time order. Without statistics SQLite takes `parent_request_id IS NULL`,
@@ -796,7 +796,7 @@ func loadSessionSummaries(ctx context.Context, reader historyReader, items []ses
 	}
 	defer rows.Close()
 	var id, sessionID, startedAt, status, protocol string
-	var completedAt, model, reasoning, service, token, preview, redirect, client, decision, output, parent sql.NullString
+	var completedAt, model, reasoning, service, token, preview, redirect, client, decision, output, parent, reasoningUpdate sql.NullString
 	// The latest call's output, decoded once per session rather than per call.
 	var latestOutput string
 	var httpStatus, turn sql.NullInt64
@@ -829,7 +829,7 @@ func loadSessionSummaries(ctx context.Context, reader historyReader, items []ses
 	for rows.Next() {
 		if err := rows.Scan(&id, &sessionID, &startedAt, &completedAt, &status, &protocol,
 			&model, &reasoning, &service, &token, &httpStatus, &turn, &preview,
-			&children, &redirect, &client, &decision, &output, &parent); err != nil {
+			&children, &redirect, &client, &decision, &output, &parent, &reasoningUpdate); err != nil {
 			return nil, err
 		}
 		if string(current.ID) != sessionID {
@@ -906,7 +906,7 @@ func loadSessionSummaries(ctx context.Context, reader historyReader, items []ses
 		current.Status = contract.SessionStatusFromRequest(record.EffectiveStatus())
 		hadSuccess = hadSuccess || record.EffectiveStatus() == contract.RequestStatusSucceeded
 		current.InputProtocol, current.ClientType = record.InputProtocol, record.ClientType
-		current.RequestedModel, current.ReasoningEffort = nil, nil
+		current.RequestedModel, current.ReasoningEffort, current.ReasoningUpdate = nil, nil, nil
 		// NullString is reused by Scan; retain independent values only for the
 		// latest row instead of allocating and retaining every historical call.
 		if model.Valid {
@@ -916,6 +916,10 @@ func loadSessionSummaries(ctx context.Context, reader historyReader, items []ses
 		if reasoning.Valid {
 			value := reasoning.String
 			current.ReasoningEffort = &value
+		}
+		if reasoningUpdate.Valid {
+			value := reasoningUpdate.String
+			current.ReasoningUpdate = &value
 		}
 		current.ServiceID, current.LocalAccessTokenID = record.ServiceID, record.LocalAccessTokenID
 		current.ModelRedirect = record.ModelRedirect

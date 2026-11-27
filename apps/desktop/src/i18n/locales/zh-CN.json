@@ -2477,6 +2477,7 @@
     "clientType": "客户端：{{client}}",
     "unknownClient": "未知客户端",
     "reasoningEffort": "思考强度",
+    "reasoningEffortUpdate": "思考强度更新",
     "redirectedTo": "重定向到",
     "modelRedirectNote": "模型重定向: {{from}} → {{to}}",
     "title": "请求记录",

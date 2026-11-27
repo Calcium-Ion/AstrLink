@@ -57,3 +57,36 @@ func TestReasoningEffortRecordedWithoutBodyCapture(t *testing.T) {
 		t.Fatal("recording reasoning effort must not enable body capture")
 	}
 }
+
+// Pi changes the level mid conversation with a configuration_update input
+// item and leaves the top-level reasoning as it was (#140).
+func TestClassifyReasoningUpdateFromConfigurationUpdate(t *testing.T) {
+	for _, test := range []struct{ name, path, body, effort, update string }{
+		{"pi", "/v1/responses", `{"model":"gpt-6.2-sol","reasoning":{"effort":"medium"},"input":[{"role":"user","content":"请回复 OK"},{"type":"configuration_update","reasoning":{"effort":"high"}}]}`, "medium", "high"},
+		{"latest wins", "/v1/responses", `{"model":"m","input":[{"type":"configuration_update","reasoning":{"effort":"low"}},{"role":"user","content":"x"},{"type":"configuration_update","reasoning":{"effort":"XHIGH"}}]}`, "", "xhigh"},
+		{"latest without level", "/v1/responses", `{"model":"m","input":[{"type":"configuration_update","reasoning":{"effort":"low"}},{"type":"configuration_update","model":"other"}]}`, "", "low"},
+		{"compact", "/v1/responses/compact", `{"model":"m","input":[{"type":"configuration_update","reasoning":{"effort":"max"}}]}`, "", "max"},
+		{"none", "/v1/responses", `{"model":"m","reasoning":{"effort":"medium"},"input":[{"role":"user","content":"x"}]}`, "medium", ""},
+		{"string input", "/v1/responses", `{"model":"m","input":"hi"}`, "", ""},
+		{"unknown level", "/v1/responses", `{"model":"m","input":[{"type":"configuration_update","reasoning":{"effort":"private text"}}]}`, "", ""},
+		{"malformed", "/v1/responses", `{"model":"m","input":[{"type":"configuration_update","reasoning":"high"}]}`, "", ""},
+		{"other protocol", "/v1/chat/completions", `{"model":"m","input":[{"type":"configuration_update","reasoning":{"effort":"high"}}]}`, "", ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := classify(httptest.NewRequest(http.MethodPost, test.path, strings.NewReader(test.body)), 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if value(got.ReasoningEffort) != test.effort || value(got.ReasoningUpdate) != test.update {
+				t.Fatalf("effort = %q, update = %q", value(got.ReasoningEffort), value(got.ReasoningUpdate))
+			}
+		})
+	}
+}
+
+func value(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}

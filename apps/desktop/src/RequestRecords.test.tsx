@@ -675,6 +675,33 @@ describe("RequestRecords", () => {
     expect(rows[1]?.querySelector('[aria-label^="思考强度:"]')).toBeNull();
   });
 
+  it("shows a mid-conversation configuration_update level next to the request's own", async () => {
+    bridgeMocks.listRequestSessions.mockResolvedValue({
+      items: [
+        sessionFromRecord(firstRecord, {
+          reasoning_effort: "medium",
+          reasoning_effort_update: "high",
+        }),
+        sessionFromRecord(secondRecord, {
+          reasoning_effort: "low",
+          reasoning_effort_update: "low",
+        }),
+      ],
+      next_cursor: null,
+    });
+    await renderRecords();
+    const rows = container.querySelectorAll(
+      '[data-testid="request-session-row"]',
+    );
+    expect(
+      rows[0]?.querySelector('[aria-label="思考强度: medium"]')?.textContent,
+    ).toBe("medium");
+    expect(
+      rows[0]?.querySelector('[aria-label="思考强度更新: high"]')?.textContent,
+    ).toBe("→high");
+    expect(rows[1]?.querySelector('[aria-label^="思考强度更新:"]')).toBeNull();
+  });
+
   it("names a session Core left untitled in the operator's language", async () => {
     bridgeMocks.listRequestSessions.mockResolvedValue({
       items: [sessionFromRecord(firstRecord, { title: "" })],

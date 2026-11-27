@@ -28,7 +28,7 @@ const requestRecordSelectColumns = `
            ORDER BY kind, direction, value)) AS cursors_json, first_token_ms, model_redirect_json,
     routing_decision_json, client_type, privacy_decision, privacy_findings_json, conversion_diagnostics_json,
     first_answer_ms, privacy_ignored_json, metadata_json, plugin_records_json, output_json, parent_session_id, context_json,
-    input_text, mid_turn_json,
+    input_text, mid_turn_json, reasoning_effort_update,
     (SELECT project FROM context_sets WHERE context_sets.id = request_records.context_set_id) AS context_project,
     (SELECT items_json FROM context_sets WHERE context_sets.id = request_records.context_set_id) AS context_items`
 
@@ -40,9 +40,9 @@ const requestRecordInsertColumns = `
     turn_index, session_link_json, turn_user_messages, turn_user_fingerprint, recovery_json, first_token_ms,
     model_redirect_json, routing_decision_json, client_type, privacy_decision, privacy_findings_json,
     conversion_diagnostics_json, first_answer_ms, privacy_ignored_json, metadata_json, plugin_records_json, output_json,
-    parent_session_id, context_json, context_set_id, input_text, mid_turn_json`
+    parent_session_id, context_json, context_set_id, input_text, mid_turn_json, reasoning_effort_update`
 
-const requestRecordInsertValues = `(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+const requestRecordInsertValues = `(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 func (row requestRecordRow) insertArgs() []any {
 	return []any{
@@ -54,7 +54,7 @@ func (row requestRecordRow) insertArgs() []any {
 		row.turnIndex, row.sessionLinkJSON, row.turnUserMessages, row.turnUserFingerprint, row.recoveryJSON, row.firstTokenMs,
 		row.modelRedirectJSON, row.routingDecisionJSON, row.clientType, row.privacyDecision, row.privacyFindingsJSON,
 		row.conversionDiagnosticsJSON, row.firstAnswerMs, row.privacyIgnoredJSON, row.metadataJSON, row.pluginRecordsJSON, row.outputJSON,
-		row.parentSessionID, row.contextJSON, row.contextSetID, row.inputText, row.midTurnJSON,
+		row.parentSessionID, row.contextJSON, row.contextSetID, row.inputText, row.midTurnJSON, row.reasoningEffortUpdate,
 	}
 }
 
@@ -143,6 +143,7 @@ ON CONFLICT(id) DO UPDATE SET
     input_preview = excluded.input_preview,
     input_text = excluded.input_text,
     mid_turn_json = excluded.mid_turn_json,
+    reasoning_effort_update = excluded.reasoning_effort_update,
     events_json = excluded.events_json,
     turn_index = excluded.turn_index,
     session_link_json = excluded.session_link_json,
@@ -818,6 +819,7 @@ type requestRecordRow struct {
 	inputPreview              any
 	inputText                 any
 	midTurnJSON               any
+	reasoningEffortUpdate     any
 	eventsJSON                any
 	createdAt                 string
 	turnIndex                 any
@@ -883,6 +885,9 @@ func encodeRequestRecordRow(record contract.RequestRecord, createdAt time.Time) 
 	}
 	if record.ReasoningEffort != nil {
 		row.reasoningEffort = *record.ReasoningEffort
+	}
+	if record.ReasoningUpdate != nil {
+		row.reasoningEffortUpdate = *record.ReasoningUpdate
 	}
 	if record.RequestedModel != nil {
 		row.requestedModel = *record.RequestedModel
@@ -1047,7 +1052,7 @@ func scanRequestRecord(row scannable) (contract.RequestRecord, error) {
 	var recoveryJSON, modelRedirectJSON, routingDecisionJSON, clientType sql.NullString
 	var privacyDecision, privacyFindingsJSON, privacyIgnoredJSON, conversionDiagnosticsJSON sql.NullString
 	var metadataJSON, pluginRecordsJSON, outputJSON, parentSessionID, contextJSON, contextProject, contextItems sql.NullString
-	var inputText, midTurnJSON sql.NullString
+	var inputText, midTurnJSON, reasoningUpdate sql.NullString
 	var firstTokenMs, firstAnswerMs sql.NullInt64
 	var (
 		id, startedAt, status, inputProtocol, auditJSON, createdAt        string
@@ -1069,7 +1074,7 @@ func scanRequestRecord(row scannable) (contract.RequestRecord, error) {
 		&createdAt, &turnIndex, &sessionLinkJSON, &turnUserMessages, &turnUserFingerprint, &recoveryJSON, &childCount, &cursorsJSON, &firstTokenMs,
 		&modelRedirectJSON, &routingDecisionJSON, &clientType, &privacyDecision, &privacyFindingsJSON,
 		&conversionDiagnosticsJSON, &firstAnswerMs, &privacyIgnoredJSON, &metadataJSON, &pluginRecordsJSON, &outputJSON,
-		&parentSessionID, &contextJSON, &inputText, &midTurnJSON, &contextProject, &contextItems,
+		&parentSessionID, &contextJSON, &inputText, &midTurnJSON, &reasoningUpdate, &contextProject, &contextItems,
 	); err != nil {
 		return contract.RequestRecord{}, err
 	}
@@ -1124,6 +1129,10 @@ func scanRequestRecord(row scannable) (contract.RequestRecord, error) {
 	}
 	if reasoningEffort.Valid {
 		record.ReasoningEffort = &reasoningEffort.String
+	}
+	if reasoningUpdate.Valid {
+		value := reasoningUpdate.String
+		record.ReasoningUpdate = &value
 	}
 	if requestedModel.Valid {
 		model := requestedModel.String
