@@ -69,7 +69,13 @@ function capture(
     },
   } as unknown as Pen;
   const hands = drawGirl(pen, client, 0, 0, scale, face, pose, lie);
-  out.push(JSON.stringify(hands));
+  // Engines differ in the last bit of trig results, so hands are compared
+  // at a precision far finer than a cell.
+  out.push(
+    JSON.stringify(hands, (_, v) =>
+      typeof v === "number" ? Number(v.toFixed(6)) : v,
+    ),
+  );
   return out.join("\n");
 }
 

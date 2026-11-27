@@ -107,7 +107,14 @@ func TestCodexCatalogWriteReopenRestore(t *testing.T) {
 				writeFile(t, paths[1], "changed after setup\n")
 			}
 			removeAt(t, home, Codex)
-			if now, _ := readFile(t, paths[0]); now != oldConfig {
+			// A Windows path comes back as an equal literal string, so compare
+			// the value and the comment rather than the quoting.
+			now, _ := readFile(t, paths[0])
+			restored, err := ReadCodexConfig(now)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if ptr, _, _ := restored.Get("model_catalog_json"); ptr != oldPointer || !strings.HasSuffix(now, "\n# keep this comment\n") || strings.Count(now, "\n") != 2 {
 				t.Fatalf("restored config = %q", now)
 			}
 			now, exists := readFile(t, paths[1])
